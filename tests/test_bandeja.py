@@ -19,6 +19,9 @@ por el mismo camino que el buzón:
   `pedir_al_iniciar`; «Configurar…» y «Abrir en explorador…» con ella cerrada
   desbloquean y abren al verla.
 - Un desbloqueo cancelado se olvida y se vuelve a ofrecer.
+- Una unidad de la lista bloqueada con BitLocker (`resumen["bitlocker"]`): su
+  desplegable «(bloqueada)» con «Desbloquear…» y el candado en el icono, sin
+  ser un aviso.
 - `despertar` (vuelta de la suspensión) sondea ya los remotos sin conexión.
 - El agente le pasa la vista a la bandeja solo cuando cambia.
 - Los iconos de los cinco estados, y el `Vigia` que se despierta.
@@ -688,5 +691,44 @@ primera = bandeja.vista(saltada).menu[0]
 c("  y encabeza el menú, llevando a su ventana",
   (primera.texto, primera.pide[0]["pide"]),
   ("PRDRIVE: Proyectos necesita --resync · Abrir…", equipo.PIDE_ABRIR))
+
+# Una unidad de la lista enchufada y bloqueada con BitLocker
+BL = {"id": "k" * 32, "nombre": "Trabajo", "raiz": "E:\\", "desbloqueando": False}
+conectada = {"id": "u", "nombre": "PRDRIVE", "atendida": True, "en_lista": True}
+con_bloqueada = bandeja.vista({"unidades": [conectada], "bitlocker": [BL]})
+suyo = entrada(con_bloqueada, "Trabajo (bloqueada)")
+c("una unidad bloqueada con BitLocker tiene su desplegable: la marca y una sola entrada",
+  suyo is not None and (suyo.emblema, [(h.texto, h.pide, h.defecto, h.icono, h.activa)
+                                       for h in suyo.hijos]),
+  (bandeja.MARCA, [("Desbloquear…", ({"pide": equipo.PIDE_DESBLOQUEAR, "id": "k" * 32},),
+                    True, bandeja.I_DESBLOQUEAR, True)]))
+rotulos = textos(con_bloqueada)
+c("  detrás de las unidades conectadas y antes de lo del agente",
+  [r for r in rotulos if r in ("PRDRIVE", "Trabajo (bloqueada)", "Pausar")],
+  ["PRDRIVE", "Trabajo (bloqueada)", "Pausar"])
+suyo = entrada(bandeja.vista({"bitlocker": [{**BL, "desbloqueando": True}]}),
+               "Trabajo (bloqueada)")
+c("mientras Windows pide la contraseña, su entrada lo dice y no se elige",
+  suyo is not None and [(h.texto, h.pide, h.activa, h.defecto) for h in suyo.hijos],
+  [("Desbloqueando: la contraseña la pide Windows", (), False, False)])
+c("sola, pone el candado y la nombra", bandeja.estado({"bitlocker": [BL]}),
+  (icons.BLOQUEADO, "Trabajo bloqueada"))
+c("  también con otra unidad ya sincronizada",
+  bandeja.estado({"unidades": [conectada], "ultima_pasada": 0.0, "bitlocker": [BL]}, 60.0),
+  (icons.BLOQUEADO, "Trabajo bloqueada"))
+c("  no es un aviso: es lo normal hasta que se desbloquea",
+  bandeja.avisos({"bitlocker": [BL]}), [])
+c("  con una raíz cifrada bloqueada, se nombra la raíz",
+  bandeja.estado({"equipo": [{"id": "r", "nombre": "Mi portátil", "cifrada": True,
+                              "estado": bandeja.BLOQUEADA}], "bitlocker": [BL]}),
+  (icons.BLOQUEADO, "Mi portátil bloqueada"))
+c("  y la pausa, una pasada en marcha y un aviso van antes",
+  [bandeja.estado({**antes, "bitlocker": [BL]})[0]
+   for antes in ({"pausado": True},
+                 {"pasada": {"unidad": "PRDRIVE", "pareja": "docs", "tipo": "pasada"}},
+                 saltada)],
+  [icons.PAUSA, icons.SINCRONIZANDO, icons.AVISO])
+c("sin esa clave en el resumen, la vista es la de siempre",
+  bandeja.vista(saltada, 0.0) == bandeja.vista({**saltada, "bitlocker": []}, 0.0), True)
 
 sys.exit(c.report())

@@ -5,12 +5,18 @@ Vive en `common/` y no en `install/` porque quien lo pregunta en ejecución es
 `install/` no viaja al dispositivo. `install/crypto.py` lo reexporta con los
 nombres de siempre y sigue dando a `estado_de()` su `IS_WIN` y su
 `_leer_estado_bitlocker`, que son los que sustituyen sus tests.
+
+También pregunta aquí el agente del equipo, para reconocer una unidad de su
+lista que está enchufada pero bloqueada: el nombre de su volumen
+(`volumen_de()`, que se lee igual con el volumen bloqueado) y la orden que saca
+la ventana de desbloqueo de Windows (`orden_desbloquear()`).
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
 
 IID_ISHELLITEM2 = "{7E9FB0D3-919F-4307-AB2E-9B1860310C93}"
 """IID de la interfaz `IShellItem2`."""
@@ -78,6 +84,20 @@ class BitLockerStatus:
         remoto. Aquí solo vale `On`.
         """
         return self.state == BDE_ON
+
+    @property
+    def locked(self) -> bool:
+        """Indica si se ha comprobado que el volumen está cifrado y bloqueado."""
+        return self.known and self.state == BDE_LOCKED
+
+    @property
+    def present(self) -> bool:
+        """Indica si se ha comprobado que el volumen lleva BitLocker, esté como esté.
+
+        Vale cualquier estado conocido menos «sin cifrar» y «no se puede
+        cifrar»: un volumen así puede aparecer bloqueado la próxima vez.
+        """
+        return self.known and self.state not in (BDE_OFF, BDE_NOT_ENCRYPTABLE)
 
     @property
     def resumen(self) -> str:
@@ -201,3 +221,90 @@ def estado_de(letra: str, leer, es_win: bool = os.name == "nt") -> BitLockerStat
 def bitlocker_status(letra: str) -> BitLockerStatus:
     """Devuelve el estado de BitLocker de una unidad, preguntándoselo a Windows."""
     return estado_de(letra, lambda ruta: _leer_estado_bitlocker(ruta))
+
+
+def _raiz_de_letra(raiz: Path | str) -> str:
+    r"""Devuelve `E:\` si esa ruta es la raíz de una letra de unidad; si no, cadena vacía.
+
+    Se decide con las reglas de rutas de Windows en cualquier sistema, para que
+    los tests digan lo mismo en Linux.
+    """
+    ruta = PureWindowsPath(str(raiz))
+    letra = ruta.drive
+    if len(letra) != 2 or letra[1] != ":" or not letra[0].isalpha():
+        return ""
+    if ruta != PureWindowsPath(ruta.anchor):
+        return ""
+    return letra.upper() + "\\"
+
+
+def _leer_volumen(raiz: str) -> str:
+    r"""Devuelve el nombre de volumen (`\\?\Volume{GUID}\`) de la raíz de una letra.
+
+    Lo da el gestor de montajes (`GetVolumeNameForVolumeMountPointW`), no el
+    sistema de ficheros: se lee igual con el volumen bloqueado y sin elevar.
+
+    Raises:
+        OSError: Si Windows no lo da.
+    """
+    import ctypes
+
+    largo = 50                   # «\\?\Volume{GUID}\» son 49 caracteres, y el nulo
+    nombre = ctypes.create_unicode_buffer(largo)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    if not k32.GetVolumeNameForVolumeMountPointW(ctypes.c_wchar_p(raiz), nombre, largo):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return nombre.value
+
+
+def volumen_de(raiz: Path | str, es_win: bool = os.name == "nt") -> str:
+    r"""Devuelve el nombre de volumen de Windows de la raíz de una unidad, en minúsculas.
+
+    Es con lo que el agente reconoce una unidad de su lista cuando no puede
+    leerla. Punto de indirección: los tests lo sustituyen, o sustituyen
+    `_leer_volumen()`.
+
+    Args:
+        raiz: La raíz de una letra (`E:\`).
+        es_win: Si se está en Windows.
+
+    Returns:
+        El nombre, o una cadena vacía fuera de Windows, si la ruta no es la
+        raíz de una letra o si Windows no contesta. No lanza: se pregunta en
+        cada recorrido del agente, y un volumen que se va a media pregunta no
+        puede dejar sin recorrer los demás.
+    """
+    letra = _raiz_de_letra(raiz) if es_win else ""
+    if not letra:
+        return ""
+    try:
+        return _leer_volumen(letra).lower()
+    except Exception:                               # noqa: BLE001 — ver docstring
+        return ""
+
+
+def orden_desbloquear(raiz: Path | str, es_win: bool = os.name == "nt") -> list[str] | None:
+    r"""Devuelve la orden que saca la ventana de desbloqueo de BitLocker de una unidad.
+
+    Es la del verbo `unlock-bde` del Explorador («Desbloquear unidad…», en
+    `HKCR\Drive\shell`): `bdeunlock.exe` con la raíz de la letra. Va con su
+    ruta completa y sin nada más: la contraseña la pide Windows.
+
+    Args:
+        raiz: La raíz de una letra (`E:\`).
+        es_win: Si se está en Windows.
+
+    Returns:
+        La orden, o `None` fuera de Windows, si la ruta no es la raíz de una
+        letra o si este Windows no trae `bdeunlock.exe`.
+    """
+    letra = _raiz_de_letra(raiz) if es_win else ""
+    if not letra:
+        return None
+    sistema = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    exe = Path(sistema) / "System32" / "bdeunlock.exe"
+    try:
+        hay = exe.is_file()
+    except OSError:
+        hay = False
+    return [str(exe), letra] if hay else None

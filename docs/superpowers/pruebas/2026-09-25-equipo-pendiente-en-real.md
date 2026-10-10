@@ -372,3 +372,30 @@ arranque a mano: lo que falta es verlo en un equipo de verdad.
 | H1 | W (con el inicio rápido activado) | Con la ventana de runsync abierta sobre una unidad (y el agente en marcha en esa raíz), «Apagar» el equipo (no «Reiniciar»), encenderlo y mirar `ui.lock.json` y `agente.lock.json`. Buscar un proceso cualquiera que haya heredado el pid que apuntan (`tasklist /FI "PID eq <pid>"`); si no lo hay, repetir hasta que lo haya o dar la prueba por no concluyente. | Apuntar si el `arranque` de los registros de antes coincide con el de ahora (se espera que sí: el núcleo se reanuda). Entonces un pid reutilizado SÍ bloquea la ventana nueva («ya hay una ventana abierta») y el agente SÍ se queda en pausa por ella: es el límite conocido (cae al pid solo, como antes). Si NO coincide, la ventana nueva se abre y el registro viejo se limpia. | `store.arranque_del_sistema()`, `store.vivo_en_este_arranque()`, `runsync._viva_aqui()`, `agente._registro_vivo()` |
 | H2 | W, L | «Reiniciar» (no «Apagar») con la ventana abierta y el agente en marcha; tras volver, abrir la ventana otra vez. | La ventana nueva se abre sin decir que ya hay otra, `ui.lock.json` pasa a ser el suyo y el agente no se queda en pausa por el registro de antes. | `runsync.tomar_ui()`, `agente._registro_vivo()` |
 | H3 | W, L | Dejar el equipo encendido más de 7 días con el servicio de runsync y el agente atendiendo la misma raíz (sin apagar ni hibernar) y la sincronización de la hora activada. Pasados los días, mirar la ventana (¿«Servicio en marcha»?), abrir `runsync.py` (que debe parar el servicio, no decir que no hay nada que parar) y `python agente.py status`. | El servicio sigue contando como vivo: su `daemon.lock.json` lleva un `arranque` reciente (lo reescribe en cada ciclo) y la diferencia con el de ahora cabe en `HOLGURA_ARRANQUE` (600 s). `agente.lock.json` solo se escribe al arrancar: apuntar cuánto se ha desviado su `arranque` del de ahora y si el agente sigue contando como vivo para `agente.py status` y el instalador. | `store.HOLGURA_ARRANQUE`, `runsync.daemon_cycle()`, `Agente._apuntar_en_lock()`, `equipo.agente_vivo()` |
+
+## Una unidad bloqueada con BitLocker
+
+El agente reconoce una unidad de su lista enchufada y bloqueada con BitLocker
+por el nombre de volumen que apuntó la última vez que la atendió, la enseña en
+la bandeja como «(bloqueada)» y ofrece «Desbloquear…», que lanza
+`bdeunlock.exe` (diseño:
+`docs/superpowers/specs/2026-10-10-agente-bitlocker-bloqueada-design.md`). Los
+tests sustituyen el nombre de volumen, el estado de BitLocker y la ventana de
+Windows. Visto en un Windows 11 Home ARM64, solo sobre `C:`: el nombre de
+volumen se lee sin elevar, `BitLockerProtection` da 1, y el verbo `unlock-bde`
+del Explorador es `bdeunlock.exe %1` con `AppliesTo` en el estado 6. Con un
+volumen **bloqueado** no se ha visto nada.
+
+Hace falta un pendrive cifrado con BitLocker To Go en un Windows Pro (la
+edición Home lo desbloquea pero no lo crea), con prdrive dentro y en la lista
+del agente. No se sabe si una máquina de GitHub Actions puede cifrar un disco
+virtual: en Windows Server, BitLocker es una característica que pide reiniciar.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| B1 | W | Con la unidad desbloqueada y atendida, mirar `agente.json`; expulsarla, enchufarla sin desbloquear y comparar con `mountvol`. | `agente.json` lleva su `volumen`, y es el mismo nombre que `mountvol` da a esa letra con el volumen bloqueado. | `bitlocker.volumen_de()`, `Agente._apuntar_volumen()` |
+| B2 | W | Enchufarla bloqueada en otro puerto USB; tras reiniciar el equipo; y repetir con un pendrive sin número de serie y con un disco USB que Windows presente como fijo. | Se reconoce en todos los casos. Si en alguno Windows le da otro nombre de volumen, no sale en la bandeja hasta desbloquearla a mano una vez: apuntar en cuál. | `Agente._mirar_bitlocker()` |
+| B3 | W | Con el agente arrancado por su tarea programada (`pythonw`), enchufarla bloqueada y mirar la bandeja, `agente.log` y `agente.py status`. | A los pocos segundos, el desplegable «<nombre> (bloqueada)» con «Desbloquear…», el candado en el icono, una línea «bloqueada con BitLocker en E:\» en el diario y la línea de `status`. Apuntar cuánto tarda la lectura con la unidad recién enchufada, y que el agente no se queda parado en ella. | `cifrada.bitlocker_de()`, `bandeja._bitlocker()` |
+| B4 | W | Elegir «Desbloquear…»; elegirlo otra vez con la ventana abierta; repetir con una cuenta sin administrador. | Sale la ventana de BitLocker de Windows para esa letra, sin pedir elevar; mientras está abierta la entrada dice «Desbloqueando: la contraseña la pide Windows» y no abre otra. Apuntar si `bdeunlock.exe` sigue vivo mientras su ventana está abierta: si no, la entrada vuelve enseguida a «Desbloquear…». | `agente.desbloquear_bitlocker()`, `bitlocker.orden_desbloquear()` |
+| B5 | W | Teclear la contraseña; y otra vez, desbloqueándola desde el Explorador sin pasar por la bandeja. | La unidad se conecta y se atiende sola. Apuntar cuántos segundos pasan desde que se desbloquea hasta «conectada» en el diario, y si llega `WM_DEVICECHANGE` (se nota porque la conexión es inmediata y no espera al recorrido de 5 s). | `Agente.cada_recorrido()`, `Agente._recorrer()` |
+| B6 | W | Cancelar la ventana de Windows sin teclear nada; después, quitar la unidad con la ventana abierta. | Cancelada, la entrada vuelve a «Desbloquear…» y la unidad sigue «(bloqueada)». Quitada, su desplegable desaparece del menú y el icono deja el candado. | `Agente._desbloquear_bitlocker()`, `Agente._mirar_bitlocker()` |

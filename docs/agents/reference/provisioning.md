@@ -44,7 +44,7 @@ Each step disables «Siguiente» until its condition is met. **No console fallba
 
 To a behavioural AV engine an unsigned `.exe` in `%TEMP%` spawning `powershell.exe` is the shape of a dropper. Windows is asked directly instead:
 
-- BitLocker state (now `common/bitlocker.py`, re-exported by `install/crypto.py`, so the device can ask it too: `common/cifrada.py`) through `IShellItem2::GetInt32` with a PROPERTYKEY from `PSGetPropertyKeyFromName` (**never** a remembered one). Only state `On` counts as protected: *Waiting for activation* must fail, or the private key lands on a volume whose key is still in the clear.
+- BitLocker state (now `common/bitlocker.py`, re-exported by `install/crypto.py`, so the device can ask it too: `common/cifrada.py`) through `IShellItem2::GetInt32` with a PROPERTYKEY from `PSGetPropertyKeyFromName` (**never** a remembered one). Only state `On` counts as protected: *Waiting for activation* must fail, or the private key lands on a volume whose key is still in the clear. The same module answers the resident agent about a drive it cannot read (`agent.md`, «A listed drive plugged in but locked with BitLocker»): `BitLockerStatus.locked`/`present`, `volumen_de()` (the volume name from `GetVolumeNameForVolumeMountPointW`; it never raises, because the agent asks on every walk) and `orden_desbloquear()` (`bdeunlock.exe` by full path, the command of Explorer's `unlock-bde` verb).
 - The volume list through kernel32, needing `SetThreadErrorMode(SEM_FAILCRITICALERRORS)` (an empty card reader otherwise pops a "no disk" modal) and `TIPOS_OCULTOS` (`GetLogicalDrives` returns mapped network drives).
 - There is **no recovery-key feature**: reading one needs elevation.
 
