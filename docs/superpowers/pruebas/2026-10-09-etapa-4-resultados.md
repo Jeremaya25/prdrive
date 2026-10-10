@@ -106,10 +106,61 @@ Una vuelta local es ruido: «Cerrar la ventana de la pasada y volver» con 50 pa
 
 Paso de tests en Windows: 356 s para 138 ficheros en la etapa 3 (`37969775676`), 421 s para 145 en `c1cf24d` y 384 s para 145 en el tip (`37988241571`). En Linux: 202 s en la etapa 3, 179 s en `c1cf24d` y 202 s en el tip, así que la mejora de `c1cf24d` no se mantiene. La causa de la subida en Windows no está medida.
 
+## Windows 11 ARM64, en un equipo de verdad (10/10/2026)
+
+Pasada local en el equipo de desarrollo: Windows 11 Home (10.0.26200) ARM64, 12 núcleos, pantalla de 2944×1840 al 200 % (`tk scaling` 2,67) y tema oscuro del sistema. El código es el tip `f375528` ([PR 99](https://github.com/Jeremaya25/prdrive/pull/99)) frente a `main` en `f76fae3`, con el Python fijado de `windows-arm64` (3.14.8, Tk 9.0.4), extraído del archivo que ya estaba en la caché del instalador. La CI solo mide esta plataforma a mano. El disco es el interno y la caché del sistema estaba tibia: no es E1. Los ficheros de las pasadas (`resumen.md`, `crudo.jsonl`, capturas, `perf-*.log`) quedaron en el equipo, sin subir.
+
+**Suite.** `run_all.py -j auto --gui-jobs 1`: pasan los 146 ficheros en 312,5 s (`-j 12`, una ventana a la vez, pantalla compartida), con 10 981 comprobaciones y ningún fallo. Las 44 líneas `(saltado)` son de otro sistema (POSIX, Linux, X11, permiso para crear enlaces): ninguna es por falta de pantalla o de `tkinter`. Los más lentos: `test_tk_servicio.py` 36,8 s, `test_run_all.py` 35,0 s, `test_tk_principal_ancho.py` 29,5 s, `test_tk_medidas.py` 26,7 s, y `test_perf_flota.py` y `test_tk_tabla.py` 26,0 s. `test_tk_asistente.py` pasa, pero escribe dos veces `Exception ignored … Variable.__del__ … main thread is not in main loop` antes de «asistente: lo de una unidad se lee después de pintar»: es el caso que describe `commands-testing.md` (una `Variable` recogida desde un hilo, con 1 s de espera cada una), y ahí falta el `gc.collect()`.
+
+**Comprobación de tiempos.** `correr.py --rondas 7 --capturas`, con las marcas apagadas: **Pasa**. Ninguna cuenta supera su techo (`modulos.agente` 158, `modulos.main` 171 y `modulos.wizard` 235 quedan justo en él) y ningún momento empeora frente a la base. El resumen no enseña metas de tiempo en esta plataforma. Suelo: 115 ms (de 108 a 127). Mediana en ms; las filas que el resumen llama «100 %» corren aquí a la escala de la pantalla, el 200 %:
+
+| Momento | Parejas | Base (`f76fae3`) | PR (`f375528`) | Dif. |
+|---|---|---|---|---|
+| Ventana principal, desde que se lanza | 5 | 1278 | 557 | -721 (-56 %) |
+| Ventana principal, desde que se lanza | 50 | 1951 | 1232 | -719 (-37 %) |
+| `theme.apply()` de la principal | 5 | 624 | 69 | -555 (-89 %) |
+| «Sincronizar ahora», hasta la ventana de la pasada | 5 | 864 | 225 | -640 (-74 %) |
+| «Sincronizar ahora», hasta la ventana de la pasada | 50 | 3822 | 232 | -3590 (-94 %) |
+| Abrir «Parejas» | 5 | 1112 | 258 | -854 (-77 %) |
+| Abrir «Parejas» | 50 | 2263 | 346 | -1917 (-85 %) |
+| «Parejas», desde que se lanza | 5 | 2388 | 970 | -1417 (-59 %) |
+| Llega el catálogo a «Parejas» | 50 | 6867 | 201 | -6666 (-97 %) |
+| Llegan las notas de la flota a «Dispositivos» | 5 | 3598 | 197 | -3401 (-95 %) |
+| Cerrar «Ajustes» y volver a la principal | 50 | 3547 | 89 | -3458 (-97 %) |
+| Pregunta del agente, desde que se lanza | — | 978 | 262 | -716 (-73 %) |
+| Asistente, desde que se lanza | — | 1103 | 518 | -584 (-53 %) |
+| Asistente: pasar al paso «Dispositivo» | — | 494 | 500 | +6 (+1 %) |
+| 10 000 líneas en la ventana de la pasada | — | 13786 | 5 | -13781 (-100 %) |
+
+Con 50 parejas en lugar de 5, el PR tarda 675 ms más en la ventana principal (557 a 1232), 88 ms más en abrir «Parejas» (258 a 346) y 820 ms más en «Parejas» desde que se lanza (970 a 1790); el resumen da como meta +50 ms. Al 150 % forzado (`tk scaling` 2,0), que aquí es menos que la escala de la pantalla, la principal baja de 557 a 487 ms y abrir «Ajustes» de 212 a 158; abrir «Parejas» sube de 258 a 296. El paso «Dispositivo» es el único momento que no mejora: lee las unidades de verdad del equipo en los dos árboles.
+
+**El diario del dispositivo frente al driver.** Otra pasada, `correr.py --rondas 1 --capturas --env PRDRIVE_PERF=1 --env PRDRIVE_TEMA=oscuro`: la vuelta medida del árbol del PR, con la misma banda que arriba (±20 % o ±10 ms). De 57 momentos comparados, 53 quedan dentro:
+
+| Momento | Driver (ms) | Dispositivo (ms) | Dif. (ms) | Veredicto |
+|---|---|---|---|---|
+| Arranque hasta la principal (`start-main`) | 555,2 | 546,3 | -8,9 | dentro |
+| Abrir «Parejas» | 260,8 | 260,7 | -0,1 | dentro |
+| Llega a la principal la lectura del estado | 112,9 | 112,8 | -0,1 | dentro |
+| «Sincronizar ahora», hasta la ventana de la pasada | 219,7 | 219,7 | 0,0 | dentro |
+| Cerrar la ventana de la pasada y volver | 19,6 | 15,3 | -4,3 | dentro |
+| Cerrar «Ajustes» y volver | 36,4 | 10,7 | -25,7 | fuera |
+| Cerrar «Ajustes» y volver, al 150 % | 37,6 | 9,2 | -28,4 | fuera |
+| Cerrar «Ajustes» y volver, 50 parejas | 90,7 | 61,8 | -28,9 | fuera |
+| Asistente: arranque (`start-wizard`) | 513,8 | 509,0 | -4,8 | dentro |
+| Asistente: paso «Dispositivo» | 488,0 | 487,9 | -0,1 | dentro |
+| Pregunta del agente: arranque (`start-agente`) | 265,8 | 260,9 | -4,9 | dentro |
+| 10 000 líneas en la pasada (`log-10k`) | 4,6 | 38,0 | +33,4 | alcance distinto |
+
+Los demás quedan a 0,4 ms o menos del driver, salvo los `apply-*` (de -0,7 a -1,0 ms), los `start-*` (de -4,6 a -8,9 ms) y «Cerrar la ventana de la pasada» (-4,2 y -4,3 ms). «Cerrar «Ajustes»» se sale de la banda: la diferencia es de 26 a 29 ms, frente a los 6 a 7 ms de Linux. Si es lo mismo que allí (el driver cuenta la destrucción del diálogo y el dispositivo no), destruir «Ajustes» cuesta eso en este Windows; no se ha medido aparte. `cold-parejas` (una suma) y `elegir-fila` (sin marca) no tienen línea en el diario, como en Linux. Con `PRDRIVE_PERF=1` los tres techos de módulos fallan por uno: `modulos.agente` 159 frente a 158, `modulos.main` 172 frente a 171 y `modulos.wizard` 236 frente a 235. Es una sola vuelta y en tema oscuro: vale para comparar dispositivo y driver, que miden el mismo proceso, no como medianas.
+
+**Capturas.** 13 de 13 pintadas en las dos pasadas, en tema claro la primera y en oscuro la segunda. Se han mirado cinco: «Parejas» y «Dispositivos» en claro, y la principal, «Ajustes» y la pregunta del agente en oscuro, todas al 200 %. Los colores son los del tema, los iconos salen nítidos, no hay texto cortado ni un control sobre otro, y la barra de título sale oscura con el tema oscuro. «Parejas» (2012×1680 px) y «Dispositivos» con la flota (2079×1680 px) llegan al alto de la pantalla y salen con barra de desplazamiento. No sustituye a E2: es un solo equipo, ARM64, sin el asistente del `.exe` y sin pantallas al 100 % ni al 150 % de verdad.
+
+**El dispositivo del equipo.** El equipo tiene un prdrive en uso montado en `P:`. Sus 263 ficheros de programa y la raíz de la unidad quedaron iguales antes y después de las tres pasadas, y el agente residente siguió en marcha.
+
 ## Lo que queda en una máquina de verdad
 
-- **E1**: arranque en frío desde una memoria USB, en W y en L, con cronómetro o con `perf.log`.
-- **E2**: el aspecto en pantalla real (claro, oscuro; 100, 150 y 200 %), en W y en W10.
+- **E1**: arranque en frío desde una memoria USB, en W y en L, con cronómetro o con `perf.log`. Sigue por hacer: la pasada de Windows ARM64 de arriba va con el disco interno y la caché tibia.
+- **E2**: el aspecto en pantalla real (claro, oscuro; 100, 150 y 200 %), en W y en W10. Sigue por hacer; visto en parte, al 200 %, en el Windows 11 ARM64 de arriba.
 - **E3**: F21 en la nube, hecha (L 9/9, W 20/20 en `maquina-real-resultados.md`).
 
 La lista completa y lo que hacer con lo que salga: `docs/superpowers/pruebas/2026-10-09-frontend-pendiente-en-real.md` (estado: por hacer).
