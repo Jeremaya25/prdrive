@@ -288,6 +288,54 @@ raiz.update()
 c("300 controles se pintan en menos de 5 s", time.monotonic() - inicio < 5, True)
 muchos.destroy()
 
+# 5c. el filete de un separador: ttk repite su imagen igual que el centro de una
+# pieza, no la estira. Con un azulejo de 1×1 un separador de 871 px eran 871
+# copias (41 ms en Windows, en cada pintado); con uno grande son un puñado, a lo
+# ancho y a lo alto. Lo grande es la imagen: el filete sigue pidiendo 1 px, y el
+# azulejo es liso entero o la línea saldría a trozos.
+LARGO, COPIAS = 1000, 8
+elementos = {}
+_crear = ttk.Style.element_create
+
+
+def _apuntar(self, nombre, tipo, *args, **kw):
+    """Como `element_create`, y apunta con qué se crea cada elemento."""
+    elementos[nombre] = (args, kw)
+    return _crear(self, nombre, tipo, *args, **kw)
+
+
+def copias(azulejo, ancho: int, alto: int) -> int:
+    """Cuántas veces copia ttk ese azulejo para llenar un hueco (`Ttk_Fill`)."""
+    return -(-ancho // azulejo.width()) * -(-alto // azulejo.height())
+
+
+otra = tk.Tk()
+otra.withdraw()
+ttk.Style.element_create = _apuntar
+try:
+    theme.apply(otra)
+finally:
+    ttk.Style.element_create = _crear
+for estilo, color in (("TSeparator", theme.LINEA), ("Card.TSeparator", theme.LINEA_SUAVE)):
+    elemento = ttk.Style(otra).layout(estilo)[0][0]
+    if not c(f"{estilo} se pinta con un elemento de imagen del tema",
+             (elemento.startswith("Prdrive."), elemento in elementos), (True, True)):
+        continue
+    azulejo = elementos[elemento][0][0]
+    c(f"  un separador de {LARGO} px son pocas copias de su azulejo, a lo ancho y a lo alto",
+      [n for n in (copias(azulejo, LARGO, 1), copias(azulejo, 1, LARGO)) if n > COPIAS], [])
+    lejos = (azulejo.width() - 1, azulejo.height() - 1)
+    puntos = {(0, 0), (lejos[0], 0), (0, lejos[1]), lejos, (lejos[0] // 2, lejos[1] // 2)}
+    c("  el azulejo es liso y opaco de esquina a esquina",
+      {(azulejo.transparency_get(x, y), theme._hex(otra, "#%02x%02x%02x" % azulejo.get(x, y)))
+       for x, y in puntos}, {(False, theme._hex(otra, color))})
+    filete = ttk.Separator(otra, style=estilo)
+    c("  y el filete sigue pidiendo 1 px",
+      (filete.winfo_reqwidth(), filete.winfo_reqheight()), (1, 1))
+theme.olvidar(otra.tk)
+icons.olvidar(otra.tk)
+otra.destroy()
+
 # 6. la letra propia
 if sys.platform == "win32" or sys.platform.startswith("linux"):
     c("la letra de ui/fuentes/ se carga", theme.cargar_fuentes(), True)
