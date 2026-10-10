@@ -153,9 +153,9 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, avisos_carpeta, catalog, components,  # noqa: E402
-                    equipo, expulsar, keepassxc, llavero, model, moderacion, prioridad,
-                    store, update, vestibulo)
+from common import (APP_NAME, avisos, avisos_carpeta, bitlocker, catalog,  # noqa: E402
+                    cifrada, components, equipo, expulsar, keepassxc, llavero, model,
+                    moderacion, prioridad, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
@@ -1736,6 +1736,7 @@ class Agente:
                 return
         if unidad.nombre != nombre:
             self._guardar(self.ajustes.con_unidad(replace(unidad, nombre=nombre)))
+        self._apuntar_volumen(con)
         diario(f"{nombre}: " + ("raíz de este equipo" if unidad.es_raiz else "conectada")
                + f" en {raiz} (modo {unidad.modo})")
         if unidad.modo == equipo.UI:
@@ -1929,13 +1930,46 @@ class Agente:
         if antes is not None:
             con.cambiada = False
             self._guardar(self.ajustes.con_unidad(replace(antes, codigo=codigo)))
+            self._apuntar_volumen(con)
             diario(f"{con.nombre}: se sigue atendiendo, con su código de ahora")
             if antes.modo == equipo.UI:
                 self._abrir_ventana(con)
             return
         self._guardar(self.ajustes.con_unidad(
             equipo.Unidad(con.id, equipo.MODO_AL_ATENDER, con.nombre, codigo=codigo)))
+        self._apuntar_volumen(con)
         diario(f"{con.nombre} añadida a la lista (modo {equipo.MODO_AL_ATENDER})")
+
+    def _apuntar_volumen(self, con: Conexion) -> None:
+        """Apunta en qué volumen está una unidad de la lista que lleva BitLocker.
+
+        Con él se la reconoce cuando vuelve bloqueada y no se puede leer su
+        fichero de control. Sin BitLocker se olvida; si Windows no dice el
+        estado o el nombre del volumen, se deja como estaba. Un volumen no
+        nombra a dos unidades: al apuntarlo a una se le quita a la que lo
+        tuviera. Las raíces de este equipo no lo llevan.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if unidad is None or unidad.es_raiz:
+            return
+        nombre = bitlocker.volumen_de(con.raiz)
+        if not nombre and not unidad.volumen:
+            return                  # ni hay qué apuntar ni qué olvidar (fuera de Windows, siempre)
+        estado = cifrada.bitlocker_de(con.raiz)
+        if not estado.known:
+            return
+        volumen = nombre if estado.present else ""
+        if (estado.present and not volumen) or volumen == unidad.volumen:
+            return
+        ajustes = self.ajustes
+        if volumen:
+            for otra in list(ajustes.unidades.values()):
+                if otra.id != con.id and otra.volumen == volumen:
+                    ajustes = ajustes.con_unidad(replace(otra, volumen=""))
+        self._guardar(ajustes.con_unidad(replace(unidad, volumen=volumen)))
+        diario(f"{con.nombre}: " + ("apuntado su volumen, para reconocerla si vuelve "
+                                    "bloqueada con BitLocker" if volumen else
+                                    "ya no lleva BitLocker; olvidado su volumen"))
 
     def _guardar(self, ajustes: equipo.Ajustes) -> None:
         """Guarda los ajustes.
