@@ -128,26 +128,28 @@ with sandbox():
 
     # Dos lecturas que acaban a la vez, y la ventana leyendo la copia entretanto:
     # nunca un fichero a medias ni vacío (que se leería como «sin catálogo» o como
-    # un catálogo sin parejas).
+    # un catálogo sin parejas), ni el texto de una con los metadatos de la otra.
     otro = {**CAT, "pair": CAT["pair"][:1]}
-    textos = [TEXTO, config_file.dumps(otro, CABECERA)]
-    vistos: list[int | None] = []
+    lecturas = [(TEXTO, "la de dos"), (config_file.dumps(otro, CABECERA), "la de una")]
+    antes = catalog.cached()        # la que ya había también es una copia entera
+    enteras = {(len(antes.raw["pair"]), antes.stamp), (2, "la de dos"), (1, "la de una")}
+    vistos: list[tuple[int, str] | None] = []
     activo = threading.Event()
     activo.set()
 
-    def escribe_siempre(texto):
+    def escribe_siempre(texto, sello):
         """Escribe la copia una y otra vez, como lo hace cada lectura que acaba."""
         for _ in range(150):
             catalog._write_cache(catalog.Catalog(raw=tomllib.loads(texto), text=texto,
-                                                 source="remote", stamp="x", endpoint="nas:/x"))
+                                                 source="remote", stamp=sello, endpoint="nas:/x"))
 
     def lee_siempre():
-        """Lee la copia mientras se escribe y apunta cuántas parejas ve."""
+        """Lee la copia mientras se escribe y apunta cuántas parejas ve y de qué lectura."""
         while activo.is_set():
             cat = catalog.cached()
-            vistos.append(None if cat is None else len(cat.raw.get("pair") or []))
+            vistos.append(None if cat is None else (len(cat.raw.get("pair") or []), cat.stamp))
 
-    hilos = [threading.Thread(target=escribe_siempre, args=(t,)) for t in textos]
+    hilos = [threading.Thread(target=escribe_siempre, args=lectura) for lectura in lecturas]
     lector = threading.Thread(target=lee_siempre)
     lector.start()
     for h in hilos:
@@ -157,10 +159,53 @@ with sandbox():
     activo.clear()
     lector.join()
     c("dos escrituras a la vez y una lectura en medio: siempre una copia entera",
-      (len(vistos) > 0, set(vistos) <= {1, 2}), (True, True))
+      (len(vistos) > 0, sorted({str(v) for v in vistos if v is None or v[0] not in (1, 2)})),
+      (True, []))
+    c("  con los metadatos de esa misma lectura, no los de la otra",
+      sorted({v for v in vistos if v and v[0] in (1, 2)} - enteras), [])
 
-    # En Windows, abrir la copia mientras otra lectura la renombra encima da
-    # PermissionError: se simula aquí para probarlo en cualquier sistema.
+    # Quien lee cuando la copia va por la mitad (el texto ya escrito, los
+    # metadatos todavía no) espera a que acabe; vale para los tres que la leen.
+    a_medias, seguir = threading.Event(), threading.Event()
+
+    def se_para(ruta, texto):
+        """`store.write_text`, que se para justo antes de escribir los metadatos."""
+        if ruta.name == "catalog.json":
+            a_medias.set()
+            seguir.wait(10)
+        return real_write_text(ruta, texto)
+
+    catalog._write_cache(catalog.Catalog(raw=CAT, text=TEXTO, source="remote",
+                                         stamp="la de antes", endpoint="nas:/antes/remote.toml"))
+    catalog.apuntar_duplicado("nas:/antes/pairs.toml")
+    nueva = catalog.Catalog(raw=otro, text=lecturas[1][0], source="remote",
+                            stamp="la nueva", endpoint="nas:/ahora/remote.toml")
+    leido: dict = {}
+    store.write_text = se_para
+    try:
+        escritor = threading.Thread(target=catalog._write_cache, args=(nueva,))
+        lectores = [threading.Thread(target=lambda f=f: leido.__setitem__(f.__name__, f()))
+                    for f in (catalog.cached, catalog.ultimo_leido, catalog.duplicado)]
+        escritor.start()
+        a_medias.wait(10)
+        for h in lectores:
+            h.start()
+        lectores[0].join(0.2)       # quien no espera a la escritura ya ha vuelto
+        seguir.set()
+        for h in (escritor, *lectores):
+            h.join()
+    finally:
+        seguir.set()
+        store.write_text = real_write_text
+    cat = leido.get("cached")
+    c("quien lee a mitad de una escritura la espera y se lleva la copia entera",
+      (cat and (cat.text == nueva.text, cat.stamp), leido.get("ultimo_leido"),
+       leido.get("duplicado")),
+      ((True, "la nueva"), "nas:/ahora/remote.toml", None))
+
+    # En Windows, abrir la copia mientras otro programa la tiene abierta sin
+    # compartirla da PermissionError: se simula aquí para probarlo en cualquier
+    # sistema.
     real_cache_toml = catalog.cache_toml
 
     class Negada:
