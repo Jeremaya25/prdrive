@@ -502,14 +502,24 @@ def explicar_carpeta(ejecutar: Ejecutar, donde: str,
     return f"{motivo} Por ejemplo «{_dentro(ruta)}», si es ahí donde está."
 
 
-_ESCRIBIENDO = threading.Lock()
-"""Un solo hilo a la vez escribe la copia local.
+_CERROJO_COPIA = threading.Lock()
+"""Un solo hilo a la vez escribe o lee la copia local.
 
-Las pantallas leen el catálogo en hilos (`ui/segundo_plano.py`) y dos lecturas
-seguidas pueden acabar a la vez. `store.write_text()` es atómico por fichero,
-pero el texto y sus metadatos comparten el nombre del temporal
-(`catalog.tmp`) y ni dos escrituras del mismo fichero ni un texto con los
-metadatos de otra lectura deben mezclarse.
+Las pantallas leen el catálogo en hilos (`ui/segundo_plano.py`): uno que acaba
+reescribe la copia mientras la ventana la lee (`cached()`) o mientras acaba
+otro. Quien la escribe y quien la lee son la ventana y sus hilos, un solo
+proceso, así que basta un cerrojo. Sin él:
+
+- La copia son dos ficheros, el texto y sus metadatos, que se escriben uno
+  detrás de otro y comparten el nombre del temporal (`catalog.tmp`): dos
+  escrituras a la vez se lo pisan, y quien lee entre un fichero y el otro se
+  lleva el texto de una lectura con la fecha y el endpoint de la anterior.
+- En Windows, `os.replace()` (`store.write_text()`) no es atómico para quien
+  mira: mientras dura, el destino no existe o no se deja abrir, así que
+  `cached()` contestaría que no hay copia; y quien tenga abierto el destino en
+  ese instante lo hace fallar (WinError 5), con lo que esa escritura se pierde.
+  Medido en Windows 11 (NTFS, Python 3.14.8) con el equipo cargado: en un
+  reemplazo que tardó 20 ms, el destino faltó de la carpeta 1,4 ms.
 """
 
 
@@ -517,11 +527,11 @@ def _write_cache(cat: Catalog) -> None:
     """Guarda la copia local; que falle no es un error.
 
     El dispositivo puede estar de solo lectura o haberse extraído a media
-    frase. La escritura es atómica (`store.write_text()`): quien lee la copia
-    desde la ventana (`cached()`) ve la anterior o la nueva entera, nunca la
-    mitad ni un fichero vacío.
+    frase. Cada fichero se sustituye entero (`store.write_text()`), nunca queda
+    a medias ni vacío, y los dos se escriben con `_CERROJO_COPIA` tomado: quien
+    lee la copia (`cached()`) ve la anterior o la nueva, con sus metadatos.
     """
-    with _ESCRIBIENDO:
+    with _CERROJO_COPIA:
         try:
             cache_toml().parent.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -549,7 +559,7 @@ def apuntar_duplicado(sobra: str | None) -> None:
         sobra: El endpoint del `pairs.toml` que sobra, o `None` si ya no hay
             dos.
     """
-    with _ESCRIBIENDO:
+    with _CERROJO_COPIA:
         meta = store.read_json(cache_meta())
         if sobra:
             meta.update(duplicado=sobra, duplicado_visto=store.stamp())
@@ -565,6 +575,16 @@ def apuntar_duplicado(sobra: str | None) -> None:
         store.write_json(cache_meta(), meta)
 
 
+def _metadatos() -> dict:
+    """Lee los metadatos de la copia local sin cruzarse con quien la escribe.
+
+    Returns:
+        Lo que dice `state/catalog.json`, o `{}` si no hay o no se entiende.
+    """
+    with _CERROJO_COPIA:
+        return store.read_json(cache_meta())
+
+
 def duplicado() -> tuple[str, str] | None:
     """Devuelve el `pairs.toml` que sobra junto al `remote.toml`, y desde cuándo se sabe.
 
@@ -574,7 +594,7 @@ def duplicado() -> tuple[str, str] | None:
         `(endpoint del que sobra, sello de cuándo se vio)`, o `None` si no
         consta que haya dos.
     """
-    meta = store.read_json(cache_meta())
+    meta = _metadatos()
     sobra = meta.get("duplicado")
     if not isinstance(sobra, str) or not sobra:
         return None
@@ -587,7 +607,7 @@ def ultimo_leido() -> str:
     Lee los metadatos, sin red: es lo que dice si este remoto conserva todavía
     su `pairs.toml`.
     """
-    leido = store.read_json(cache_meta()).get("endpoint")
+    leido = _metadatos().get("endpoint")
     return leido if isinstance(leido, str) else ""
 
 
@@ -632,27 +652,32 @@ def cached() -> Catalog | None:
 
     Es `None` si no hay copia o no sirve.
 
-    En Windows, abrir la copia justo mientras otra lectura la sustituye
-    (`os.replace()` en `_write_cache()`) da `PermissionError`: quien renombra
-    la tiene abierta para borrarla, y `open()` no comparte ese permiso. Dura
-    lo que el renombrado, así que se reintenta unas pocas veces antes de
-    contestar que no hay copia, que la ventana enseñaría como «sin catálogo».
+    El texto y sus metadatos se leen con `_CERROJO_COPIA` tomado: si un hilo
+    está reescribiendo la copia se le espera, que es lo que tarda en escribir
+    dos ficheros pequeños, y lo que se devuelve es de una sola lectura.
+
+    Queda quien no es prdrive: en Windows, un programa que tenga abierta la
+    copia sin compartirla (un antivirus que la repasa recién escrita) hace que
+    abrirla dé `PermissionError`. Dura un instante, así que se reintenta unas
+    pocas veces antes de contestar que no hay copia, que la ventana enseñaría
+    como «sin catálogo».
     """
-    for intento in range(_REINTENTOS_COPIA):
-        try:
-            text = cache_toml().read_text(encoding="utf-8")
-            break
-        except PermissionError:
-            if intento + 1 == _REINTENTOS_COPIA:
+    with _CERROJO_COPIA:
+        for intento in range(_REINTENTOS_COPIA):
+            try:
+                text = cache_toml().read_text(encoding="utf-8")
+                break
+            except PermissionError:
+                if intento + 1 == _REINTENTOS_COPIA:
+                    return None
+                time.sleep(0.02)
+            except OSError:
                 return None
-            time.sleep(0.02)
-        except OSError:
-            return None
+        meta = store.read_json(cache_meta())
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return None
-    meta = store.read_json(cache_meta())
     return Catalog(raw=raw, text=text, source="cache",
                    stamp=str(meta.get("pulled_at") or SIN_FECHA),
                    endpoint=str(meta.get("endpoint") or endpoint()))
@@ -828,7 +853,7 @@ def sin_renombrar(raw_local: Mapping[str, Any] | None = None) -> SinRenombrar | 
 
 def apuntar_renombrado(viejo: str, nuevo: str) -> None:
     """Apunta en la copia local que el catálogo que se leía como `viejo` es ya `nuevo`."""
-    with _ESCRIBIENDO:
+    with _CERROJO_COPIA:
         meta = store.read_json(cache_meta())
         if not meta:
             return
