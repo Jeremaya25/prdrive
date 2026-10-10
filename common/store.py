@@ -154,10 +154,12 @@ def write_text(path: Path, text: str) -> bool:
 
     Atómico quiere decir que el fichero nunca queda a medias ni vacío. En
     Windows no quiere decir más: mientras dura `os.replace()`, quien mire el
-    destino puede no encontrarlo o no poder abrirlo, y si alguien lo tiene
-    abierto en ese instante el reemplazo falla (WinError 5) y se devuelve
-    False. Quien lee y escribe un mismo fichero desde varios hilos los turna
-    con un cerrojo, como `common/catalog.py` con su copia local.
+    destino puede no encontrarlo o no poder abrirlo, y quien lo tenga abierto
+    en ese instante hace fallar el reemplazo (WinError 5). A un fichero así de
+    ocupado se le espera (`insistir()`, aquí y en `read_json()`), y solo si no
+    lo sueltan a tiempo se devuelve False; el instante en que el destino no
+    está no se espera. Quien lee y escribe un mismo fichero desde varios hilos
+    los turna con un cerrojo, como `common/catalog.py` con su copia local.
     """
     try:
         tmp = path.with_suffix(".tmp")
@@ -174,7 +176,6 @@ def write_text(path: Path, text: str) -> bool:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        # En Windows, quien tenga abierto el destino en ese instante lo impide.
         insistir(lambda: os.replace(tmp, path), path)
         return True
     except OSError:
