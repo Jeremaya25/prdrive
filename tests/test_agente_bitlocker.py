@@ -13,8 +13,19 @@ de la unidad y el estado `BDE_LOCKED`. Se comprueba:
   no lo lleva y no toca nada si Windows no contesta. Nunca el de una raíz de
   este equipo, ni el de una unidad con otro código, por actualizar o que no
   está en la lista. Un volumen no nombra a dos unidades.
+- Una letra que no da ni fichero de control ni vestíbulo (o que contesta con un
+  error), con el volumen apuntado de una unidad de la lista y en `BDE_LOCKED`,
+  sale en `resumen()["bitlocker"]`, en `estado.json` y en `status`, con una
+  línea en el diario por conexión. Nada más cuenta: otro estado, otro volumen,
+  el modo `nada`, una unidad que ya no está en la lista. De ella no se lee ni
+  se lanza nada, y sin volúmenes apuntados no se pregunta nada de ninguna letra.
+- Con una bloqueada se recorre cada `RECORRIDO_WINDOWS` aunque haya bandeja.
+- Desbloqueada, se conecta por el camino de siempre, huella incluida.
 """
 
+import contextlib
+import io
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +34,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import bitlocker, cifrada, equipo
+from common import bitlocker, cifrada, equipo, store
 
 c = Checks("el agente y una unidad bloqueada con BitLocker")
 F.preparar()
@@ -86,7 +97,17 @@ def guardar_contando(ajustes: equipo.Ajustes) -> bool:
     return guardar_de_verdad(ajustes)
 
 
-bitlocker.volumen_de = lambda raiz, es_win=True: VOLUMENES.get(Path(raiz), "")
+NOMBRADAS: list[Path] = []
+"""Las raíces de las que se ha pedido el nombre de volumen."""
+
+
+def volumen_falso(raiz, es_win: bool = True) -> str:
+    """Contesta por Windows con lo que diga `VOLUMENES`."""
+    NOMBRADAS.append(Path(raiz))
+    return VOLUMENES.get(Path(raiz), "")
+
+
+bitlocker.volumen_de = volumen_falso
 cifrada.bitlocker_de = bitlocker_falso
 equipo.guardar_ajustes = guardar_contando
 
@@ -198,5 +219,152 @@ ESTADOS[RQ], VOLUMENES[RQ] = bitlocker.BDE_ON, "\\\\?\\volume{66666666-6666-6666
 ag = enchufado(RQ)
 c("la raíz de este equipo, aunque su disco lleve BitLocker, no apunta volumen",
   (Q in ag.conexiones, volumen(Q)), (True, ""))
+
+
+# --- enchufada y bloqueada
+class Rota(type(Path())):
+    """Una raíz que contesta con un error a cualquier lectura, como un volumen bloqueado."""
+
+    def is_file(self, *args, **kwargs):
+        """Falla como Windows al mirar dentro de un volumen bloqueado."""
+        raise PermissionError(5, "Acceso denegado")
+
+
+class BandejaMuda:
+    """Una bandeja que no enseña nada: solo está, para la cadencia del recorrido."""
+
+    def poner(self, vista) -> None:
+        """No hace nada con la vista."""
+
+
+def bloqueadas(agente_) -> list[str]:
+    """Devuelve los ids de las unidades que el resumen da por bloqueadas con BitLocker."""
+    return [b["id"] for b in agente_.resumen()["bitlocker"]]
+
+
+def recorrido(agente_) -> list[str]:
+    """Da una vuelta con recorrido y devuelve las bloqueadas que quedan en el resumen."""
+    F.vueltas(agente_, 1)
+    return bloqueadas(agente_)
+
+
+def cada(agente_, windows: bool, bandeja_) -> float:
+    """Devuelve cada cuánto recorrería ese agente, en Windows o no, con esa bandeja."""
+    era, tenia = agente.IS_WIN, agente_.bandeja
+    agente.IS_WIN, agente_.bandeja = windows, bandeja_
+    try:
+        return agente_.cada_recorrido()
+    finally:
+        agente.IS_WIN, agente_.bandeja = era, tenia
+
+
+def dichas() -> list[str]:
+    """Devuelve las líneas del diario que dicen que una unidad está bloqueada."""
+    return [d for d in F.DIARIO if "bloqueada con BitLocker" in d]
+
+
+guardar_de_verdad(equipo.Ajustes())
+lista(A, RA, "Trabajo", volumen=V1)
+VOLUMENES.clear()
+ESTADOS.clear()
+E = tmpdir("prdrive-letra-")            # su letra, bloqueada: dentro no se ve nada
+VOLUMENES[E], ESTADOS[E] = V1, bitlocker.BDE_LOCKED
+F.RAICES[:] = [E]
+F.DIARIO.clear()
+F.LANZADOS.clear()
+ag = F.nuevo()
+F.vueltas(ag, 1)
+c("bloqueada y conocida: sale en el resumen a la primera",
+  ag.resumen()["bitlocker"],
+  [{"id": A, "nombre": "Trabajo", "raiz": str(E), "desbloqueando": False}])
+c("  no es una conexión ni se lanza nada", (A in ag.conexiones, F.LANZADOS), (False, []))
+c("  y el diario lo dice una vez", dichas(), [f"Trabajo: bloqueada con BitLocker en {E}"])
+F.vueltas(ag, 3)
+c("  mientras siga así no se repite", len(dichas()), 1)
+c("  y llega a estado.json", [b["id"] for b in equipo.leer_estado()["bitlocker"]], [A])
+store.write_json(equipo.lock_json(), {"pid": os.getpid(), "host": agente.HOST})
+salida = io.StringIO()
+with contextlib.redirect_stdout(salida):
+    agente.cmd_status(None)
+c.contains("  y `status` lo cuenta, con cómo desbloquearla", salida.getvalue(),
+           f"Bloqueada con BitLocker: Trabajo en {E} (agente.py desbloquear {A})")
+equipo.lock_json().unlink()
+c("con una bloqueada se recorre cada pocos segundos, también con bandeja",
+  (cada(ag, True, BandejaMuda()), cada(ag, True, None)),
+  (agente.RECORRIDO_WINDOWS, agente.RECORRIDO_WINDOWS))
+c("  fuera de Windows, el recorrido de respaldo de siempre",
+  cada(ag, False, BandejaMuda()), agente.RECORRIDO_RESPALDO)
+
+for estado_bl in (bitlocker.BDE_ON, bitlocker.BDE_OFF, bitlocker.BDE_SUSPENDED):
+    ESTADOS[E] = estado_bl
+    c(f"con el volumen en el estado {estado_bl} no está bloqueada", recorrido(ag), [])
+c("sin ninguna bloqueada, con bandeja se recorre de tarde en tarde y sin ella como siempre",
+  (cada(ag, True, BandejaMuda()), cada(ag, True, None)),
+  (agente.RECORRIDO_RESPALDO, agente.RECORRIDO_WINDOWS))
+del ESTADOS[E]
+c("sin poder comprobar su estado, tampoco", recorrido(ag), [])
+ESTADOS[E] = bitlocker.BDE_LOCKED
+c("bloqueada otra vez, vuelve", recorrido(ag), [A])
+c("  y se dice otra vez: es otra conexión", len(dichas()), 2)
+VOLUMENES[E] = V2
+c("un volumen bloqueado que no es el de ninguna unidad de la lista no se enseña",
+  recorrido(ag), [])
+VOLUMENES[E] = V1
+otra = tmpdir("prdrive-otra-letra-")    # Windows no da su nombre de volumen
+F.RAICES[:] = [otra, E]
+c("una letra sin nombre de volumen no tapa a las demás", recorrido(ag), [A])
+F.RAICES[:] = [E]
+
+equipo.pedir({"pide": equipo.PIDE_MODO, "id": A, "modo": equipo.NADA})
+c("en modo `nada` no se enseña", recorrido(ag), [])
+equipo.pedir({"pide": equipo.PIDE_MODO, "id": A, "modo": equipo.DAEMON})
+c("  y de vuelta a otro modo, sí", recorrido(ag), [A])
+en_la_lista = ag.ajustes
+ag._guardar(equipo.Ajustes())
+c("fuera de la lista, deja de enseñarse sin esperar al recorrido", bloqueadas(ag), [])
+c("  y el recorrido tampoco la ve", recorrido(ag), [])
+ag._guardar(en_la_lista)
+c("  de vuelta en la lista, sí", recorrido(ag), [A])
+
+rota = Rota(str(tmpdir("prdrive-letra-rota-")))
+VOLUMENES[Path(rota)], ESTADOS[Path(rota)] = V1, bitlocker.BDE_LOCKED
+F.RAICES[:] = [rota]
+F.vueltas(ag, 1)
+c("una letra que contesta con un error a toda lectura se reconoce igual",
+  [(b["id"], b["raiz"]) for b in ag.resumen()["bitlocker"]], [(A, str(rota))])
+F.RAICES[:] = [E]
+
+lista(B, RB, "Vieja")                   # ninguna de la lista con volumen apuntado
+VOLUMENES[RB], ESTADOS[RB] = V2, bitlocker.BDE_LOCKED
+guardar_de_verdad(equipo.Ajustes().con_unidad(equipo.leer_ajustes().unidades[B]))
+sin_volumen = F.nuevo()
+NOMBRADAS.clear()
+PREGUNTADAS.clear()
+F.vueltas(sin_volumen, 2)
+c("sin ninguna unidad con volumen apuntado, no se pregunta nada de ninguna letra",
+  (bloqueadas(sin_volumen), NOMBRADAS, PREGUNTADAS), ([], [], []))
+guardar_de_verdad(en_la_lista)
+
+# desbloqueada: su letra ya se lee
+F.RAICES[:] = [RA]
+VOLUMENES[RA], ESTADOS[RA] = V1, bitlocker.BDE_ON
+F.vueltas(ag, 4)
+c("desbloqueada, se conecta y se atiende como siempre",
+  (A in ag.conexiones, ag.resumen()["bitlocker"], F.lock(RA).get("agente")), (True, [], True))
+for pasada in F.pasadas(RA):            # que no quede una pasada a medias
+    F.acabar(pasada)
+F.vueltas(ag, 1)
+F.RAICES[:] = [E]
+F.vueltas(ag, 1)
+c("bloqueada de nuevo con la unidad puesta: deja de ser conexión y vuelve a enseñarse",
+  (A in ag.conexiones, bloqueadas(ag)), (False, [A]))
+(RA / penwatch.APP_SUBDIR / "de_mas.py").write_text("# otro código\n", encoding="utf-8")
+preguntadas_antes = len(F.preguntas())
+F.RAICES[:] = [RA]
+F.vueltas(ag, 4)
+c("desbloqueada con otro código: no se atiende y se pregunta, como siempre",
+  (ag.conexiones[A].cambiada, len(F.preguntas()) - preguntadas_antes, F.lock(RA)),
+  (True, 1, {}))
+(RA / penwatch.APP_SUBDIR / "de_mas.py").unlink()
 
 sys.exit(c.report())

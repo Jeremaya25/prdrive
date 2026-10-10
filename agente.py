@@ -1427,6 +1427,8 @@ class Agente:
         bloqueos: Los «Bloquear» en marcha.
         expulsiones: Los «Expulsar» en marcha, por id de la unidad.
         fantasmas: Los volúmenes fantasma ya dichos.
+        bitlocker: Las unidades de la lista que el último recorrido vio
+            enchufadas y bloqueadas con BitLocker, con su raíz, por id.
         recorridos: Los recorridos hechos desde que arrancó.
         sin_rclone_avisado: Si ya se dijo que el agente no tiene rclone.
         peticiones: Lo que pide la bandeja, que corre en otro hilo: los mismos
@@ -1494,6 +1496,7 @@ class Agente:
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
     expulsiones: dict[str, Expulsion] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
+    bitlocker: dict[str, Path] = field(default_factory=dict)
     recorridos: int = 0
     sin_rclone_avisado: bool = False
     peticiones: Any = field(default_factory=queue.SimpleQueue)
@@ -1576,6 +1579,7 @@ class Agente:
         """
         abiertas: dict[str, Path] = {}
         cerradas: dict[str, Path] = {}
+        resto: list[Path] = []
         # Las raíces del equipo, primero y por su ruta: son carpetas, no
         # volúmenes, y el recorrido no las vería. Van como las raíces extra de
         # penwatch: el recorrido sigue siendo uno.
@@ -1594,8 +1598,10 @@ class Agente:
                     uid = penwatch.vestibule_id(raiz)
                     if uid:
                         cerradas.setdefault(uid, raiz)
+                else:
+                    resto.append(raiz)
             except OSError:
-                continue            # un volumen bloqueado contesta con error: ahora no
+                resto.append(raiz)  # un volumen bloqueado contesta con error: ahora no
         self._fantasmas(abiertas)
 
         for uid in list(self.vistas):
@@ -1617,7 +1623,61 @@ class Agente:
                 self._desconectar(uid, ahora, cerradas)
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
+        self._mirar_bitlocker(resto)
         self.recorridos += 1
+
+    def _mirar_bitlocker(self, resto: list[Path]) -> None:
+        """Apunta qué unidades de la lista están enchufadas y bloqueadas con BitLocker.
+
+        Un volumen bloqueado no enseña nada de lo que lleva dentro: se reconoce
+        por el nombre de volumen que se apuntó la última vez que se atendió
+        (`_apuntar_volumen()`), y solo cuenta si Windows dice que está
+        bloqueado. De la unidad no se lee ni se ejecuta nada, así que basta
+        verla una vez. Sin ninguna unidad con volumen apuntado (fuera de
+        Windows, siempre) no se pregunta nada de ninguna letra.
+
+        Args:
+            resto: Las raíces del recorrido que no han dado ni fichero de
+                control ni vestíbulo, o que han contestado con un error.
+        """
+        conocidas = {u.volumen: uid for uid, u in self.ajustes.unidades.items()
+                     if u.volumen and not u.es_raiz and u.modo != equipo.NADA
+                     and uid not in self.conexiones}
+        vistas: dict[str, Path] = {}
+        for raiz in resto if conocidas else ():
+            uid = conocidas.get(bitlocker.volumen_de(raiz))
+            if uid is None or uid in vistas:
+                continue
+            if cifrada.bitlocker_de(raiz).locked:
+                vistas[uid] = raiz
+        for uid, raiz in vistas.items():
+            if uid not in self.bitlocker:
+                diario(f"{self.ajustes.unidades[uid].nombre or uid[:8]}: bloqueada con "
+                       f"BitLocker en {raiz}")
+        self.bitlocker = vistas
+
+    def _bloqueada_bitlocker(self, uid: str) -> Path | None:
+        """Devuelve la raíz donde esa unidad se ve bloqueada con BitLocker, o `None`.
+
+        Es lo del último recorrido, si la unidad sigue en la lista y no está
+        en modo `nada`: lo que se pida entre dos recorridos no espera al
+        siguiente para dejar de contar.
+        """
+        unidad = self.ajustes.unidades.get(uid)
+        if unidad is None or unidad.modo == equipo.NADA:
+            return None
+        return self.bitlocker.get(uid)
+
+    def cada_recorrido(self) -> float:
+        """Devuelve cada cuántos segundos toca recorrer aunque nadie avise de un montaje.
+
+        Sin quien avise (Windows sin bandeja) se recorre como penwatch. Con una
+        unidad bloqueada con BitLocker a la vista, también: no se sabe que
+        Windows avise al desbloquearla, y se atiende en cuanto se lee.
+        """
+        if IS_WIN and (self.bandeja is None or self.bitlocker):
+            return RECORRIDO_WINDOWS
+        return RECORRIDO_RESPALDO
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
         """Quita de `abiertas` las raíces cifradas que son un volumen fantasma.
@@ -4021,6 +4081,13 @@ class Agente:
                                      for u in self.bloqueos if u in self.ajustes.unidades),
                 "fantasmas": sorted(self.ajustes.unidades[u].ruta for u in self.fantasmas
                                     if u in self.ajustes.unidades),
+                # Las unidades de la lista enchufadas y bloqueadas con BitLocker.
+                "bitlocker": sorted(
+                    ({"id": uid, "nombre": self.ajustes.unidades[uid].nombre or uid[:8],
+                      "raiz": str(raiz), "desbloqueando": False}
+                     for uid, raiz in self.bitlocker.items()
+                     if self._bloqueada_bitlocker(uid) is not None),
+                    key=lambda b: (b["nombre"], b["id"])),
                 # Las raíces de este equipo, con su estado: lo que pinta la bandeja.
                 "equipo": [{"id": uid, "nombre": u.nombre or APP_NAME, "ruta": u.ruta,
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
@@ -4408,14 +4475,13 @@ def cmd_run(_args: argparse.Namespace) -> int:
     agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
-    cada = RECORRIDO_WINDOWS if IS_WIN and agente.bandeja is None else RECORRIDO_RESPALDO
     proximo = -math.inf
     try:
         while not (agente.terminar and agente.pasada is None):
             ahora = time.time()
             recorrer = ahora >= proximo or ahora < agente.rafaga_hasta
             if recorrer:
-                proximo = ahora + cada
+                proximo = ahora + agente.cada_recorrido()
             try:
                 agente.vuelta(recorrer)
             except Exception as e:                      # noqa: BLE001
@@ -4495,6 +4561,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"Falta la raíz del equipo: no está en {ruta}")
     for nombre in estado.get("bloqueadas") or []:
         print(f"Bloqueada: {nombre} (agente.py desbloquear)")
+    for b in estado.get("bitlocker") or []:
+        print(f"Bloqueada con BitLocker: {b.get('nombre')} en {b.get('raiz')} "
+              f"(agente.py desbloquear {b.get('id')})")
     for nombre in estado.get("desbloqueando") or []:
         print(f"Desbloqueando: {nombre}; la contraseña la pide VeraCrypt")
     for nombre in estado.get("bloqueando") or []:
