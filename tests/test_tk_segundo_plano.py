@@ -230,8 +230,7 @@ CAT_REMOTO = {"defaults": {"remote": "nas"},
                         "remote_path": "/R/fotos", "mode": "up"}]}
 CUANDO = "2026-09-30 08:00:00"
 ENDPOINT = "nas:/prdrive-catalog/remote.toml"
-BOTONES_CATALOGO = ("Nueva pareja…", "Borrar del catálogo…", "Guardar en el catálogo…",
-                    "Ajustes del catálogo…")
+BOTONES_CATALOGO = ("Nueva pareja…", "Borrar del catálogo…", "Ajustes del catálogo…")
 
 
 class RemotoLento:
@@ -316,10 +315,41 @@ def foto(dlg) -> dict:
 explorables: list = []
 
 
+def en_la_ventana(dlg, hacer, pareja: str | None = None) -> None:
+    """Abre la ventana de la pareja elegida y deja que `hacer(ventana)` la maneje.
+
+    `ventana` es el `Toplevel` de la ventana de la pareja: lleva `editor` (sus
+    campos) y `ventana` (la `VentanaPareja`). Si `hacer` no la cierra, se cierra
+    al volver, sin preguntar: aquí solo se espera en `wait_window`, que durante
+    esa ventana es `hacer`.
+
+    Args:
+        dlg: El `Toplevel` de «Parejas».
+        hacer: Lo que se hace con la ventana donde `mostrar()` esperaría.
+        pareja: La fila que se elige antes; `None` deja la elegida.
+    """
+    fuera = tk.Toplevel.wait_window
+
+    def _wait(self, *_a, **_k):
+        """Maneja la ventana de la pareja y la cierra si sigue abierta."""
+        tk.Toplevel.wait_window = fuera
+        hacer(self)
+        if self.winfo_exists():
+            self.destroy()
+
+    if pareja is not None:
+        dlg.lista.elegir(pareja)
+    tk.Toplevel.wait_window = _wait
+    try:
+        next(b for b in dlg.pantalla.botones.values()
+             if b.cget("text") == "Modificar…" and b.master.winfo_manager()).invoke()
+    finally:
+        tk.Toplevel.wait_window = fuera
+
+
 def modificar(dlg, pareja: str) -> None:
-    """Elige una pareja y apunta si su editor deja recorrer el remoto."""
-    dlg.lista.elegir(pareja)
-    explorables.append(dlg.editor.explorable)
+    """Abre la ventana de una pareja y apunta si sus campos dejan recorrer el remoto."""
+    en_la_ventana(dlg, lambda ventana: explorables.append(ventana.editor.explorable), pareja)
 
 
 def montar_catalogo(dlg) -> None:
@@ -362,9 +392,9 @@ with sandbox():
     c("  el indicador va, y la línea dice que se está leyendo",
       (antes["esperando"], f"copia local del {CUANDO}" in antes["linea"]), (True, True))
     c("  el bloque del catálogo, apagado mientras",
-      [antes["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 4)
+      [antes["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 3)
     c("  y «Releer», también", antes["botones"]["Releer"], "disabled")
-    c("  lo de este dispositivo sigue disponible", antes["botones"]["Guardar aquí…"],
+    c("  lo de este dispositivo sigue disponible", antes["botones"]["Modificar…"],
       "normal")
     c("  «Examinar…» del remoto no se ofrece mientras", explorables[0], False)
 
@@ -376,7 +406,7 @@ with sandbox():
       any(t.startswith("catálogo leído · ") for t in despues["textos"]), True)
     c("  el indicador se va", (despues["esperando"], despues["linea"]), (False, ""))
     c("  el bloque del catálogo se enciende",
-      [despues["botones"][b] for b in BOTONES_CATALOGO + ("Releer",)], ["normal"] * 5)
+      [despues["botones"][b] for b in BOTONES_CATALOGO + ("Releer",)], ["normal"] * 4)
     c("  la fila elegida sigue elegida", despues["seleccion"], ("notas",))
     c("  «Examinar…» del remoto ya se ofrece", explorables[1], True)
     c("  y la copia local es ya la del remoto",
@@ -384,9 +414,9 @@ with sandbox():
     c("  nada ha reventado por el camino", errores, [])
     explorables.clear()
 
-# Lo que se teclea en el editor mientras llega el catálogo no se pierde. El del
-# remoto trae la pareja `notas` con otra ruta, para ver también cuándo SÍ se
-# recarga el editor: cuando no hay nada escrito.
+# Lo que se teclea en la ventana de una pareja mientras llega el catálogo no se
+# pierde. El del remoto trae la pareja `notas` con otra ruta, para ver también
+# cuándo SÍ se recargan sus campos: cuando no hay nada escrito.
 CAT_REMOTO_OTRA = {"defaults": {"remote": "nas"},
                    "pair": [{**CAT_REMOTO["pair"][0], "remote_path": "/R/notas-v2"},
                             *CAT_REMOTO["pair"][1:]]}
@@ -398,12 +428,12 @@ def pulsar_boton(ventana, texto: str) -> None:
 
 
 def al_llegar_el_catalogo(teclear: bool, despues=None) -> dict:
-    """Abre Parejas con el remoto callado, escribe en el editor y deja llegar el catálogo.
+    """Abre Parejas con el remoto callado, y la ventana de `notas`, y deja llegar el catálogo.
 
     Args:
         teclear: Si se escribe algo en la pareja `notas` antes de que llegue.
-        despues: `despues(dlg, vista)` hace lo que se quiera con la pantalla ya
-            con el catálogo y apunta en `vista` lo que vea.
+        despues: `despues(ventana, vista)` hace lo que se quiera con la ventana
+            de la pareja ya con el catálogo y apunta en `vista` lo que vea.
 
     Returns:
         Lo que se vio: los campos antes y después, la lista, los botones y lo
@@ -417,23 +447,30 @@ def al_llegar_el_catalogo(teclear: bool, despues=None) -> dict:
         catalog.run = remoto
 
         def conducir(self, *_a, **_k):
-            """Escribe, suelta el remoto y mira la pantalla cuando ha llegado."""
+            """Abre la ventana de `notas`, suelta el remoto y la mira cuando ha llegado."""
             montar_catalogo(self)
-            self.lista.elegir("notas")
-            vista["inicial"] = self.editor.datos()
-            if teclear:
-                self.editor.campos["remote_path"].set("/R/notas-nueva")
-                pulsar_boton(self, "Mostrar")         # «Avanzado» se construye al verlo
-                self.editor.textos["exclude"].insert("1.0", "*.tmp")
-            vista["antes"] = self.editor.datos()
-            remoto.soltar.set()
-            vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
-            vista["despues"] = self.editor.datos()
-            vista["pantalla"] = foto(self)
-            vista["examinar"] = str(self.editor.examinar["remote_path"].cget("state"))
-            vista["pista"] = str(self.editor.pistas["remote_path"].cget("text"))
-            if despues is not None:
-                despues(self, vista)
+
+            def en_ella(ventana):
+                """Escribe, deja llegar el catálogo por detrás y apunta lo que queda."""
+                editor = ventana.editor
+                vista["inicial"] = editor.datos()
+                if teclear:
+                    editor.campos["remote_path"].set("/R/notas-nueva")
+                    pulsar_boton(ventana, "Mostrar")  # «Avanzado» se construye al verlo
+                    editor.textos["exclude"].insert("1.0", "*.tmp")
+                vista["antes"] = editor.datos()
+                remoto.soltar.set()
+                vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+                vista["despues"] = editor.datos()
+                vista["pantalla"] = foto(self)
+                vista["examinar"] = str(editor.examinar["remote_path"].cget("state"))
+                vista["pista"] = str(editor.pistas["remote_path"].cget("text"))
+                vista["chip"] = ventana.ventana.chip.spec
+                vista["nota"] = str(ventana.ventana.nota.cget("text"))
+                if despues is not None:
+                    despues(ventana, vista)
+            en_la_ventana(self, en_ella, "notas")
+            vista["tras_cerrar"] = (self.pantalla.ventana, self.lista.elegida)
 
         tk.Toplevel.wait_window = conducir
         abrir(tk_pairs, cfg)
@@ -442,71 +479,121 @@ def al_llegar_el_catalogo(teclear: bool, despues=None) -> dict:
     return vista
 
 
-def cambiar_de_pareja_y_descartar(dlg, vista: dict) -> None:
-    """Intenta pasar a otra pareja diciendo que no a descartar, y luego descarta."""
+def cerrar_diciendo_que_no_y_que_si(ventana, vista: dict) -> None:
+    """Pulsa «Cancelar» diciendo que no a descartar lo escrito, y luego que sí."""
     preguntas: list = []
     messagebox.askokcancel = lambda *a, **k: preguntas.append(a) or False
     try:
-        vista["cambia"] = dlg.lista.elegir("subida")
-        vista["elegida"] = dlg.lista.elegida
-        vista["preguntas"] = len(preguntas)
-        pulsar_boton(dlg, "Descartar")
-        vista["descartado"] = dlg.editor.datos()
-        vista["cambia_tras_descartar"] = dlg.lista.elegir("subida")
-        vista["preguntas_tras_descartar"] = len(preguntas)
+        pulsar_boton(ventana, "Cancelar")
+        vista["sigue"] = (bool(ventana.winfo_exists()), len(preguntas))
+        messagebox.askokcancel = lambda *a, **k: preguntas.append(a) or True
+        if ventana.winfo_exists():
+            pulsar_boton(ventana, "Cancelar")
+        vista["cerrada"] = (not ventana.winfo_exists(), len(preguntas))
     finally:
         messagebox.askokcancel = lambda *a, **k: True
 
 
-def pasar_al_catalogo(dlg, vista: dict) -> None:
-    """Escribe algo y pasa a editar el catálogo, diciendo que sí a descartarlo."""
-    dlg.editor.campos["remote_path"].set("/R/otra-vez")
-    buscar(dlg, ttk.Radiobutton, "Catálogo").invoke()
-    vista["en_catalogo"] = dlg.editor.datos()
-
-
-escrito = al_llegar_el_catalogo(True, cambiar_de_pareja_y_descartar)
+escrito = al_llegar_el_catalogo(True, cerrar_diciendo_que_no_y_que_si)
 c("escrito: el catálogo llega", escrito["llego"], True)
 c("  la lista se repinta con él", escrito["pantalla"]["filas"],
   ["fotos", "notas", "subida"])
 c("  la pareja elegida sigue siendo `notas`", escrito["pantalla"]["seleccion"], ("notas",))
-c("  lo escrito en el editor sigue ahí, campo a campo",
+c("  lo escrito en la ventana sigue ahí, campo a campo",
   escrito["despues"], escrito["antes"])
 c("  la ruta remota escrita", escrito["despues"]["remote_path"], "/R/notas-nueva")
 c("  y los patrones", escrito["despues"]["exclude"][0], "*.tmp")
-c("  «Examinar…» del remoto ya se ofrece, aunque el editor no se recargue",
+c("  «Examinar…» del remoto ya se ofrece, aunque los campos no se recarguen",
   escrito["examinar"], "normal")
 c("  el bloque del catálogo se enciende",
-  [escrito["pantalla"]["botones"][b] for b in BOTONES_CATALOGO], ["normal"] * 4)
-c("  lo escrito sigue contando como sin guardar: cambiar de pareja pregunta",
-  (escrito["cambia"], escrito["elegida"], escrito["preguntas"]), (False, "notas", 1))
-c("  «Descartar» devuelve lo guardado", escrito["descartado"], escrito["inicial"])
-c("  y entonces cambiar de pareja ya no pregunta",
-  (escrito["cambia_tras_descartar"], escrito["preguntas_tras_descartar"]), (True, 1))
+  [escrito["pantalla"]["botones"][b] for b in BOTONES_CATALOGO], ["normal"] * 3)
+c("  y la ventana no dice que la pareja haya cambiado: la de este dispositivo sigue igual",
+  "ha cambiado mientras se editaba" in escrito["nota"], False)
+c("  lo escrito sigue contando como sin guardar: cerrar la ventana pregunta",
+  escrito["sigue"], (True, 1))
+c("  y diciendo que sí, se cierra", escrito["cerrada"], (True, 2))
+c("  la pantalla se queda sin ventana y con la misma pareja elegida",
+  escrito["tras_cerrar"], (None, "notas"))
 c("  nada ha reventado por el camino", escrito["errores"], [])
 
-limpio = al_llegar_el_catalogo(False, cambiar_de_pareja_y_descartar)
-c("sin escribir nada: el editor se recarga con lo que llega",
+limpio = al_llegar_el_catalogo(False, cerrar_diciendo_que_no_y_que_si)
+c("sin escribir nada: lo que rodea a los campos se pone al día con lo que llega",
   "/R/notas-v2" in limpio["pista"], True)
-c("  y cambiar de pareja no pregunta", (limpio["cambia"], limpio["preguntas"]), (True, 0))
-
-descartado = al_llegar_el_catalogo(False, pasar_al_catalogo)
-c("pasar al catálogo diciendo que sí a descartar recarga el editor con la del catálogo",
-  descartado["en_catalogo"]["remote_path"], "/R/notas-v2")
+c("  el chip dice ya que la pareja está modificada aquí", limpio["chip"],
+  ("Modificada aquí", "Aviso.", "warn"))
+c("  y cerrar la ventana no pregunta", limpio["cerrada"], (True, 0))
 c("escrito en este dispositivo: la pista del catálogo se pone al día sin recargar",
   "/R/notas-v2" in escrito["pista"], True)
 
 
+# La ventana de una pareja del catálogo, abierta antes de que conteste el remoto,
+# no deja cambiar nada; al llegar el catálogo se enciende, con la pareja de ahora.
+def abierta_antes_de_que_llegue(del_remoto: dict) -> dict:
+    """Pasa al catálogo, abre `notas` con el remoto callado y deja llegar `del_remoto`.
+
+    Returns:
+        Qué botón guarda, y la ventana antes y después de llegar el catálogo: si
+        se deja escribir, si se deja guardar, la ruta y cómo se cierra.
+    """
+    vista: dict = {}
+    with sandbox():
+        cfg = preparar()
+        dejar_copia(CAT_LOCAL)
+        remoto = RemotoLento(config_file.dumps(del_remoto))
+        catalog.run = remoto
+
+        def conducir(self, *_a, **_k):
+            """Pasa al catálogo y abre `notas` con el remoto todavía callado."""
+            buscar(self, ttk.Radiobutton, "Catálogo").invoke()
+
+            def en_ella(ventana):
+                """Mira la ventana antes y después de que llegue el catálogo."""
+                def estado() -> tuple:
+                    """Si se deja escribir, si se deja guardar, la ruta y cómo se cierra."""
+                    return (str(ventana.editor.entradas["remote_path"].cget("state")),
+                            str(ventana.ventana.boton_guardar.cget("state")),
+                            ventana.editor.campos["remote_path"].get(),
+                            str(ventana.ventana.boton_cerrar.cget("text")))
+                vista["antes"] = estado()
+                vista["guardar"] = str(ventana.ventana.boton_guardar.cget("text"))
+                remoto.soltar.set()
+                vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+                vista["despues"] = estado()
+            en_la_ventana(self, en_ella, "notas")
+
+        tk.Toplevel.wait_window = conducir
+        abrir(tk_pairs, cfg)
+        catalog.run = nadie
+    vista["errores"] = list(errores)
+    return vista
+
+
+otra = abierta_antes_de_que_llegue(CAT_REMOTO_OTRA)
+c("la ventana de una pareja del catálogo guarda en el catálogo", otra["guardar"],
+  "Guardar en el catálogo…")
+c("  con el remoto sin contestar enseña la de la copia local, sin dejar tocarla",
+  otra["antes"], ("readonly", "disabled", "/R/notas", "Cerrar"))
+c("  y al llegar el catálogo se enciende, con la pareja como está en el remoto",
+  (otra["llego"], otra["despues"]), (True, ("normal", "normal", "/R/notas-v2", "Cancelar")))
+misma = abierta_antes_de_que_llegue(CAT_LOCAL)
+c("  si la pareja del remoto es la misma de la copia, se enciende igual: sus campos también",
+  (misma["llego"], misma["despues"]), (True, ("normal", "normal", "/R/notas", "Cancelar")))
+c("  nada ha reventado por el camino", otra["errores"] + misma["errores"], [])
+
+
 def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
-    """En la vista del catálogo, escribe en `notas` y pulsa «Releer».
+    """En la vista del catálogo, escribe en la ventana de `notas` y se relee el catálogo.
+
+    Con la ventana delante «Releer» no se alcanza: aquí se pulsa por detrás para
+    ver la regla, que es la misma que cuando llega la primera lectura.
 
     Args:
         otra: El catálogo que contesta el remoto la segunda vez; `None`, el mismo.
         rc: El código de salida de la segunda lectura (distinto de 0: caído).
 
     Returns:
-        El editor antes y después, si se deja editar, los textos a la vista, la
-        línea del catálogo y el estado de «Guardar en el catálogo…».
+        Los campos antes y después, si se dejan editar, la nota de la ventana,
+        la línea del catálogo y el estado de «Guardar en el catálogo…».
     """
     vista: dict = {}
     with sandbox():
@@ -520,19 +607,24 @@ def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
             remoto.soltar.set()
             dar_vueltas(lambda: not self.sondeo.esperando)
             buscar(self, ttk.Radiobutton, "Catálogo").invoke()
-            self.lista.elegir("notas")
-            pulsar_boton(self, "Mostrar")             # «Avanzado» se construye al verlo
-            self.editor.textos["exclude"].insert("1.0", "*.tmp")
-            vista["antes"] = self.editor.datos()
-            remoto.texto = config_file.dumps(otra if otra is not None else CAT_REMOTO)
-            remoto.rc = rc
-            pulsar_boton(self, "Releer")
-            vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
-            vista["despues"] = self.editor.datos()
-            vista["editable"] = self.editor.editable
-            pantalla = foto(self)
-            vista["textos"], vista["linea"] = pantalla["textos"], pantalla["linea"]
-            vista["guardar"] = pantalla["botones"]["Guardar en el catálogo…"]
+
+            def en_ella(ventana):
+                """Escribe en «Avanzado», relee por detrás y apunta lo que queda."""
+                editor = ventana.editor
+                pulsar_boton(ventana, "Mostrar")      # «Avanzado» se construye al verlo
+                editor.textos["exclude"].insert("1.0", "*.tmp")
+                vista["antes"] = editor.datos()
+                remoto.texto = config_file.dumps(otra if otra is not None else CAT_REMOTO)
+                remoto.rc = rc
+                pulsar_boton(self, "Releer")
+                vista["llego"] = dar_vueltas(lambda: not self.sondeo.esperando)
+                vista["despues"] = editor.datos()
+                vista["editable"] = editor.editable
+                vista["nota"] = str(ventana.ventana.nota.cget("text"))
+                vista["linea"] = foto(self)["linea"]
+                vista["guardar"] = str(ventana.ventana.boton_guardar.cget("state"))
+                vista["sin_guardar"] = ventana.ventana.hay_cambios()
+            en_la_ventana(self, en_ella, "notas")
 
         tk.Toplevel.wait_window = conducir
         abrir(tk_pairs, cfg)
@@ -542,8 +634,8 @@ def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
 
 
 def dice_que_cambio(vista: dict) -> bool:
-    """Si el pie dice que la pareja cambió mientras se editaba."""
-    return any("ha cambiado mientras se editaba" in t for t in vista["textos"])
+    """Si la ventana dice que la pareja cambió mientras se editaba."""
+    return "ha cambiado mientras se editaba" in vista["nota"]
 
 
 igual = releer_escribiendo()
@@ -551,15 +643,16 @@ c("releer en el catálogo, la pareja igual: lo escrito sigue ahí",
   (igual["llego"], igual["despues"], igual["editable"]), (True, igual["antes"], True))
 c("  y no se dice que haya cambiado", dice_que_cambio(igual), False)
 cambiada = releer_escribiendo(CAT_REMOTO_OTRA)
-c("releer en el catálogo, la pareja cambiada por otro: el editor trae la de ahora",
+c("releer en el catálogo, la pareja cambiada por otro: la ventana trae la de ahora",
   (cambiada["llego"], cambiada["despues"]["remote_path"], cambiada["despues"]["exclude"]),
   (True, "/R/notas-v2", [""]))
 c("  y lo dice, en vez de guardar luego lo escrito encima de lo del otro",
-  dice_que_cambio(cambiada), True)
+  (dice_que_cambio(cambiada), cambiada["sin_guardar"]), (True, False))
 caido = releer_escribiendo(rc=1)
 c("releer en el catálogo con el remoto caído: lo escrito no se pierde",
-  (caido["llego"], caido["despues"], dice_que_cambio(caido)), (True, caido["antes"], False))
-c("  pero no se puede guardar, y la línea dice por qué",
+  (caido["llego"], caido["despues"], dice_que_cambio(caido), caido["sin_guardar"]),
+  (True, caido["antes"], False, True))
+c("  pero no se puede guardar, y la línea de la pantalla dice por qué",
   (caido["guardar"], "Sin conexión con el catálogo" in caido["linea"]), ("disabled", True))
 c("  nada ha reventado por el camino",
   igual["errores"] + cambiada["errores"] + caido["errores"], [])
@@ -594,7 +687,7 @@ with sandbox():
       (True, True, "Aviso.TLabel"))
     c("  sin indicador: ya no se espera nada", caido["esperando"], False)
     c("  el catálogo no se puede editar desde la copia",
-      [caido["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 4)
+      [caido["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 3)
     c("  pero se puede volver a intentar", caido["botones"]["Releer"], "normal")
     c("  ni recorrer el remoto", explorables, [False])
     c("  y la copia local no se ha tocado",
@@ -682,7 +775,7 @@ with sandbox():
     rel, sub = vista["releyendo"], vista["subiendo"]
     c("releer: el indicador vuelve y el catálogo se apaga mientras",
       (rel["esperando"], rel["linea"], [rel["botones"][b] for b in BOTONES_CATALOGO]),
-      (True, catalog_editor.RELEYENDO, ["disabled"] * 4))
+      (True, catalog_editor.RELEYENDO, ["disabled"] * 3))
     c("  y al llegar lo dice en el pie", "Catálogo releído." in vista["releido"]["textos"],
       True)
     c("subir: va por working() y se sube una vez", len(subidos), 1)
@@ -690,13 +783,13 @@ with sandbox():
       ("musica" in sub["filas"], any(t.startswith("copia local · ")
                                      for t in sub["textos"])), (True, True))
     c("  con el catálogo apagado hasta que contesta el remoto",
-      [sub["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 4)
+      [sub["botones"][b] for b in BOTONES_CATALOGO], ["disabled"] * 3)
     c("  y lo hecho, en el pie", "Catálogo actualizado (de mentira)" in sub["textos"],
       True)
     c("  al llegar, otra vez editable y la nota sigue",
       ([vista["subido"]["botones"][b] for b in BOTONES_CATALOGO],
        "Catálogo actualizado (de mentira)" in vista["subido"]["textos"]),
-      (["normal"] * 4, True))
+      (["normal"] * 3, True))
     c("  nada ha reventado por el camino", errores, [])
 
 # Cerrar antes de que conteste: el hilo acaba, y nadie pinta en widgets muertos.

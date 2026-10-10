@@ -1019,7 +1019,9 @@ def botones(fila: CatalogRow | None, lect) -> dict[str, bool]:
     """Dice qué botones de la pantalla de parejas valen para la fila elegida.
 
     Es la regla de `habilitar()` sin Tk: la pantalla enciende y apaga cada
-    botón con lo que diga aquí.
+    botón con lo que diga aquí. «Modificar…» vale para cualquier fila: una
+    pareja que no se puede cambiar (aquí no se usa, o el catálogo no se ha
+    leído del remoto) se abre igual, y su ventana la enseña sin dejar tocarla.
 
     Args:
         fila: La fila elegida, o `None` si no hay ninguna.
@@ -1027,8 +1029,8 @@ def botones(fila: CatalogRow | None, lect) -> dict[str, bool]:
             escribir en él (`editable`) y si se está leyendo (`leyendo`).
 
     Returns:
-        Por texto de botón (y `"Descartar del catálogo"`, el de su barra), si se
-        puede pulsar.
+        Por texto de botón (y `"Modificar… del catálogo"`, el de su barra), si
+        se puede pulsar.
     """
     en_pen = fila is not None and fila.en_pen
     con_fila = fila is not None
@@ -1036,14 +1038,12 @@ def botones(fila: CatalogRow | None, lect) -> dict[str, bool]:
         "Usar aquí": con_fila and not en_pen,
         "Simular": en_pen,
         "Quitar…": en_pen,
-        "Descartar": en_pen,
-        "Guardar aquí…": en_pen,
         "Volver al catálogo": en_pen and bool(fila.difiere),
+        "Modificar…": con_fila,
         "Ajustes del catálogo…": bool(lect.editable),
         "Nueva pareja…": bool(lect.editable),
         "Borrar del catálogo…": bool(lect.editable) and con_fila,
-        "Guardar en el catálogo…": bool(lect.editable) and con_fila,
-        "Descartar del catálogo": con_fila,
+        "Modificar… del catálogo": con_fila,
         "Releer": not lect.leyendo,
     }
 

@@ -9,14 +9,16 @@ pantalla escribe nada sin haber enseñado antes lo que va a pasar.
 
 Lo primero que se elige es QUÉ se edita: este dispositivo o el catálogo (y
 por tanto TODOS los dispositivos). Es el asunto de la pantalla, así que va
-arriba, y lo que hay debajo (la franja de `[defaults]`, la lista, el editor y
-la barra de acciones) cambia con esa elección; mientras se edita el catálogo,
-un aviso ámbar lo recuerda. Una pareja se crea o se borra en el catálogo y
-después cada dispositivo elige si la usa.
+arriba, y lo que hay debajo (la franja de `[defaults]`, la lista y la barra de
+acciones) cambia con esa elección; mientras se edita el catálogo, un aviso
+ámbar lo recuerda. Una pareja se crea o se borra en el catálogo y después cada
+dispositivo elige si la usa.
 
-La pareja elegida se edita en la propia pantalla (`EditorPareja`), no en un
-formulario aparte: lo que se va a guardar está a la vista junto a la lista, y
-pasar a otra pareja con algo sin guardar se pregunta antes.
+La pantalla es para elegir y actuar. Los campos de la pareja elegida se cambian
+en su propia ventana (`VentanaPareja`, con el mismo `EditorPareja` del alta),
+que se abre con «Modificar…» o abriendo la fila y va modal sobre la pantalla:
+mientras está abierta no se elige otra pareja ni se cambia de vista, y cerrarla
+con algo sin guardar se pregunta antes.
 
 Las consecuencias no se enseñan en un `messagebox`: `confirmar_plan()` es una
 ventana de verdad, con las consecuencias como lista y los avisos en su recuadro
@@ -59,8 +61,8 @@ ANCHO_RUTA = 240
 """El ancho mínimo de «Local ↔ remoto» en la lista, en medidas del diseño.
 
 El resto del ancho de la pantalla también es suyo; lo que no quepa se corta con
-«…» (el editor enseña la ruta entera), así que una ruta larga no ensancha la
-pantalla.
+«…» (la ventana de la pareja enseña la ruta entera), así que una ruta larga no
+ensancha la pantalla.
 """
 
 DEFAULTS_KEYS = ("remote", "device_remote", "catalog_path")
@@ -79,8 +81,17 @@ ANTES = "Antes de guardar se enseña qué va a pasar."
 AVISO_CAMBIADO = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
                   "leer. Revisa y vuelve a guardar.")
 """Lo que dice el pie cuando el config se ha editado por fuera y no se ha hecho lo pedido."""
-CAMPOS_DEL_EDITOR = ("original", "actual", "editable", "ayuda_modo", "ayudas")
-"""Lo que, al cambiar, obliga a recargar el editor; el resto de `que_cargar()` solo lo rodea."""
+CAMPOS_DEL_EDITOR = ("actual", "editable")
+"""Lo que, al cambiar, obliga a recargar los campos de la ventana de una pareja.
+
+El resto de `VentanaPareja.que_cargar()` solo los rodea. Con algo escrito en
+ellos solo cuenta `actual`: lo escrito se guardaría encima de la pareja entera.
+"""
+ALCANCE_PEN = "Lo que cambies se queda en este dispositivo: el catálogo no cambia."
+"""Lo que dice la ventana de una pareja de este dispositivo, bajo su título."""
+ALCANCE_CATALOGO = ("Lo que cambies lo verán todos los dispositivos: cada uno tiene que "
+                    "volver al catálogo para recibirlo.")
+"""Lo que dice la ventana de una pareja del catálogo, bajo su título."""
 
 
 class ListaParejas:
@@ -97,14 +108,13 @@ class ListaParejas:
     crea, coloca y pinta una a una. Por eso abrir la pantalla ya no crece con
     las parejas. La tabla compara por nombre: una fila que sigue igual no se
     toca y elegir repinta dos. Una ruta que no cabe se corta con «…»: la lista
-    no ensancha la pantalla, y el editor la enseña entera.
+    no ensancha la pantalla, y la ventana de la pareja la enseña entera.
 
     Args:
         parent: Dónde va.
-        puede_dejar: Se pregunta antes de cambiar de fila; si dice que no
-            (quedan cambios sin guardar y la persona no los quiere perder), la
-            elección no se hace.
         al_elegir: Lo que se llama después de elegir otra.
+        al_activar: Lo que se llama al abrir la fila elegida (un doble clic
+            sobre ella, o Intro); sin él no se abre nada.
 
     Attributes:
         marco: El lienzo de la lista: lo que se coloca.
@@ -117,9 +127,9 @@ class ListaParejas:
                 ("Modo", 0, False), ("Estado", 0, False))
     """Las columnas de la tabla: la casilla, el nombre, la ruta (la que estira), el modo y el estado."""
 
-    def __init__(self, parent, puede_dejar, al_elegir):
+    def __init__(self, parent, al_elegir, al_activar=None):
         self.tabla = TablaLienzo(parent, self.COLUMNAS, al_elegir=al_elegir,
-                                 puede_dejar=puede_dejar, vacio="No hay ninguna pareja.")
+                                 al_activar=al_activar, vacio="No hay ninguna pareja.")
         self.tabla.momento_elegir = "elegir-pareja"
         self.marco = self.tabla.marco
         self.filas: dict[str, dict] = {}
@@ -177,7 +187,7 @@ class ListaParejas:
         """Elige esa pareja (o ninguna) y lo cuenta, si `avisar`; se repintan dos filas.
 
         Returns:
-            Si la elección se ha hecho: `puede_dejar` puede negarse.
+            Si la elección se ha hecho.
         """
         return self.tabla.elegir(name, avisar)
 
@@ -195,12 +205,12 @@ class ListaParejas:
 
 
 class EditorPareja:
-    """Los campos de una pareja: el editor de la pantalla y el del alta.
+    """Los campos de una pareja: el editor de la ventana de una pareja y el del alta.
 
     Solo dibuja: lo que se escribe lo decide `pair_editor` o `catalog_editor`
-    con lo que devuelve `datos()`. En la pantalla de parejas va en una tarjeta
-    a dos columnas (los campos a la izquierda, el modo y sus casillas a la
-    derecha) con «Avanzado» plegado; en el alta, a una columna y desplegado.
+    con lo que devuelve `datos()`. En la ventana de una pareja va a dos
+    columnas (los campos a la izquierda, el modo y sus casillas a la derecha)
+    con «Avanzado» plegado; en el alta, a una columna y desplegado.
 
     Junto a cada campo se dice para qué es y, si hay con qué comparar, lo que
     dice el catálogo, marcado con ✎ si difiere: es lo que convierte «guardar
@@ -214,17 +224,21 @@ class EditorPareja:
     Args:
         parent: Dónde va.
         dlg: La ventana de la que cuelgan sus diálogos.
-        sup: La superficie donde cae (`'Card.'` o `''`).
+        sup: La superficie donde cae (`''`, el papel, o `'Card.'`).
         dos_columnas: Los campos y el modo, lado a lado.
         plegable: «Avanzado» (incluir, excluir y flags) empieza plegado y se
             construye al desplegarlo; sin ello se construye de entrada.
+        al_crecer: Lo que se llama, sin argumentos, cuando el editor puede pedir
+            más sitio del que tenía: al desplegar «Avanzado» y al cambiar el
+            aviso del modo. Es de quien lo tiene en su ventana, que la agranda.
     """
 
-    def __init__(self, parent, dlg, sup: str = "Card.", dos_columnas: bool = True,
-                 plegable: bool = True):
+    def __init__(self, parent, dlg, sup: str = "", dos_columnas: bool = True,
+                 plegable: bool = True, al_crecer=None):
         import tkinter as tk
         from tkinter import ttk
         self.dlg, self.sup = dlg, sup
+        self.al_crecer = al_crecer
         self.raw: dict = {}
         self.actual: dict = {}
         self.catalogo: dict | None = None
@@ -314,8 +328,8 @@ class EditorPareja:
                                        wraplength=theme.medida(440), justify="left")
         self.pista_vigilar.grid(row=7, column=0, sticky="w", padx=(theme.E5, 0))
 
-        # Avanzado: incluir, excluir y los flags. Casi nunca se tocan, así que
-        # en la pantalla van plegados; los flags, además, en su propio diálogo,
+        # Avanzado: incluir, excluir y los flags. Casi nunca se tocan, así que en
+        # la ventana de una pareja van plegados; los flags, además, en su propio diálogo,
         # porque lo que hay que ver de ellos (cuáles acaban valiendo) no cabe
         # al lado de un campo.
         abajo = ttk.Frame(self.marco, style=marco_sup)
@@ -356,7 +370,7 @@ class EditorPareja:
         """Construye el bloque de «Avanzado»: incluir, excluir y los flags.
 
         Se llama una sola vez: al crear el editor del alta, o al desplegar por
-        primera vez el de la pantalla. Las cajas salen con lo que dicen
+        primera vez el de la ventana de una pareja. Las cajas salen con lo que dicen
         `patrones` y el botón de los flags, con el estado del editor.
         """
         from tkinter import ttk
@@ -548,6 +562,8 @@ class EditorPareja:
         self.plegado.set(not self.plegado.get())
         self.boton_plegar.configure(text="Mostrar" if self.plegado.get() else "Ocultar")
         self._resumir()
+        if not self.plegado.get() and self.al_crecer is not None:
+            self.al_crecer()
 
     def modo_cambiado(self) -> None:
         """Pone el aviso del modo y apaga las casillas que no valen en él.
@@ -559,7 +575,8 @@ class EditorPareja:
         """
         modo = self.modo.get()
         aviso = pair_editor.aviso_espejo(modo)
-        if aviso != self._espejo_puesto:
+        otro_aviso = aviso != self._espejo_puesto
+        if otro_aviso:
             if self.espejo is not None:
                 self.espejo.destroy()
                 self.espejo = None
@@ -587,6 +604,8 @@ class EditorPareja:
             "Solo con el agente residente. Lo del remoto espera al intervalo."
             if vale_vigilar else
             "Solo donde el origen es el dispositivo (no en down ni down-mirror)."))
+        if otro_aviso and aviso is not None and self.al_crecer is not None:
+            self.al_crecer()
 
     def examinar_local(self) -> None:
         """Deja elegir la carpeta local con el diálogo de carpetas del sistema.
@@ -680,6 +699,224 @@ class HuecoChip:
         return True
 
 
+class VentanaPareja:
+    """La ventana donde se cambia una pareja: sus campos y el botón que los guarda.
+
+    Se abre desde la pantalla de parejas para la pareja elegida y la vista de
+    entonces, y va modal sobre ella: mientras está abierta no se elige otra
+    pareja ni se cambia de vista. Guarda en este dispositivo o en el catálogo
+    según esa vista, siempre por el plan y su confirmación
+    (`PantallaParejas.plan_de`): la pantalla la cierra cuando el plan se ha
+    ejecutado, y si no se llega a guardar se queda con lo escrito. Cerrarla con
+    algo sin guardar se pregunta antes.
+
+    Una pareja que no se puede cambiar (este dispositivo no la usa, o el
+    catálogo no se ha leído del remoto) se enseña igual, con todo apagado.
+
+    El catálogo puede llegar del remoto con la ventana abierta: la pantalla la
+    pone entonces al día (`poner_al_dia()`), sin perder lo escrito mientras la
+    pareja siga siendo la misma.
+
+    El `Toplevel` lleva, para los tests, `dlg.ventana` (esta ventana) y
+    `dlg.editor`.
+
+    Args:
+        pantalla: La `PantallaParejas` de la que cuelga: de ella salen el
+            config, el catálogo y los planes.
+        nombre: La pareja que se abre.
+        del_catalogo: Si se abre la del catálogo, y se guarda en él, o la de
+            este dispositivo.
+
+    Attributes:
+        dlg: El `Toplevel`, retirado hasta `abrir()`.
+        editor: El `EditorPareja` con los campos.
+        chip: El hueco del chip de la cabecera (`HuecoChip`): a quién afecta lo
+            que se guarde, o por qué no se puede cambiar.
+        nota: La línea del pie: lo que pasa al guardar, o lo que ha pasado con
+            la pareja mientras la ventana estaba abierta.
+        boton_guardar: «Guardar aquí…» o «Guardar en el catálogo…».
+        boton_cerrar: «Cancelar», o «Cerrar» si los campos no se pueden cambiar.
+        base: Los argumentos con que se cargó el editor (`que_cargar()`).
+        cargado: Lo que dio `editor.datos()` al cargarlo: con qué se compara
+            para saber si hay algo sin guardar.
+    """
+
+    def __init__(self, pantalla, nombre: str, del_catalogo: bool) -> None:
+        """Construye la ventana retirada, con la pareja ya en sus campos."""
+        from tkinter import ttk
+
+        self.pantalla, self.nombre, self.del_catalogo = pantalla, nombre, del_catalogo
+        self.base: dict = {}
+        self.cargado: dict = {}
+        titulo = f"Modificar '{nombre}'"
+        dlg = self.dlg = modal(pantalla.dlg, titulo)
+        marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
+        marco.columnconfigure(0, weight=1)
+
+        arriba = ttk.Frame(marco)
+        arriba.grid(row=0, column=0, sticky="ew")
+        arriba.columnconfigure(0, weight=1)
+        ttk.Label(arriba, text=titulo, style="Dialogo.TLabel").grid(row=0, column=0,
+                                                                    sticky="w")
+        self.chip = HuecoChip(arriba, row=0, column=1, sticky="e", padx=(theme.E3, 0))
+        ttk.Label(marco, text=ALCANCE_CATALOGO if del_catalogo else ALCANCE_PEN,
+                  style="Pista.TLabel", wraplength=theme.medida(640), justify="left").grid(
+            row=1, column=0, sticky="w", pady=(theme.E1, 0))
+
+        self.editor = EditorPareja(marco, dlg, al_crecer=self.crecer)
+        self.editor.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
+
+        ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
+                                                       pady=(theme.E4, 0))
+        pie = ttk.Frame(marco)
+        pie.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+        pie.columnconfigure(0, weight=1)
+        self.nota = ttk.Label(
+            pie, text=f"{ANTES} {NOTA_CATALOGO if del_catalogo else NOTA_PEN}",
+            style="Pista.TLabel", wraplength=theme.medida(520), justify="left")
+        self.nota.grid(row=0, column=0, sticky="w")
+        self.boton_cerrar = ttk.Button(pie, text="Cancelar", command=self.cerrar)
+        self.boton_cerrar.grid(row=0, column=1, padx=(theme.E3, theme.E2))
+        self.boton_guardar = ttk.Button(
+            pie, text="Guardar en el catálogo…" if del_catalogo else "Guardar aquí…",
+            style="Primary.TButton", command=self.guardar)
+        self.boton_guardar.grid(row=0, column=2)
+        dlg.protocol("WM_DELETE_WINDOW", self.cerrar)
+        dlg.ventana, dlg.editor = self, self.editor      # los tests
+        self.cargar()
+
+    def abrir(self) -> None:
+        """Enseña la ventana sobre la pantalla de parejas y espera a que se cierre."""
+        self.dlg.perf_momento = "open-pareja"
+        mostrar(self.dlg, self.pantalla.dlg)
+
+    def que_cargar(self) -> dict:
+        """Lo que `editor.cargar()` pone para esta pareja ahora, como argumentos.
+
+        En este dispositivo se edita la suya, comparada con la del catálogo; si
+        no la usa, se enseña la del catálogo sin dejar cambiarla. En el
+        catálogo, la del catálogo, que solo se cambia recién leído del remoto.
+        De una pareja que ya no está, `actual` sale vacío.
+        """
+        pantalla = self.pantalla
+        lect = pantalla.lectura()
+        del_cat = catalog.find_pair(pantalla.cat, self.nombre)
+        if self.del_catalogo:
+            actual, comparar = dict(del_cat or {}), None
+            editable = del_cat is not None and lect.editable
+            ayuda_modo = ("Cambiar el modo cambia la baseline: cada dispositivo la "
+                          "aparta cuando vuelve al catálogo.")
+            raw_de = pantalla.cat.raw if pantalla.cat else {}
+            ayudas = {"name": "Nombra también su carpeta en state/ de cada dispositivo.",
+                      "local": "Relativa a la raíz de cada dispositivo."}
+        else:
+            local = next((p for p in pantalla.raw.get("pair") or []
+                          if p.get("name") == self.nombre), None)
+            editable = local is not None
+            actual, comparar = (dict(local), del_cat) if editable else (dict(del_cat or {}),
+                                                                         None)
+            ayuda_modo, raw_de, ayudas = "", pantalla.raw, None
+        return {"raw": raw_de, "actual": actual, "original": self.nombre,
+                "catalogo": comparar, "editable": editable, "explorable": lect.editable,
+                "ayuda_modo": ayuda_modo, "ayudas": ayudas}
+
+    def cargar(self, args: dict | None = None) -> None:
+        """Pone en los campos la pareja como está ahora; lo escrito en ellos se pierde."""
+        self.base = args if args is not None else self.que_cargar()
+        self.editor.cargar(**self.base)
+        self.cargado = self.editor.datos()
+        self.pintar()
+
+    def poner_al_dia(self) -> None:
+        """Pone la ventana al día con el config y el catálogo que la pantalla acaba de leer.
+
+        Con algo escrito, lo escrito se queda si la pareja sigue igual: se
+        guarda luego entero, campo a campo, y si mientras tanto la pareja ha
+        cambiado (en el catálogo, otro dispositivo; aquí, el config) conservarlo
+        desharía ese cambio sin decirlo. Entonces los campos se recargan y la
+        nota lo dice. Sin nada escrito se recargan cuando cambia la pareja o si
+        se puede cambiar. Lo que solo rodea a los campos (el catálogo con el que
+        se compara, si se puede recorrer el remoto) se pone al día sin tocarlos.
+        """
+        nueva, antes = self.que_cargar(), self.base
+        escrito = self.hay_cambios()
+        if any(nueva[k] != antes[k] for k in (("actual",) if escrito else CAMPOS_DEL_EDITOR)):
+            self.cargar(nueva)
+            if escrito:
+                self.decir(f"'{self.nombre}' ha cambiado mientras se editaba: se ha "
+                           f"cargado como está ahora y lo escrito se ha descartado.")
+            else:
+                self.crecer()
+            return
+        if nueva != antes:
+            self.base = nueva
+            self.editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
+            self.pintar()
+            self.crecer()
+
+    def pintar(self) -> None:
+        """Pone el chip de la cabecera y enciende lo que vale para la pareja como está ahora."""
+        base = self.base
+        if not base["actual"]:
+            spec = ("Ya no existe", "Apagado.", None)
+        elif self.del_catalogo:
+            spec = ("Afecta a todos los dispositivos", "Aviso.", "warn")
+        elif not base["editable"]:
+            spec = ("Úsala aquí para cambiarla", "Apagado.", None)
+        elif base["catalogo"] is not None and catalog.diff_keys(base["actual"],
+                                                                base["catalogo"]):
+            spec = ("Modificada aquí", "Aviso.", "warn")
+        else:
+            spec = None
+        self.chip.poner(spec)
+        quiero = "normal" if base["editable"] else "disabled"
+        if str(self.boton_guardar.cget("state")) != quiero:
+            self.boton_guardar.configure(state=quiero)
+        PantallaParejas.poner_texto(self.boton_cerrar,
+                                    "Cancelar" if self.editor.editable else "Cerrar")
+
+    def decir(self, texto: str) -> None:
+        """Pone ese texto en la nota del pie; la ventana crece si le hace falta."""
+        self.nota.configure(text=texto)
+        self.crecer()
+
+    def crecer(self) -> None:
+        """Agranda la ventana si lo de ahora pide más sitio, y la recoloca si ha crecido."""
+        dlg = self.dlg
+        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
+            centrar(dlg, self.pantalla.dlg)
+
+    def hay_cambios(self) -> bool:
+        """Si en los campos hay algo que no se ha guardado."""
+        return self.editor.editable and self.editor.datos() != self.cargado
+
+    def cerrar(self) -> None:
+        """Cierra la ventana; con algo sin guardar, pregunta antes de perderlo."""
+        from tkinter import messagebox
+
+        if self.hay_cambios() and not messagebox.askokcancel(
+                TITLE, f"Hay cambios sin guardar en '{self.nombre}'. ¿Descartarlos?",
+                parent=self.dlg):
+            return
+        self.dlg.destroy()
+
+    def guardar(self) -> None:
+        """Pide el plan de guardar lo escrito, en este dispositivo o en el catálogo.
+
+        Guarda la pareja que enseña la ventana, sea cual sea la fila elegida en
+        la lista. La pantalla cierra la ventana si el plan llega a ejecutarse.
+        """
+        pantalla, nombre = self.pantalla, self.nombre
+        if self.del_catalogo:
+            pantalla.plan_de(catalog_editor.plan_catalog_save, pantalla.cat,
+                             self.editor.datos(), nombre, pantalla.raw, en_catalogo=True,
+                             titulo=f"Editar '{nombre}' en el catálogo")
+        else:
+            pantalla.plan_de(pair_editor.plan_override, pantalla.raw, pantalla.cat, nombre,
+                             self.editor.datos(),
+                             titulo=f"Modificar '{nombre}' en este dispositivo")
+
+
 class PantallaParejas:
     """La pantalla de parejas: lo que sabe, sus widgets y lo que hace cada botón.
 
@@ -689,9 +926,12 @@ class PantallaParejas:
     `abrir()` la pinta con la copia local del catálogo, lee el remoto en segundo
     plano, la enseña y espera a que se cierre.
 
+    Los campos de una pareja no están aquí: `modificar()` abre su ventana
+    (`VentanaPareja`), modal sobre esta, y mientras está abierta la pantalla la
+    pone al día en cada repintado y le pasa lo que haya que decir.
+
     El `Toplevel` lleva, para los tests: `dlg.pantalla` (esta pantalla),
-    `dlg.lista` (siempre la que se ve), `dlg.editor`, `dlg.indicador` y
-    `dlg.sondeo`.
+    `dlg.lista` (siempre la que se ve), `dlg.indicador` y `dlg.sondeo`.
 
     Args:
         parent: La ventana de la que cuelga.
@@ -708,10 +948,7 @@ class PantallaParejas:
         leyendo: Si se está leyendo el catálogo del remoto.
         cambiado: Si se ha cambiado el config de este dispositivo: lo que
             devuelve `abrir()`.
-        cargado: Lo que dio `editor.datos()` al cargarlo, o `None` si lo
-            escrito no cuenta como cambio (se ha guardado o descartado).
-        base: Los argumentos con que se cargó el editor (`que_cargar()`), o
-            `None` si hay que recargarlo.
+        ventana: La `VentanaPareja` abierta, o `None`.
         compartida: La lectura compartida si aún no se ha usado, o `None`.
         estados: El baseline y los filtros de cada pareja bisync, por nombre.
         estados_de: El config del que salen `estados`, o `None`.
@@ -723,7 +960,6 @@ class PantallaParejas:
         vista: La variable del interruptor: `'dispositivo'` o `'catalogo'`.
         lista: La lista que se ve; `lista_d` es la de este dispositivo y
             `lista_c` la del catálogo, `None` hasta montarla.
-        editor: El `EditorPareja` de la pareja elegida.
         botones: Los botones de acción, por su texto (o su clave).
     """
 
@@ -740,8 +976,7 @@ class PantallaParejas:
         self.aviso: str | None = None
         self.leyendo = False
         self.cambiado = False
-        self.cargado: dict | None = None
-        self.base: dict | None = None
+        self.ventana: VentanaPareja | None = None
         self.compartida = compartida
         self.estados: dict = {}
         self.estados_de = None
@@ -797,36 +1032,22 @@ class PantallaParejas:
 
         # La lista de este dispositivo, con lo que se sabe de cada pareja. La del
         # catálogo es otra y se crea al verla (`montar_catalogo`).
-        self.lista_d = ListaParejas(marco, self.seguir_sin_guardar, self.cargar_editor)
+        self.lista_d = ListaParejas(marco, self.habilitar, self.modificar)
         self.lista_d.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
         self.lista_c: ListaParejas | None = None
         self.lista = self.lista_d
         dlg.indicador, dlg.sondeo, dlg.lista = self.indicador, self.sondeo, self.lista
         dlg.pantalla = self                            # los tests
 
-        # La pareja elegida, editable aquí mismo.
-        titulo_eleg = ttk.Frame(marco)
-        titulo_eleg.grid(row=5, column=0, sticky="ew", pady=(theme.E4, theme.E2))
-        titulo_eleg.columnconfigure(0, weight=1)
-        self.rotulo_eleg = ttk.Label(titulo_eleg, style="Rotulo.TLabel")
-        self.rotulo_eleg.grid(row=0, column=0, sticky="w")
-        self.chip_eleg = HuecoChip(titulo_eleg, row=0, column=1, sticky="e")
-        tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E5, theme.E4))
-        tarjeta.grid(row=6, column=0, sticky="ew")
-        tarjeta.columnconfigure(0, weight=1)
-        self.editor = EditorPareja(tarjeta, dlg)
-        self.editor.marco.grid(row=0, column=0, sticky="ew")
-        dlg.editor = self.editor
-
         # Las acciones: unas por vista, porque no tocan lo mismo.
         self.barra_d = ttk.Frame(marco)
-        self.barra_d.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
+        self.barra_d.grid(row=5, column=0, sticky="ew", pady=(theme.E4, 0))
         self.barra_d.columnconfigure(10, weight=1)
         self.barra_c = None
         self.aviso_catalogo = None
 
         cierre = ttk.Frame(marco)
-        cierre.grid(row=8, column=0, sticky="ew", pady=(theme.E4, 0))
+        cierre.grid(row=6, column=0, sticky="ew", pady=(theme.E4, 0))
         cierre.columnconfigure(0, weight=1)
         ttk.Separator(cierre).grid(row=0, column=0, columnspan=3, sticky="ew",
                                    pady=(0, theme.E4))
@@ -851,8 +1072,7 @@ class PantallaParejas:
         self.boton(barra, "Simular", self.simular, icono="eye", col=1)
         self.boton(barra, "Volver al catálogo", self.volver_al_catalogo, icono="back", col=2)
         self.boton(barra, "Quitar…", self.quitar, "Danger.TButton", "trash", col=3)
-        self.boton(barra, "Descartar", self.descartar, col=11)
-        self.boton(barra, "Guardar aquí…", self.guardar_aqui, "Primary.TButton", col=12)
+        self.boton(barra, "Modificar…", self.modificar, "Primary.TButton", "edit", col=12)
 
         # La flota cuelga de aquí y no de la ventana principal: es de la misma
         # familia que el catálogo (lo que comparten todos los dispositivos) y no
@@ -877,10 +1097,10 @@ class PantallaParejas:
         try:
             mostrar(dlg, self.parent)
         finally:
-            # Las variables del editor quedan en ciclos con la ventana: se sueltan
-            # AQUÍ, en el hilo de Tk. Si las soltara el recolector desde el hilo
-            # de una lectura en segundo plano, borrarlas sería hablarle a Tk desde
-            # otro hilo (`aviso_fallo` hace lo mismo).
+            # Las variables de Tk de la pantalla quedan en ciclos con ella: se
+            # sueltan AQUÍ, en el hilo de Tk. Si las soltara el recolector desde
+            # el hilo de una lectura en segundo plano, borrarlas sería hablarle a
+            # Tk desde otro hilo (`aviso_fallo` hace lo mismo).
             import gc
             gc.collect()
         return self.cambiado
@@ -937,104 +1157,6 @@ class PantallaParejas:
                 pair_editor.catalog_rows(self.config, self.raw, self.cat,
                                          self.estados_actuales())]
 
-    def entrada_de(self, name: str | None) -> tuple[dict, dict | None]:
-        """La pareja que se edita y aquella con la que se compara.
-
-        En este dispositivo se edita la suya, comparada con la del catálogo; si
-        no la usa, se enseña la del catálogo. En el catálogo, la del catálogo.
-        """
-        del_cat = catalog.find_pair(self.cat, name) if name else None
-        if self.del_catalogo():
-            return dict(del_cat or {}), None
-        local = next((p for p in self.raw.get("pair") or []
-                      if p.get("name") == name), None)
-        if local is None:
-            return dict(del_cat or {}), None
-        return dict(local), del_cat
-
-    def que_cargar(self) -> dict:
-        """Lo que `editor.cargar()` pone para la pareja elegida, como argumentos."""
-        fila = self.lista.fila()
-        actual, comparar = self.entrada_de(fila.name if fila else None)
-        lect = self.lectura()
-        if self.del_catalogo():
-            editable = fila is not None and lect.editable
-            ayuda_modo = ("Cambiar el modo cambia la baseline: cada dispositivo la "
-                          "aparta cuando vuelve al catálogo.")
-            raw_de = self.cat.raw if self.cat else {}
-            ayudas = {"name": "Nombra también su carpeta en state/ de cada dispositivo.",
-                      "local": "Relativa a la raíz de cada dispositivo."}
-        else:
-            editable = fila is not None and fila.en_pen
-            ayuda_modo, raw_de, ayudas = "", self.raw, None
-        return {"raw": raw_de, "actual": actual, "original": fila.name if fila else None,
-                "catalogo": comparar, "editable": editable, "explorable": lect.editable,
-                "ayuda_modo": ayuda_modo, "ayudas": ayudas}
-
-    def cargar_editor(self, args: dict | None = None) -> None:
-        """Pone en el editor la pareja elegida, con lo que se puede hacer con ella."""
-        self.base = args if args is not None else self.que_cargar()
-        self.editor.cargar(**self.base)
-        self.cargado = self.editor.datos()
-        self.pintar_eleccion()
-
-    def conservar_lo_escrito(self) -> bool:
-        """Deja lo escrito en el editor si la pareja sobre la que se escribe sigue igual.
-
-        Lo escrito se guarda luego entero, campo a campo: si mientras tanto la
-        pareja ha cambiado (en el catálogo, otro dispositivo; aquí, el config),
-        conservarlo desharía ese cambio sin decirlo. Entonces el editor se
-        recarga y se devuelve `False`. Si sigue igual, solo se pone al día lo de
-        alrededor (con qué se compara, si se puede recorrer el remoto). Los
-        campos siguen editables aunque el catálogo no se pueda guardar ahora
-        (se está leyendo, o no hay conexión): lo escrito no se pierde y se
-        guarda cuando «Releer» lo vuelva a dejar; mientras, «Guardar en el
-        catálogo…» está apagado y la línea del catálogo dice por qué.
-        """
-        nueva, antes = self.que_cargar(), self.base or {}
-        if any(nueva[k] != antes.get(k) for k in ("original", "actual")):
-            self.cargar_editor(nueva)
-            return False
-        self.base = nueva
-        self.editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
-        self.pintar_eleccion()
-        return True
-
-    def poner_al_dia_el_editor(self) -> None:
-        """Pone el editor al día con la pareja elegida cuando no hay nada escrito en él.
-
-        Lo que cambia los campos (la pareja, si se puede editar, lo que se dice
-        del modo) recarga el editor. Lo que solo los rodea (el catálogo con el
-        que se compara, si se puede recorrer el remoto) lo pone al día sin
-        tocarlos, y si nada ha cambiado solo se repinta lo de la elegida.
-        """
-        nueva, antes = self.que_cargar(), self.base or {}
-        if any(nueva[k] != antes.get(k) for k in CAMPOS_DEL_EDITOR):
-            self.cargar_editor(nueva)
-            return
-        if any(nueva[k] != antes.get(k) for k in ("raw", "catalogo", "explorable")):
-            self.base = nueva
-            self.editor.poner_alrededor(nueva["raw"], nueva["catalogo"], nueva["explorable"])
-        self.pintar_eleccion()
-
-    def pintar_eleccion(self) -> None:
-        """Pone el rótulo y el chip de la pareja elegida y enciende lo que vale para ella.
-
-        Es lo de `cargar_editor()` que no son los campos: se repinta también
-        cuando el editor conserva lo que se ha escrito en él.
-        """
-        fila = self.lista.fila()
-        self.poner_texto(self.rotulo_eleg, theme.rotulo(
-            f"Pareja elegida · {fila.name}" if fila else "Ninguna pareja elegida"))
-        spec = None
-        if fila is not None and not self.del_catalogo():
-            if not fila.en_pen:
-                spec = ("Úsala aquí para cambiarla", "Apagado.", None)
-            elif fila.difiere:
-                spec = ("Modificada aquí", "Aviso.", "warn")
-        self.chip_eleg.poner(spec)
-        self.habilitar()
-
     def habilitar(self) -> None:
         """Enciende las acciones que valen para la pareja elegida."""
         for texto, vale in pair_editor.botones(self.lista.fila(), self.lectura()).items():
@@ -1043,28 +1165,43 @@ class PantallaParejas:
             if b is not None and str(b.cget("state")) != quiero:
                 b.configure(state=quiero)
 
-    def hay_cambios(self) -> bool:
-        """Si el editor tiene algo que no se ha guardado."""
-        return (self.cargado is not None and self.editor.editable
-                and self.editor.datos() != self.cargado)
+    def delante(self):
+        """La ventana que tiene la persona delante: la de la pareja si está abierta, o esta."""
+        return self.ventana.dlg if self.ventana is not None else self.dlg
 
-    def seguir_sin_guardar(self) -> bool:
-        """Pregunta antes de perder lo que se ha cambiado en el editor."""
-        from tkinter import messagebox
+    def decir(self, nota: str) -> None:
+        """Pone la nota en el pie y, si la ventana de una pareja está abierta, en el suyo.
 
-        if not self.hay_cambios():
-            return True
-        return messagebox.askokcancel(
-            TITLE, f"Hay cambios sin guardar en '{self.editor.original}'. "
-                   f"¿Descartarlos?", parent=self.dlg)
+        Con esa ventana delante, el pie de la pantalla no se ve.
+        """
+        self.pie_nota.configure(text=nota)
+        if self.ventana is not None:
+            self.ventana.decir(nota)
+
+    def modificar(self) -> None:
+        """Abre la ventana de la pareja elegida, para la vista de ahora, y espera a que se cierre."""
+        fila = self.fila_elegida()
+        if fila is None or self.ventana is not None:
+            return
+        perf_empezar("open-pareja")
+        ventana = self.ventana = VentanaPareja(self, fila.name, self.del_catalogo())
+        try:
+            ventana.abrir()
+        finally:
+            self.ventana = None
+            # Las variables de sus campos quedan en ciclos con la ventana: se
+            # sueltan aquí, en el hilo de Tk, como al cerrar la pantalla (`abrir()`).
+            import gc
+            gc.collect()
+
+    def cerrar_ventana(self) -> None:
+        """Cierra la ventana de la pareja, si está abierta: lo que tenía ya se ha guardado."""
+        ventana, self.ventana = self.ventana, None
+        if ventana is not None:
+            ventana.dlg.destroy()
 
     def cambiar_vista(self) -> None:
         """Pasa de este dispositivo al catálogo, o al revés."""
-        if not self.seguir_sin_guardar():
-            self.vista.set("catalogo" if self.vista.get() == "dispositivo" else "dispositivo")
-            return
-        self.cargado = None                   # lo escrito se ha descartado
-        self.base = None                      # y el editor enseña la pareja de la otra vista
         self.pie_nota.configure(text=self.nota_inicial())
         self.refrescar()
 
@@ -1096,12 +1233,12 @@ class PantallaParejas:
         aviso.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
         aviso.lower(self.fila_defaults)
         self.aviso_catalogo = aviso
-        lista_c = ListaParejas(marco, self.seguir_sin_guardar, self.cargar_editor)
+        lista_c = ListaParejas(marco, self.habilitar, self.modificar)
         lista_c.marco.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
         tk.Misc.lift(lista_c.marco, self.lista_d.marco)   # el `lift` de un lienzo sube elementos
         self.lista_c = lista_c
         barra = ttk.Frame(marco)
-        barra.grid(row=7, column=0, sticky="ew", pady=(theme.E4, 0))
+        barra.grid(row=5, column=0, sticky="ew", pady=(theme.E4, 0))
         barra.lift(self.barra_d)
         barra.columnconfigure(10, weight=1)
         self.barra_c = barra
@@ -1111,10 +1248,8 @@ class PantallaParejas:
                    "trash", col=1)
         self.boton(barra, "Releer", lambda: self.leer_catalogo("Catálogo releído."),
                    "Quiet.TButton", "reload", col=2)
-        self.boton(barra, "Descartar", self.descartar, col=11,
-                   clave="Descartar del catálogo")
-        self.boton(barra, "Guardar en el catálogo…", self.catalogo_guardar,
-                   "Primary.TButton", col=12)
+        self.boton(barra, "Modificar…", self.modificar, "Primary.TButton", "edit", col=12,
+                   clave="Modificar… del catálogo")
         b = ttk.Button(self.fila_defaults, text="Ajustes del catálogo…",
                        style="GrisQuiet.TButton", command=self.catalogo_defaults)
         b.grid(row=0, column=5, padx=(theme.E1, 0))
@@ -1162,21 +1297,21 @@ class PantallaParejas:
 
     def envolventes(self) -> tuple[str, ...]:
         """Los textos de la pantalla que se parten en líneas, que son los que la hacen más alta."""
-        editor = self.editor
         return (str(self.indicador.texto.cget("text")), str(self.linea_defaults.cget("text")),
-                str(self.pie_nota.cget("text")), str(editor.pista_modo.cget("text")),
-                *(str(p.cget("text")) for p in editor.pistas.values()))
+                str(self.pie_nota.cget("text")))
 
     def refrescar(self, nota: str | None = None) -> None:
         """Pone la pantalla al día con el config y el catálogo, tocando solo lo que cambia.
 
         Relee el config (solo se parsea si el fichero ha cambiado) y repinta la
-        lista, el chip, la franja y el editor. La ventana solo se agranda y se
-        recoloca si ha llegado o se ha ido una fila, o algún texto de los que se
-        parten en líneas es otro y no más corto.
+        lista, el chip y la franja; si la ventana de una pareja está abierta, la
+        pone al día también (`VentanaPareja.poner_al_dia`). La pantalla solo se
+        agranda y se recoloca si ha llegado o se ha ido una fila, o algún texto
+        de los que se parten en líneas es otro y no más corto.
 
         Args:
-            nota: Lo que se pone en el pie; `None` lo deja como esté.
+            nota: Lo que se pone en el pie (y en el de la ventana de la pareja,
+                si está abierta); `None` lo deja como esté.
         """
         dlg = self.dlg
         self.raw, self.config = self.lector.leer()
@@ -1203,25 +1338,20 @@ class PantallaParejas:
         self.poner_texto(self.linea_defaults, resumen)
 
         # Lo elegido sobrevive al repintado: el catálogo del remoto puede llegar
-        # con una fila ya elegida, y perderla sería editar luego otra.
+        # con una fila ya elegida, y perderla sería abrir luego otra.
         lista = self.lista
         elegida = anterior.elegida
-        escrito = self.hay_cambios() and self.editor.original == elegida
         cambio = lista.poner(self.filas(), del_catalogo=catalogo)
         lista.elegir(elegida if elegida in lista.filas else
                      (lista.orden[0] if lista.orden else None), avisar=False)
-        # Y lo escrito en el editor, también: el catálogo llega mientras se
-        # teclea, y recargar el editor lo borraba y daba lo borrado por guardado.
-        if escrito and lista.elegida == elegida:
-            if not self.conservar_lo_escrito():
-                nota = (f"'{elegida}' ha cambiado mientras se editaba: se ha cargado "
-                        f"como está ahora y lo escrito se ha descartado.")
-        elif escrito:
-            self.cargar_editor()
-        else:
-            self.poner_al_dia_el_editor()
+        self.habilitar()
         if nota is not None:
-            self.pie_nota.configure(text=nota)
+            self.decir(nota)
+        # Y lo escrito en la ventana de una pareja, también: el catálogo llega
+        # mientras se teclea. Va detrás de la nota: si la pareja ha cambiado, lo
+        # que dice la ventana es eso.
+        if self.ventana is not None:
+            self.ventana.poner_al_dia()
         # Lo que llega del remoto puede traer una explicación más larga que la
         # de la espera: entonces el recuadro crece, en vez de meterla tras una
         # barra, y la ventana se recoloca (como el asistente) para que lo que
@@ -1294,7 +1424,7 @@ class PantallaParejas:
         try:
             self.lector.leer()
         except ConfigError as e:
-            messagebox.showerror(TITLE, str(e), parent=self.dlg)
+            messagebox.showerror(TITLE, str(e), parent=self.delante())
             return True
         if not self.lector.cambio:
             return False
@@ -1314,12 +1444,16 @@ class PantallaParejas:
         mientras tanto alguien lo ha editado a mano, ejecutarlo lo pisaría. Se
         mira otra vez justo antes y, si ha cambiado, no se ejecuta nada.
 
+        Lo que se pregunta y lo que falla se enseña sobre la ventana que haya
+        delante (`delante()`). Un plan ejecutado cierra la ventana de la pareja,
+        si de ella venía; uno que no llega a ejecutarse la deja con lo escrito.
+
         Args:
             base: El `raw` del que sale el plan, tal como lo enseñaba la pantalla.
         """
         from tkinter import messagebox
 
-        dlg = self.dlg
+        dlg = self.delante()
         if not confirmar_plan(dlg, plan, titulo or "Confirmar el cambio",
                               NOTA_CATALOGO if en_catalogo else NOTA_PEN):
             return
@@ -1331,7 +1465,7 @@ class PantallaParejas:
                                      parent=dlg)
                 return
             self.cat = catalog.cached() or self.cat
-            self.cargado = None                   # lo editado ya está subido
+            self.cerrar_ventana()
             self.pie_nota.configure(text="  ·  ".join(valor))
             self.leer_catalogo()
             return
@@ -1349,9 +1483,9 @@ class PantallaParejas:
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}", parent=dlg)
             return
         self.cambiado = True
-        self.cargado = None
         # Lo que se sabía del baseline y los filtros puede haber cambiado con el plan.
         self.estados_de, self.compartida = None, None
+        self.cerrar_ventana()
         self.refrescar("  ·  ".join(hechos))
 
     def plan_de(self, funcion, *args, en_catalogo=False, titulo=""):
@@ -1363,13 +1497,9 @@ class PantallaParejas:
         try:
             plan = funcion(*args)
         except ConfigError as e:
-            messagebox.showerror(TITLE, str(e), parent=self.dlg)
+            messagebox.showerror(TITLE, str(e), parent=self.delante())
             return
         self.aplicar_plan(plan, en_catalogo, titulo, base=self.raw)
-
-    def descartar(self) -> None:
-        """Devuelve el editor a lo que hay guardado."""
-        self.cargar_editor()
 
     # Este dispositivo.
 
@@ -1420,14 +1550,6 @@ class PantallaParejas:
         self.pie_nota.configure(text=f"Simulación de '{fila.name}' terminada: no se ha "
                                      f"tocado nada.")
 
-    def guardar_aqui(self) -> None:
-        """Guarda lo del editor SOLO en este dispositivo."""
-        fila = self.fila_elegida()
-        if fila is not None and fila.en_pen:
-            self.plan_de(pair_editor.plan_override, self.raw, self.cat, fila.name,
-                         self.editor.datos(),
-                         titulo=f"Modificar '{fila.name}' en este dispositivo")
-
     def volver_al_catalogo(self) -> None:
         """Devuelve la pareja elegida a lo que dice el catálogo."""
         fila = self.fila_elegida()
@@ -1463,14 +1585,6 @@ class PantallaParejas:
         if datos is not None:
             self.plan_de(catalog_editor.plan_catalog_save, self.cat, datos, None,
                          self.raw, en_catalogo=True, titulo="Dar de alta en el catálogo")
-
-    def catalogo_guardar(self) -> None:
-        """Guarda en el catálogo lo del editor."""
-        fila = self.fila_elegida()
-        if fila is not None:
-            self.plan_de(catalog_editor.plan_catalog_save, self.cat, self.editor.datos(),
-                         fila.name, self.raw, en_catalogo=True,
-                         titulo=f"Editar '{fila.name}' en el catálogo")
 
     def catalogo_borrar(self) -> None:
         """Borra del catálogo la pareja elegida."""
@@ -1508,9 +1622,10 @@ def open_dialog(parent, config, compartida=None) -> bool:
 
     Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
     se lee en segundo plano; al llegar, la pantalla cambia solo lo que cambia:
-    ni la lista ni el editor ni la cabecera se rehacen para enseñar lo mismo.
-    Lo que solo hace falta para editar el catálogo (su lista, su barra de
-    acciones, su aviso) se crea la primera vez que se pasa a esa vista.
+    ni la lista ni la cabecera se rehacen para enseñar lo mismo. Lo que solo
+    hace falta para editar el catálogo (su lista, su barra de acciones, su
+    aviso) se crea la primera vez que se pasa a esa vista, y los campos de una
+    pareja, en su ventana (`VentanaPareja`), cuando se pide modificarla.
 
     El config se relee en cada repintado (`pair_editor.LecturaConfig`: solo se
     parsea si ha cambiado) y otra vez antes de cada plan y justo antes de
@@ -1519,8 +1634,8 @@ def open_dialog(parent, config, compartida=None) -> bool:
     leer y el pie lo dice.
 
     La pantalla es una `PantallaParejas`, y trae `dlg.pantalla` (ella misma,
-    con lo que sabe), `dlg.lista` (siempre la que se ve), `dlg.editor`,
-    `dlg.indicador` y `dlg.sondeo`.
+    con lo que sabe), `dlg.lista` (siempre la que se ve), `dlg.indicador` y
+    `dlg.sondeo`.
 
     Args:
         parent: La ventana de la que cuelga.
@@ -1693,9 +1808,8 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
                explorable: bool = False) -> dict | None:
     """Abre el formulario de una pareja y devuelve sus campos, o `None` si se cancela.
 
-    Es el alta de una pareja en el catálogo: los mismos campos que el editor
-    de la pantalla de parejas (`EditorPareja`), a una columna y con todo a la
-    vista.
+    Es el alta de una pareja en el catálogo: los mismos campos que la ventana
+    de una pareja (`EditorPareja`), a una columna y con todo a la vista.
 
     Args:
         catalogo: La entrada del catálogo con la que comparar: junto a cada
@@ -1716,7 +1830,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     resultado: dict = {"datos": None}
 
     fila = _cabecera_form(marco, titulo or "Pareja", marca, subtitulo, 0)
-    editor = EditorPareja(marco, dlg, sup="", dos_columnas=False, plegable=False)
+    editor = EditorPareja(marco, dlg, dos_columnas=False, plegable=False)
     editor.marco.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     editor.cargar(raw, actual, original_name, catalogo=catalogo, explorable=explorable)
 
