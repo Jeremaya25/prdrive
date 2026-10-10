@@ -149,7 +149,7 @@ c("una principal leída por encima de su techo falla y nombra la cuenta",
 MOMENTOS_NUEVOS = ("llega-instantanea", "marcar", "sincronizar-ventana", "volver-pasada",
                    "elegir-fila", "elegir-pareja", "reabrir-parejas", "pane-otra-vez",
                    "volver-ajustes", "open-dispositivos", "llega-flota", "elegir-dispositivo",
-                   "open-flags", "paso-dispositivo")
+                   "open-pareja", "open-flags", "paso-dispositivo")
 c("todos los momentos nuevos tienen etiqueta (sin ella `comparar` los descarta)",
   [e for e in MOMENTOS_NUEVOS if e not in informe.ETIQUETAS], [])
 
@@ -231,9 +231,10 @@ c("  y todo momento esperado se compara (tiene etiqueta)",
 
 # --- «Dispositivos», el editor de flags y el paso del asistente a «Dispositivo»
 orden_etiquetas = list(informe.ETIQUETAS)
-c("«Dispositivos» y el editor de flags van tras «reabrir-parejas» y antes de «Ajustes», en este orden",
+c("«Dispositivos», la ventana de una pareja y el editor de flags van tras «reabrir-parejas» y "
+  "antes de «Ajustes», en el orden en que se miden",
   orden_etiquetas[orden_etiquetas.index("reabrir-parejas") + 1:orden_etiquetas.index("open-ajustes")],
-  ["open-dispositivos", "llega-flota", "elegir-dispositivo", "open-flags"])
+  ["open-dispositivos", "llega-flota", "elegir-dispositivo", "open-pareja", "open-flags"])
 c("el paso del asistente a «Dispositivo» va justo tras `apply-wizard`",
   orden_etiquetas[orden_etiquetas.index("apply-wizard") + 1], "paso-dispositivo")
 
@@ -256,7 +257,28 @@ c("  y el paso del asistente tampoco (los widgets del asistente son los de `star
 c("  al 150 % no cuentan, como las demás",
   informe.cuentas([dict(cuenta("pr", "llega-flota", widgets=131), escala="2.0")], "pr"), {})
 
-pres_flota = {"techo": {"widgets.dispositivos": 131, "widgets.flags": 82,
+# La ventana de una pareja (`open-pareja`): por ella se llega al editor de flags desde que el
+# editor no está en la propia «Parejas». Solo la mide el árbol que la tiene.
+pareja = informe.cuentas([cuenta("pr", "open-pareja", widgets=44, tema=0, estilos_tardios=0)], "pr")
+c("las cuentas de la ventana de una pareja, con su clave y sin `.p5`",
+  sorted(pareja), ["estilos.pareja", "tema.abrir.pareja", "widgets.pareja"])
+c("  sus widgets son los de abrirla", pareja["widgets.pareja"]["valores"], [44])
+sobre_pareja = veredicto([cuenta("pr", "open-pareja", widgets=50, tema=0, estilos_tardios=0)],
+                         {"techo": {"widgets.pareja": 44}})
+c("  y por encima de su techo falla y nombra la cuenta",
+  (len(sobre_pareja["fallos"]), any("widgets.pareja" in f for f in sobre_pareja["fallos"])),
+  (1, True))
+CUENTAS_PAREJA = ("widgets.pareja", "tema.abrir.pareja", "estilos.pareja")
+techo_real = informe.techos(informe.cargar_presupuesto(
+    REPO / "tests" / "rendimiento" / "presupuesto.toml"), "linux-x64")
+c("  el presupuesto de verdad le pone techo a las tres, y 0 a los temas y los estilos tardíos",
+  ([k for k in CUENTAS_PAREJA if k not in techo_real],
+   [techo_real.get(k) for k in CUENTAS_PAREJA[1:]]), ([], [0, 0]))
+c("  «Parejas» pesa menos de la mitad desde que no lleva el editor (eran 83 widgets), con 5 "
+  "parejas y con 50",
+  [k for k in ("widgets.parejas.p5", "widgets.parejas.p50") if not 0 < techo_real[k] <= 41], [])
+
+pres_flota ={"techo": {"widgets.dispositivos": 131, "widgets.flags": 82,
                         "tema.abrir.dispositivos": 0, "estilos.flags": 0}}
 base_flota = [cuenta("base", "llega-flota", widgets=131), cuenta("base", "open-flags", widgets=82)]
 en_techo = veredicto(base_flota + [cuenta("pr", "llega-flota", widgets=131),

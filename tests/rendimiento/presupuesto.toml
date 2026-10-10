@@ -17,7 +17,10 @@
 #                                             ya llegada, la ficha del primero a la vista
 #              widgets.flags                  widgets del editor de flags de la primera pareja del dispositivo
 #                                             de muestra (sin flags propios)
-#              tema.abrir.dispositivos|flags, estilos.dispositivos|flags   lo mismo que para «Parejas» y «Ajustes»
+#              widgets.pareja                 widgets de la ventana de esa pareja («Modificar…»), recién abierta
+#                                             y con «Avanzado» plegado
+#              tema.abrir.dispositivos|flags|pareja, estilos.dispositivos|flags|pareja
+#                                             lo mismo que para «Parejas» y «Ajustes»
 #            `[techo.windows]` y `[techo.linux]` sustituyen a `[techo]` en esa plataforma (los
 #            módulos importados son los de cada sistema).
 # [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
@@ -38,9 +41,11 @@
 # parejas que la lectura pone en la lista.
 "widgets.main_leida.p5" = 50
 "widgets.main_leida.p50" = 230
-"widgets.parejas.p5" = 83
+# «Parejas» sin el editor de la pareja elegida, que pasó a su propia ventana (`widgets.pareja`):
+# de 83 a 38 (10/10/2026, medido en Windows ARM64; no depende de la máquina).
+"widgets.parejas.p5" = 38
 # La lista sobre un lienzo (etapa 2, tarea 14): las mismas piezas con 5 parejas que con 50.
-"widgets.parejas.p50" = 83
+"widgets.parejas.p50" = 38
 "widgets.ajustes.p5" = 38
 "widgets.ajustes.p50" = 38
 "widgets.agente" = 11
@@ -68,6 +73,11 @@
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0
 "estilos.flags" = 0
+# La ventana de una pareja (10/10/2026): el editor que antes iba dentro de «Parejas», con su
+# cabecera y su pie. La mide solo el árbol que la tiene (`open-pareja`).
+"widgets.pareja" = 54
+"tema.abrir.pareja" = 0
+"estilos.pareja" = 0
 
 [techo.linux]
 "modulos.main" = 171
@@ -97,6 +107,8 @@
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0
 "estilos.flags" = 0
+"tema.abrir.pareja" = 0
+"estilos.pareja" = 0
 
 [meta_ms]
 "start-main" = 350
