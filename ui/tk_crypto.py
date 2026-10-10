@@ -364,17 +364,24 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
         recalcula al cambiar el tamaño es la división.
         """
         estado.dinamico = bool(dinamico.get())
+        try:
+            bytes_ = None if estado.dinamico else crypto.size_to_bytes(
+                tam.get(), libre, tope, viajero=bool(traveler.get()))
+            error = None
+        except InstallError as e:
+            bytes_, error = None, str(e)
+        if bytes_ is not None:
+            # Que la sonda exista antes de mirarla: sin ella no se arma el sondeo.
+            lecturas_asistente.sonda_de(estado)
+        # Se vigila antes de pintar: si la sonda acaba entre las dos lecturas,
+        # ya la espera el sondeo, que vuelve a pintar.
+        vigilar_sonda()
         if estado.dinamico:
             espera.configure(text="Creación prácticamente inmediata.")
+        elif error is not None:
+            espera.configure(text=error)
         else:
-            try:
-                bytes_ = crypto.size_to_bytes(tam.get(), libre, tope,
-                                              viajero=bool(traveler.get()))
-            except InstallError as e:
-                espera.configure(text=str(e))
-            else:
-                espera.configure(text=lecturas_asistente.texto_espera(estado, bytes_))
-        vigilar_sonda()
+            espera.configure(text=lecturas_asistente.texto_espera(estado, bytes_))
         poner_boton()
 
     def al_cambiar_dinamico(*_) -> None:

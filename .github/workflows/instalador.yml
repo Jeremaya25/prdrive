@@ -13,10 +13,6 @@ name: Instalador
 # En un PR que toca lo que compila, y a mano. Que lo lancen también los PR que tocan ui/ o common/
 # (otros 6-10 minutos de máquina Windows por PR) es una pregunta para el dueño.
 on:
-  # TEMPORAL: quitar antes del PR (primera compilación con el Python fijado antes de abrirlo).
-  push:
-    branches:
-      - claude/adoring-pascal-5j258r
   pull_request:
     paths:
       - "build_installer.py"

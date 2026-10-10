@@ -148,7 +148,7 @@ def compilador(plataforma: str, destino: Path, cache: Path) -> int:
     """Deja en `destino` el Python con el que se compila el instalador.
 
     Es el mismo archivo comprobado que `runtime()`, extraído entero
-    (`runtime_bin.extract(..., podar=False)`): PyInstaller se instala con pip y
+    (`runtime_bin.extract(..., entero=True)`): PyInstaller se instala con pip y
     compila con el Python que lo ejecuta, así que el `.exe` lleva justo el
     Python y el Tk de los dispositivos. Solo de Windows: el `.exe` de las
     releases solo es de Windows.
@@ -172,7 +172,7 @@ def compilador(plataforma: str, destino: Path, cache: Path) -> int:
     archivo = _archivo(plat, cache)
     if archivo is None:
         return 1
-    runtime_bin.extract(archivo, destino, plat, runtime_bin.file_sha256(archivo), podar=False)
+    runtime_bin.extract(archivo, destino, plat, runtime_bin.file_sha256(archivo), entero=True)
 
     python = destino / plat.interprete_consola
     if not python.is_file():

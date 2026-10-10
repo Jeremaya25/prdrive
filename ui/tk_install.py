@@ -77,26 +77,6 @@ def _ruta_destino(cuerpo, antes: str, ruta, despues: str, fila: int = 0) -> None
     _texto(marco, despues, 2)
 
 
-def _posicion(ventana) -> tuple[int, int]:
-    """Dónde está una ventana, en las coordenadas de `geometry("+x+y")`.
-
-    Son las de `wm geometry`, las que se usan para moverla, y no las de
-    `winfo_x()`: con el marco del sistema alrededor pueden no coincidir, y
-    moverla con unas leídas de las otras la desplazaría. Es lo que hace
-    `ui.tk.VentanaPrincipal.posicion()`.
-
-    Args:
-        ventana: La ventana a mirar.
-
-    Returns:
-        La esquina de arriba a la izquierda.
-    """
-    casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", ventana.geometry())
-    if casa is None:                 # colocada desde la derecha o desde abajo
-        return ventana.winfo_x(), ventana.winfo_y()
-    return int(casa.group(1)), int(casa.group(2))
-
-
 def _sitio_en_pantalla(x: int, y: int, ancho: int, alto: int,
                        util: tuple[int, int],
                        pantalla: tuple[int, int]) -> tuple[int, int]:
@@ -375,7 +355,7 @@ class Wizard:
         reposo. Si cabe, no toca nada.
         """
         self._sitio_pendiente = None
-        x, y = _posicion(self.root)
+        x, y = uitk.posicion(self.root)
         nueva = _sitio_en_pantalla(
             x, y, self.root.winfo_width(), self.root.winfo_height(),
             uitk.pantalla_util(self.root),
@@ -1405,7 +1385,7 @@ def _paso_actualizar(cuerpo, wiz) -> None:
             """Copia el código y la guía, pinta el icono y conserva el id."""
             # Sin rclone ni Python: ya están puestos. Y sin lanzadores: se
             # escriben al aprovisionar, y actualizar el programa no los toca.
-            escrito = deploy.deploy_code(raiz, precompilar=False)
+            escrito = deploy.deploy_code(raiz, con_pyc=False)
             guia = deploy.write_guide(raiz)
             if guia is not None:
                 escrito.append(guia)
@@ -1522,9 +1502,9 @@ def _paso_instalar(cuerpo, wiz) -> None:
             # llega), el dispositivo sigue sin tocar y el reintento solo baja
             # lo que faltaba (#49).
             conseguido = deploy.conseguir_plataformas(plan)
-            escrito_ = deploy.deploy_code(raiz, precompilar=False)
+            escrito_ = deploy.deploy_code(raiz, con_pyc=False)
             nuevos, borrados = deploy.apply_platforms(raiz, plan, conseguido=conseguido,
-                                                      precompilar=False)
+                                                      con_pyc=False)
             escrito_ += nuevos
             escrito_ += deploy.write_launchers(raiz, plan.completa)
             guia = deploy.write_guide(raiz)
@@ -1772,7 +1752,7 @@ def _paso_plataformas(cuerpo, wiz) -> None:
 
         def trabajo():
             """Pone y quita plataformas y rehace la entrada de fuera y VeraCrypt."""
-            nuevos, borrados = deploy.apply_platforms(raiz, plan, precompilar=False)
+            nuevos, borrados = deploy.apply_platforms(raiz, plan, con_pyc=False)
             lanzadores = deploy.write_launchers(raiz, plan.completa)
             # La entrada de fuera, por lo mismo que los lanzadores: un
             # dispositivo VeraCrypt de antes no la tiene, y este es el camino

@@ -11,6 +11,7 @@ después de cerrar la ventana de salida de una sincronización.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import gc
 import hashlib
 import sys
 import threading
@@ -931,6 +932,10 @@ tk.Toplevel.deiconify = lambda self: None               # nada se enseña en un 
 recibido: list = []
 try:
     antes = set(raiz.winfo_children())
+    # Antes recoge la basura en este hilo: una `tkinter.Variable` de una ventana
+    # anterior que el recolector suelte desde el hilo de la salida llamaría a Tk
+    # desde allí, y sin `mainloop()` `_tkinter` espera 1 s antes de rendirse.
+    gc.collect()
     vuelta = SALIDA_REAL(
         "Prueba", [sys.executable, "-c", "print('hola')"], parent=raiz,
         modal=False, al_cerrar=recibido.append)

@@ -481,7 +481,7 @@ class VistaPrincipal:
             # estado del dispositivo sino algo que acaba de pasar.
             caja = bloque_aviso(self.marco, e.aviso, ancho=400,
                                 boton=("Descartar", self._acciones.descartar))
-            caja.texto, caja.boton = e.aviso, caja.acciones.winfo_children()[0]
+            caja.texto = e.aviso
             self._nuevo_bloque("aviso", caja)
         self._colocar(caja, "aviso", sticky="ew", pady=(theme.E4, 0))
         return True
@@ -529,7 +529,7 @@ class VistaPrincipal:
         if caja is None or caja.texto != e.version:
             caja = bloque_aviso(self.marco, e.version, ancho=420, icono="down", tono="Azul.",
                                 boton=("Actualizar…", self._acciones.actualizar))
-            caja.texto, caja.boton = e.version, caja.acciones.winfo_children()[0]
+            caja.texto = e.version
             self._nuevo_bloque("version", caja)
         self._colocar(caja, "version", sticky="ew", pady=(theme.E4, 0))
         return True
@@ -552,8 +552,6 @@ class VistaPrincipal:
                 boton=(("Actualizar…", self._acciones.componentes)
                        if e.componentes_boton else None))
             caja.dato = dato
-            botones = caja.acciones.winfo_children()
-            caja.boton = botones[0] if botones else None
             self._nuevo_bloque("componentes", caja)
         self._colocar(caja, "componentes", sticky="ew", pady=(theme.E4, 0))
         return True
@@ -678,8 +676,8 @@ class VistaPrincipal:
         Es de cada día, así que va aquí y no detrás del engranaje. Su botón se
         apaga o se enciende con los demás (`_poner_activos`).
         """
-        dato = None if e.llavero is None else e.llavero[:3]
-        if antes is not None and (None if antes.llavero is None else antes.llavero[:3]) == dato:
+        dato = None if e.llavero is None else e.llavero.dibujo
+        if antes is not None and (None if antes.llavero is None else antes.llavero.dibujo) == dato:
             return False
         if dato is None:
             return self._esconder("llavero")
@@ -711,7 +709,7 @@ class VistaPrincipal:
                 self._esconder("arranque")
             else:
                 linea = self._bloques.get("arranque")
-                dato = e.arranque[:3]
+                dato = e.arranque.dibujo
                 if linea is None or linea.dato != dato:
                     texto, aviso, boton = dato
                     linea = theme.linea_estado(self.marco, "arranque", texto, boton,

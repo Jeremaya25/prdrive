@@ -12,15 +12,14 @@ Cada pieza se prueba contra lo que se vería si se dibujara de nuevo:
   (lo que asoma por sus esquinas);
 - la pantalla entera: el catálogo que llega sin cambiar nada no rehace nada, el
   bloque del catálogo se crea al verlo por primera vez, «Avanzado» se construye
-  al desplegarlo, lo que se edita a mano en `sync_config.toml` mientras la
-  pantalla está abierta no se pisa, y una pantalla vuelta a poner (`aplicar()`)
-  enseña lo que una recién abierta.
+  al desplegarlo, y lo que se edita a mano en `sync_config.toml` mientras la
+  pantalla está abierta no se pisa.
 """
 
 from __future__ import annotations
 
+import gc
 import random
-import re
 import subprocess
 import sys
 import threading
@@ -229,8 +228,8 @@ def probar_la_lista(tema: str) -> None:
     # Una fila que pasa a ámbar cambia de color, no de tamaño
     en_ambar = base[1]._replace(aviso="requiere resync")
     cambio = lista.poner([base[0]._replace(estado="broken"), en_ambar, *base[2:]], False)
-    c(p + "una fila que pasa a ámbar lo dice", (lista.filas["q1"]["sup"], lista.leer()[1][4]),
-      ("NotaAmbar.", "requiere resync"))
+    c(p + "una fila que pasa a ámbar lo dice", (lista.filas["q1"]["tono"], lista.leer()[1][4]),
+      ("aviso", "requiere resync"))
     c(p + "  y si su chip es el más ancho de la columna, la lista pide otro ancho", cambio, True)
     lista.poner(base, False)
 
@@ -551,9 +550,16 @@ def enseñada(dlg) -> None:
 def abrir(cfg, conducir, compartida=None, destruir: bool = True):
     """Abre la pantalla y, donde `mostrar()` esperaría, deja que `conducir(dlg)` la maneje.
 
+    Antes recoge la basura en este hilo: una `tkinter.Variable` de una pantalla
+    anterior que el recolector suelte desde el hilo de la lectura del catálogo
+    llama a Tk desde allí, y sin `mainloop()` `_tkinter` espera 1 s antes de
+    rendirse («main thread is not in main loop»).
+
     Returns:
         Lo que devuelve `open_dialog()`.
     """
+    gc.collect()
+
     def mostrar(dlg, parent=None, **_k):
         """Sustituye a `mostrar()`: conduce la pantalla y la cierra, si se quiere."""
         try:
@@ -876,59 +882,7 @@ def probar_la_pantalla() -> None:
         c("llega una pareja más: la ventana comprueba si ha de crecer",
           visto["una_mas"], (1, ["notas", "subida", "fotos"]))
 
-    # 3i. una pantalla vuelta a poner enseña lo de una recién abierta
-    with sandbox():
-        cfg, remoto = con_remoto(CAT_MAS)
-        remoto.soltar.set()
-        dlgs: list = []
-        tk_pairs.confirmar_plan = lambda *a, **k: True
-
-        def asentada(dlg):
-            """Espera a que acabe de llegar el catálogo y la guarda."""
-            dar_vueltas(lambda: not dlg.sondeo.esperando)
-            dlgs.append(dlg)
-
-        abrir(cfg, asentada, destruir=False)
-        usada = dlgs[0]
-        ver_catalogo(usada)
-        usada.lista.elegir("fotos")
-        pulsar(usada, "Mostrar")
-        usada.editor.campos["remote_path"].set("/R/escrito")
-        usada.editor.textos["exclude"].insert("1.0", "*.tmp")
-        usada.pantalla.cambiado = True
-        usada.pantalla.cargado = None            # lo escrito se da por guardado o descartado
-        pie = next(w for w in todos(usada) if isinstance(w, ttk.Label)
-                   and str(w.cget("text")).startswith("Antes de guardar"))
-        pie.configure(text="algo que se ha hecho")
-        antes_widgets = conjunto(usada)
-        usada.aplicar()
-        dar_vueltas(lambda: not usada.sondeo.esperando)
-        abrir(cfg, asentada, destruir=False)
-        nueva = dlgs[1]
-        c("aplicar(): la pantalla vuelve a este dispositivo y a su primera pareja",
-          (usada.pantalla.vista_puesta, usada.lista.elegida, usada.pantalla.cambiado),
-          (False, nueva.lista.elegida, False))
-        def sin_hora(vista: list) -> list:
-            """La vista sin la hora de lectura del catálogo, que es la de cada apertura."""
-            return [tuple(re.sub(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", "<hora>", x)
-                          if isinstance(x, str) else x for x in fila) for fila in vista]
-
-        distintas = [(a, b) for a, b in zip(sin_hora(leer_vista(usada)),
-                                            sin_hora(leer_vista(nueva))) if a != b]
-        c("  y enseña lo mismo que una recién abierta",
-          (distintas, len(leer_vista(usada)) == len(leer_vista(nueva)),
-           usada.lista.leer() == nueva.lista.leer()), ([], True, True))
-        c("  con «Avanzado» plegado y lo escrito fuera",
-          (usada.editor.plegado.get(), usada.editor.campos["remote_path"].get()),
-          (True, nueva.editor.campos["remote_path"].get()))
-        c("  sin crear nada que no hubiera ya, salvo chips",
-          sin_chips(usada) - antes_widgets, set())
-        usada.destroy()
-        nueva.destroy()
-        tk_pairs.confirmar_plan = lambda *a, **k: True
-        c("  nada ha reventado", errores, [])
-
-    # 3j. el Tab recorre cada vista de arriba abajo, también la del catálogo, hecha tarde
+    # 3i. el Tab recorre cada vista de arriba abajo, también la del catálogo, hecha tarde
     with sandbox():
         cfg, remoto = con_remoto(CAT_MAS)
         remoto.soltar.set()

@@ -21,6 +21,7 @@ y que queda abierto; su final lo pone `mostrar()` y lo comprueban los tests de
 «Ajustes» y de «Parejas».
 """
 
+import gc
 import sys
 import time
 from contextlib import contextmanager
@@ -156,7 +157,13 @@ def abrir(accion) -> None:
     pendiente (`start-main`, que vence al instante), se cancelan los sondeos y la lectura
     se entrega a mano, como la reparte el sondeo. Al final la ventana se destruye
     aunque la acción falle.
+
+    Antes recoge la basura en este hilo: una `tkinter.Variable` de una principal
+    anterior que el recolector suelte desde un hilo de trabajo llamaría a Tk desde
+    allí, y sin `mainloop()` `_tkinter` espera 1 s antes de rendirse.
     """
+    gc.collect()
+
     def conducir(root, n=0) -> None:
         """La sonda que sustituye al bucle de eventos."""
         try:

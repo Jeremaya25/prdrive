@@ -22,9 +22,6 @@ on:
   push:
     branches:
       - main
-      # TEMPORAL: quitar antes del PR (da la primera medida en Windows con el Tk 9 del
-      # dispositivo antes de que el dueño abra el PR; corren también los demás trabajos).
-      - claude/adoring-pascal-5j258r
     # Un push que solo toca documentos de trabajo no pasa la suite. Los tests leen
     # docs/agents/, AGENTS.md y .claude/: esas rutas no se excluyen nunca.
     paths-ignore:

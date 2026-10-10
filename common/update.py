@@ -34,9 +34,13 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Callable, NamedTuple
+from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from . import APP_NAME, model, store
+
+if TYPE_CHECKING:
+    # Solo para las anotaciones: `zipfile` se importa dentro de `download()`.
+    import zipfile
 
 REPO = "Jeremaya25/prdrive"
 """Repositorio del proyecto, de donde sale este mismo programa.

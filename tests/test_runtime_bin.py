@@ -156,21 +156,21 @@ for podado in ("Lib/site-packages", "Lib/ensurepip", "Lib/idlelib", "Lib/test",
     c(f"{podado} no viaja", (destino / podado).exists(), False)
 c("se cuenta lo escrito", escritos, 6)
 
-# Sin podar: el Python con el que se compila el instalador necesita pip.
-entero = tmpdir() / "compilar"
-escritos_enteros = runtime_bin.extract(archivo_en_disco(ARCHIVO_WIN), entero, WIN,
-                                       sha256="abc123", podar=False)
+# Entero: el Python con el que se compila el instalador necesita pip.
+destino_entero = tmpdir() / "compilar"
+escritos_enteros = runtime_bin.extract(archivo_en_disco(ARCHIVO_WIN), destino_entero, WIN,
+                                       sha256="abc123", entero=True)
 for queda in ("Lib/site-packages/pip/__init__.py", "Lib/ensurepip/__init__.py",
               "Lib/idlelib/idle.py", "include/Python.h", "libs/python313.lib"):
-    c(f"sin podar, {queda} se queda", (entero / queda).is_file(), True)
+    c(f"sin podar, {queda} se queda", (destino_entero / queda).is_file(), True)
 c("  y se escribe todo, el sello incluido", escritos_enteros, 12)
-c("  con el mismo sello", (entero / runtime_bin.STAMP).read_text(encoding="utf-8"),
+c("  con el mismo sello", (destino_entero / runtime_bin.STAMP).read_text(encoding="utf-8"),
   runtime_bin.stamp_text(WIN, "abc123"))
 try:
     runtime_bin.extract(archivo_en_disco(ARCHIVO_WIN), tmpdir() / "p", WIN, "abc123", False)
-    c("podar solo se pasa por nombre", "posicional", "TypeError")
+    c("entero solo se pasa por nombre", "posicional", "TypeError")
 except TypeError:
-    c("podar solo se pasa por nombre", "TypeError", "TypeError")
+    c("entero solo se pasa por nombre", "TypeError", "TypeError")
 
 sello = (destino / runtime_bin.STAMP).read_text(encoding="utf-8")
 c.contains("el sello dice la versión de Python", sello, pins.PYTHON_VERSION)

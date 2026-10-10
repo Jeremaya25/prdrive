@@ -5,7 +5,8 @@ Lo que se comprueba es lo que cuida los datos de la persona:
 - La sonda de escritura de una unidad (8 MiB con `fsync`) corre en otro hilo y
   UNA sola vez por unidad: ni repintar el panel, ni un hilo que acaba sin que
   nadie lo haya mirado, ni volver a la unidad la lanzan otra vez. «Crear y
-  montar» está apagado mientras escribe, hasta su tope (`TOPE_SONDA_S`).
+  montar» está apagado mientras escribe, hasta su tope (`TOPE_SONDA_S`), y una
+  sonda que acaba justo después de pintar la espera también se pinta.
 - Las carpetas de «En este equipo» se examinan cuando se deja de teclear, fuera
   del hilo de Tk, y un examen que llega para un texto que ya no está escrito no
   cuenta: ni enciende «Siguiente» ni deja crear un contenedor que se montaría
@@ -23,6 +24,7 @@ un temporal. Donde importa el orden, los `after` de las cajas se mueven a mano
 cumple la condición, con un tope de 2 s (`dar_vueltas`).
 """
 
+import gc
 import sys
 import threading
 import time
@@ -241,7 +243,14 @@ def textos(w) -> list[str]:
 
 
 def asistente(dispositivo=None):
-    """Un asistente con la conexión y el catálogo ya dados por buenos."""
+    """Un asistente con la conexión y el catálogo ya dados por buenos.
+
+    Antes recoge la basura en este hilo: una `tkinter.Variable` de un asistente
+    anterior que el recolector suelte desde un hilo de trabajo llamaría a Tk
+    desde allí, y sin `mainloop()` `_tkinter` espera 1 s antes de rendirse
+    («main thread is not in main loop»).
+    """
+    gc.collect()
     top = tk.Toplevel(raiz)
     top.withdraw()
     wiz = tk_install.build(top)
@@ -356,6 +365,33 @@ try:
     c("teclear el tamaño cinco veces no lanza otra sonda", len(medidas), 1)
     c("  y la estimación es la división del tamaño por lo medido", linea_espera(vc),
       division(vc, "500M", VELOCIDAD))
+
+    # La sonda acaba en el hueco entre pintar la espera y mirarla: el hilo de
+    # verdad (`Encargo.correr`) la termina justo después de la lectura de
+    # `texto_espera`. La línea no puede quedarse en «Midiendo…».
+    segundo_plano.lanzar = Pendientes()
+    medidas.clear()
+    texto_real = lecturas_asistente.texto_espera
+
+    def acaba_tras_pintar(estado, bytes_):
+        """Pinta la espera como siempre, y luego la sonda termina en otro hilo."""
+        texto = texto_real(estado, bytes_)
+        encargo = estado.sondas[Path(estado.device)].encargo
+        if not encargo.hecho:
+            hilo = threading.Thread(target=encargo.correr)
+            hilo.start()
+            hilo.join()
+        return texto
+
+    lecturas_asistente.texto_espera = acaba_tras_pintar
+    try:
+        justo = panel_vc(tmpdir())
+    finally:
+        lecturas_asistente.texto_espera = texto_real
+    esperado = division(justo, caja_tamano(justo).get(), VELOCIDAD)
+    dar_vueltas(lambda: linea_espera(justo) == esperado)
+    c("la sonda que acaba justo después de pintar la espera también se pinta",
+      linea_espera(justo), esperado)
 
     # Una sonda que no acaba: el contenedor va al lado de lo que escribe.
     pendientes = Pendientes()

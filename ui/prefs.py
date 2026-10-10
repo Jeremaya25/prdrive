@@ -28,9 +28,9 @@ El fichero conserva el nombre de cuando era «lo último que se eligió en la UI
 renombrarlo pediría una migración para cambiar una palabra.
 
 Aparte, en `state/ventana.json`, la ventana principal recuerda su ancho y lo
-que ocupan lo que va encima y lo que va debajo de la lista (`ancho_recordado`,
-`recordar_ancho`, `arriba_recordado`, `recordar_arriba`, `abajo_recordado`,
-`recordar_abajo`): no es cosa del servicio y no va en `ui_prefs.json`.
+que ocupan lo que va encima y lo que va debajo de la lista (`recordado()` y
+`recordar()`, por campo: `ancho`, `arriba` y `abajo`): no es cosa del servicio y
+no va en `ui_prefs.json`.
 """
 
 from __future__ import annotations
@@ -64,6 +64,11 @@ parejas, cada uno por clave (`clave_ancho()`).
 No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
 fichero y recarga su servicio con cualquier cambio (`agente.py`,
 `_cargar_servicio`), y el tamaño de una ventana no le dice nada al servicio.
+"""
+CAMPOS_VENTANA = {"ancho": 1, "arriba": 0, "abajo": 0}
+"""Los campos de `ventana.json` y el menor valor que admite cada uno.
+
+`0` es un alto válido: la última vez no había nada encima ni debajo de la lista.
 """
 
 
@@ -349,134 +354,73 @@ def clave_ancho(version_tk: str, escala: float) -> str:
     return f"{sys.platform}:{version_tk}:{escala:.3f}"
 
 
-def ancho_recordado(clave: str) -> int | None:
-    """Devuelve el ancho que pidió el contenido de la principal la última vez, o `None`.
+def recordado(campo: str, clave: str) -> int | None:
+    """Devuelve el píxel que la ventana recordó en `campo` para `clave`, o `None`.
 
-    Es el de después de llegar su lectura del dispositivo, el que la ventana
-    reserva desde el primer pintado. Nunca lanza: un fichero que falta, está a
-    medias o no dice un ancho para esa clave es `None`.
+    Los campos son los de `CAMPOS_VENTANA`:
+
+    - `"ancho"`: el ancho que pidió el contenido de la principal la última vez,
+      el de después de llegar su lectura del dispositivo. La ventana lo reserva
+      desde el primer pintado, para que la lectura no la ensanche.
+    - `"arriba"`: lo que ocuparon, apiladas, las líneas que solo conoce la lectura
+      («Reparación…», el aviso de componentes) junto a las que ya estaban en el
+      primer pintado, con su margen. La ventana lo reserva desde el primer pintado
+      para que la lista no baje al llegar la lectura. `0` es un valor: la última
+      vez no había nada encima.
+    - `"abajo"`: lo que ocuparon las filas entre la lista y el pie (la línea del
+      llavero, «Parejas…» y «Ajustes…», la del arranque automático y la frase de
+      la pausa), con su margen. La ventana lo reserva para que el pie no baje, ni
+      la ventana crezca, al llegar la lectura. `0` es un valor, igual que en
+      `"arriba"`.
+
+    Nunca lanza por el fichero: uno que falta, está a medias o no dice un píxel
+    válido para esa clave es `None`.
 
     Args:
+        campo: Uno de los de `CAMPOS_VENTANA`.
         clave: La de `clave_ancho()`.
-    """
-    return _recordado("ancho", clave, 1)
-
-
-def recordar_ancho(clave: str, ancho: int) -> bool:
-    """Guarda el ancho de la principal para esa clave, solo si ha cambiado.
-
-    Conserva los de otras claves y los altos de `recordar_arriba()` y
-    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
-    extraído, simplemente no lo recuerda.
-
-    Args:
-        clave: La de `clave_ancho()`.
-        ancho: Lo que pide el contenido de la ventana, en píxeles.
 
     Returns:
-        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+        El píxel recordado, o `None`.
+
+    Raises:
+        ValueError: Si `campo` no está en `CAMPOS_VENTANA`.
     """
-    return _recordar("ancho", clave, ancho)
-
-
-def arriba_recordado(clave: str) -> int | None:
-    """Devuelve lo que ocupó la última vez lo que va encima de la lista, o `None`.
-
-    Es lo que ocupan, apiladas, las líneas que solo conoce la lectura del
-    dispositivo («Reparación…», el aviso de componentes) junto a las que ya
-    estaban en el primer pintado, con su margen, en píxeles. La ventana lo
-    reserva desde el primer pintado para que la lista no baje al llegar la
-    lectura. `0` es un valor: la última vez no había nada encima. Nunca lanza:
-    un fichero que falta, está a medias o no dice un alto para esa clave es
-    `None`.
-
-    Args:
-        clave: La de `clave_ancho()`.
-    """
-    return _recordado("arriba", clave, 0)
-
-
-def recordar_arriba(clave: str, alto: int) -> bool:
-    """Guarda lo que ocupa lo que va encima de la lista, solo si ha cambiado.
-
-    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
-    `recordar_abajo()`. Nunca lanza: un dispositivo de solo lectura, o ya
-    extraído, simplemente no lo recuerda.
-
-    Args:
-        clave: La de `clave_ancho()`.
-        alto: Lo que ocupan esas líneas con la lectura aplicada, en píxeles; 0
-            si no hay ninguna.
-
-    Returns:
-        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
-    """
-    return _recordar("arriba", clave, alto)
-
-
-def abajo_recordado(clave: str) -> int | None:
-    """Devuelve lo que ocupó la última vez lo que va debajo de la lista, o `None`.
-
-    Es lo que ocupan, apiladas, las filas de entre la lista y el pie: la línea
-    del llavero, «Parejas…» y «Ajustes…», la del arranque automático y la frase
-    de la pausa, con su margen, en píxeles. Las del llavero, el arranque y la
-    pausa solo las conoce la lectura del dispositivo. La ventana lo reserva desde
-    el primer pintado para que el pie no baje, ni la ventana crezca, al llegar
-    la lectura. `0` es un valor, igual que en `arriba_recordado()`. Nunca lanza:
-    un fichero que falta, está a medias o no dice un alto para esa clave es
-    `None`.
-
-    Args:
-        clave: La de `clave_ancho()`.
-    """
-    return _recordado("abajo", clave, 0)
-
-
-def recordar_abajo(clave: str, alto: int) -> bool:
-    """Guarda lo que ocupa lo que va debajo de la lista, solo si ha cambiado.
-
-    Conserva los de otras claves, el ancho de `recordar_ancho()` y el alto de
-    `recordar_arriba()`. Nunca lanza: un dispositivo de solo lectura, o ya
-    extraído, simplemente no lo recuerda.
-
-    Args:
-        clave: La de `clave_ancho()`.
-        alto: Lo que ocupan esas filas con la lectura aplicada, en píxeles.
-
-    Returns:
-        True si se ha escrito o ya estaba así; False si no se ha podido escribir.
-    """
-    return _recordar("abajo", clave, alto)
-
-
-def _recordado(campo: str, clave: str, minimo: int) -> int | None:
-    """Lee de `ventana.json` el píxel recordado en `campo` para `clave`, o `None`.
-
-    Args:
-        campo: `"ancho"`, `"arriba"` o `"abajo"`.
-        clave: La de `clave_ancho()`.
-        minimo: El menor valor que vale; lo que no es un entero o es menor es
-            como si no hubiera nada.
-    """
+    if campo not in CAMPOS_VENTANA:
+        raise ValueError(f"campo de ventana.json desconocido: {campo!r}")
     valores = store.read_json(ruta_ventana()).get(campo)
     valor = valores.get(clave) if isinstance(valores, dict) else None
     # `type` y no `isinstance`: un `True` también es un `int`.
-    return valor if type(valor) is int and valor >= minimo else None
+    return valor if type(valor) is int and valor >= CAMPOS_VENTANA[campo] else None
 
 
-def _recordar(campo: str, clave: str, valor: int) -> bool:
-    """Escribe en `ventana.json` el píxel de `campo` para `clave`, solo si cambia.
+def recordar(campo: str, clave: str, px: int) -> bool:
+    """Guarda el píxel de `campo` para `clave` en `ventana.json`, solo si ha cambiado.
 
-    Conserva las demás claves de `campo` y todo lo que no sea `campo`.
+    Conserva las demás claves de `campo` y los demás campos. Nunca lanza por el
+    disco: un dispositivo de solo lectura, o ya extraído, simplemente no lo
+    recuerda.
+
+    Args:
+        campo: Uno de los de `CAMPOS_VENTANA` (ver `recordado()`).
+        clave: La de `clave_ancho()`.
+        px: Lo que pide o ocupa, en píxeles: para el ancho, lo que pide el
+            contenido de la ventana; para los altos, lo que ocupan con la lectura
+            aplicada, 0 si no hay ninguna línea.
 
     Returns:
         True si se ha escrito o ya estaba así; False si no se ha podido escribir.
+
+    Raises:
+        ValueError: Si `campo` no está en `CAMPOS_VENTANA`.
     """
+    if campo not in CAMPOS_VENTANA:
+        raise ValueError(f"campo de ventana.json desconocido: {campo!r}")
     ruta = ruta_ventana()
     datos = store.read_json(ruta)
     valores = datos.get(campo)
     valores = dict(valores) if isinstance(valores, dict) else {}
-    if type(valores.get(clave)) is int and valores[clave] == valor:
+    if type(valores.get(clave)) is int and valores[clave] == px:
         return True  # ya estaba así: no se gasta escritura en el dispositivo
-    valores[clave] = valor
+    valores[clave] = px
     return store.write_json(ruta, {**datos, campo: valores})

@@ -2029,7 +2029,9 @@ def aviso(parent, titulo: str, cuerpo: str = "", tono: str = "Ambar.",
     Returns:
         El marco del aviso. Su columna 1 se estira, y quien quiera añadirle
         botones los pone en la fila 2 de esa columna (`marco.acciones`, un
-        marco ya colocado, vacío hasta entonces).
+        marco ya colocado, vacío hasta entonces). `marco.titulo` y
+        `marco.cuerpo` son sus etiquetas de texto, o `None` cuando no se crean;
+        `marco.superficie` es la superficie de su tono (`'NotaAmbar.'`…).
     """
     from tkinter import ttk
 
@@ -2052,16 +2054,18 @@ def aviso(parent, titulo: str, cuerpo: str = "", tono: str = "Ambar.",
     # Un título solo se centra con la baldosa: lo que le sobra a su línea
     # hasta los 32 de la baldosa, la mitad arriba.
     centrado = relleno_control(marco, 32, "fuerte")[1]
+    marco.titulo = marco.cuerpo = None
     if titulo:
-        ttk.Label(marco, text=titulo, style=f"{sup}Fuerte.TLabel",
-                  wraplength=medida(ancho), justify="left").grid(
-            row=0, column=1, sticky="w", pady=(centrado if not cuerpo else 0, 0))
+        marco.titulo = ttk.Label(marco, text=titulo, style=f"{sup}Fuerte.TLabel",
+                                 wraplength=medida(ancho), justify="left")
+        marco.titulo.grid(row=0, column=1, sticky="w",
+                          pady=(centrado if not cuerpo else 0, 0))
     if cuerpo:
-        ttk.Label(marco, text=cuerpo,
-                  style=f"{sup}{'Campo.' if titulo else ''}TLabel",
-                  wraplength=medida(ancho), justify="left").grid(
-            row=1 if titulo else 0, column=1, sticky="w",
-            pady=(E1, 0) if titulo else 0)
+        marco.cuerpo = ttk.Label(marco, text=cuerpo,
+                                 style=f"{sup}{'Campo.' if titulo else ''}TLabel",
+                                 wraplength=medida(ancho), justify="left")
+        marco.cuerpo.grid(row=1 if titulo else 0, column=1, sticky="w",
+                          pady=(E1, 0) if titulo else 0)
     marco.acciones = ttk.Frame(marco, style=f"Plano.{sup}TFrame")
     marco.acciones.grid(row=2, column=1, sticky="w")
     marco.superficie = sup

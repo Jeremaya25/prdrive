@@ -665,7 +665,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             if xvfb:
-                pantallas = arrancar_pantallas(trabajadores)
+                try:
+                    pantallas = arrancar_pantallas(trabajadores)
+                except RuntimeError as e:
+                    _escribir(f"No se pudo arrancar Xvfb: {e}")
+                    return 1
             # Cada trabajador con su servidor X (None sin Xvfb) y su DISPLAY.
             pares: list[tuple[subprocess.Popen | None, str | None]] = (
                 list(pantallas) or [(None, None)] * trabajadores)
@@ -681,8 +685,9 @@ def main(argv: list[str] | None = None) -> int:
 
                 Un fallo de la suite al correr un test lo deja como FALLA de ese test
                 (`ejecutar_protegido()`), y el hilo sigue con la cola. Si el Xvfb del
-                trabajador murió durante un test, ese test falla y el trabajador deja la
-                cola: el resto de tests quedan sin resultado.
+                trabajador murió durante un test, ese test falla y el trabajador se para;
+                los demás siguen tomando la cola, y lo que nadie llega a correr queda sin
+                resultado.
                 """
                 while True:
                     nombre = reparto.tomar()
@@ -735,9 +740,6 @@ def main(argv: list[str] | None = None) -> int:
                     break
                 except KeyboardInterrupt:
                     pass
-    except RuntimeError as e:
-        _escribir(f"No se pudo arrancar Xvfb: {e}")
-        return 1
     finally:
         _restaurar_senales(anteriores)
         parar_pantallas(pantallas)

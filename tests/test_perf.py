@@ -203,12 +203,12 @@ with sandbox() as raiz_prueba:
     c("el hilo vuelca cada segundo: la marca llega al diario sin salir del proceso",
       ("escrito" in r.stdout, len(_perf.lineas(tmp / "hilo", "hilo"))), (True, 1))
 
-    # 10. El inicio del proceso (Linux): más que lo que lleva la propia prueba.
-    if sys.platform.startswith("linux"):
+    # 10. El inicio del proceso (Linux y Windows): más que lo que lleva la propia prueba.
+    if os.name == "nt" or sys.platform.startswith("linux"):
         antes = time.perf_counter()
         time.sleep(0.05)
         desde = ui.perf_desde_inicio()
-        c("perf_desde_inicio (Linux): un número mayor que el tiempo que lleva esta prueba",
+        c("perf_desde_inicio (Linux y Windows): un número mayor que el tiempo que lleva esta prueba",
           desde is not None and desde > (time.perf_counter() - antes) * 1000, True)
     else:
         print("  (saltado) perf_desde_inicio: solo se mide en Linux y en Windows")

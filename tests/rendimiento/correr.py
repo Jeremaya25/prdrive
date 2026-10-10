@@ -195,6 +195,19 @@ class Medidor:
         return env, base
 
     def entorno(self, extra: dict | None = None, perfil: bool = False) -> tuple[dict, Path]:
+        """Arma el entorno de un hijo, con su equipo falso.
+
+        Quita del entorno del proceso las `PYTHON*`, `BENCH_*`, `PRDRIVE_*` y las de
+        tema y de Tk; después añade el equipo falso, `PYTHONIOENCODING`, el tema claro,
+        `extra` y, con `perfil`, `BENCH_PERFIL=1`.
+
+        Args:
+            extra: Variables que se añaden al final y pisan a las anteriores.
+            perfil: Si se da, el hijo va perfilado (solo el calentamiento).
+
+        Returns:
+            El entorno y la carpeta `base` del equipo falso; quien llama la borra al acabar.
+        """
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith(("PYTHON", "BENCH_", "PRDRIVE_"))
                and k.upper() not in ("GTK_THEME", "TCL_LIBRARY", "TK_LIBRARY", "TCLLIBPATH")}
@@ -250,6 +263,11 @@ class Medidor:
 
     # -- preparación (fuera de todo cronómetro) --------------------------------------
     def compilar(self, ruta: Path) -> None:
+        """Compila a `.pyc` un árbol con el Python del runtime, fuera de todo cronómetro.
+
+        Sin `check`: un código de salida distinto de 0 no para la medición; sí lo hace
+        que `compileall` pase de 180 s (`subprocess.TimeoutExpired`).
+        """
         subprocess.run([self.py, "-W", "ignore", "-m", "compileall", "-q", str(ruta)],
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, timeout=180)
@@ -382,6 +400,13 @@ class Medidor:
                 log(f"no se pudo guardar {nombre}: {e}")
 
     def suelo(self) -> list[dict]:
+        """Mide el suelo (`start-bare`, `suelo.py`): una ventana Tk desnuda, sin prdrive.
+
+        Se hace al acabar cada vuelta.
+
+        Returns:
+            Las líneas de `start-bare`, con `arbol="suelo"`; lista vacía si no hay ninguna.
+        """
         env, base = self.entorno(dict(self.env_extra, BENCH_FLOW="suelo"))
         try:
             r = self.hijo([self.py, str(self.staging / "entrada.py"), "suelo"], env, self.staging)
@@ -403,6 +428,13 @@ class Medidor:
 
 
 def main() -> int:
+    """Mide `--pr` contra `--base`, escribe el resumen y devuelve el código de salida.
+
+    Returns:
+        0 si el PR cumple el presupuesto; 1 si no lo cumple; 2 si no hay nada que
+        medir (sin Python, un `--env` mal escrito o ningún árbol con su dispositivo
+        de muestra).
+    """
     for f in (sys.stdout, sys.stderr):        # un carácter que la consola no sepa no debe tirar la ejecución
         try:
             f.reconfigure(errors="backslashreplace")

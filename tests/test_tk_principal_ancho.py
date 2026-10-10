@@ -362,7 +362,7 @@ with sandbox():
 
 # 3. un ancho recordado mayor que el de ahora: acaba en el de ahora, y se reescribe
 with sandbox():
-    prefs.recordar_ancho(primera["clave"], primera["natural"] + 120)
+    prefs.recordar("ancho", primera["clave"], primera["natural"] + 120)
     ancha = abrir()
     c("un ancho recordado mayor se reserva en el primer pintado",
       ancha["ancho_antes"], primera["ancho_despues"] + 120)
@@ -375,7 +375,7 @@ with sandbox():
 
 # 3b. y uno menor: crece una vez hasta el suyo
 with sandbox():
-    prefs.recordar_ancho(primera["clave"], primera["natural"] - 60)
+    prefs.recordar("ancho", primera["clave"], primera["natural"] - 60)
     estrecha = abrir()
     c("un ancho recordado menor: al llegar crece hasta el suyo",
       (estrecha["ancho_antes"] < primera["ancho_despues"], estrecha["ancho_despues"]),
@@ -388,7 +388,7 @@ with sandbox():
 
 # 4. el de otra clave (otra escala, otro sistema) no se usa ni se pierde
 with sandbox():
-    prefs.recordar_ancho("otro:9.9:2.000", primera["natural"] + 300)
+    prefs.recordar("ancho", "otro:9.9:2.000", primera["natural"] + 300)
     otra = abrir()
     c("el ancho de otra clave no se reserva", otra["ancho_antes"], primera["ancho_antes"])
     c("  y al apuntar el suyo se conserva",
@@ -417,7 +417,7 @@ with sandbox():
 # 5b. una lectura que falla entera no se recuerda: sin nada leído la ventana es más
 # estrecha que la de siempre, y la vez siguiente se ensancharía al llegar
 with sandbox():
-    prefs.recordar_ancho(primera["clave"], primera["natural"])
+    prefs.recordar("ancho", primera["clave"], primera["natural"])
     real_leer = instantanea.leer
 
     def leer_roto(config, **_k):
@@ -462,8 +462,8 @@ with sandbox():
         visto["escrituras"] = ESCRITAS["n"] - antes
         visto["geometria"] = geometria(root)
 
-    prefs.recordar_ancho(primera["clave"], primera["natural"])
-    prefs.recordar_abajo(primera["clave"], ABAJO)    # (que este caso trate solo del ancho)
+    prefs.recordar("ancho", primera["clave"], primera["natural"])
+    prefs.recordar("abajo", primera["clave"], ABAJO)    # (que este caso trate solo del ancho)
     ABRIR["despues"] = releer_sin_expulsar
     tras = abrir()
     c("con el ancho recordado, la primera lectura no lo cambia ni lo escribe",
@@ -555,7 +555,7 @@ with sandbox():
 
 # La franja recordada y la lectura no trae nada encima: se suelta, y se recuerda 0
 with sandbox():
-    prefs.recordar_arriba(clave, alto)
+    prefs.recordar("arriba", clave, alto)
     vacia = abrir()
     c("un alto recordado y una lectura sin nada encima: se reserva en el primer pintado",
       (vacia["arriba_antes"], vacia["linea"]), (alto, False))
@@ -565,33 +565,33 @@ with sandbox():
     c("  con un solo movimiento: sube lo que se había reservado",
       vacia["abajo_antes"]["rotulo"] - vacia["abajo_despues"]["rotulo"], alto)
     c("  y lo recordado pasa a 0, que también es un valor",
-      (prefs.arriba_recordado(clave), ancho_guardado()["arriba"]), (0, {clave: 0}))
+      (prefs.recordado("arriba", clave), ancho_guardado()["arriba"]), (0, {clave: 0}))
 
 # Un alto recordado menor que el de ahora: baja la diferencia, una vez, y lo reescribe
 with sandbox():
-    prefs.recordar_arriba(clave, 20)
+    prefs.recordar("arriba", clave, 20)
     with revisando(3):
         corto = abrir()
     c("un alto recordado menor: se reserva lo que había", corto["arriba_antes"], 20)
     c("  al llegar la lista baja la diferencia y queda donde estaría sin nada recordado",
       (corto["abajo_despues"]["rotulo"] - corto["abajo_antes"]["rotulo"],
        movidos(corto["abajo_despues"], nueva["abajo_despues"])), (alto - 20, []))
-    c("  y se reescribe", prefs.arriba_recordado(clave), alto)
+    c("  y se reescribe", prefs.recordado("arriba", clave), alto)
 
 # Uno mayor: sube la diferencia
 with sandbox():
-    prefs.recordar_arriba(clave, alto + 30)
+    prefs.recordar("arriba", clave, alto + 30)
     with revisando(3):
         largo = abrir()
     c("un alto recordado mayor: se reserva lo que había", largo["arriba_antes"], alto + 30)
     c("  al llegar la lista sube la diferencia y queda donde estaría sin nada recordado",
       (largo["abajo_antes"]["rotulo"] - largo["abajo_despues"]["rotulo"],
        movidos(largo["abajo_despues"], nueva["abajo_despues"])), (30, []))
-    c("  y se reescribe", prefs.arriba_recordado(clave), alto)
+    c("  y se reescribe", prefs.recordado("arriba", clave), alto)
 
 # El de otra clave no se usa ni se pierde
 with sandbox():
-    prefs.recordar_arriba("otro:9.9:2.000", alto + 300)
+    prefs.recordar("arriba", "otro:9.9:2.000", alto + 300)
     with revisando(3):
         otra_clave = abrir()
     c("el alto de otra clave no se reserva", otra_clave["arriba_antes"], 0)
@@ -623,8 +623,8 @@ with sandbox():
 # Una lectura que falla entera suelta la reserva, pero no se recuerda: sin nada leído no hay
 # línea, y la vez siguiente la lista bajaría al llegar
 with sandbox():
-    prefs.recordar_ancho(clave, nueva["natural"])
-    prefs.recordar_arriba(clave, alto)
+    prefs.recordar("ancho", clave, nueva["natural"])
+    prefs.recordar("arriba", clave, alto)
     real_leer = instantanea.leer
     instantanea.leer = leer_roto
     try:
@@ -652,9 +652,9 @@ with sandbox():
                      abajo=abajo(root), guardado=ancho_guardado(),
                      escrituras=ESCRITAS["n"] - antes, lista=root.instantanea_lista)
 
-    prefs.recordar_ancho(clave, nueva["natural"])
-    prefs.recordar_arriba(clave, alto)
-    prefs.recordar_abajo(clave, ABAJO)               # (que este caso trate solo de lo de arriba)
+    prefs.recordar("ancho", clave, nueva["natural"])
+    prefs.recordar("arriba", clave, alto)
+    prefs.recordar("abajo", clave, ABAJO)               # (que este caso trate solo de lo de arriba)
     ABRIR["despues"] = releer_sin_revisar
     with revisando(3):
         despues = abrir()
@@ -742,7 +742,7 @@ with sandbox():
 
 # Un alto recordado menor que el de ahora: el pie baja la diferencia, una vez, y se reescribe
 with sandbox():
-    prefs.recordar_abajo(clave, bajo - 20)
+    prefs.recordar("abajo", clave, bajo - 20)
     corta = abrir()
     c("un alto de abajo recordado menor: se reserva lo que había", corta["banda_abajo_antes"],
       bajo - 20)
@@ -750,11 +750,11 @@ with sandbox():
       (corta["debajo_despues"]["pie"] - corta["debajo_antes"]["pie"],
        corta["alto_despues"] - corta["alto_antes"],
        movidos(corta["debajo_despues"], inicial["debajo_despues"])), (20, 20, []))
-    c("  y se reescribe", prefs.abajo_recordado(clave), bajo)
+    c("  y se reescribe", prefs.recordado("abajo", clave), bajo)
 
 # Uno mayor: el pie sube la diferencia
 with sandbox():
-    prefs.recordar_abajo(clave, bajo + 30)
+    prefs.recordar("abajo", clave, bajo + 30)
     larga = abrir()
     c("un alto de abajo recordado mayor: se reserva lo que había", larga["banda_abajo_antes"],
       bajo + 30)
@@ -762,11 +762,11 @@ with sandbox():
       (larga["debajo_antes"]["pie"] - larga["debajo_despues"]["pie"],
        larga["alto_antes"] - larga["alto_despues"],
        movidos(larga["debajo_despues"], inicial["debajo_despues"])), (30, 30, []))
-    c("  y se reescribe", prefs.abajo_recordado(clave), bajo)
+    c("  y se reescribe", prefs.recordado("abajo", clave), bajo)
 
 # El de otra clave no se usa ni se pierde
 with sandbox():
-    prefs.recordar_abajo("otro:9.9:2.000", bajo + 300)
+    prefs.recordar("abajo", "otro:9.9:2.000", bajo + 300)
     otra_clave_abajo = abrir()
     c("el alto de abajo de otra clave no se reserva",
       otra_clave_abajo["banda_abajo_antes"], solo_pantallas)
@@ -777,8 +777,8 @@ with sandbox():
 # tiene): se suelta la reserva, se coloca una vez y se recuerda lo que hay, que sigue siendo
 # «Parejas…» y «Ajustes…»
 with sandbox():
-    prefs.recordar_ancho(clave, inicial["natural"])
-    prefs.recordar_abajo(clave, bajo)
+    prefs.recordar("ancho", clave, inicial["natural"])
+    prefs.recordar("abajo", clave, bajo)
     with leyendo(vigilante=watch.Resumen("no_disponible")):
         sin_linea = abrir()
     c("un alto de abajo recordado y una lectura sin línea del arranque: se reserva en el "
@@ -796,8 +796,8 @@ with sandbox():
 # Una lectura que falla entera suelta la reserva, pero no se recuerda: sin nada leído no hay
 # línea, y la vez siguiente el pie bajaría al llegar
 with sandbox():
-    prefs.recordar_ancho(clave, inicial["natural"])
-    prefs.recordar_abajo(clave, bajo)
+    prefs.recordar("ancho", clave, inicial["natural"])
+    prefs.recordar("abajo", clave, bajo)
     real_leer = instantanea.leer
     instantanea.leer = leer_roto
     try:

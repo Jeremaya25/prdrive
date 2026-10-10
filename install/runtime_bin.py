@@ -108,10 +108,6 @@ def podar(plat: Plataforma) -> tuple[str, ...]:
             lib + "test/", lib + "turtledemo/", f"{lib}config-{_mm()}")
 
 
-_PREFIJOS_PODADOS = podar
-"""`podar()` con otro nombre, para `extract()`, cuyo argumento `podar` lo tapa."""
-
-
 def _podado(rel: str, prefijos: tuple[str, ...], plat: Plataforma) -> bool:
     """Indica si ese miembro se poda."""
     if any(rel.startswith(p) or rel == p.rstrip("/") for p in prefijos):
@@ -570,16 +566,16 @@ def _relativo(nombre: str) -> str | None:
 
 
 def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str, *,
-            podar: bool = True) -> int:
+            entero: bool = False) -> int:
     """Extrae el runtime en `destino` y le pone el sello.
 
     Son dos pasadas: la primera valida y decide sin tocar el disco; la segunda
     escribe. Así un archivo con un solo miembro malo no deja nada a medias.
 
     Args:
-        podar: Si se deja fuera lo que prdrive no usa (`podar()`). Solo el
-            Python con el que se compila el instalador va entero
-            (`tests/_runtime_ci.py compilador`): necesita pip.
+        entero: Si se extrae entero, sin podar lo que prdrive no usa
+            (`podar()`). Solo el Python con el que se compila el instalador va
+            entero (`tests/_runtime_ci.py compilador`): necesita pip.
 
     Returns:
         Cuántos ficheros ha escrito, el sello incluido.
@@ -588,7 +584,7 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str, *,
         InstallError: Si el archivo no es válido, algún miembro es peligroso o
             no se puede escribir.
     """
-    prefijos = _PREFIJOS_PODADOS(plat)
+    prefijos = podar(plat)
     estables = {plat.interprete, plat.interprete_consola}
     tk = tk_xft(plat)
     try:
@@ -625,7 +621,7 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str, *,
             escribir = []
             for rel, m in regulares.items():
                 salida = renombrar.get(rel, rel)
-                if podar and _podado(salida, prefijos, plat):
+                if not entero and _podado(salida, prefijos, plat):
                     continue
                 escribir.append((salida, m))
 

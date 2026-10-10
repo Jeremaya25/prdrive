@@ -185,10 +185,9 @@ class VentanaAjustes:
     que dicen los apartados se apunta en `resultados`, que es lo que devuelve
     `abrir()`.
 
-    El `Toplevel` lleva, para los tests y para quien la vuelva a enseñar, los
-    mismos objetos que esta clase: `dlg.resultados`, `dlg.panel`,
-    `dlg.paneles`, `dlg.chips`, `dlg.aplicar` y, con «Actualizaciones» al día,
-    `dlg.boton_buscar`.
+    El `Toplevel` lleva, para los tests, los mismos objetos que esta clase:
+    `dlg.resultados`, `dlg.panel`, `dlg.paneles`, `dlg.chips` y, con
+    «Actualizaciones» al día, `dlg.boton_buscar`.
 
     Args:
         parent: La ventana de la que cuelga.
@@ -299,7 +298,6 @@ class VentanaAjustes:
         self.con_nota: set = set()
         self.forma_dibujada = None
         dlg.paneles = self.paneles                     # los tests lo miran
-        dlg.aplicar = self.aplicar
 
     def abrir(self) -> dict:
         """Dibuja la barra y el apartado inicial, enseña la ventana y espera a que se cierre.
@@ -741,20 +739,10 @@ class VentanaAjustes:
             self.dibujar(clave)
         perf_al_pintar(self.dlg, momento)
 
-    def aplicar(self) -> None:
-        """Deja la ventana como al abrirla: sin búsqueda, sin apartados guardados y en el inicial."""
-        self.busqueda.set("")
-        for clave in list(self.paneles):
-            self.tirar(clave)
-        self.componentes = self.lista_de_componentes()
-        self.poner_chips()
-        antes, self.clave = self.clave, None
-        self.elegir_inicial(antes)
-
-    def elegir_inicial(self, antes: str | None = None) -> None:
+    def elegir_inicial(self) -> None:
         """Elige el apartado con que se abre, restilando solo los botones que cambian."""
         clave = self.inicial if self.inicial in self.entradas else INICIAL
-        self.marcar(antes, clave)
+        self.marcar(None, clave)
         self.clave = clave
         self.dibujar(clave)
 
@@ -765,11 +753,10 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                 marcadas=None, compartida=None) -> dict:
     """Abre «Ajustes» y devuelve lo que han dicho sus apartados.
 
-    La ventana lleva, para los tests y para quien la vuelva a enseñar:
-    `resultados`, `panel` (el `Panel` del apartado a la vista), `paneles`
-    (`{clave: (marco, Panel)}` de los apartados dibujados), `chips` (`{clave:
-    (texto, tipo, icono) o None}` de los chips de la barra) y `aplicar()`, que
-    la deja como una apertura nueva (`VentanaAjustes`).
+    La ventana lleva, para los tests: `resultados`, `panel` (el `Panel` del
+    apartado a la vista), `paneles` (`{clave: (marco, Panel)}` de los
+    apartados dibujados) y `chips` (`{clave: (texto, tipo, icono) o None}` de
+    los chips de la barra). Todo eso es `VentanaAjustes`.
 
     Args:
         config: La configuración, que se pasa a los apartados que la necesitan.

@@ -25,6 +25,7 @@ intérprete de Tk: es reversible y la cogen los widgets que se creen después.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import gc
 import struct
 import sys
 import threading
@@ -1048,6 +1049,10 @@ try:
                   len(recorrido["pide"]), 1)
                 c(f"{nombre}: ni aparece o desaparece una barra",
                   len(recorrido["barras"]), 1)
+        # Antes recoge la basura: una `tkinter.Variable` de una pantalla anterior
+        # que el recolector suelte desde el hilo de `working()` llamaría a Tk desde
+        # allí, y sin `mainloop()` `_tkinter` espera 1 s por cada una.
+        gc.collect()
         # La ventanita de `working()` con avance: no va en un `Visor` —es un
         # párrafo y una barra—, así que lo que se mide es que quepa, y que al
         # llegar la primera cifra no cambie de tamaño: su hueco está reservado

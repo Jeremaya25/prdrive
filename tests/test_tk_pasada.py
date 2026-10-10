@@ -20,6 +20,7 @@ salida de la espera) están en `test_matar_arbol.py`.
 """
 
 import functools
+import gc
 import subprocess
 import sys
 import tempfile
@@ -295,7 +296,13 @@ try:
     UNA = mkcfg(["notas"])
 
     def principal(orden, conducir) -> None:
-        """Abre la principal con esa orden como pasada y ejecuta `conducir` en su bucle."""
+        """Abre la principal con esa orden como pasada y ejecuta `conducir` en su bucle.
+
+        Antes recoge la basura en este hilo: una `tkinter.Variable` de una principal
+        anterior que el recolector suelte desde un hilo de trabajo llamaría a Tk desde
+        allí, y sin `mainloop()` `_tkinter` espera 1 s antes de rendirse.
+        """
+        gc.collect()
         uitk.orden_sync = lambda args: orden
 
         def _mainloop(self, n=0):
