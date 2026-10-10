@@ -1264,7 +1264,7 @@ c("y un clic en una fila sí la elige y toma el foco",
 dlg9.destroy()
 
 # 9d. Intro sobre la fila que ya está elegida no pregunta si se puede dejar ni la vuelve a elegir
-#     (volver a elegirla recargaría el editor y descartaría lo escrito sin preguntar)
+#     (ya lo está: quien escucha `al_elegir` no tiene nada nuevo que hacer)
 preguntas9d: list = []
 llamadas9d: list = []
 
@@ -1286,6 +1286,51 @@ t9d.marco.event_generate("<Return>")
 dlg9.update()
 c("Intro sobre la fila ya elegida no pregunta ni vuelve a llamar a al_elegir",
   (preguntas9d, llamadas9d, t9d.elegida), ([], [], "larga"))
+dlg9.destroy()
+
+# 9d2. Abrir una fila: el doble clic sobre ella, o Intro con ella elegida, llaman a `al_activar`
+#      («Parejas» abre así la ventana de la pareja). Elegir sigue siendo cosa del primer clic.
+elegidas9a: list = []
+abiertas9a: list = []
+
+
+def doble_clic(lienzo, donde: dict) -> None:
+    """Dos pulsaciones seguidas en el mismo punto: Tk casa la segunda con `<Double-Button-1>`."""
+    lienzo.event_generate("<Button-1>", **donde)
+    lienzo.event_generate("<ButtonRelease-1>", **donde)
+    lienzo.event_generate("<Button-1>", **donde)
+    lienzo.event_generate("<ButtonRelease-1>", **donde)
+
+
+dlg9, marco9 = ventana(raiz)
+t9a = tabla_en(marco9, al_elegir=lambda: elegidas9a.append(t9a.elegida),
+               al_activar=lambda: abiertas9a.append(t9a.elegida))
+t9a.poner(FILAS)
+enseñar(raiz, dlg9)
+cv9a = t9a.marco
+doble_clic(cv9a, punto(t9a, "copias"))
+dlg9.update()
+c("un doble clic en una fila la elige una vez y la abre una vez",
+  (t9a.elegida, elegidas9a, abiertas9a), ("copias", ["copias"], ["copias"]))
+doble_clic(cv9a, {"x": (t9a.caja("copias")[0] + t9a.caja("copias")[2]) // 2, "y": 3})
+dlg9.update()
+c("un doble clic en la cabecera no abre nada", abiertas9a, ["copias"])
+cv9a.focus_force()
+dlg9.update()
+cv9a.event_generate("<Return>")
+dlg9.update()
+c("Intro abre la fila elegida, sin volver a elegirla",
+  (abiertas9a, elegidas9a), (["copias", "copias"], ["copias"]))
+t9a.elegir(None, avisar=False)
+cv9a.event_generate("<Return>")
+dlg9.update()
+c("  y sin fila elegida no abre nada", len(abiertas9a), 2)
+t9a.elegir("copias", avisar=False)
+t9a.puede_dejar = lambda: False
+doble_clic(cv9a, punto(t9a, "larga"))
+dlg9.update()
+c("si no se puede dejar la fila elegida, el doble clic sobre otra no abre ninguna",
+  (t9a.elegida, len(abiertas9a)), ("copias", 2))
 dlg9.destroy()
 
 # 9e. El ratón encima de una fila sigue a la fila que hay bajo él: ni tras poner() ni tras la rueda

@@ -215,6 +215,9 @@ class TablaLienzo:
             el teclado; sin él, las filas no se eligen a mano.
         puede_dejar: Se pregunta antes de cambiar de fila; si dice que no, no se
             hace. Sin él, siempre se puede.
+        al_activar: Lo que se llama, sin argumentos, al abrir la fila elegida:
+            con un doble clic sobre ella o con Intro. Sin él, ninguna de las
+            dos cosas hace nada. Solo cuenta con `al_elegir`.
         vacio: Lo que se dice cuando no hay ninguna fila.
         superficie: La superficie sobre la que va la tabla (`''`, el papel):
             es lo que asoma por fuera de sus esquinas redondeadas.
@@ -237,6 +240,7 @@ class TablaLienzo:
             donde se dibuja todo.
         al_elegir: El del constructor; se puede cambiar.
         puede_dejar: El del constructor; se puede cambiar.
+        al_activar: El del constructor; se puede cambiar.
         filas: Por `iid`, la `FilaTabla` que se dibuja.
         orden: Los `iid`, de arriba abajo.
         elegida: El `iid` de la fila elegida, o `None`.
@@ -250,9 +254,10 @@ class TablaLienzo:
 
     def __init__(self, parent, columnas, al_elegir=None, puede_dejar=None,
                  vacio: str = "", superficie: str = "", alto_fila: int = ALTO_FILA,
-                 rejilla: bool = False, encima: bool = True) -> None:
+                 rejilla: bool = False, encima: bool = True, al_activar=None) -> None:
         import tkinter as tk
         self.al_elegir, self.puede_dejar, self._vacio = al_elegir, puede_dejar, vacio
+        self.al_activar = al_activar
         self._rejilla = rejilla
         self._columnas = [(titulo, ancho, bool(estira)) for titulo, ancho, estira in columnas]
         self.cabeceras = [titulo for titulo, _ancho, _estira in self._columnas]
@@ -301,6 +306,7 @@ class TablaLienzo:
             cv.bind("<Return>", self._intro)
             cv.bind("<KP_Enter>", self._intro)
             cv.bind("<Button-1>", self._clic)
+            cv.bind("<Double-Button-1>", self._doble_clic)
             if encima:
                 cv.bind("<Motion>", self._mover)
                 cv.bind("<Leave>", lambda _e: self._salir())
@@ -829,6 +835,16 @@ class TablaLienzo:
         self.elegir(iid)
         self._anillo()
 
+    def _doble_clic(self, evento) -> None:
+        """La segunda pulsación de un doble clic abre la fila, si es la elegida.
+
+        La primera ya la eligió (`_clic`). Si `puede_dejar` se negó, la elegida
+        sigue siendo otra y no se abre ninguna.
+        """
+        iid = self._fila_bajo(evento.x, evento.y)
+        if iid is not None and iid == self.elegida and self.al_activar is not None:
+            self.al_activar()
+
     def _mover(self, evento) -> None:
         """El ratón se mueve sobre el lienzo: se tiñe la fila que hay bajo él."""
         self._raton_y = evento.y
@@ -871,12 +887,14 @@ class TablaLienzo:
         return "break"
 
     def _intro(self, _evento=None) -> str:
-        """Intro no cambia nada: la fila elegida ya lo está.
+        """Intro abre la fila elegida (`al_activar`) y no la vuelve a elegir.
 
-        Volver a llamar a `al_elegir` no vale: en «Parejas» recarga el editor y
-        descartaría lo escrito sin preguntar. Por eso tampoco pregunta
-        `puede_dejar`. Solo impide que el evento llegue a la ventana.
+        La fila elegida ya lo está: no se llama otra vez a `al_elegir` ni se
+        pregunta `puede_dejar`. Sin `al_activar`, o sin fila elegida, solo
+        impide que el evento llegue a la ventana.
         """
+        if self.al_activar is not None and self.elegida is not None:
+            self.al_activar()
         return "break"
 
     def _foco(self, tiene: bool) -> None:
