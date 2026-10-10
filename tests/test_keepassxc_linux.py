@@ -195,7 +195,42 @@ if os.name != "nt":
     while time.monotonic() < limite and store.pid_alive(hijo.pid):
         time.sleep(0.05)
     c("un hijo que ya ha salido, sin recoger, no está vivo", store.pid_alive(hijo.pid), False)
+
+    # Ni uno al que recogen entre las dos miradas de pid_alive(): la señal 0 aún
+    # lo encuentra y su /proc ya no está. A un huérfano lo recoge init cuando
+    # quiere, no quien pregunta por él.
+    kill_real = os.kill
+
+    def kill_y_recoger(pid: int, sig: int) -> None:
+        """Manda la señal de verdad y, detrás de la primera, recoge al hijo."""
+        kill_real(pid, sig)
+        if hijo.returncode is None:
+            hijo.wait()
+
+    os.kill = kill_y_recoger
+    try:
+        recogido = store.pid_alive(hijo.pid)
+    finally:
+        os.kill = kill_real
+    c("  ni uno al que recogen mientras se pregunta por él", recogido, False)
     hijo.wait()
+
+    # Mientras lo recogen, su estado es `X` (EXIT_DEAD) y la señal 0 lo sigue
+    # encontrando. Se lee de un /proc de mentira: ese instante no se puede provocar.
+    yo = os.getpid()
+    proc_falso = tmpdir()
+    (proc_falso / str(yo)).mkdir()
+    path_real = store.Path
+    store.Path = lambda raiz: proc_falso if raiz == "/proc" else path_real(raiz)
+    try:
+        vistos = []
+        for estado in ("X", "S"):
+            (proc_falso / str(yo) / "stat").write_text(f"{yo} (python3) {estado} 1 {yo}",
+                                                       encoding="ascii")
+            vistos.append(store.pid_alive(yo))
+    finally:
+        store.Path = path_real
+    c("  ni uno en estado X; uno dormido (S), sí", vistos, [False, True])
     c("  y uno vivo, sí", store.pid_alive(os.getpid()), True)
 else:
     print("  (saltado) los zombis son de POSIX: Windows mira el código de salida")
