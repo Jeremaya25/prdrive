@@ -59,13 +59,76 @@ def desde_sello(texto: str) -> float | None:
         return None
 
 
+IS_WIN = os.name == "nt"
+"""Si esto es Windows, para `insistir()`: los tests lo fuerzan en cualquier sistema."""
+ESPERA_OCUPADO = 0.5
+"""Segundos que `insistir()` espera, en Windows, a que otro suelte un fichero.
+
+Lo tiene quien lo está leyendo o quien lo está sustituyendo, y lo suelta
+enseguida. Medido en Windows 11 (NTFS, antivirus activo) con doce parejas de
+procesos a la vez: un milisegundo de mediana, 25 ms como mucho leyendo cada
+0,1 s, y 105 ms en el peor caso visto leyendo y escribiendo sin parar.
+"""
+PASO_OCUPADO = 0.005    # segundos entre un intento y el siguiente
+
+
+def insistir(hacer, ruta: Path):
+    """Llama a `hacer()`, que abre o sustituye `ruta`, insistiendo en Windows si está ocupada.
+
+    En Windows un fichero que otro proceso tiene abierto no se deja sustituir
+    (`os.replace()` falla con WinError 5: `open()` no comparte el permiso de
+    borrado), y mientras se sustituye no se deja abrir (WinError 32). Las dos
+    cosas llegan como `PermissionError` y duran lo que el otro tarda en
+    cerrarlo, así que se vuelve a intentar cada `PASO_OCUPADO` hasta
+    `ESPERA_OCUPADO`. Sin esto, quien escribe pierde la escritura y quien lee
+    entiende que no hay nada escrito.
+
+    Solo se espera a un fichero normal que sigue ahí. Una carpeta en su sitio,
+    o un dispositivo que ya no está (WinError 21, que también llega como
+    `PermissionError`), no se van a dejar por esperar. Fuera de Windows no se
+    insiste: allí un fichero abierto por otro se sustituye y se abre, y un
+    `PermissionError` es de permisos.
+
+    Args:
+        hacer: La operación, sin argumentos.
+        ruta: El fichero que `hacer` abre, o el destino que sustituye.
+
+    Returns:
+        Lo que devuelva `hacer()`.
+
+    Raises:
+        PermissionError: Si pasado `ESPERA_OCUPADO` sigue sin dejarse, o a la
+            primera si no es un fichero ocupado.
+        OSError: Cualquier otro fallo de `hacer()`, a la primera.
+    """
+    import time
+    limite = None
+    while True:
+        try:
+            return hacer()
+        except PermissionError:
+            if not IS_WIN:
+                raise
+            ahora = time.monotonic()
+            if limite is None:
+                limite = ahora + ESPERA_OCUPADO
+            try:
+                normal = stat.S_ISREG(os.stat(ruta).st_mode)
+            except OSError:
+                normal = False
+            if not normal or ahora >= limite:
+                raise
+            time.sleep(PASO_OCUPADO)
+
+
 def read_json(path: Path) -> dict:
     """Lee un JSON que es un objeto.
 
-    Si falta, está a medias o no lo es, devuelve `{}`.
+    Si falta, está a medias o no lo es, devuelve `{}`. A uno que en Windows
+    está ocupado se le espera (`insistir()`).
     """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(insistir(lambda: path.read_text(encoding="utf-8"), path))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -76,7 +139,8 @@ def write_json(path: Path, data: dict) -> bool:
 
     Returns:
         True si se ha escrito; False si el dispositivo es de solo lectura o ya
-        se extrajo.
+        se extrajo, o si en Windows otro proceso tiene abierto el fichero más
+        de lo que se le espera (`insistir()`).
     """
     return write_text(path, json.dumps(data, ensure_ascii=False, indent=1))
 
@@ -90,10 +154,12 @@ def write_text(path: Path, text: str) -> bool:
 
     Atómico quiere decir que el fichero nunca queda a medias ni vacío. En
     Windows no quiere decir más: mientras dura `os.replace()`, quien mire el
-    destino puede no encontrarlo o no poder abrirlo, y si alguien lo tiene
-    abierto en ese instante el reemplazo falla (WinError 5) y se devuelve
-    False. Quien lee y escribe un mismo fichero desde varios hilos los turna
-    con un cerrojo, como `common/catalog.py` con su copia local.
+    destino puede no encontrarlo o no poder abrirlo, y quien lo tenga abierto
+    en ese instante hace fallar el reemplazo (WinError 5). A un fichero así de
+    ocupado se le espera (`insistir()`, aquí y en `read_json()`), y solo si no
+    lo sueltan a tiempo se devuelve False; el instante en que el destino no
+    está no se espera. Quien lee y escribe un mismo fichero desde varios hilos
+    los turna con un cerrojo, como `common/catalog.py` con su copia local.
     """
     try:
         tmp = path.with_suffix(".tmp")
@@ -110,7 +176,7 @@ def write_text(path: Path, text: str) -> bool:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp, path)
+        insistir(lambda: os.replace(tmp, path), path)
         return True
     except OSError:
         return False

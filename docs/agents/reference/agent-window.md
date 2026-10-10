@@ -3,7 +3,7 @@
 Files: `ui/watch.py`, `ui/tk_watch.py`, `ui/cifrado.py`, `runsync.py`, `common/equipo.py`, `agente.py`, `install/agente.py`.
 Formerly AGENTS.md «The window ↔ the agent (phase 5)». Core of the agent: `agent.md`; the tray: `tray.md`.
 
-No ports: two mailboxes of JSON lines, appended by whoever asks and consumed by the agent renaming them first (`equipo.pedir(…, buzon_de=)`/`equipo.recoger(buzon_de=)`).
+No ports: two mailboxes of JSON lines, appended by whoever asks and consumed by the agent renaming them first (`equipo.pedir(…, buzon_de=)`/`equipo.recoger(buzon_de=)`). What a request and the agent's rename do to each other when they land in the same instant, measured per system: `service.md`, «A state file another process has open (Windows)».
 
 - **`state/servicio.pide`** (`equipo.BUZON_SERVICIO`) is the ROOT's. The agent drains it only for connected roots **in its list** (`_buzones_de_raices()`; an unlisted drive's is not even read), takes the id from WHERE the file is, never from the request, and accepts only `equipo.PIDE_SERVICIO` (`pausar_raiz`, `reanudar`, `pasada`, `bloquear`); anything else is logged and ignored. The window's «Bloquear» goes through it (`cifrado.pedir_bloqueo()`); the agent still takes `bloquear` from `agente.pide` too (the CLI, the tray).
 - **With the agent as this root's service, the footer offers «Pausar»/«Reanudar», not «Iniciar servicio»** (#64). `watch.boton_servicio(res)` is the one pure rule:

@@ -517,7 +517,8 @@ proceso, así que basta un cerrojo. Sin él:
 - En Windows, `os.replace()` (`store.write_text()`) no es atómico para quien
   mira: mientras dura, el destino no existe o no se deja abrir, así que
   `cached()` contestaría que no hay copia; y quien tenga abierto el destino en
-  ese instante lo hace fallar (WinError 5), con lo que esa escritura se pierde.
+  ese instante lo hace fallar (WinError 5) hasta que lo cierre, que es lo que
+  `store.insistir()` espera, con un plazo.
   Medido en Windows 11 (NTFS, Python 3.14.8) con el equipo cargado: en un
   reemplazo que tardó 20 ms, el destino faltó de la carpeta 1,4 ms.
 """
