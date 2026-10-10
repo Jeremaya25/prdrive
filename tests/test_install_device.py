@@ -474,12 +474,25 @@ if os.name == "posix":
     tardo = time.monotonic() - inicio
     c("un «Python» con un nieto colgado vuelve al pasar el tope (124)",
       (colgado.returncode, tardo < 10), (device.CODIGO_TIEMPO, True))
-    nieto = int(pid_nieto.read_text(encoding="utf-8").strip()) if pid_nieto.is_file() else 0
+    try:
+        apuntado = pid_nieto.read_text(encoding="utf-8").strip()
+    except OSError:
+        apuntado = None
+    nieto = int(apuntado) if apuntado and apuntado.isdigit() else 0
+    vivo = nieto > 0
     for _ in range(50):                      # la señal es asíncrona: un instante de margen
-        if not store.pid_alive(nieto):
+        vivo = vivo and store.pid_alive(nieto)
+        if not vivo:
             break
         time.sleep(0.1)
-    c("  y el nieto ya no está vivo", nieto > 0 and not store.pid_alive(nieto), True)
+    # Lo obtenido dice cuál de las tres cosas ha pasado si esto falla.
+    if apuntado is None:
+        suerte = "sin nieto.pid: el falso «Python» no llegó a apuntarlo antes del tope"
+    elif not nieto:
+        suerte = f"nieto.pid a medias: {apuntado!r}"
+    else:
+        suerte = f"el nieto {nieto} sigue vivo" if vivo else "muerto"
+    c("  y el nieto ya no está vivo", suerte, "muerto")
 else:
     print("  (saltado) el árbol de procesos de verdad solo se prueba en POSIX")
 

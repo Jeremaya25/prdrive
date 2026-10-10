@@ -451,23 +451,40 @@ def pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True     # existe, pero es de otro usuario
-    return not _zombi(pid)
+    salido = _zombi(pid)
+    if salido is None:
+        # Sin su `/proc` no se sabe más, salvo que lo hayan recogido entre las
+        # dos miradas: entonces el núcleo ya no lo conoce.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            pass
+        return True
+    return not salido
 
 
-def _zombi(pid: int) -> bool:
+def _zombi(pid: int) -> bool | None:
     """Indica si ese proceso ya ha salido y solo espera a que su padre lo recoja.
 
     `os.kill(pid, 0)` lo da por vivo, y no lo está: el KeePassXC que lanza la
     ventana es hijo suyo, y al cerrarlo se queda así hasta que ella lo recoge,
     así que «Expulsar» lo esperaba hasta el tope. Es el estado `Z` de
-    `/proc/<pid>/stat` (el tercer campo, detrás del nombre entre paréntesis);
-    sin `/proc`, no se sabe y no lo es.
+    `/proc/<pid>/stat` (el tercer campo, detrás del nombre entre paréntesis), o
+    `X` en el instante en que lo recogen: `wait_task_zombie()` (`kernel/exit.c`)
+    lo pasa de EXIT_ZOMBIE a EXIT_DEAD antes de `release_task()`, y hasta
+    entonces la señal 0 lo sigue encontrando.
+
+    Returns:
+        `None` si no se puede leer: el sistema no tiene `/proc`, o el proceso
+        ha dejado de existir.
     """
     try:
         datos = (Path("/proc") / str(pid) / "stat").read_bytes()
     except OSError:
-        return False
-    return datos[datos.rfind(b")") + 2:][:1] == b"Z"
+        return None
+    return datos[datos.rfind(b")") + 2:][:1] in (b"Z", b"X")
 
 
 def matar_arbol(pid: int) -> None:
