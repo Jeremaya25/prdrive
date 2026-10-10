@@ -2091,7 +2091,7 @@ class Agente:
             return
         nombre = bitlocker.volumen_de(con.raiz)
         if not nombre and not unidad.volumen:
-            return                  # ni hay qué apuntar ni qué olvidar (fuera de Windows, siempre)
+            return              # ni qué apuntar ni qué olvidar: fuera de Windows, siempre
         estado = cifrada.bitlocker_de(con.raiz)
         if not estado.known:
             return

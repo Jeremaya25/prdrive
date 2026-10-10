@@ -27,6 +27,8 @@ de la unidad y el estado `BDE_LOCKED`. Se comprueba:
   se avisa. Desenchufada con la ventana abierta, se olvida sin cerrarla. Sin
   id, con el de una raíz cifrada, con el de una unidad que no está bloqueada o
   recién puesta en modo `nada`, no se pide nada a BitLocker.
+- La bandeja le pone su desplegable, y elegir su «Desbloquear…» llega al agente
+  por el mismo camino que el buzón (lo que dibuja está en `test_bandeja.py`).
 """
 
 import contextlib
@@ -41,6 +43,7 @@ import _agente_falso as F
 import agente
 import penwatch
 from common import bitlocker, cifrada, equipo, store
+from ui import bandeja, icons
 
 c = Checks("el agente y una unidad bloqueada con BitLocker")
 F.preparar()
@@ -221,7 +224,7 @@ for py in ("runsync.py", "sync.py"):
     encoding="utf-8")
 guardar_de_verdad(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(Q, equipo.DAEMON, "Mi portátil", str(RQ))))
-ESTADOS[RQ], VOLUMENES[RQ] = bitlocker.BDE_ON, "\\\\?\\volume{66666666-6666-6666-6666-666666666666}\\"
+ESTADOS[RQ], VOLUMENES[RQ] = bitlocker.BDE_ON, V5.replace("5", "6")
 ag = enchufado(RQ)
 c("la raíz de este equipo, aunque su disco lleve BitLocker, no apunta volumen",
   (Q in ag.conexiones, volumen(Q)), (True, ""))
@@ -506,5 +509,26 @@ try:
       (lanzador_de_verdad(E), len(F.LANZADOS)), (None, 1))
 finally:
     bitlocker.orden_desbloquear = orden_de_verdad
+
+# --- de la bandeja al agente
+F.RAICES[:] = [E]
+ag = F.nuevo()
+F.vueltas(ag, 1)
+suyo = next((e for e in bandeja.vista(ag.resumen()).menu if e.texto == "Trabajo (bloqueada)"),
+            None)
+c("la bandeja le pone su desplegable, con «Desbloquear…»",
+  suyo is not None and [h.texto for h in suyo.hijos], ["Desbloquear…"])
+antes = len(DESBLOQUEOS)
+for peticion in (suyo.hijos[0].pide if suyo is not None else ()):
+    ag.pedir(dict(peticion))
+F.vueltas(ag, 1, recorrer=False)
+c("  y elegirlo le pide a Windows la ventana de esa letra",
+  DESBLOQUEOS[antes:], [E])
+suyo = next(e for e in bandeja.vista(ag.resumen()).menu if e.texto == "Trabajo (bloqueada)")
+c("  tras lo cual la entrada dice que la contraseña la pide Windows",
+  [(h.texto, h.activa) for h in suyo.hijos],
+  [("Desbloqueando: la contraseña la pide Windows", False)])
+c("  y el icono de la bandeja lleva el candado", bandeja.estado(ag.resumen()),
+  (icons.BLOQUEADO, "Trabajo bloqueada"))
 
 sys.exit(c.report())
