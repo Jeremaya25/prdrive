@@ -17,6 +17,7 @@ Las ventanas se crean ocultas; el bucle de eventos se mueve a mano
 (`dar_vueltas`), que es lo que hace llegar el resultado.
 """
 
+import gc
 import subprocess
 import sys
 import threading
@@ -167,6 +168,19 @@ def dar_vueltas(condicion, limite=5.0) -> bool:
 def pendientes() -> tuple:
     """Los `after` que Tk tiene pendientes."""
     return raiz.tk.splitlist(raiz.tk.call("after", "info"))
+
+
+def abrir(modulo, *args):
+    """Abre la pantalla de `modulo` (su `open_dialog`) sobre la raíz, con lecturas en hilos.
+
+    Antes recoge la basura en este hilo. Una `tkinter.Variable` de una pantalla
+    anterior que el recolector suelte desde el hilo de una lectura llama a Tk
+    desde allí, y sin `mainloop()` (aquí el bucle se mueve con `update()`)
+    `_tkinter` espera 1 s a que entre antes de rendirse («main thread is not in
+    main loop»): la lectura llegaría tarde por eso y no por lenta.
+    """
+    gc.collect()
+    modulo.open_dialog(raiz, *args)
 
 
 # El sondeo, solo: en el acto si ya terminó, por `after` si no, y nada si la
@@ -337,7 +351,7 @@ with sandbox():
         modificar(self, "notas")
 
     tk.Toplevel.wait_window = mirar
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     antes, despues = vista["antes"], vista["despues"]
 
@@ -422,7 +436,7 @@ def al_llegar_el_catalogo(teclear: bool, despues=None) -> dict:
                 despues(self, vista)
 
         tk.Toplevel.wait_window = conducir
-        tk_pairs.open_dialog(raiz, cfg)
+        abrir(tk_pairs, cfg)
         catalog.run = nadie
     vista["errores"] = list(errores)
     return vista
@@ -521,7 +535,7 @@ def releer_escribiendo(otra: dict | None = None, rc: int = 0) -> dict:
             vista["guardar"] = pantalla["botones"]["Guardar en el catálogo…"]
 
         tk.Toplevel.wait_window = conducir
-        tk_pairs.open_dialog(raiz, cfg)
+        abrir(tk_pairs, cfg)
         catalog.run = nadie
     vista["errores"] = list(errores)
     return vista
@@ -567,7 +581,7 @@ with sandbox():
         modificar(self, "notas")
 
     tk.Toplevel.wait_window = mirar_caido
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     caido = vista["foto"]
     c("caído: la espera termina", vista["llego"], True)
@@ -602,7 +616,7 @@ with sandbox():
         vista["despues"] = foto(self)
 
     tk.Toplevel.wait_window = mirar_sin_copia
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("sin copia: se ven las parejas de este dispositivo",
       vista["antes"]["filas"], ["notas", "subida"])
@@ -662,7 +676,7 @@ with sandbox():
 
     tk.Toplevel.wait_window = releer_y_subir
     try:
-        tk_pairs.open_dialog(raiz, cfg)
+        abrir(tk_pairs, cfg)
     finally:
         catalog.push, catalog.run = real_push, nadie
     rel, sub = vista["releyendo"], vista["subiendo"]
@@ -705,7 +719,7 @@ with sandbox():
         dar_vueltas(lambda: False, 0.4)
 
     tk.Toplevel.wait_window = cerrar_antes
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("cerrar antes: la espera se cancela con la pantalla", vista["cancelada"], True)
     c("  sin dejar su `after` pendiente", vista["espera"] in pendientes(), False)
@@ -736,10 +750,10 @@ with sandbox():
         vista["despues"] = foto(self)
 
     tk.Toplevel.wait_window = cerrar_y_reabrir
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     leido_uno = dar_vueltas(lambda: len(remoto.pedidos) == 1)
     tk.Toplevel.wait_window = reabierta
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("reabrir con el hilo vivo: el remoto oyó un solo `cat`",
       (leido_uno, vista["pedidos_antes"], remoto.pedidos), (True, 1, [["cat", ENDPOINT]]))
@@ -772,7 +786,7 @@ with sandbox():
         vista["despues"] = foto(self)
 
     tk.Toplevel.wait_window = releer_forzado
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("releer con una lectura viva: no hay un segundo `cat`",
       (vista["llego"], len(remoto.pedidos)), (True, 1))
@@ -823,7 +837,7 @@ with sandbox():
         vista["raiz"] = self
 
     tk.Toplevel.wait_window = crece_parejas
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("parejas: una explicación larga hace crecer el recuadro",
       (vista["a_la_vista"], vista["alto_despues"] > vista["alto_antes"]), (True, True))
@@ -846,7 +860,7 @@ with sandbox():
         dar_vueltas(lambda: not self.sondeo.esperando)
 
     tk.Toplevel.wait_window = no_crece_parejas
-    tk_pairs.open_dialog(raiz, cfg)
+    abrir(tk_pairs, cfg)
     catalog.run = nadie
     c("parejas: si no ha crecido, la ventana no se mueve", colocadas, [])
 
@@ -902,7 +916,7 @@ with sandbox():
                                            "Quitar de la lista…").cget("state"))
 
     tk.Toplevel.wait_window = mirar_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     antes, despues = vista["antes"], vista["despues"]
     c("flota lenta: la ventana se abre antes de que lleguen las notas", antes["filas"], [])
@@ -938,7 +952,7 @@ with sandbox():
         vista["foto"] = foto(self)
 
     tk.Toplevel.wait_window = mirar_flota_caida
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     caida = vista["foto"]
     c("flota caída: lo dice el chip y el pie",
@@ -966,10 +980,10 @@ with sandbox():
         vista["filas"] = foto(self)["filas"]
 
     tk.Toplevel.wait_window = cerrar_y_reabrir_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     dar_vueltas(lambda: len(remoto.pedidos) == 1)
     tk.Toplevel.wait_window = reabierta_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     c("flota reabierta con el hilo vivo: una sola lectura del remoto",
       (vista["pedidos_antes"], len([p for p in remoto.pedidos if p[0] == "copy"])),
@@ -992,7 +1006,7 @@ with sandbox():
         dar_vueltas(lambda: False, 0.4)
 
     tk.Toplevel.wait_window = cerrar_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     c("flota cerrada antes: sin `after` pendiente ni nadie pintando",
       (vista["espera"] in pendientes(), errores), (False, []))
@@ -1018,7 +1032,7 @@ with sandbox():
         vista["raiz"] = self
 
     tk.Toplevel.wait_window = crece_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     c("flota: una explicación larga hace crecer el recuadro",
       (vista["a_la_vista"], vista["alto_despues"] > vista["alto_antes"]), (True, True))
@@ -1043,7 +1057,7 @@ with sandbox():
         dar_vueltas(lambda: not self.sondeo.esperando)
 
     tk.Toplevel.wait_window = no_crece_flota
-    tk_fleet.open_dialog(raiz, cfg, dict(BASE))
+    abrir(tk_fleet, cfg, dict(BASE))
     catalog.run = nadie
     c("flota: releer lo mismo no hace crecer nada, y la ventana no se mueve",
       colocadas, [])

@@ -157,6 +157,8 @@ Los demás quedan a 0,4 ms o menos del driver, salvo los `apply-*` (de -0,7 a -1
 
 **El dispositivo del equipo.** El equipo tiene un prdrive en uso montado en `P:`. Sus 263 ficheros de programa y la raíz de la unidad quedaron iguales antes y después de las tres pasadas, y el agente residente siguió en marcha.
 
+**Después de la pasada.** El ruido de `test_tk_asistente.py` se reproduce en Linux haciendo que cada hilo recoja la basura al empezar (`threading.Thread.run` envuelto con un `gc.collect()` delante): salen las mismas dos líneas en el mismo sitio y el fichero tarda 2 s más. Con ese peor caso, otros ocho ficheros escriben la misma línea (`test_perf_principal.py`, `test_tk_equipo_lecturas.py`, `test_tk_medidas.py`, `test_tk_parejas_vista.py`, `test_tk_pasada.py`, `test_tk_reparacion.py`, `test_tk_segundo_plano.py` y `test_tk_servicio.py`; 54 líneas entre los nueve en una pasada) y dos fallan una comprobación de tiempo («1080p: y se cierra al terminar» y «reabrir con el hilo vivo: el remoto oyó un solo `cat`»). Los nueve recogen ahora la basura antes de mover Tk con un hilo de verdad y, con el peor caso, ya no la escriben. Ese peor caso destapó además una carrera en el paso de VeraCrypt del asistente (`ui/tk_crypto.py`): si la medida de escritura acababa entre que se pintaba la espera y se miraba si seguía midiendo, la línea se quedaba en «Midiendo lo que escribe la unidad…» (`test_tk_equipo_lecturas.py`, «la sonda llega sola», fallaba en la mayoría de las pasadas). Ahora se mira antes de pintar, y un test lo fija.
+
 ## Lo que queda en una máquina de verdad
 
 - **E1**: arranque en frío desde una memoria USB, en W y en L, con cronómetro o con `perf.log`. Sigue por hacer: la pasada de Windows ARM64 de arriba va con el disco interno y la caché tibia.
@@ -177,4 +179,4 @@ La lista completa y lo que hacer con lo que salga: `docs/superpowers/pruebas/202
 
 ## Encontrado de paso, fuera de esta etapa
 
-- `common/keepassxc.py`, `sonda_cli` (línea 1408): usa `CREATE_NO_WINDOW` sin definir en el módulo (el resto del fichero escribe `model.CREATE_NO_WINDOW`). Lo introdujo `dddeae8`. En Windows, `llave_vale()` lanza `NameError`; en Linux no se ve. Queda para una PR pequeña del dueño.
+- `common/keepassxc.py`, `sonda_cli` (línea 1408): usa `CREATE_NO_WINDOW` sin definir en el módulo (el resto del fichero escribe `model.CREATE_NO_WINDOW`). Lo introdujo `dddeae8`. En Windows, `llave_vale()` lanza `NameError`; en Linux no se ve. Arreglado en `main` por la PR 98 (`0845c14`).

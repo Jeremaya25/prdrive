@@ -29,6 +29,7 @@ Las ventanas se crean ocultas; el bucle de eventos se mueve a mano
 (`dar_vueltas`), que es lo que hace llegar el resultado.
 """
 
+import gc
 import sys
 import threading
 import time
@@ -249,7 +250,14 @@ def con_lanzar(funcion) -> None:
 
 
 def nuevo_asistente(dispositivo=None, selected=("p0", "p1")):
-    """Devuelve un asistente con la conexión y el catálogo ya dados por buenos."""
+    """Devuelve un asistente con la conexión y el catálogo ya dados por buenos.
+
+    Antes recoge la basura en este hilo: una `tkinter.Variable` de un asistente
+    anterior que el recolector suelte desde un hilo de trabajo llamaría a Tk
+    desde allí, y sin `mainloop()` `_tkinter` espera 1 s antes de rendirse
+    («main thread is not in main loop»).
+    """
+    gc.collect()
     root = tk.Toplevel(raiz)
     root.withdraw()
     wiz = tk_install.build(root)

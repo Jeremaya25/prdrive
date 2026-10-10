@@ -31,6 +31,7 @@ el sitio (`segundo_plano.en_el_acto`) y llega con el primer
 porque la ventana guarda escondidos los bloques que no enseña.
 """
 
+import gc
 import re
 import sys
 import time
@@ -116,7 +117,12 @@ def ventana(cfg, conducir, resumen=INSTALADO):
     En vez de su bucle de eventos deja llegar la lectura del dispositivo,
     apunta qué no se pudo leer y ejecuta `conducir`. Devuelve la elección con
     que se cierra.
+
+    Antes recoge la basura en este hilo: la principal arranca hilos de lectura,
+    y una `tkinter.Variable` de una ventana anterior que el recolector suelte
+    desde uno llamaría a Tk desde allí (sin `mainloop()`, 1 s por cada una).
     """
+    gc.collect()
     watch.resumen = lambda: resumen
 
     def _mainloop(self):
