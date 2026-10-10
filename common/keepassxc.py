@@ -1405,7 +1405,7 @@ def sonda_cli(orden_: list[str], entorno_: dict[str, str]) -> int:
     Raises:
         OSError, subprocess.TimeoutExpired: Si no arranca o no acaba.
     """
-    banderas = CREATE_NO_WINDOW if os.name == "nt" else 0
+    banderas = model.CREATE_NO_WINDOW if os.name == "nt" else 0
     return subprocess.run(orden_, cwd=tempfile.gettempdir(), env=entorno_,
                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL, timeout=SONDA_TOPE,

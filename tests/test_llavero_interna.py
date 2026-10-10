@@ -15,13 +15,17 @@ sujeta:
   catálogo; si algo falla antes, no queda nada.
 - La llave no viaja: ningún filtro del llavero la deja pasar.
 - Abrir pasa `--keyfile` solo en este modo; combinar, `--no-password`.
+- La sonda de la llave (`sonda_cli`) corre de verdad: en Windows, sin ventana.
 """
 
 import contextlib
 import hashlib
 import io
+import os
 import struct
+import subprocess
 import sys
+import types
 from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
@@ -338,6 +342,47 @@ try:
         c("  y convertir dice que falta", keepassxc.sin_conversion(), keepassxc.SIN_CLI_CONVERTIR)
 finally:
     keepassxc.cli, keepassxc.cli_lanzable, keepassxc.sonda_cli = real_cli, real_lanzable, real_sonda
+
+
+def o_error(funcion):
+    """Devuelve lo que da `funcion()`, o su excepción escrita, para que el fallo se cuente."""
+    try:
+        return funcion()
+    except Exception as e:                           # noqa: BLE001 — se cuenta como fallo
+        return repr(e)
+
+
+# la sonda de verdad, sin sustituirla: en Windows, sin ventana de consola
+llamadas: list = []
+real_os, real_run = keepassxc.os, keepassxc.subprocess.run
+
+
+def correr(orden_, **kw):
+    """`subprocess.run` de mentira: apunta cómo se lanzaría y sale con 0."""
+    llamadas.append(kw)
+    return subprocess.CompletedProcess(orden_, 0)
+
+
+try:
+    with sandbox() as root:
+        programa = root / "keepassxc-cli.exe"
+        programa.write_text("")
+        keepassxc.cli = lambda: programa
+        keepassxc.cli_lanzable = lambda p: p
+        keepassxc.os = types.SimpleNamespace(name="nt", environ={})
+        keepassxc.subprocess.run = correr
+        c("en Windows, la sonda de verdad dice si la llave vale",
+          o_error(lambda: keepassxc.llave_vale(base, llave)), True)
+        c("  sin ventana de consola ni teclado",
+          [(kw.get("creationflags"), kw.get("stdin")) for kw in llamadas],
+          [(model.CREATE_NO_WINDOW, subprocess.DEVNULL)])
+finally:
+    keepassxc.os, keepassxc.subprocess.run = real_os, real_run
+    keepassxc.cli, keepassxc.cli_lanzable = real_cli, real_lanzable
+c("la sonda de verdad en este sistema: devuelve el código del programa",
+  o_error(lambda: keepassxc.sonda_cli(
+      [sys.executable, "-c", "import os, sys; sys.exit(int(os.environ['PRDRIVE_SONDA']))"],
+      dict(os.environ, PRDRIVE_SONDA="3"))), 3)
 
 # --- la pasada sin cifrar no corre
 real_estado, real_execute = cifrada.estado, sync.execute

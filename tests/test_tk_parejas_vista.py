@@ -18,6 +18,7 @@ Cada pieza se prueba contra lo que se vería si se dibujara de nuevo:
 
 from __future__ import annotations
 
+import gc
 import random
 import subprocess
 import sys
@@ -549,9 +550,16 @@ def enseñada(dlg) -> None:
 def abrir(cfg, conducir, compartida=None, destruir: bool = True):
     """Abre la pantalla y, donde `mostrar()` esperaría, deja que `conducir(dlg)` la maneje.
 
+    Antes recoge la basura en este hilo: una `tkinter.Variable` de una pantalla
+    anterior que el recolector suelte desde el hilo de la lectura del catálogo
+    llama a Tk desde allí, y sin `mainloop()` `_tkinter` espera 1 s antes de
+    rendirse («main thread is not in main loop»).
+
     Returns:
         Lo que devuelve `open_dialog()`.
     """
+    gc.collect()
+
     def mostrar(dlg, parent=None, **_k):
         """Sustituye a `mostrar()`: conduce la pantalla y la cierra, si se quiere."""
         try:
