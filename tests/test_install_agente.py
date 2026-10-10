@@ -213,6 +213,16 @@ c("  se lo pide al agente: los modos que cambian y las nuevas, y el plazo",
   [(p["pide"], p.get("id", p.get("clave"))[:1], p.get("modo", p.get("valor")))
    for p in peticiones],
   [("modo", "e", "ui"), ("modo", "n", "daemon"), ("ajuste", "e", 60)])
+pedir_de_verdad = equipo.pedir
+equipo.pedir = lambda peticion, *a: False
+try:
+    dicho = ia.aplicar_unidades({"e" * 32: (equipo.UI, "Azul")}, 60)
+except ia.InstallError as e:
+    dicho = f"InstallError: {e}"
+finally:
+    equipo.pedir = pedir_de_verdad
+c("  una petición que no se puede dejar no se da por pedida: se dice",
+  dicho.startswith("InstallError") and str(equipo.buzon()) in dicho, True)
 
 # penwatch fuera
 llamado = []

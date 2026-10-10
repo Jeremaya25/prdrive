@@ -634,6 +634,27 @@ ia.ESPERA_PASADA = 0.8
 equipo.lock_json().unlink(missing_ok=True)
 equipo.pasada_json().unlink(missing_ok=True)
 
+# Un «parar» que no se pudo dejar en el buzón se vuelve a pedir mientras se
+# espera: sin él el agente no se va solo y acaba cortado a la fuerza.
+equipo.recoger()
+pedir_de_verdad, pedidos = equipo.pedir, []
+equipo.pedir = lambda p, *a: pedidos.append(p["pide"]) or (len(pedidos) > 1
+                                                          and pedir_de_verdad(p, *a))
+agente_lento = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.6)"],
+                                start_new_session=os.name != "nt")
+threading.Thread(target=agente_lento.wait, daemon=True).start()
+store.write_json(equipo.lock_json(), {"pid": agente_lento.pid, "host": equipo.HOST})
+try:
+    ia.parar_agente()
+finally:
+    equipo.pedir = pedir_de_verdad
+    if agente_lento.poll() is None:
+        agente_lento.kill()
+c("parar_agente(): un «parar» que no se pudo dejar se vuelve a pedir",
+  (pedidos, [p["pide"] for p in equipo.recoger()]),
+  ([equipo.PIDE_PARAR] * 2, [equipo.PIDE_PARAR]))
+equipo.lock_json().unlink(missing_ok=True)
+
 # el id no es una credencial: la huella del código
 H = "3" * 32
 RH = F.unidad(H, parejas=("docs",))
