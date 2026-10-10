@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import socket
 import time
 from dataclasses import dataclass, field, replace
@@ -60,6 +61,12 @@ UI, DAEMON, SYNC, NADA = "ui", "daemon", "sync", "nada"
 MODOS = (UI, DAEMON, SYNC, NADA)
 """Modos al enchufar una unidad: los tres de penwatch y `nada`."""
 MODO_AL_ATENDER = DAEMON                # lo natural para un programa en segundo plano
+FORMA_VOLUMEN = re.compile(r"\\\\\?\\volume\{[0-9a-f-]{36}\}\\")
+r"""La forma de un nombre de volumen de Windows, en minúsculas: `\\?\volume{GUID}\`.
+
+Es lo único que `agente.json` acepta en `Unidad.volumen`
+(`bitlocker.volumen_de()`).
+"""
 TEXTO_MODO = {UI: "abrir la ventana", DAEMON: "sincronizar en segundo plano",
               SYNC: "una pasada al enchufarla", NADA: "nada"}
 """Cómo se nombra cada modo de cara al usuario."""
@@ -180,6 +187,11 @@ class Unidad:
             reiniciarse, hasta «Reanudar» (`PIDE_REANUDAR`). Solo esa raíz:
             la pausa de todo es la de la bandeja (`PIDE_PAUSA`), que no se
             guarda.
+        volumen: El nombre de volumen de Windows (`FORMA_VOLUMEN`) donde este
+            equipo atendió la unidad por última vez con BitLocker puesto. Con
+            él el agente la reconoce enchufada y bloqueada, cuando no puede
+            leer su fichero de control. Vacío sin BitLocker, fuera de Windows
+            y en las raíces del equipo.
     """
     id: str
     modo: str = MODO_AL_ATENDER
@@ -188,6 +200,7 @@ class Unidad:
     contenedor: str = ""
     codigo: str = ""
     pausada: bool = False
+    volumen: str = ""
 
     @property
     def es_raiz(self) -> bool:
@@ -283,9 +296,13 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
             ruta = u.get("ruta") if isinstance(u.get("ruta"), str) else ""
             hc = u.get("contenedor") if isinstance(u.get("contenedor"), str) else ""
             codigo = u.get("codigo") if isinstance(u.get("codigo"), str) else ""
+            volumen = u["volumen"].strip().lower() if isinstance(u.get("volumen"), str) else ""
+            if ruta.strip() or not FORMA_VOLUMEN.fullmatch(volumen):
+                volumen = ""
             unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
                                            hc.strip() if ruta.strip() else "",
-                                           codigo.strip(), u.get("pausada") is True)
+                                           codigo.strip(), u.get("pausada") is True,
+                                           volumen)
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     politica = replace(
@@ -317,7 +334,8 @@ def a_dict(aj: Ajustes) -> dict:
                             **({"ruta": u.ruta} if u.ruta else {}),
                             **({"contenedor": u.contenedor} if u.contenedor else {}),
                             **({"codigo": u.codigo} if u.codigo else {}),
-                            **({"pausada": True} if u.pausada else {})}
+                            **({"pausada": True} if u.pausada else {}),
+                            **({"volumen": u.volumen} if u.volumen else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -476,7 +494,8 @@ PIDE_PAUSA = "pausa"
 PIDE_SIGUE = "sigue"
 PIDE_PARAR = "parar"            # que termine (el instalador, antes de sustituirlo)
 PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de este equipo
-PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
+PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada; con el id de
+#                                     una unidad bloqueada con BitLocker, la ventana de Windows
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
 PIDE_EXPLORAR = "explorar"      # id: esa raíz en el explorador de archivos (ídem)

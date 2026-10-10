@@ -151,6 +151,13 @@ def write_text(path: Path, text: str) -> bool:
     El diario de pasadas no es un JSON sino una línea por pasada
     (`common/historial.py`), y cuando se recorta se reescribe entero con la
     misma regla que el resto.
+
+    Atómico quiere decir que el fichero nunca queda a medias ni vacío. En
+    Windows no quiere decir más: mientras dura `os.replace()`, quien mire el
+    destino puede no encontrarlo o no poder abrirlo, y si alguien lo tiene
+    abierto en ese instante el reemplazo falla (WinError 5) y se devuelve
+    False. Quien lee y escribe un mismo fichero desde varios hilos los turna
+    con un cerrojo, como `common/catalog.py` con su copia local.
     """
     try:
         tmp = path.with_suffix(".tmp")

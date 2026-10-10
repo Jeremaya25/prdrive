@@ -10,6 +10,7 @@ ventana real y `mostrar()` real:
 - `catalogo-llega`: lo que llega del remoto repinta y cierra su momento;
 - `elegir-pareja`: un clic en una fila de la lista (no `ListaParejas.elegir`), y que
   elegir la misma fila no anota nada;
+- `open-pareja`: «Modificar…», hasta que la ventana de la pareja está pintada;
 - `open-flags`: el editor de flags de una pareja, con su `flags_form()` real; un
   `flags_form()` sin inicio (el de «Ajustes de este dispositivo») no anota nada;
 - `open-dispositivos`: solo su inicio, en `ver_flota()`. Su final es de la ventana de
@@ -98,8 +99,13 @@ def buscar(ventana, clase, texto: str):
     return None
 
 
-def pulsar_fila(dlg, nombre: str) -> int:
+def pulsar_fila(dlg, nombre: str, a_lo_ancho: float = 0.5) -> int:
     """Hace un clic en la fila de esa pareja, sobre el lienzo de «Parejas» (como el ratón).
+
+    Args:
+        a_lo_ancho: En qué punto de la fila, de 0 (izquierda) a 1. Dos clics
+            seguidos en el mismo punto son para Tk un doble clic, que abre la
+            ventana de la pareja: un segundo clic suelto va en otro punto.
 
     Returns:
         Si la ventana estaba a la vista justo antes del clic (`winfo_viewable()`).
@@ -108,7 +114,8 @@ def pulsar_fila(dlg, nombre: str) -> int:
     _perf.a_la_vista(dlg)
     x0, y0, x1, y1 = dlg.lista.tabla.caja(nombre)
     vista = dlg.winfo_viewable()
-    dlg.lista.marco.event_generate("<Button-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
+    dlg.lista.marco.event_generate("<Button-1>", x=x0 + int((x1 - x0) * a_lo_ancho),
+                                   y=(y0 + y1) // 2)
     return vista
 
 
@@ -199,6 +206,7 @@ def probar_con_perf() -> None:
             ui.perf_empezar("open-parejas")
             elegida: list[str | None] = []
             vistas: list[int] = []
+            abiertas_al_elegir: list = []
 
             def clicar(dlg):
                 """Espera el catálogo, pulsa «subida» dos veces y mira qué queda elegido."""
@@ -207,9 +215,10 @@ def probar_con_perf() -> None:
                 dlg.update()
                 _perf.vaciar()
                 elegida.append(dlg.lista.elegida)
-                vistas.append(pulsar_fila(dlg, "subida"))
+                vistas.append(pulsar_fila(dlg, "subida", a_lo_ancho=0.25))
                 dlg.update()
                 _perf.vaciar()
+                abiertas_al_elegir.append(dlg.pantalla.ventana)
 
             abrir_parejas(clicar)
             # La raíz vuelve a estar retirada, como al empezar el test.
@@ -219,6 +228,29 @@ def probar_con_perf() -> None:
               elegida, ["subida"])
             c("elegir-pareja: una línea por elección; elegir la misma fila no anota nada",
               len(_perf.lineas(t, "elegir-pareja")), 1)
+            c("  y dos clics sueltos en una fila no abren la ventana de la pareja",
+              abiertas_al_elegir, [None])
+
+        # open-pareja: «Modificar…» abre la ventana de la pareja elegida, con su `mostrar()` real.
+        with _perf.con_perf(tmp / "pareja") as t:
+            abiertas: list[str] = []
+
+            def modificar(ventana):
+                """En «Parejas», pulsa «Modificar…»; en la ventana de la pareja, la deja pintarse."""
+                if hasattr(ventana, "ventana"):
+                    abiertas.append(ventana.ventana.nombre)
+                    esperar_linea(ventana, t, "open-pareja")
+                    return
+                esperar_linea(ventana, t, "catalogo-llega")
+                buscar(ventana, ttk.Button, "Modificar…").invoke()
+
+            abrir_parejas(modificar)
+            raiz.withdraw()
+            _perf.vaciar()
+            c("open-pareja: «Modificar…» abre la ventana de la pareja elegida",
+              abiertas, ["notas"])
+            c("open-pareja: una línea al mostrarse la ventana de la pareja",
+              len(_perf.lineas(t, "open-pareja")), 1)
 
         # open-flags: el editor de la pareja abre sus flags con `flags_form()` real.
         with _perf.con_perf(tmp / "flags") as t:

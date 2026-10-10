@@ -31,7 +31,10 @@ Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y e
   «Atender…». Lo que no está bien lo dice el rótulo entre paréntesis
   («bloqueada», «por actualizar»…). Si su programa es anterior al del
   agente, «Actualizar a la vX» lo pone al día con la versión del agente.
-  Abajo del todo, apagada, la versión de su programa, si se sabe.
+  Abajo del todo, apagada, la versión de su programa, si se sabe. Una unidad
+  de la lista enchufada pero bloqueada con BitLocker (`resumen["bitlocker"]`)
+  va detrás de las conectadas, «(bloqueada)», con una sola entrada:
+  «Desbloquear…», que le pide a Windows su ventana.
 - Fuera, lo del agente entero: **Sincronizar todo ahora** (solo con dos o más
   dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar**
   (o **Buscar actualizaciones**, si no se sabe de ninguna) y **Cerrar el
@@ -286,10 +289,11 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
     El orden de prioridad es: la pausa pedida (lo ha decidido alguien) > una
     pasada en marcha > los avisos > lo que retiene sin ser pausa (batería, red
     de uso medido) > una raíz en el «Pausar» de su ventana > la raíz cifrada
-    bloqueada > bien. Bloqueada no es un aviso: es lo normal con el contenedor
-    cerrado y el icono lo enseña sin alarmar. La raíz pausada tampoco: lo ha
-    decidido alguien, y el icono de pausa y su nombre bastan para saber por qué
-    no se sincroniza.
+    bloqueada > una unidad de la lista bloqueada con BitLocker > bien.
+    Bloqueada no es un aviso: es lo normal con el contenedor cerrado, o con la
+    unidad recién enchufada, y el icono lo enseña sin alarmar. La raíz pausada
+    tampoco: lo ha decidido alguien, y el icono de pausa y su nombre bastan
+    para saber por qué no se sincroniza.
 
     Cuando va bien, la frase dice cuándo acabó bien la última pasada
     (`ultima_pasada`, segundos de época): «al día» a secas no decía nada que el
@@ -320,6 +324,9 @@ def estado(resumen: Mapping[str, Any], ahora: float | None = None) -> tuple[str,
         for r in raices:
             if r.get("estado") == estado_:
                 return icons.BLOQUEADO, f"{r.get('nombre')} {frase}"
+    con_bitlocker = resumen.get("bitlocker") or []
+    if con_bitlocker:
+        return icons.BLOQUEADO, f"{con_bitlocker[0].get('nombre')} bloqueada"
     if not raices and not resumen.get("unidades"):
         return icons.BIEN, "esperando unidades"
     ultima = resumen.get("ultima_pasada")
@@ -597,6 +604,27 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
     return entradas
 
 
+def _bitlocker(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve el desplegable de cada unidad de la lista enchufada y bloqueada con BitLocker.
+
+    De una unidad bloqueada no se lee nada: lleva la marca de prdrive por icono
+    y una sola entrada, «Desbloquear…», que le pide a Windows su ventana y es
+    la de por defecto de su desplegable. Mientras esa ventana siga abierta, se
+    dice y no se elige.
+    """
+    entradas: list[Entrada] = []
+    for b in resumen.get("bitlocker") or []:
+        if b.get("desbloqueando"):
+            cerrojo = Entrada("Desbloqueando: la contraseña la pide Windows", activa=False)
+        else:
+            cerrojo = Entrada("Desbloquear…",
+                              _pide(equipo.PIDE_DESBLOQUEAR, id=b.get("id", "")),
+                              defecto=True, icono=I_DESBLOQUEAR)
+        entradas.append(Entrada(f"{b.get('nombre') or APP_NAME} ({ESTADO_DE_RAIZ[BLOQUEADA]})",
+                                hijos=(cerrojo,), emblema=MARCA))
+    return entradas
+
+
 def _del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
     """Devuelve lo que es del agente entero y no de un dispositivo.
 
@@ -675,7 +703,8 @@ def vista(resumen: Mapping[str, Any], ahora: float | None = None) -> Vista:
     cabecera = hay[:MAX_AVISOS]
     if len(hay) > MAX_AVISOS:
         cabecera.append(Entrada(f"y {len(hay) - MAX_AVISOS} más", activa=False))
-    menu = _bloques(cabecera, _raices_del_equipo(resumen) + _unidades(resumen),
+    menu = _bloques(cabecera,
+                    _raices_del_equipo(resumen) + _unidades(resumen) + _bitlocker(resumen),
                     _del_agente(resumen),
                     [*_actualizar(resumen),
                      Entrada("Cerrar el agente", _pide(equipo.PIDE_PARAR), icono=I_CERRAR)],

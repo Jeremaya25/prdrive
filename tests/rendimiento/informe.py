@@ -42,11 +42,12 @@ ETIQUETAS = {
     "cold-parejas": "«Parejas», desde que se lanza",
     "catalogo-llega": "Llega el catálogo a «Parejas»",
     "elegir-fila": "Elegir otra fila de «Parejas»",
-    "elegir-pareja": "Elegir otra pareja de «Parejas» (carga el editor)",
+    "elegir-pareja": "Elegir otra pareja de «Parejas»",
     "reabrir-parejas": "Volver a abrir «Parejas»",
     "open-dispositivos": "Abrir «Dispositivos»",
     "llega-flota": "Llegan las notas de la flota a «Dispositivos»",
     "elegir-dispositivo": "Elegir otro dispositivo de «Dispositivos»",
+    "open-pareja": "Abrir la ventana de una pareja («Modificar…»)",
     "open-flags": "Abrir el editor de flags",
     "open-ajustes": "Abrir «Ajustes»",
     "pane-reparacion": "Apartado «Reparación»",
@@ -167,10 +168,12 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
             # Los widgets de «Dispositivos» son los de después de llegar las notas: son los
             # que crecen con los dispositivos. Sin `.p5`: la flota de muestra es la misma.
             apuntar("widgets.dispositivos", c.get("widgets"), d)
-        elif esc == "open-flags":
-            apuntar("widgets.flags", c.get("widgets"), d)
-            apuntar("tema.abrir.flags", c.get("tema"), d)
-            apuntar("estilos.flags", c.get("estilos_tardios"), d)
+        elif esc in ("open-flags", "open-pareja"):
+            # Sin `.p5`: la pareja es siempre la primera del dispositivo de muestra.
+            pantalla = esc[len("open-"):]
+            apuntar(f"widgets.{pantalla}", c.get("widgets"), d)
+            apuntar(f"tema.abrir.{pantalla}", c.get("tema"), d)
+            apuntar(f"estilos.{pantalla}", c.get("estilos_tardios"), d)
         elif esc.startswith("pane-"):
             apuntar("tema.apartado", c.get("tema"), d)
             apuntar("estilos.apartado", c.get("estilos_tardios"), d)

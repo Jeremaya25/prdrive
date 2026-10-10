@@ -557,10 +557,9 @@ model.parse_config = parse_real
 # ---------------------------------------------------------------------------
 # Qué botones valen para la fila elegida
 # ---------------------------------------------------------------------------
-TEXTOS_BOTONES = ("Usar aquí", "Simular", "Quitar…", "Descartar", "Guardar aquí…",
-                  "Volver al catálogo", "Ajustes del catálogo…", "Nueva pareja…",
-                  "Borrar del catálogo…", "Guardar en el catálogo…",
-                  "Descartar del catálogo", "Releer")
+TEXTOS_BOTONES = ("Usar aquí", "Simular", "Quitar…", "Volver al catálogo", "Modificar…",
+                  "Ajustes del catálogo…", "Nueva pareja…", "Borrar del catálogo…",
+                  "Modificar… del catálogo", "Releer")
 
 
 def fila_de(en_pen: bool, difiere: tuple = ()) -> "pair_editor.CatalogRow":
@@ -580,13 +579,12 @@ def esperado_botones(fila, lect) -> dict:
     en_pen = fila is not None and fila.en_pen
     return {
         "Usar aquí": fila is not None and not en_pen,
-        "Simular": en_pen, "Quitar…": en_pen, "Descartar": en_pen,
-        "Guardar aquí…": en_pen,
+        "Simular": en_pen, "Quitar…": en_pen,
         "Volver al catálogo": en_pen and bool(fila.difiere),
+        "Modificar…": fila is not None,
         "Ajustes del catálogo…": lect.editable, "Nueva pareja…": lect.editable,
         "Borrar del catálogo…": lect.editable and fila is not None,
-        "Guardar en el catálogo…": lect.editable and fila is not None,
-        "Descartar del catálogo": fila is not None,
+        "Modificar… del catálogo": fila is not None,
         "Releer": not lect.leyendo}
 
 
@@ -599,11 +597,13 @@ for fila in (None, fila_de(False), fila_de(True), fila_de(True, ("remote_path",)
             if visto != esperado_botones(fila, lect):
                 malas.append((fila, editable, leyendo, visto))
 c("los botones de cada combinación de fila y catálogo son los de la regla", malas, [])
-c("  y son justo los doce de la pantalla",
+c("  y son justo los diez de la pantalla",
   sorted(pair_editor.botones(None, lectura_de(True, False))), sorted(TEXTOS_BOTONES))
-c("  sin fila no hay nada que usar, guardar ni borrar",
+c("  sin fila no hay nada que usar, modificar ni borrar",
   [v for k, v in pair_editor.botones(None, lectura_de(True, False)).items()
-   if k not in ("Ajustes del catálogo…", "Nueva pareja…", "Releer")], [False] * 9)
+   if k not in ("Ajustes del catálogo…", "Nueva pareja…", "Releer")], [False] * 7)
+c("  una pareja que aquí no se usa también se abre: su ventana la enseña sin dejar cambiarla",
+  pair_editor.botones(fila_de(False), lectura_de(False, True))["Modificar…"], True)
 
 # ---------------------------------------------------------------------------
 # Los estados que ya se saben no se vuelven a leer
