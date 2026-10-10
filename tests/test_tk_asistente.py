@@ -906,6 +906,7 @@ tk_install.build = build_que_guarda
 crypto.medir_escritura = medir_lenta
 try:
     con_lanzar(LANZAR_REAL)
+    gc.collect()                # como `nuevo_asistente()`: este lo construye `run_wizard()`
     rc_bucle = tk_install.run_wizard()
 finally:
     tk.Tk = tk_raiz_real

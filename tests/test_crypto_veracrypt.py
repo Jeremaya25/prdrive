@@ -134,9 +134,13 @@ try:
     # memoria USB llenarse. El caso de #46: más de 100 GB en exFAT, «unos 23
     # min» dichos y 40 cumplidos sin terminar. El número se da como mínimo, y
     # siempre al lado de por qué.
+    #
+    # La unidad es una carpeta temporal y no una letra: sin el sustituto, la
+    # sonda de verdad escribiría y borraría su fichero en la raíz que se le dé.
+    unidad_medida = tmpdir("prdrive-medida-")
     crypto.medir_escritura = lambda root, muestra=0: 10 * 1024 ** 2   # 10 MB/s
     c("un giga a 10 MB/s son ~102 s",
-      round(crypto.estimar_creacion("P:/", 1024 ** 3)), 102)
+      round(crypto.estimar_creacion(unidad_medida, 1024 ** 3)), 102)
     c("el caso de #46 ya no promete 23 min: son un mínimo, y se dice por qué",
       crypto.describir_espera(23 * 60),
       "al menos unos 23 min; en memorias USB suele tardar bastante más, porque "
@@ -156,7 +160,7 @@ try:
       "al menos unas 2 h")
     crypto.medir_escritura = lambda root, muestra=0: None
     c("si no se ha podido medir, se dice; no se inventa un número",
-      crypto.estimar_creacion("P:/", 1024 ** 3), None)
+      crypto.estimar_creacion(unidad_medida, 1024 ** 3), None)
     c("y el texto lo reconoce",
       crypto.describir_espera(None), "no he podido medir la velocidad de la unidad")
 
