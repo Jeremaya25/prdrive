@@ -187,4 +187,98 @@ with sandbox():
     except repair.ReparacionImposible as e:
         c.contains("sin reventar", str(e), "ya no está en la configuración")
 
+
+# lo que ya no está: se vuelve a mirar antes de actuar
+with sandbox():
+    cfg = mkcfg(["notas", "fotos"])
+    notas, fotos = cfg.pairs
+    for pareja in (notas, fotos):
+        pareja.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pareja)
+    suelto = notas.workdir / "algo.lck"
+    suelto.write_text("", encoding="utf-8")
+    visto = hallazgo(revision.revisar(cfg), "lock")
+
+    ahora = repair.vigente(cfg, visto)
+    c("un hallazgo que sigue ahí se devuelve",
+      (ahora.clave, ahora.pareja), ("lock", "notas"))
+    c("  recién leído, con lo que lleva ahora", ahora.dato, visto.dato)
+
+    otro = notas.workdir / "otro.lck"
+    otro.write_text("", encoding="utf-8")
+    c("  y si ha cambiado lo que lleva, se devuelve el de ahora, no el que se vio",
+      sorted(Path(r).name for r in repair.vigente(cfg, visto).dato),
+      ["algo.lck", "otro.lck"])
+    otro.unlink()
+
+    suelto.unlink()
+    c("un bloqueo que se soltó mientras tanto: ya no está", repair.vigente(cfg, visto), None)
+
+    fantasma = revision.Hallazgo("lock", "x", "y", "no-existe")
+    c("una pareja que no está en el config: ya no está", repair.vigente(cfg, fantasma), None)
+
+    (fotos.workdir / "uno.lck").write_text("", encoding="utf-8")
+    c("la misma avería en OTRA pareja no vale por la que se vio",
+      repair.vigente(cfg, visto), None)
+
+    llamadas: list = []
+    real_revisar = revision.revisar
+    revision.revisar = lambda config, **k: llamadas.append(config) or real_revisar(config, **k)
+    try:
+        repair.vigente(cfg, visto)
+    finally:
+        revision.revisar = real_revisar
+    c("mirar de nuevo es leer el dispositivo, una vez", len(llamadas), 1)
+
+
+# ejecutar un plan vuelve a mirar lo que lo hacía seguro
+with sandbox():
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    pair.local_abs.mkdir(parents=True, exist_ok=True)
+    listados(pair)
+    lock = pair.workdir / "algo.lck"
+    lock.write_text("", encoding="utf-8")
+    aviso = hallazgo(revision.revisar(cfg), "lock")
+
+    plan = repair.plan_locks(cfg, aviso)
+    store.write_json(model.daemon_lock(), {"pid": os.getpid(), "host": prefs.HOST})
+    try:
+        plan.execute()
+        c("si empieza una pasada entre el plan y el sí, no se borra el bloqueo",
+          "se ha ejecutado", "excepción")
+    except repair.ReparacionImposible as e:
+        c.contains("si empieza una pasada entre el plan y el sí, no se borra el bloqueo",
+                   str(e), "Ahora mismo está sincronizando")
+    c("  y el bloqueo sigue donde estaba", lock.exists(), True)
+    model.daemon_lock().unlink()
+    c("  sin nadie sincronizando, el mismo plan sí lo borra",
+      (any("algo.lck" in h for h in plan.execute()), lock.exists()), (True, False))
+
+with sandbox():
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    pair.local_abs.mkdir(parents=True, exist_ok=True)
+    listados(pair, "otro-destino-cualquiera")
+    aviso = hallazgo(revision.revisar(cfg), "prefijo")
+
+    plan = repair.plan_apartar(cfg, aviso)
+    apartado = bisync.shelve_baseline(pair.name)       # lo aparta otra pantalla antes
+    c("(el baseline se apartó por otro lado)", apartado is not None, True)
+    llamadas = []
+    real_apartar = repair.apartar
+    repair.apartar = lambda nombre: llamadas.append(nombre) or real_apartar(nombre)
+    try:
+        plan.execute()
+        c("si el baseline ya se apartó entre el plan y el sí, no se aparta otra vez",
+          "se ha ejecutado", "excepción")
+    except repair.ReparacionImposible as e:
+        c.contains("si el baseline ya se apartó entre el plan y el sí, se dice",
+                   str(e), "ya no tiene baseline")
+    finally:
+        repair.apartar = real_apartar
+    c("  y no se toca nada más", llamadas, [])
+    c("  ni queda un segundo baseline apartado",
+      len(list(model.STATE_DIR.glob("notas.old-*"))), 1)
+
 sys.exit(c.report())

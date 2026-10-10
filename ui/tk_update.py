@@ -39,8 +39,8 @@ from pathlib import Path
 from common import components, model, store, update
 
 from . import prefs, theme
-from .tk import (TITLE, Panel, bloque_aviso, cabecera, dialogo, mostrar, output_window,
-                 pie, working)
+from .tk import (PRECARGA, PRECARGA_LLAVERO, TITLE, Panel, bloque_aviso, cabecera, dialogo,
+                 mostrar, output_window, pie, precargar, working)
 
 CERRAR = "cerrar"
 """Lo que devuelve `open_components_dialog()` cuando la ventana tiene que cerrarse."""
@@ -150,6 +150,9 @@ def construir(panel: Panel, nueva) -> None:
                                      parent=dlg)
                 return
 
+            # Lo último antes de que cambie el disco: a partir de aquí, un módulo
+            # que se importe por primera vez se leería nuevo junto a los viejos.
+            precargar(PRECARGA + PRECARGA_LLAVERO)
             rc = output_window(f"actualizar a la {nueva.tag}",
                                update.apply_command(staged, model.DEVICE_ROOT),
                                parent=dlg,

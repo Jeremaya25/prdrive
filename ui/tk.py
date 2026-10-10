@@ -27,12 +27,12 @@ import threading
 import time
 from typing import Mapping, NamedTuple
 
-from common import (APP_NAME, components, conflicts, model, progress, revision,
-                    store, update)
+from common import APP_NAME, model, progress, store
 from common.model import Config
 
-from . import (Choice, abrir, avisos_de_resync, cifrado, cuando, cuando_sello, icons,
-               manual_args, pair_status_notes, pair_times, prefs, theme)
+from . import (Choice, abrir, avisos_de_resync, cifrado, cuando_sello, icons, manual_args,
+               pair_status_notes, pair_times, perf_activo, perf_al_pintar, perf_desde_inicio,
+               perf_empezar, prefs, theme)
 
 TITLE = APP_NAME
 """El nombre de la ventana, que sale de `common/`."""
@@ -49,17 +49,6 @@ CAPTURA_EN_NEGRO = 0x1
 """`WDA_MONITOR`: en una captura la ventana sale, pero como un rectángulo negro."""
 CAPTURA_EXCLUIDA = 0x11
 """`WDA_EXCLUDEFROMCAPTURE`: en una captura la ventana no sale (Windows 10 2004)."""
-
-
-def corto(texto: str, maximo: int = 30) -> str:
-    r"""Devuelve una ruta recortada por delante, que es por donde sobra.
-
-    En el dispositivo esto no hace nada (`DEVICE_ROOT` es `F:\`), pero montado
-    en un punto con nombre largo (`/media/quien/PRDRIVE`) o corriendo desde el
-    repositorio, una ruta entera estira la ventana hasta salirse de la
-    pantalla.
-    """
-    return texto if len(texto) <= maximo else "…" + texto[-(maximo - 1):]
 
 
 class TkFrontend:
@@ -189,6 +178,27 @@ def pantalla_util(win) -> tuple[int, int]:
             max(360, win.winfo_screenheight() - icons.px(win, 110)))
 
 
+def posicion(ventana) -> tuple[int, int]:
+    """Dónde está una ventana, en las coordenadas de `geometry("+x+y")`.
+
+    Son las de `wm geometry`, las que se dan para moverla, y no las de
+    `winfo_x`/`winfo_y`: con el marco del sistema alrededor pueden no
+    coincidir, y moverla con unas leídas de las otras la desplazaría.
+
+    Args:
+        ventana: La ventana a mirar.
+
+    Returns:
+        La esquina de arriba a la izquierda.
+    """
+    import re
+
+    casa = re.fullmatch(r"\d+x\d+\+(-?\d+)\+(-?\d+)", ventana.geometry())
+    if casa is None:                 # colocada desde la derecha o desde abajo
+        return ventana.winfo_x(), ventana.winfo_y()
+    return int(casa.group(1)), int(casa.group(2))
+
+
 class Visor:
     """Un recuadro con el contenido dentro, que se desplaza cuando no cabe.
 
@@ -206,6 +216,17 @@ class Visor:
 
     Las barras tienen su hueco reservado siempre, aparezcan o no: si lo ganaran
     y lo perdieran, la ventana cambiaría de ancho al pasar de un paso a otro.
+    La barra horizontal, que casi ninguna pantalla necesita, se crea la primera
+    vez que el contenido desborda por la derecha una mirilla que ya está a su
+    tamaño (`_revisar()`); desde entonces se pone y se quita como la vertical.
+    Su franja está reservada igualmente desde el principio, con el grosor de la
+    vertical (en ttk son iguales), así que la ventana pide el mismo tamaño
+    tenga o no la barra. No se mira antes de que el recuadro se ajuste por
+    primera vez, cuando la mirilla es un tamaño de partida, ni mientras
+    `encajar`/`crecer` miden el contenido, que fuerzan el reparto de las
+    geometrías pendientes con la mirilla todavía a su tamaño de antes: en los
+    dos casos el contenido la desborda sin que falte ninguna barra, y se
+    crearía una en cada ventana cuyo contenido cambia.
 
     `lienzo` es un marco que hace de mirilla e `interior` va dentro colocado con
     `place`; desplazar es moverlo. No es un `Canvas` a propósito: un `Canvas`
@@ -221,10 +242,14 @@ class Visor:
         alto: El alto de partida y el mínimo, no un tope: el recuadro nunca es
             más pequeño que eso y crece con el contenido hasta donde llegue la
             pantalla.
+
+    Attributes:
+        horizontal: La barra horizontal, o `None` mientras el contenido no haya
+            sido más ancho que la mirilla.
     """
 
     def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
-        """Crea el recuadro, su mirilla y sus barras, y engancha los eventos."""
+        """Crea el recuadro, su mirilla y la barra vertical, y engancha los eventos."""
         import tkinter as tk
         from tkinter import ttk
 
@@ -235,17 +260,20 @@ class Visor:
                                width=ancho or 200, height=alto or 150)
         self.vertical = ttk.Scrollbar(self.marco, orient="vertical",
                                       command=lambda *a: self._desplazar(1, *a))
-        self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
-                                        command=lambda *a: self._desplazar(0, *a))
+        self.horizontal = None
         self.lienzo.grid(row=0, column=0, sticky="nsew")
         self.marco.columnconfigure(0, weight=1)
         self.marco.rowconfigure(0, weight=1)
-        self.marco.columnconfigure(1, minsize=self.vertical.winfo_reqwidth())
-        self.marco.rowconfigure(1, minsize=self.horizontal.winfo_reqheight())
+        grosor = self.vertical.winfo_reqwidth()     # el de la horizontal es igual
+        self.marco.columnconfigure(1, minsize=grosor)
+        self.marco.rowconfigure(1, minsize=grosor)
 
         self.interior = ttk.Frame(self.lienzo)
         self.interior.place(x=0, y=0)
         self._puesto = (0, 0)          # lo último que se le dijo a `place`
+        self._ajustado = False         # si `encajar`/`crecer` ya le dieron su tamaño
+        self._ajustando = 0            # cuántos `encajar`/`crecer` lo están midiendo ahora
+        self._capado = (False, False)  # por qué lados recortó el último ajuste (x, y)
         self._desde = [0, 0]           # cuánto está desplazado, en x y en y
         self.interior.bind("<Configure>", lambda _e: self._revisar())
         self.lienzo.bind("<Configure>", lambda _e: self._revisar())
@@ -292,16 +320,76 @@ class Visor:
         cambia = (ancho, alto) != self._medida()
         if cambia:
             self.lienzo.configure(width=ancho, height=alto)
+        self._ajustado = True
         self._revisar()
         return cambia
 
+    def _exacto(self, eje: int, natural: int, actual: int, tope: int) -> int | None:
+        """Devuelve el tamaño final por un lado si se sabe sin probar, o `None`.
+
+        Lo que sobra de la ventana por un lado solo puede menguar cuando el
+        recuadro crece (un widget más ancho que el recuadro deja de mandar en
+        cuanto el recuadro lo alcanza, y desde entonces el resto es constante),
+        así que el tope medido con el recuadro como está nunca es mayor que el
+        medido con el recuadro más grande. De ahí salen los dos casos exactos:
+
+        - El contenido cabe y el recuadro solo crece (o se queda): cabe también
+          con el tope de verdad, y el tamaño final es el natural.
+        - El contenido no cabe, el último ajuste recortó ese lado (`_capado`)
+          y el recuadro sigue pegado al tope: el recuadro llena la pantalla,
+          manda en ese lado y el tope no se mueve al crecer. El tamaño final
+          es ese tope. Pedir que siga pegado hace inofensiva una marca vieja
+          (otra pantalla, un recuadro que cambió `crecer()`).
+
+        Fuera de ahí (el primer desbordamiento por ese lado, o un recuadro que
+        mengua) hay que probar con el recuadro estirado.
+
+        Args:
+            eje: 0 para el horizontal, 1 para el vertical.
+            natural: Lo que pide el contenido por ese lado.
+            actual: Lo que mide ahora el recuadro por ese lado.
+            tope: El tope medido con el recuadro como está.
+        """
+        if actual <= natural <= tope:
+            return natural
+        if natural > tope and actual == tope and self._capado[eje]:
+            return tope
+        return None
+
     def encajar(self, ventana=None) -> bool:
-        """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe."""
+        """Deja el recuadro del tamaño del contenido, o del que quepa si no cabe.
+
+        No da al recuadro ningún tamaño que no se quede siempre que pueda
+        saber el final sin probar (`_exacto()`): en Windows cada cambio de
+        tamaño de la ventana repinta todos sus widgets, y estirar el recuadro
+        hasta lo que pide el contenido entero (más que la pantalla, cuando
+        desborda) para medir lo que sobra de la ventana es un repintado entero
+        que no cambia nada. Solo cuando no se sabe (el primer desbordamiento
+        por un lado, que casi siempre ocurre con la ventana sin enseñar) se
+        estira ese lado, se mide y se recorta.
+
+        Devuelve si el recuadro ha cambiado de tamaño, quepa el contenido o no:
+        es cuando quien llama tiene que volver a colocar la ventana.
+        """
+        antes = self._medida()
         ventana = ventana or self.marco.winfo_toplevel()
-        ancho, alto = self._natural()
-        self._fijar(ancho, alto)
-        tope_x, tope_y = self._tope(ventana)
-        return self._fijar(min(ancho, tope_x), min(alto, tope_y))
+        self._ajustando += 1
+        try:
+            natural = self._natural()
+            tope = self._tope(ventana)
+            final = [self._exacto(eje, natural[eje], antes[eje], tope[eje])
+                     for eje in (0, 1)]
+            if None in final:
+                self._fijar(*(natural[eje] if final[eje] is None else final[eje]
+                              for eje in (0, 1)))
+                tope = self._tope(ventana)
+                final = [min(natural[eje], tope[eje]) if final[eje] is None else final[eje]
+                         for eje in (0, 1)]
+        finally:
+            self._ajustando -= 1
+        self._capado = (natural[0] > final[0], natural[1] > final[1])
+        self._fijar(*final)
+        return self._medida() != antes
 
     def crecer(self, ventana=None) -> bool:
         """Agranda el recuadro si lo de ahora pide más, y no lo encoge nunca.
@@ -312,11 +400,16 @@ class Visor:
         tiene que volver a colocarla.
         """
         ventana = ventana or self.marco.winfo_toplevel()
-        pide_x, pide_y = self._natural()
-        hay_x, hay_y = self._medida()
-        tope_x, tope_y = self._tope(ventana)
-        return self._fijar(min(max(hay_x, pide_x), tope_x),
-                           min(max(hay_y, pide_y), tope_y))
+        self._ajustando += 1
+        try:
+            pide_x, pide_y = self._natural()
+            hay_x, hay_y = self._medida()
+            tope_x, tope_y = self._tope(ventana)
+        finally:
+            self._ajustando -= 1
+        quiere = (max(hay_x, pide_x), max(hay_y, pide_y))
+        self._capado = (quiere[0] > tope_x, quiere[1] > tope_y)
+        return self._fijar(min(quiere[0], tope_x), min(quiere[1], tope_y))
 
     def ver(self, widget) -> None:
         """Desplaza lo justo para que `widget` quede entero a la vista.
@@ -369,7 +462,7 @@ class Visor:
             self._desde[eje] = desde
             self.interior.place_configure(x=-self._desde[0], y=-self._desde[1])
         barra = self.vertical if eje else self.horizontal
-        if total > 0:
+        if barra is not None and total > 0:
             barra.set(desde / total, min(1.0, (desde + hueco) / total))
 
     def _desplazar(self, eje: int, *orden) -> None:
@@ -386,6 +479,15 @@ class Visor:
             paso = self._hueco()[eje] * (0.9 if orden[2].startswith("page") else 0.1)
             self._mover(eje, self._desde[eje] + int(orden[1]) * max(1, int(paso)))
 
+    def barras(self) -> tuple[bool, bool]:
+        """Indica qué barras están puestas: `(vertical, horizontal)`.
+
+        La horizontal cuenta como puesta solo si existe y está en la rejilla;
+        una que se quitó porque dejó de hacer falta sigue existiendo y no cuenta.
+        """
+        return (bool(self.vertical.grid_info()),
+                self.horizontal is not None and bool(self.horizontal.grid_info()))
+
     def _revisar(self) -> None:
         """Enseña cada barra solo si por ese lado sobra contenido.
 
@@ -393,6 +495,11 @@ class Visor:
         un formulario colocado con `sticky='ew'` siga ocupando todo el ancho; y
         solo se le habla cuando la medida cambia, porque redimensionarlo
         dispara otro `<Configure>` y con él se volvería aquí sin parar.
+
+        La barra horizontal se crea aquí, la primera vez que hace falta con la
+        mirilla ya a su tamaño, con la misma forma que si hubiera nacido con
+        el recuadro; su estilo ya lo dejó puesto `theme.apply()`, así que
+        crearla con la ventana enseñada no toca ningún estilo de ttk.
         """
         ancho, alto = self._hueco()
         pide_x = self.interior.winfo_reqwidth()
@@ -401,6 +508,11 @@ class Visor:
         if medida != self._puesto:
             self._puesto = medida
             self.interior.place_configure(width=medida[0], height=medida[1])
+        if (pide_x > ancho and self.horizontal is None
+                and self._ajustado and not self._ajustando):
+            from tkinter import ttk
+            self.horizontal = ttk.Scrollbar(self.marco, orient="horizontal",
+                                            command=lambda *a: self._desplazar(0, *a))
         for eje in (0, 1):                  # lo que sobraba puede haber menguado
             self._mover(eje, self._desde[eje])
         # Puesta o no en la rejilla, no `winfo_ismapped()`: una ventana todavía
@@ -409,6 +521,8 @@ class Visor:
         for barra, falta, sitio in (
                 (self.vertical, pide_y > alto, dict(row=0, column=1, sticky="ns")),
                 (self.horizontal, pide_x > ancho, dict(row=1, column=0, sticky="ew"))):
+            if barra is None:
+                continue
             puesta = bool(barra.grid_info())
             if falta and not puesta:
                 barra.grid(**sitio)
@@ -438,7 +552,7 @@ class Visor:
         return "break"
 
 
-def cuerpo_visible(ventana, **opciones):
+def cuerpo_visible(ventana, directo: bool = False, **opciones):
     """Devuelve el marco donde se dibuja una pantalla, ya dentro de un `Visor`.
 
     Sustituye al `ttk.Frame(ventana, padding=…)` + `.grid(sticky='nsew')` que
@@ -446,17 +560,32 @@ def cuerpo_visible(ventana, **opciones):
     pantalla es pequeña, el contenido se desplaza en vez de quedarse fuera. El
     visor queda colgado de la ventana para que `mostrar()` lo encaje al
     enseñarla, sin que cada diálogo tenga que acordarse.
+
+    Args:
+        ventana: La ventana donde se pone el `Visor`.
+        directo: Si se da, la pantalla se dibuja en el `interior` del `Visor` y
+            no en un marco más: las opciones van a `interior.configure()` y no
+            se le dan pesos a sus columnas ni a sus filas, que son de quien
+            dibuja (el marco de siempre sí estira su celda). Es un widget
+            menos para las ventanas que tienen pocos.
+        **opciones: Las del marco (`padding=…`).
+
+    Returns:
+        El marco, o el `interior` del `Visor` con `directo`.
     """
     from tkinter import ttk
     visor = Visor(ventana)
     visor.marco.grid(row=0, column=0, sticky="nsew")
     ventana.columnconfigure(0, weight=1)
     ventana.rowconfigure(0, weight=1)
+    ventana.visor = visor
+    if directo:
+        visor.interior.configure(**opciones)
+        return visor.interior
     visor.interior.columnconfigure(0, weight=1)
     visor.interior.rowconfigure(0, weight=1)
     marco = ttk.Frame(visor.interior, **opciones)
     marco.grid(row=0, column=0, sticky="nsew")
-    ventana.visor = visor
     return marco
 
 
@@ -506,6 +635,10 @@ def mostrar(dlg, parent=None) -> None:
         dlg.grab_set()
     except tk.TclError:
         pass
+    # Con PRDRIVE_PERF, el momento que declaró quien abrió el diálogo acaba aquí, en su pintado.
+    momento = getattr(dlg, "perf_momento", None)
+    if momento:
+        perf_al_pintar(dlg, momento)
     dlg.wait_window()
 
 
@@ -728,6 +861,10 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
     Args:
         tipo: `'Ambar'` o `'Rojo'`; `tono` (`'Azul.'`, `'Verde.'`…) manda si
             se da.
+
+    Returns:
+        El marco de `theme.aviso`. `caja.boton` es el botón que se ha creado,
+        o `None` si no se pasó `boton`.
     """
     from tkinter import ttk
     tono = tono or f"{tipo}."
@@ -736,11 +873,12 @@ def bloque_aviso(parent, texto: str, ancho: int = 560, tipo: str = "Ambar",
         titulo, cuerpo = "", titulo
     caja = theme.aviso(parent, titulo, cuerpo, tono=tono, icono=icono,
                        ancho=ancho)
+    caja.boton = None
     if boton is not None:
         rotulo, accion = boton
-        ttk.Button(caja.acciones, text=rotulo, command=accion,
-                   style="Ambar.TButton" if tono == "Ambar." else "TButton").grid(
-            row=0, column=0, sticky="w", pady=(theme.E3, 0))
+        caja.boton = ttk.Button(caja.acciones, text=rotulo, command=accion,
+                                style="Ambar.TButton" if tono == "Ambar." else "TButton")
+        caja.boton.grid(row=0, column=0, sticky="w", pady=(theme.E3, 0))
     return caja
 
 
@@ -873,17 +1011,12 @@ class FilaTabla(NamedTuple):
     Args:
         iid: Cómo se la llama al elegirla.
         celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip` o `CeldaIcono`.
-        tono: `''`, `'aviso'` (fondo ámbar), `'propio'` (fondo del acento) o
-            `'apagado'` (todo el texto en gris).
+        tono: `''`, `'aviso'` (fondo ámbar), `'peligro'` (fondo rojo), `'propio'`
+            (fondo del acento) o `'apagado'` (todo el texto en gris).
     """
     iid: str
     celdas: tuple
     tono: str = ""
-
-
-SUPERFICIE_FILA = {"": "Card.", "apagado": "Card.", "aviso": "NotaAmbar.",
-                   "propio": "NotaAzul."}
-"""La superficie de cada tono de fila de `Tabla`."""
 
 
 class Tabla:
@@ -891,160 +1024,114 @@ class Tabla:
 
     Es la `Table` del diseño. No es una `ttk.Treeview` porque las celdas llevan
     chips e iconos y una lista de Tk no sabe pintar nada dentro de una celda:
-    son etiquetas en una rejilla sobre una tarjeta, como la lista de parejas.
-    Si se le da `al_elegir`, las filas se eligen con un clic o con las
-    flechas, y la elegida va en el azul suave del acento.
+    se dibuja en un solo lienzo (`tk_tabla.TablaLienzo`), con una tarjeta, los
+    rótulos de la cabecera y, por fila, rectángulos, textos e imágenes. Las
+    celdas no son widgets: en Windows cada widget es una ventana del sistema
+    que se crea, se coloca y se pinta por su cuenta, y así la tabla es un solo
+    widget, lleve las filas que lleve.
+
+    Se ve como una rejilla de etiquetas de ttk (mismas medidas, huecos y
+    colores; lo que lo asegura es `tests/test_tk_tabla.py`). Frente a la lista
+    de «Parejas», que es la misma pieza, tiene dos diferencias: nada se corta
+    con «…» (cada columna mide lo que su contenido más ancho; la que estira se
+    queda con lo que sobra) y la fila que tiene el ratón encima no se tiñe. Si
+    se le da `al_elegir`, las filas se eligen con un clic o con las flechas, y
+    la elegida va en el azul suave del acento; sin él no hay nada que elegir ni
+    toma el foco. La rueda no es suya: la recoge la pantalla (el `Visor`).
 
     Args:
         parent: Dónde va.
         columnas: `(titulo, ancho, estira)` por columna; el ancho es el mínimo,
             en medidas del diseño.
-        al_elegir: Lo que se llama al elegir otra fila; sin él, no se elige.
+        al_elegir: Lo que se llama, sin argumentos, al elegir otra fila; sin
+            él, no se elige.
         vacio: Lo que se dice cuando no hay ninguna fila.
         alto_fila: El alto mínimo de cada fila, en medidas del diseño: 36 la
             de una lista, 30 la de una tabla larga que solo se lee.
+
+    Attributes:
+        marco: Lo que se coloca (`grid()`): el lienzo, que no tiene ningún
+            widget dentro.
+        filas: Por `iid`, el texto de cada celda de la fila (de un icono, lo
+            que dice para quien no lo ve).
+        orden: Los `iid`, de arriba abajo.
+        elegida: El `iid` de la fila elegida, o `None`.
+        cabeceras: Los títulos de las columnas.
+        n: Cuántas columnas tiene.
     """
 
     def __init__(self, parent, columnas, al_elegir=None, vacio: str = "",
                  alto_fila: int = 36):
-        from tkinter import ttk
-
-        from . import icons
-        self.al_elegir, self.vacio, self.alto_fila = al_elegir, vacio, alto_fila
+        from .tk_tabla import TablaLienzo
+        self.vacio, self.alto_fila = vacio, alto_fila
         self.n = len(columnas)
         self.cabeceras = [titulo for titulo, _ancho, _estira in columnas]
-        self.marco = ttk.Frame(parent, style="Card.TFrame", takefocus=bool(al_elegir),
-                               padding=icons.px(parent, 1))       # su borde
-        for col, (_titulo, ancho, estira) in enumerate(columnas):
-            self.marco.columnconfigure(col, minsize=icons.px(parent, ancho),
-                                       weight=1 if estira else 0)
-        cabeza = ttk.Frame(self.marco, style="Plano.TFrame")
-        cabeza.grid(row=0, column=0, columnspan=self.n, sticky="nsew")
-        cabeza.lower()
-        self._fijos = [cabeza]
-        for col, titulo in enumerate(self.cabeceras):
-            rotulo = ttk.Label(self.marco, text=theme.rotulo(titulo) if titulo else "",
-                               style="Rotulo.TLabel")
-            rotulo.grid(row=0, column=col, sticky="w", padx=self._lados(col),
-                        pady=theme.E1)
-            self._fijos.append(rotulo)
-        self.marco.rowconfigure(0, minsize=icons.px(self.marco, 28))
+        self._lienzo = TablaLienzo(parent, columnas, al_elegir=al_elegir, vacio=vacio,
+                                   alto_fila=alto_fila, rejilla=True, encima=False)
+        self.marco = self._lienzo.marco
         self.filas: dict[str, list[str]] = {}
-        self.orden: list[str] = []
-        self.elegida: str | None = None
-        self._pintadas: dict[str, dict] = {}
-        if al_elegir is not None:
-            self.marco.bind("<Up>", lambda _e: self._mover(-1))
-            self.marco.bind("<Down>", lambda _e: self._mover(1))
+        self._lienzo.poner([])      # sin filas aún, ya pide lo que ocupa su cabecera
+
+    @property
+    def al_elegir(self):
+        """Lo que se llama al elegir otra fila (se puede cambiar)."""
+        return self._lienzo.al_elegir
+
+    @al_elegir.setter
+    def al_elegir(self, funcion) -> None:
+        self._lienzo.al_elegir = funcion
+
+    @property
+    def orden(self) -> list[str]:
+        """Los `iid`, de arriba abajo."""
+        return self._lienzo.orden
+
+    @property
+    def elegida(self) -> str | None:
+        """El `iid` de la fila elegida, o `None`."""
+        return self._lienzo.elegida
+
+    @property
+    def momento_elegir(self) -> str | None:
+        """Nombre del momento de `PRDRIVE_PERF` que se anota al elegir una fila; `None`, ninguno."""
+        return self._lienzo.momento_elegir
+
+    @momento_elegir.setter
+    def momento_elegir(self, momento: str | None) -> None:
+        self._lienzo.momento_elegir = momento
 
     def grid(self, **opciones):
         """Coloca la tabla como un widget; devuelve la tabla."""
         self.marco.grid(**opciones)
         return self
 
-    def _lados(self, col: int):
-        """El hueco a los lados de una celda: el de la rejilla y el borde de la fila."""
-        return (theme.E3 if col == 0 else theme.E2, theme.E3 if col == self.n - 1 else 0)
+    def poner(self, filas) -> bool:
+        """Pinta estas filas (`FilaTabla`) en lugar de las de antes, tocando solo las que cambian.
 
-    def poner(self, filas) -> None:
-        """Pinta estas filas (`FilaTabla`) en lugar de las de antes."""
-        from functools import partial
-        from tkinter import ttk
+        Una fila igual a la de antes no se toca; una que cambia se dibuja de
+        nuevo, y solo ella. Lo dibuja la tabla en el acto, aunque la ventana
+        aún no se haya enseñado.
 
-        from . import icons
-        for hijo in self.marco.winfo_children():
-            if hijo not in self._fijos:
-                hijo.destroy()
-        for fila_tk in range(1, self.marco.grid_size()[1]):
-            self.marco.rowconfigure(fila_tk, minsize=0)   # las de antes no ocupan
-        self.filas, self.orden, self._pintadas = {}, [], {}
-        ttk.Separator(self.marco, style="Card.TSeparator").grid(
-            row=1, column=0, columnspan=self.n, sticky="ew")
-        fila_tk = 2
-        for i, fila in enumerate(filas):
-            if i:
-                separador_fila(self.marco, fila_tk, self.n)
-                fila_tk += 1
-            sup = SUPERFICIE_FILA.get(fila.tono, "Card.")
-            fondo = ttk.Frame(self.marco, style=f"Plano.{sup}TFrame")
-            fondo.grid(row=fila_tk, column=0, columnspan=self.n, sticky="nsew")
-            fondo.lower()
-            textos, celdas = [], []
-            for col, celda in enumerate(fila.celdas):
-                if isinstance(celda, CeldaChip):
-                    widget = theme.chip(self.marco, celda.texto, celda.tipo, celda.icono)
-                    textos.append(celda.texto)
-                    rol = None
-                elif isinstance(celda, CeldaIcono):
-                    widget = ttk.Label(self.marco)
-                    widget.nombre_icono = celda.nombre
-                    textos.append(celda.texto)
-                    rol = None
-                else:
-                    celda = celda if isinstance(celda, CeldaTexto) else CeldaTexto(str(celda))
-                    widget = ttk.Label(self.marco, text=celda.texto)
-                    textos.append(celda.texto)
-                    rol = celda.rol
-                    if fila.tono == "apagado":
-                        rol = "MonoPista." if rol.startswith("Mono") else "Pista."
-                widget.grid(row=fila_tk, column=col, sticky="w", padx=self._lados(col),
-                            pady=theme.E2 if self.alto_fila >= 36 else theme.E1)
-                celdas.append((widget, rol))
-                if self.al_elegir is not None:
-                    widget.bind("<Button-1>", partial(self._clic, fila.iid))
-            if self.al_elegir is not None:
-                fondo.bind("<Button-1>", partial(self._clic, fila.iid))
-            self.marco.rowconfigure(fila_tk, minsize=icons.px(self.marco, self.alto_fila))
-            self.filas[fila.iid] = textos
-            self.orden.append(fila.iid)
-            self._pintadas[fila.iid] = {"sup": sup, "fondo": fondo, "celdas": celdas}
-            fila_tk += 1
-        if not filas and self.vacio:
-            ttk.Label(self.marco, text=self.vacio, style="Card.Pista.TLabel").grid(
-                row=2, column=0, columnspan=self.n, pady=theme.E3)
-        if self.elegida not in self.filas:
-            self.elegida = None
-        self._pintar()
+        Returns:
+            Si lo que la tabla pide (su ancho y su alto) ha cambiado.
+        """
+        filas = list(filas)
+        cambio = self._lienzo.poner(filas)
+        self.filas = {fila.iid: [celda.texto if hasattr(celda, "texto") else str(celda)
+                                 for celda in fila.celdas] for fila in filas}
+        return cambio
 
-    def _pintar(self) -> None:
-        """Pone a cada fila su superficie; la elegida, la del acento."""
-        from . import icons
-        for iid, f in self._pintadas.items():
-            sup = "NotaAzul." if iid == self.elegida else f["sup"]
-            f["fondo"].configure(style=f"Plano.{sup}TFrame")
-            for widget, rol in f["celdas"]:
-                if rol is not None:
-                    widget.configure(style=f"{sup}{rol}TLabel")
-                elif hasattr(widget, "nombre_icono"):
-                    fondo = theme.fondo_de(sup)
-                    img = icons.get(self.marco, widget.nombre_icono, 16, theme.OK, fondo)
-                    widget.configure(style=f"{sup}TLabel")
-                    if img is not None:
-                        widget.configure(image=img)
-                        widget.image = img
+    def elegir(self, iid: str | None, avisar: bool = True) -> bool:
+        """Elige esa fila (o ninguna) y lo cuenta, si `avisar`.
 
-    def _clic(self, iid: str, _evento=None) -> None:
-        """Elige la fila pulsada y le da el foco a la tabla, para las flechas."""
-        self.marco.focus_set()
-        self.elegir(iid)
+        Returns:
+            Si la elección se ha hecho.
+        """
+        return self._lienzo.elegir(iid, avisar)
 
-    def _mover(self, paso: int) -> str:
-        """Elige la fila de arriba o la de abajo."""
-        if self.orden:
-            i = self.orden.index(self.elegida) + paso if self.elegida in self.orden else 0
-            self.elegir(self.orden[max(0, min(len(self.orden) - 1, i))])
-        return "break"
-
-    def elegir(self, iid: str | None, avisar: bool = True) -> None:
-        """Elige esa fila (o ninguna) y lo cuenta, si `avisar`."""
-        if iid is not None and iid not in self.filas:
-            iid = None
-        if iid == self.elegida:
-            return
-        self.elegida = iid
-        self._pintar()
-        if avisar and self.al_elegir is not None:
-            self.al_elegir()
+    def leer(self) -> list[tuple[str, ...]]:
+        """Devuelve lo que se dibuja, fila a fila: el texto de cada celda."""
+        return self._lienzo.leer()
 
 
 class Panel:
@@ -1070,6 +1157,14 @@ class Panel:
       quien la abrió. Suelta lo devuelve `dialogo()`; en «Ajustes» se guarda
       por apartado y se le da a la ventana principal al cerrarla.
 
+    Un apartado de «Ajustes» que se deja no se destruye: se esconde y se
+    conserva. Lo que espera o se anima no puede seguir gastando mientras tanto,
+    así que una pantalla que lo hace lo pide al panel (`sondeo()`,
+    `indicador()`) en vez de crearlo ella, y quien esconde o enseña el apartado
+    avisa con `ocultado()` y `mostrado()`: el panel pausa y reanuda lo que
+    pidió, y llama a lo que la pantalla registró con `al_ocultar()` y
+    `al_mostrar()`. Un diálogo suelto no se esconde nunca y no los llama.
+
     Attributes:
         ventana: La ventana de nivel superior: padre de los mensajes, de
             `working()` y de los modales que se abran desde aquí.
@@ -1088,6 +1183,10 @@ class Panel:
         self._al_cerrar = al_cerrar
         self._resultados = {} if resultados is None else resultados
         self._clave = clave
+        self._sondeos: list[Sondeo] = []
+        self._indicadores: list[Indicador] = []
+        self._al_mostrar: list = []
+        self._al_ocultar: list = []
 
     def devolver(self, valor) -> None:
         """Apunta lo que la pantalla devuelve; lo último que se apunta manda."""
@@ -1113,6 +1212,61 @@ class Panel:
             self._al_cerrar()
         if despues is not None:
             despues()
+
+    def al_mostrar(self, funcion) -> None:
+        """Registra `funcion()` para cuando se vuelva a enseñar el panel (`mostrado()`)."""
+        self._al_mostrar.append(funcion)
+
+    def al_ocultar(self, funcion) -> None:
+        """Registra `funcion()` para cuando se esconda el panel (`ocultado()`)."""
+        self._al_ocultar.append(funcion)
+
+    def sondeo(self) -> Sondeo:
+        """Crea un `Sondeo` colgado del marco, que el panel pausa al esconderse.
+
+        Se cancela con el marco, como cualquier `Sondeo`, y además lo pausa
+        `ocultado()` y lo reanuda `mostrado()`.
+        """
+        sondeo = Sondeo(self.marco)
+        self._sondeos.append(sondeo)
+        return sondeo
+
+    def indicador(self, padre, ancho: int = 560) -> Indicador:
+        """Crea un `Indicador` en `padre`, que el panel para al esconderse.
+
+        Args:
+            padre: Donde va la línea; quien lo pide la coloca.
+            ancho: El corte de la frase, en medidas del diseño.
+        """
+        indicador = Indicador(padre, ancho=ancho)
+        self._indicadores.append(indicador)
+        return indicador
+
+    def mostrado(self) -> None:
+        """Reanuda lo que `ocultado()` paró y llama a los `al_mostrar`.
+
+        Lo llama quien vuelve a enseñar el apartado, nunca al dibujarlo por
+        primera vez.
+        """
+        for sondeo in self._sondeos:
+            sondeo.seguir()
+        for indicador in self._indicadores:
+            indicador.seguir()
+        for funcion in list(self._al_mostrar):
+            funcion()
+
+    def ocultado(self) -> None:
+        """Pausa los sondeos e indicadores del panel y llama a los `al_ocultar`.
+
+        Lo llama quien esconde el apartado sin destruirlo. Un sondeo pausado
+        conserva su encargo y lo recoge al `mostrado()`.
+        """
+        for sondeo in self._sondeos:
+            sondeo.pausar()
+        for indicador in self._indicadores:
+            indicador.pausar()
+        for funcion in list(self._al_ocultar):
+            funcion()
 
     def ajustar(self) -> None:
         """Hace sitio a lo que ha crecido después de enseñarse.
@@ -1194,8 +1348,33 @@ def soltar_capturas(ventana) -> None:
         pass
 
 
-PASO_BARRA_MS = 12
-"""Milisegundos que tarda en avanzar la barra sin cifra."""
+PASO_BARRA_MS = 32
+"""Milisegundos entre dos pasos de la barra sin cifra.
+
+Con 12 la barra gastaba el 10,6 % de un núcleo, y con 48 el 2,6 %, pero a 48
+(21 pasos por segundo) se la veía ir a saltos. 32 son unos 31 por segundo:
+fluida a la vista y con la tercera parte de los pasos de antes.
+"""
+SALTO_BARRA = PASO_BARRA_MS / 12
+"""Cuánto avanza la barra sin cifra en cada paso, de un máximo de 100.
+
+Es proporcional al intervalo, así que barre a la velocidad de siempre (un
+vaivén cada 1,2 s, el de saltos de 1 cada 12 ms), con menos pasos y más grandes.
+"""
+
+
+def _arrancar_barra(barra) -> None:
+    """Pone a ir y venir una barra sin cifra, a `PASO_BARRA_MS` y `SALTO_BARRA`.
+
+    `ttk::progressbar start` acepta el salto como segundo argumento
+    (`start ?intervalo? ?salto?`) y tkinter solo deja darle el intervalo, así que
+    se llama a Tcl directamente.
+    """
+    import tkinter as tk
+    try:
+        barra.tk.call(str(barra), "start", PASO_BARRA_MS, SALTO_BARRA)
+    except tk.TclError:
+        barra.start(PASO_BARRA_MS)
 
 
 def _medir_avance(progreso) -> tuple[float, str] | None:
@@ -1226,7 +1405,7 @@ def _pintar_avance(barra, etiqueta, medida: tuple[float, str] | None) -> None:
     if medida is None:
         if determinada:
             barra.configure(mode="indeterminate", value=0)
-            barra.start(PASO_BARRA_MS)
+            _arrancar_barra(barra)
         if str(etiqueta.cget("text")):
             etiqueta.configure(text="")
         return
@@ -1286,7 +1465,7 @@ def working(parent, title: str, funcion, mensaje: str = "",
     barra = ttk.Progressbar(marco, mode="indeterminate",
                             length=theme.medida(380))
     barra.grid(row=1, column=0, pady=(theme.E4, 0), sticky="ew")
-    barra.start(PASO_BARRA_MS)
+    _arrancar_barra(barra)
     cifra = None
     if progreso is not None:
         cifra = ttk.Label(marco, text="", wraplength=theme.medida(380),
@@ -1351,54 +1530,92 @@ SONDEO_MS = 120
 class Sondeo:
     """Recoge en el hilo de Tk lo que una pantalla encargó a `ui.segundo_plano`.
 
-    Es la mitad de Tk de un `Encargo`: mira cada `SONDEO_MS` si ha terminado
-    y, cuando termina, llama a quien lo esperaba desde este hilo, nunca desde
-    el del trabajo. Hay uno por pantalla y espera un encargo cada vez: uno
-    nuevo deja sin respuesta al anterior.
+    Es la mitad de Tk de un `Encargo`: mira cada `cada` milisegundos si ha
+    terminado y, cuando termina, llama a quien lo esperaba desde este hilo,
+    nunca desde el del trabajo. Hay uno por pantalla y espera un encargo cada
+    vez: uno nuevo deja sin respuesta al anterior.
 
     Si la pantalla se cierra antes, la espera se cancela con ella
     (`after_cancel`) y nadie pinta en widgets que ya no existen. Sin eso, el
     `after` pendiente llamaría a una orden que Tk ya ha borrado con la ventana.
 
+    Una pantalla que se esconde sin cerrarse (un apartado de «Ajustes» que se
+    conserva) lo pausa con `pausar()`: no deja ningún `after` pendiente, pero
+    guarda el encargo y a quien lo esperaba, y `seguir()` los retoma. Mientras
+    está pausado no programa ninguna mirada: un encargo nuevo sin terminar
+    espera a `seguir()`.
+
     Args:
         ventana: La pantalla de la que cuelga la espera.
+        cada: Milisegundos entre dos miradas al encargo.
+
+    Attributes:
+        cada: Lo mismo que el argumento.
     """
 
-    def __init__(self, ventana) -> None:
+    def __init__(self, ventana, cada: int = SONDEO_MS) -> None:
         """Engancha la espera al cierre de la ventana."""
         self.ventana = ventana
+        self.cada = cada
         self._id = None
         self._encargo = None
         self._al_llegar = None
+        self._pausado = False
         ventana.bind("<Destroy>", self._al_destruir, add="+")
 
     @property
     def esperando(self) -> bool:
-        """Indica si hay un encargo pendiente de recoger."""
-        return self._id is not None
+        """Indica si hay un encargo pendiente de recoger, esté pausado el sondeo o no."""
+        return self._encargo is not None
 
     def esperar(self, encargo, al_llegar) -> None:
         """Llama a `al_llegar(encargo)` cuando el encargo termine.
 
         Si ya ha terminado, en el acto: es lo que hace que una pantalla cuyos
         tests corren el encargo en el sitio (`segundo_plano.en_el_acto`) se
-        pinte entera antes de enseñarse.
+        pinte entera antes de enseñarse. Con el sondeo pausado, un encargo sin
+        terminar queda guardado hasta `seguir()`.
         """
         self.cancelar()
         if encargo.hecho:
             al_llegar(encargo)
             return
         self._encargo, self._al_llegar = encargo, al_llegar
-        self._id = self.ventana.after(SONDEO_MS, self._mirar)
+        if not self._pausado:
+            self._id = self.ventana.after(self.cada, self._mirar)
 
     def cancelar(self) -> None:
         """Deja de esperar; lo que llegue después no se recoge."""
+        self._quitar_after()
+        self._encargo = self._al_llegar = None
+
+    def pausar(self) -> None:
+        """Deja de mirar sin olvidar lo que espera.
+
+        Cancela el `after` pendiente y conserva el encargo y a quien lo
+        esperaba. Pausar dos veces es lo mismo que una.
+        """
+        self._pausado = True
+        self._quitar_after()
+
+    def seguir(self) -> None:
+        """Retoma la espera: llama en el acto si el encargo ya terminó, y si no vuelve a mirar.
+
+        Sin nada que esperar, o si ya estaba mirando, no hace nada.
+        """
+        self._pausado = False
+        if self._encargo is None or self._id is not None:
+            return
+        self._mirar()
+
+    def _quitar_after(self) -> None:
+        """Cancela el `after` pendiente, si lo hay."""
         if self._id is not None:
             try:
                 self.ventana.after_cancel(self._id)
             except Exception:                        # noqa: BLE001 — ya no está
                 pass
-        self._id = self._encargo = self._al_llegar = None
+            self._id = None
 
     def _mirar(self) -> None:
         """Mira si el encargo ha terminado y, si no, vuelve a mirar luego."""
@@ -1411,7 +1628,8 @@ class Sondeo:
             self.cancelar()
             return
         if not self._encargo.hecho:
-            self._id = self.ventana.after(SONDEO_MS, self._mirar)
+            if not self._pausado:
+                self._id = self.ventana.after(self.cada, self._mirar)
             return
         encargo, al_llegar = self._encargo, self._al_llegar
         self._encargo = self._al_llegar = None
@@ -1436,6 +1654,10 @@ class Indicador:
     decir, la línea desaparece entera. Quien la crea la coloca con
     `indicador.marco.grid(...)` y luego solo la `poner()`.
 
+    Una pantalla que se esconde sin cerrarse la pausa con `pausar()`: la barra
+    se para, porque Tk la anima aunque nadie la vea, y la frase queda como
+    está. `seguir()` la reanuda si sigue esperando.
+
     Args:
         padre: Donde va la línea.
         ancho: El corte de la frase, en medidas del diseño.
@@ -1457,23 +1679,45 @@ class Indicador:
         self.texto = ttk.Label(self.marco, style="Pista.TLabel", justify="left",
                                wraplength=theme.medida(ancho))
         self.texto.grid(row=0, column=1, sticky="w")
+        self._pausado = False
 
     @property
     def esperando(self) -> bool:
         """Indica si la barra está puesta."""
         return bool(self.barra.grid_info())
 
+    def _viva(self) -> bool:
+        """Indica si la barra existe todavía (su pantalla no se ha destruido)."""
+        try:
+            return bool(self.barra.winfo_exists())
+        except Exception:                            # noqa: BLE001 — intérprete cerrado
+            return False
+
+    def pausar(self) -> None:
+        """Para la barra sin tocar la frase; mientras dure, `poner()` no la arranca."""
+        self._pausado = True
+        if self._viva():
+            self.barra.stop()
+
+    def seguir(self) -> None:
+        """Reanuda la barra si la línea sigue esperando."""
+        self._pausado = False
+        if self._viva() and self.esperando:
+            _arrancar_barra(self.barra)
+
     def poner(self, texto: str, esperando: bool, tono: str = "Pista.") -> None:
         """Pone la frase y la barra; sin ninguna de las dos, quita la línea.
 
         Args:
             texto: Lo que dice la línea.
-            esperando: Si la barra va y viene.
+            esperando: Si la barra va y viene; con la línea pausada queda
+                puesta pero parada, hasta `seguir()`.
             tono: El rol de la frase (`Pista.`, `Aviso.`, `Peligro.`).
         """
         if esperando:
             self.barra.grid()
-            self.barra.start(PASO_BARRA_MS)
+            if not self._pausado:
+                _arrancar_barra(self.barra)
         else:
             self.barra.stop()
             self.barra.grid_remove()
@@ -1482,6 +1726,80 @@ class Indicador:
             self.marco.grid()
         else:
             self.marco.grid_remove()
+
+
+PRECARGA = ("ui.tk_pairs", "ui.tk_doctor", "ui.tk_watch", "ui.tk_repair", "ui.tk_update",
+            "ui.instantanea", "ui.watch", "common.conflicts")
+"""Lo que la principal importa después de pintarse, en orden de uso probable.
+
+Sale de los `import` de dentro de `main_window()`: las pantallas que abre cada
+clic y, al final, lo que trae la lectura del dispositivo, que ya suele estar
+cargado (lo importa el hilo de `instantanea.leer()`). Con `[keychain]` se añade
+`PRECARGA_LLAVERO`. `tests/test_imports_perezosos.py` comprueba que no falta
+ninguno.
+"""
+PRECARGA_LLAVERO = ("common.cifrada", "common.keepassxc", "ui.llavero_editor", "ui.tk_llavero")
+"""Lo mismo, del llavero: en trozos de menos de 10 ms, porque `tk_llavero` arrastra a todos."""
+PAUSA_PRECARGA_MS = 1
+"""Milisegundos entre un import y el siguiente de `precargar_a_ratos()`."""
+
+
+def precarga_de(config: Config) -> tuple[str, ...]:
+    """Devuelve los módulos que la principal de ese dispositivo puede tener que importar después."""
+    return PRECARGA + (PRECARGA_LLAVERO if config.llavero is not None else ())
+
+
+def precargar(nombres: tuple[str, ...] = PRECARGA) -> None:
+    """Importa ahora esos módulos, los que falten.
+
+    Es lo que se hace antes de aplicar una actualización: `deploy_code()`
+    sustituye los ficheros de uno en uno, y un módulo importado a mitad se
+    leería ya nuevo junto a los viejos que están en memoria. Un fallo no se
+    cuenta: si importarlo falla, fallará igual al abrir la pantalla.
+    """
+    from importlib import import_module
+
+    for nombre in nombres:
+        try:
+            import_module(nombre)
+        except Exception:                                # noqa: BLE001
+            pass
+
+
+def precargar_a_ratos(root, nombres: tuple[str, ...]) -> None:
+    """Importa esos módulos de uno en uno, ya con la ventana enseñada.
+
+    Un import por turno del bucle de Tk (`after`, no `after_idle`: una cadena
+    de `after_idle` deja sin turno a los temporizadores mientras dura), así que
+    un clic espera como mucho a un import. El primer clic en «Parejas…» ya no
+    paga los 8–12 ms de los módulos de esa pantalla.
+
+    Args:
+        root: La ventana.
+        nombres: Qué importar, en orden.
+    """
+    pendientes = list(nombres)
+
+    def uno() -> None:
+        """Importa el siguiente y deja el turno al bucle."""
+        precargar((pendientes.pop(0),))
+        if pendientes:
+            try:
+                root.after(PAUSA_PRECARGA_MS, uno)
+            except Exception:                            # noqa: BLE001
+                pass                                     # la ventana ya se ha cerrado
+
+    if pendientes:
+        root.after(PAUSA_PRECARGA_MS, uno)
+
+
+SONDEO_INSTANTANEA_MS = 20
+"""Milisegundos entre dos miradas de la principal a su lectura del dispositivo.
+
+Menos que `SONDEO_MS`: lo que espera es el resto de su primer pintado (los
+chips, «Sincronizar ahora», las líneas del pie), y mirar si ha llegado es mirar
+un booleano.
+"""
 
 
 def main_window(config: Config, startup_msg: str | None) -> Choice | None:
@@ -1494,14 +1812,27 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     es el agente del equipo, en su lugar están «Pausar» / «Reanudar», que se
     lo piden por su buzón sin cerrarla. Devuelve `None` si se cierra sin más.
 
+    Se pinta primero con lo que se sabe sin leer el dispositivo (la config,
+    `ui_prefs.json`, las horas de las pasadas, la versión pendiente de la
+    caché) y lee el resto después de enseñarse, en un hilo
+    (`refrescar_instantanea`): mientras, el chip es «…» y lo que necesita esa
+    lectura no se puede pulsar (`principal.controles`). Lo que cambia después
+    se cambia en su sitio (`tk_principal.VistaPrincipal.aplicar`), nunca se
+    rehace la ventana. Para los tests y la comprobación de tiempos deja en la
+    raíz `instantanea` (el encargo de la última lectura), `instantanea_lista`
+    (si ya se aplicó) y `sondeo_instantanea` (el único `Sondeo` que la espera).
+
     Raises:
         ImportError: Si no hay tkinter.
         TclError: Si no hay entorno gráfico.
     """
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from functools import partial
+    from tkinter import messagebox
 
-    from . import llavero_editor, tk_doctor, tk_llavero, tk_pairs, tk_update, tk_watch, watch
+    from common import update
+
+    from . import principal, segundo_plano, tk_principal
 
     theme.nitidez()
     root = tk.Tk()  # TclError aquí si no hay display -> fallback consola
@@ -1512,117 +1843,335 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     root.resizable(False, False)
     root.withdraw()          # se enseña ya centrada, ver el final de la función
     result: dict = {"choice": None}
+    # Lo que la ventana sabe. `inst` es la última lectura del dispositivo
+    # (`ui.instantanea`), `None` hasta que llega; `pedido` es lo que se le ha
+    # pedido al agente y la lectura aún no ve, con el número de lecturas
+    # lanzadas cuando se pidió; `marcadas`, con qué nace la casilla de una
+    # pareja que aparece; `ancho`, `arriba` y `abajo`, el ancho recordado de su
+    # contenido y lo que ocupan lo que va encima y lo que va debajo de la lista
+    # (`state/ventana.json`); `reservado`, `reservado_arriba` y `reservado_abajo`,
+    # lo que se le guarda de cada uno hasta que llega la lectura, y `libera`, el
+    # número de la lectura que deja libre la ventana tras una pasada.
+    vista: dict = {"config": config, "aviso": startup_msg, "en_curso": False,
+                   "inst": None, "pedido": None, "lecturas": 0, "compartida": None,
+                   "volcado": None, "ancho": None, "reservado": 0, "arriba": None,
+                   "reservado_arriba": 0, "abajo": None, "reservado_abajo": 0,
+                   "libera": None}
+    seleccion = prefs.SeleccionPendiente()
+
+    def poner_nueva(nueva) -> None:
+        """Apunta la release pendiente y, si la hay, la versión que lleva puesta."""
+        vista["nueva"] = nueva
+        vista["instalada"] = None
+        if nueva is not None:
+            try:
+                vista["instalada"] = update.installed_version()
+            except Exception:                        # noqa: BLE001
+                pass
+
     # `nueva` es la release pendiente, si la hay. Se pregunta a la caché y no a
     # la red: es el primer pintado y tiene que ser instantáneo. Quien va a
     # GitHub es el hilo de `mirar_version()`. Bajo `except` porque `ui.start()`
     # envuelve toda la llamada a `ask()`: un estado ilegible aquí no daría un
     # error, daría un menú de consola sin explicar por qué.
     try:
-        pendiente = update.pending()
+        poner_nueva(update.pending())
     except Exception:                                # noqa: BLE001
-        pendiente = None
-    vista: dict = {"config": config, "aviso": startup_msg, "nueva": pendiente,
-                   "en_curso": False}
+        poner_nueva(None)
+    vista["tiempos"] = pair_times(config)
+    # Las casillas salen marcadas con lo del servicio (`prefs`): lo que se ve
+    # marcado al abrir es lo que sincroniza el servicio.
+    vista["marcadas"] = frozenset(prefs.startup_defaults(config)[0])
 
     # Dentro de un visor: la lista de parejas crece con cada pareja y la ventana
     # no puede pasar del alto de la pantalla. Con pocas parejas no se nota nada.
     frame = cuerpo_visible(root, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
     frame.columnconfigure(0, weight=1)
+    clave_ancho = prefs.clave_ancho(str(tk.TkVersion), float(root.tk.call("tk", "scaling")))
+    vista["ancho"] = prefs.recordado("ancho", clave_ancho)
+    vista["arriba"] = prefs.recordado("arriba", clave_ancho)
+    vista["abajo"] = prefs.recordado("abajo", clave_ancho)
+    # Uno solo para todas las lecturas: una nueva deja sin recoger la anterior.
+    sondeo = Sondeo(root, cada=SONDEO_INSTANTANEA_MS)
+    root.sondeo_instantanea = sondeo
 
-    def leer_estado() -> None:
-        """Lee lo que hay que revisar: averías apuntadas, conflictos y componentes.
+    def la_compartida():
+        """Devuelve la lectura que se reparte a las pantallas, creada la primera vez."""
+        if vista["compartida"] is None:
+            from . import instantanea
+            vista["compartida"] = instantanea.Compartida()
+        return vista["compartida"]
 
-        Se lee de `state/` y no se recorre nada: es lo que pinta la ventana
-        nada más abrirse y al volver de una sincronización (`sync.py` lo acaba
-        de escribir). El recorrido de verdad lo hace `mirar_conflictos()` en un
-        hilo. Va bajo `except` por lo mismo que `update.pending()` arriba.
-        """
-        try:
-            vista["hallazgos"] = revision.revisar(vista["config"])
-        except Exception:                            # noqa: BLE001
-            vista["hallazgos"] = []
-        try:
-            vista["conflictos"] = conflicts.contar(conflicts.cargar(vista["config"]))
-        except Exception:                            # noqa: BLE001
-            vista["conflictos"] = {}
-        # Los componentes se leen de sus sellos: es un puñado de ficheros de dos
-        # líneas del propio dispositivo, así que no hace falta hilo ni red —a
-        # diferencia de la release, que vive en GitHub—.
-        try:
-            vista["componentes"] = components.pendientes()
-        except Exception:                            # noqa: BLE001
-            vista["componentes"] = []
-        # ¿Vive en un contenedor VeraCrypt? Entonces cerrar la ventana no basta
-        # para quitar la unidad, y el pie ofrece «Expulsar». Mira las unidades,
-        # no la red: es un stat por letra.
-        try:
-            vista["expulsion"] = cifrado.expulsion()
-        except Exception:                            # noqa: BLE001
-            vista["expulsion"] = None
-        # La raíz cifrada de un equipo no se expulsa: se bloquea, y lo hace el
-        # agente residente (`cifrado.bloqueo`).
-        try:
-            vista["bloqueo"] = cifrado.bloqueo()
-        except Exception:                            # noqa: BLE001
-            vista["bloqueo"] = None
-        # Una carpeta de este equipo no se quita: con llavero no hay «Expulsar».
-        try:
-            vista["del_equipo"] = model.es_equipo()
-        except Exception:                            # noqa: BLE001
-            vista["del_equipo"] = False
-        # Qué hace este equipo al enchufar el dispositivo. Solo lee ficheros del
-        # equipo (ver `watch.resumen`), así que también cabe en el primer pintado.
-        try:
-            vista["vigilante"] = watch.resumen()
-        except Exception:                            # noqa: BLE001
-            vista["vigilante"] = watch.Resumen("no_disponible")
-        # Cómo está el llavero, si lo lleva: ficheros del dispositivo y una foto
-        # de los procesos del equipo (si su KeePassXC está abierto), sin red.
-        try:
-            vista["llavero"] = llavero_editor.linea(vista["config"])
-        except Exception:                            # noqa: BLE001
-            vista["llavero"] = None
+    def vigilante_actual():
+        """Qué hace el arranque automático: lo pedido al agente, o lo leído; `None` sin leer."""
+        if vista["pedido"] is not None:
+            return vista["pedido"][1]
+        return None if vista["inst"] is None else vista["inst"].vigilante
 
-    leer_estado()
+    def pedir(resumen) -> None:
+        """Apunta lo que se le acaba de pedir al agente, para enseñarlo hasta que se vea."""
+        vista["pedido"] = (vista["lecturas"], resumen)
+
+    def estado_actual():
+        """Devuelve lo que la ventana tiene que enseñar ahora (`principal.estado`)."""
+        return principal.estado(
+            vista["config"], aviso=vista["aviso"], nueva=vista["nueva"],
+            instalada=vista["instalada"], tiempos=vista["tiempos"],
+            marcadas=vista["marcadas"], en_curso=vista["en_curso"], inst=vista["inst"],
+            vigilante=None if vista["pedido"] is None else vista["pedido"][1])
 
     def reajustar() -> None:
-        """Repinta sin mover la ventana si no ha cambiado de tamaño.
+        """Cambia lo que haya cambiado y, solo si cambió de tamaño, la vuelve a encajar.
 
         Lo que cambia aquí (un botón que se apaga mientras sincroniza, un chip
         que pasa a ámbar) casi nunca cambia el tamaño, y recolocar una ventana
-        que la persona ha movido sería arrastrársela.
+        que la persona ha movido sería arrastrársela: se centra solo si ha
+        cambiado de tamaño.
         """
-        render()
-        if root.visor.encajar(root):
+        if v.aplicar(estado_actual()) and root.visor.encajar(root):
             centrar(root)
 
+    def recolocar(ancho_antes: int, x: int, y: int) -> None:
+        """Tras cambiar de tamaño con una lectura: el mismo centro y el mismo borde de arriba.
+
+        No se vuelve a centrar entera (se acaba de ver dónde está, y la persona
+        la ha podido mover): crece hacia abajo y a los dos lados por igual, y
+        solo sube lo justo si su borde de abajo se saldría de la pantalla. Como
+        `centrar`, el lado solo se corrige si está en la pantalla principal.
+
+        Args:
+            ancho_antes: Lo que pedía de ancho antes de la lectura.
+            x: Dónde estaba (`posicion(root)`), antes de la lectura.
+            y: Lo mismo, en vertical.
+        """
+        ancho, alto = root.winfo_reqwidth(), root.winfo_reqheight()
+        nueva_x = x
+        if ancho != ancho_antes:
+            nueva_x = x - (ancho - ancho_antes) // 2
+            pantalla = root.winfo_screenwidth()
+            if 0 <= x < pantalla:
+                nueva_x = max(0, min(nueva_x, pantalla - ancho))
+        _ancho_util, alto_util = pantalla_util(root)
+        nueva_y = max(0, alto_util - alto) if y + alto > alto_util else y
+        if (nueva_x, nueva_y) != (x, y):
+            root.geometry(f"+{nueva_x}+{nueva_y}")
+
+    def reservar(ancho: int) -> None:
+        """Guarda ese ancho al contenido, aunque pida menos (0: ninguno).
+
+        Va en la columna del `Visor` donde `cuerpo_visible` pone el marco: lo
+        que pide el marco sigue siendo lo suyo, que es lo que se recuerda.
+        """
+        root.visor.interior.columnconfigure(0, minsize=ancho)
+        vista["reservado"] = ancho
+
+    def asentar_ancho(recordar: bool) -> None:
+        """Tras aplicar una lectura: la ventana a su ancho, y ese ancho recordado.
+
+        Se llama recién encajada, así que lo que pide el contenido está al día.
+        Si es lo reservado no se mueve nada. Si pide menos, se quita la reserva
+        y se encaja otra vez: se coloca una sola vez a su ancho, como si no
+        hubiera habido reserva (si pedía más, `encajar` ya lo ha hecho). Se
+        escribe solo si cambia, y un dispositivo que no se deja escribir no lo
+        recuerda y ya está.
+
+        Args:
+            recordar: Si se apunta. No con una lectura que falló entera: la
+                ventana sin nada leído es más estrecha que la de siempre.
+        """
+        ancho = frame.winfo_reqwidth()
+        if vista["reservado"]:
+            sobra = vista["reservado"] > ancho
+            reservar(0)
+            if sobra:
+                root.visor.encajar(root)
+        if recordar and ancho != vista["ancho"]:
+            vista["ancho"] = ancho
+            prefs.recordar("ancho", clave_ancho, ancho)
+
+    def reservar_arriba(alto: int) -> None:
+        """Guarda ese alto a lo que va encima de la lista, aunque aún no esté (0: ninguno).
+
+        Es lo que le falta a lo que ya hay encima (`VistaPrincipal.reservar_arriba`);
+        la reserva se queda apuntada hasta que se suelta.
+        """
+        vista["reservado_arriba"] = v.reservar_arriba(alto)
+
+    def asentar_arriba(recordar: bool) -> None:
+        """Tras aplicar una lectura y encajar: apunta lo que ocupa lo que va encima de la lista.
+
+        Se llama con la reserva ya suelta y la ventana recién encajada, así que
+        mide lo que hay de verdad sin repintar nada. Si es lo reservado, la lista
+        no se ha movido; si no, se movió una sola vez, a donde queda ahora. Se
+        escribe solo si cambia (sin nada recordado, 0 es lo mismo que nada), y
+        un dispositivo que no se deja escribir no lo recuerda y ya está.
+
+        Args:
+            recordar: Si se apunta. No con una lectura que falló entera: la
+                ventana sin nada leído no tiene lo que la lectura pone encima.
+        """
+        alto = v.alto_arriba()
+        if recordar and alto != (vista["arriba"] or 0):
+            vista["arriba"] = alto
+            prefs.recordar("arriba", clave_ancho, alto)
+
+    def reservar_abajo(alto: int) -> None:
+        """Guarda ese alto a lo que va debajo de la lista, aunque aún no esté (0: ninguno).
+
+        Es lo que le falta a lo que ya hay (`VistaPrincipal.reservar_abajo`); la
+        reserva se queda apuntada hasta que se suelta.
+        """
+        vista["reservado_abajo"] = v.reservar_abajo(alto)
+
+    def asentar_abajo(recordar: bool) -> None:
+        """Tras aplicar una lectura y encajar: apunta lo que ocupa lo que va debajo de la lista.
+
+        Como `asentar_arriba`, con la reserva ya suelta y la ventana recién
+        encajada: si lo medido es lo reservado, el pie no se ha movido ni la
+        ventana ha cambiado de alto; si no, se movió una sola vez. Lo que se mide
+        incluye «Parejas…» y «Ajustes…», que siempre están, así que sin nada
+        recordado la primera lectura siempre apunta.
+
+        Args:
+            recordar: Si se apunta. No con una lectura que falló entera: la
+                ventana sin nada leído no tiene las líneas que la lectura pone.
+        """
+        alto = v.alto_abajo()
+        if recordar and alto != (vista["abajo"] or 0):
+            vista["abajo"] = alto
+            prefs.recordar("abajo", clave_ancho, alto)
+
+    def llegar(numero: int, encargo) -> None:
+        """Aplica la lectura que acaba de llegar y la reparte a las pantallas.
+
+        La ventana cambia de tamaño sin centrarse otra vez (`recolocar`), y no
+        se ensancha si su contenido pide el ancho reservado desde el primer
+        pintado, que es el de la última vez (`asentar_ancho`); la lista
+        tampoco baja si lo que la lectura pone encima ocupa lo reservado
+        (`asentar_arriba`), ni el pie ni la ventana si lo que pone debajo
+        ocupa lo reservado (`asentar_abajo`). Lo que se le había pedido al
+        agente antes de lanzar esta lectura se olvida: ya lo cuenta ella, o lo
+        contará la siguiente. La que se lanzó al cerrar una pasada (o una
+        posterior) deja la ventana libre. Un hilo que falló deja una lectura
+        vacía, la de una ventana sin nada que enseñar.
+        """
+        perf_empezar("llega-instantanea")
+        from . import instantanea
+
+        inst = encargo.resultado
+        leida = encargo.error is None and inst is not None
+        if not leida:
+            inst = instantanea.vacia(vista["config"])
+        vista["inst"] = inst
+        if vista["pedido"] is not None and vista["pedido"][0] < numero:
+            vista["pedido"] = None
+        if vista["libera"] is not None and numero >= vista["libera"]:
+            vista["en_curso"], vista["libera"] = False, None
+        vista["tiempos"] = pair_times(vista["config"])
+        ancho_antes, (x, y) = root.winfo_reqwidth(), posicion(root)
+        if (v.aplicar(estado_actual()) or vista["reservado"] or vista["reservado_arriba"]
+                or vista["reservado_abajo"]):
+            # Las reservas de arriba y de abajo se sueltan en la misma colocación
+            # que grida los bloques que llegan: con `encajar` se coloca todo de una vez.
+            if vista["reservado_arriba"]:
+                reservar_arriba(0)
+            if vista["reservado_abajo"]:
+                reservar_abajo(0)
+            root.visor.encajar(root)
+            asentar_ancho(leida)
+            asentar_arriba(leida)
+            asentar_abajo(leida)
+            recolocar(ancho_antes, x, y)
+        root.instantanea_lista = True
+        # Lo último: un suscriptor que falla (una pantalla a medio cerrar) no
+        # deja esta ventana a medias.
+        la_compartida().poner(inst)
+        perf_al_pintar(root, "llega-instantanea")
+
+    def refrescar_instantanea(libera: bool = False) -> None:
+        """Lee en un hilo lo que la ventana enseña del dispositivo, y lo aplica al llegar.
+
+        Es la única lectura de averías, conflictos, componentes, contenedor,
+        arranque automático y llavero de esta ventana (`instantanea.leer()`):
+        la primera, tras enseñarse, y otra cada vez que algo puede haberlo
+        cambiado (una pasada, «Reparación», el llavero, la config…). Una nueva
+        sustituye a la que estuviera en camino, cuyo resultado se tira.
+
+        Args:
+            libera: La ventana está ocupada y deja de estarlo cuando llegue
+                esta lectura, o una lanzada después (al cerrar una pasada).
+        """
+        from . import instantanea
+
+        vista["lecturas"] += 1
+        numero = vista["lecturas"]
+        if libera:
+            vista["libera"] = numero
+        encargo = segundo_plano.lanzar(partial(
+            instantanea.leer, vista["config"], notas=pair_status_notes))
+        root.instantanea = encargo
+        root.instantanea_lista = False
+        sondeo.esperar(encargo, lambda hecho: llegar(numero, hecho))
+
+    def volcar_seleccion() -> None:
+        """Escribe ya la última selección de casillas, si la hay, y quita su espera."""
+        if vista["volcado"] is not None:
+            try:
+                root.after_cancel(vista["volcado"])
+            except Exception:                        # noqa: BLE001 — se está cerrando
+                pass
+            vista["volcado"] = None
+        seleccion.volcar()
+
+    def selected() -> list[str]:
+        """Devuelve las parejas con la casilla marcada, en el orden del config."""
+        return [n for n in vista["config"].names
+                if n in v.casillas and v.casillas[n].get()]
+
+    def al_marcar() -> None:
+        """Pone el «N de M» y apunta la selección, sin escribirla en el clic.
+
+        La escribe `volcar_seleccion` pasados `prefs.ESPERA_MS` sin más clics, y
+        siempre antes de lanzar una pasada, de iniciar el servicio, de expulsar
+        o de cerrar la ventana: el servicio y el agente leen esa elección. Sin
+        ninguna marcada no se guarda nada (`prefs.guardar_parejas`) y queda la
+        anterior.
+        """
+        perf_empezar("marcar")
+        v.contar()
+        seleccion.poner(vista["config"], selected())
+        if vista["volcado"] is not None:
+            root.after_cancel(vista["volcado"])
+        vista["volcado"] = root.after(prefs.ESPERA_MS, volcar_seleccion)
+        perf_al_pintar(root, "marcar")
+
+    def marcar_todas() -> None:
+        """Marca todas las casillas, o las desmarca si ya lo están."""
+        valor = not all(var.get() for var in v.casillas.values())
+        for var in v.casillas.values():
+            var.set(valor)
+        al_marcar()
+
     def recargar() -> None:
-        """Relee el config, que ha cambiado bajo nuestros pies, y repinta.
+        """Relee el config, que ha cambiado bajo nuestros pies, y lo vuelve a leer todo.
 
         Si ha quedado ilegible se dice y se conserva el anterior en pantalla,
-        que es mejor que quedarse con una ventana en blanco.
+        que es mejor que quedarse con una ventana en blanco. Las parejas nuevas
+        nacen marcadas; las que siguen, como estén.
         """
         try:
-            vista["config"] = model.load_config()
+            nuevo = model.load_config()
         except model.ConfigError as e:
             messagebox.showerror(TITLE, f"El config no se puede leer:\n\n{e}")
             return
+        conocidas = set(vista["config"].names)
+        vista["marcadas"] = frozenset(selected()) | {n for n in nuevo.names
+                                                     if n not in conocidas}
+        vista["config"] = nuevo
         vista["aviso"] = None
-        leer_estado()
-        render()
-        root.visor.encajar(root)
-        centrar(root)   # quitar o añadir parejas le cambia el alto
-
-    def repintar() -> None:
-        """Repinta y recoloca la ventana.
-
-        La ventana no es redimensionable y va dentro de un visor, así que
-        quitar o poner un bloque obliga a rehacer las dos medidas; sin esto el
-        aviso nuevo aparece recortado.
-        """
-        render()
-        root.visor.encajar(root)
-        centrar(root)
+        vista["tiempos"] = pair_times(nuevo)
+        reajustar()
+        refrescar_instantanea()
 
     def descartar_aviso() -> None:
         """Quita el aviso de arranque, que es lo único de la ventana que se lee una vez.
@@ -1643,12 +2192,23 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         programa y cierra esta ventana, porque este proceso tiene cargados en
         memoria los módulos que se acaban de sustituir.
         """
+        from . import tk_update
+
         if tk_update.open_dialog(root, vista["nueva"]):
             result["choice"] = None
             root.destroy()
             return
-        vista["nueva"] = update.pending()
-        repintar()
+        mirar_pendiente()
+
+    def mirar_pendiente() -> None:
+        """Vuelve a mirar en la caché la release pendiente y repinta solo si ha cambiado."""
+        try:
+            nueva = update.pending()
+        except Exception:                            # noqa: BLE001
+            return
+        if nueva != vista["nueva"]:
+            poner_nueva(nueva)
+            reajustar()
 
     def abrir_componentes() -> None:
         """Abre la pantalla para poner al día el rclone y el Python del dispositivo.
@@ -1659,14 +2219,17 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         corre esta ventana: ése lo cambia el relevo cuando se cierra y la
         reabre él.
         """
-        tocado = tk_update.open_components_dialog(root, vista["componentes"])
+        from . import tk_update
+
+        inst = vista["inst"]
+        tocado = tk_update.open_components_dialog(
+            root, list(inst.componentes) if inst is not None else [])
         if tocado == tk_update.CERRAR:
             result["choice"] = None
             root.destroy()
             return
         if tocado:
-            leer_estado()
-        repintar()
+            refrescar_instantanea()
 
     def mirar_version(respuesta=None) -> None:
         """Le pregunta a GitHub si hay algo nuevo.
@@ -1689,8 +2252,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             # También cuando pasa a None: si la caché estaba adelantada, el
             # aviso tiene que irse, no quedarse puesto hasta la próxima vez.
             if nueva != vista["nueva"]:
-                vista["nueva"] = nueva
-                repintar()
+                poner_nueva(nueva)
+                reajustar()
             if respuesta is not None:
                 respuesta(texto)
 
@@ -1714,31 +2277,32 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
     def mirar_conflictos() -> None:
         """Recorre las carpetas de verdad, sin que se note.
 
-        Lo que se pintó al abrir sale del último escaneo; esto lo pone al día
-        (conflictos que han llegado de otro dispositivo, o que se han resuelto
-        a mano). Va en un hilo porque recorrer un árbol grande en un
-        dispositivo USB tarda, y devuelve por `after` porque a Tk solo se le
-        habla desde su hilo. Mientras sincroniza no se mira: `sync.py` ya lo
-        hace al acabar.
+        Lo que se pintó sale del último escaneo (`state/conflicts.json`); esto
+        lo pone al día (conflictos que han llegado de otro dispositivo, o que se
+        han resuelto a mano) y, si las cuentas no son las que se enseñan, vuelve
+        a leer: los conflictos son una avería más, así que la línea de «cosas
+        que revisar» y el chip de la cabecera salen de la misma lectura. Va en
+        un hilo porque recorrer un árbol grande en un dispositivo USB tarda, y
+        devuelve por `after` porque a Tk solo se le habla desde su hilo.
+        Mientras sincroniza no se mira: `sync.py` ya lo hace al acabar.
         """
         if vista["en_curso"]:
             return
         config_ahora = vista["config"]
 
         def responder(cuentas) -> None:
-            """Repinta si la cuenta de conflictos ha cambiado."""
-            if cuentas != vista["conflictos"] and not vista["en_curso"]:
-                # `leer_estado()` y no solo la cuenta nueva: los conflictos son
-                # una avería más, así que la línea de «cosas que revisar» y el
-                # chip de la cabecera salen de la misma revisión y hay que
-                # rehacerla, o dirían uno menos de los que se acaban de ver.
-                leer_estado()
-                vista["conflictos"] = cuentas
-                reajustar()
+            """Vuelve a leer si la cuenta de conflictos no es la que se enseña."""
+            if vista["en_curso"]:
+                return
+            inst = vista["inst"]
+            # Sin lectura todavía no se sabe qué se enseña: se lee otra vez.
+            if inst is None or cuentas != dict(inst.conflictos):
+                refrescar_instantanea()
 
         def trabajo() -> None:
             """Recorre las parejas, en el hilo, y le pasa la cuenta a la ventana."""
             try:
+                from common import conflicts
                 cuentas = conflicts.contar(conflicts.refrescar(config_ahora))
             except Exception:                        # noqa: BLE001
                 return
@@ -1749,27 +2313,35 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
 
         threading.Thread(target=trabajo, daemon=True).start()
 
+    def abrir_parejas() -> None:
+        """Abre «Parejas…» y, si se ha guardado algo, relee el config y el estado."""
+        perf_empezar("open-parejas")
+        from . import tk_pairs
+
+        if tk_pairs.open_dialog(root, vista["config"], compartida=la_compartida()):
+            recargar()
+
     def abrir_arranque() -> None:
         """Abre la pantalla del vigilante.
 
-        Al volver relee qué hace este equipo al enchufar. Se puede haber
-        instalado, cambiado de modo o quitado. Con el agente residente se abre
-        «Qué hace el agente», que se lo pide por su buzón: la línea enseña lo
-        pedido, que el agente aplica en unos segundos.
+        Con el agente residente se abre «Qué hace el agente», que se lo pide por
+        su buzón: la línea enseña lo pedido, que el agente aplica en unos
+        segundos. La del vigilante no devuelve nada y se puede haber instalado,
+        cambiado de modo o quitado: al volver se lee otra vez, siempre.
         """
-        actual = vista["vigilante"]
-        if actual.es_agente:
+        from . import tk_watch
+
+        actual = vigilante_actual()
+        if actual is not None and actual.es_agente:
             modo = tk_watch.open_agente(root, actual)
             if modo is not None:
-                vista["vigilante"] = watch.pedido(actual, modo)
+                from . import watch
+
+                pedir(watch.pedido(actual, modo))
                 reajustar()
             return
         tk_watch.open_dialog(root)
-        try:
-            vista["vigilante"] = watch.resumen()
-        except Exception:                            # noqa: BLE001
-            vista["vigilante"] = watch.Resumen("no_disponible")
-        reajustar()
+        refrescar_instantanea()
 
     def abrir_reparacion() -> None:
         """Abre la pantalla donde se ve lo que está mal y se arregla.
@@ -1778,22 +2350,21 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         pasada, y lo que interesa simular es lo que se iba a sincronizar.
         """
         from . import tk_repair
-        marcadas = [n for n in vista["config"].names
-                    if n in vista.get("casillas", {})
-                    and vista["casillas"][n].get()]
-        if tk_repair.open_dialog(root, vista["config"], lanzar, marcadas):
-            leer_estado()
-        reajustar()
+
+        if tk_repair.open_dialog(root, vista["config"], lanzar, selected(),
+                                 compartida=la_compartida()):
+            refrescar_instantanea()
 
     def abrir_llavero() -> None:
         """«Abrir llavero»: KeePassXC con la base del dispositivo (`tk_llavero`).
 
-        Al volver relee el estado: puede haber hecho una pasada, y la línea del
+        Al volver se lee otra vez: puede haber hecho una pasada, y la línea del
         llavero dice si su KeePassXC está abierto.
         """
+        from . import tk_llavero
+
         tk_llavero.abrir(root, vista["config"])
-        leer_estado()
-        reajustar()
+        refrescar_instantanea()
 
     def abrir_ajustes() -> None:
         """Abre «Ajustes» y hace lo que digan sus apartados al cerrarlo.
@@ -1802,38 +2373,49 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         esta ventana: cerrarse tras actualizar el programa (sus módulos ya no
         son los de disco), releer el config tras tocar el llavero y, si se ha
         activado, lanzar su primera pasada, que sube la base o trae la del
-        remoto en la ventana de salida de siempre; y releer el estado o el
-        vigilante si se han tocado.
+        remoto en la ventana de salida de siempre; y volver a leer el estado o
+        el vigilante si se han tocado. Si no ha cambiado nada no se toca nada.
         """
-        marcadas = [n for n in vista["config"].names
-                    if n in vista.get("casillas", {}) and vista["casillas"][n].get()]
+        perf_empezar("open-ajustes")
+        from . import tk_doctor, tk_update
+
+        inst = vista["inst"]
         hecho = tk_doctor.open_dialog(
             root, vista["config"], lanzar, buscar_version=mirar_version,
-            nueva=vista["nueva"], componentes=vista["componentes"],
-            vigilante=vista["vigilante"], hallazgos=vista["hallazgos"],
-            marcadas=marcadas)
+            nueva=vista["nueva"],
+            componentes=list(inst.componentes) if inst is not None else None,
+            vigilante=vigilante_actual(),
+            hallazgos=list(inst.hallazgos) if inst is not None else None,
+            marcadas=selected(), compartida=la_compartida())
+        perf_empezar("volver-ajustes")
         if (hecho.get("actualizaciones") is True
                 or hecho.get("componentes") == tk_update.CERRAR):
             result["choice"] = None
             root.destroy()
             return
+        releer = bool(hecho.get("reparacion") or hecho.get("componentes"))
         llavero = hecho.get("llavero")
         if llavero is not None:
-            recargar()
+            from . import tk_llavero
+
+            recargar()                       # que ya vuelve a leer
+            releer = False
             if llavero == tk_llavero.ACTIVADO:
                 lanzar("Llavero: la primera pasada", [model.LLAVERO])
-        elif hecho.get("reparacion") or hecho.get("componentes"):
-            leer_estado()
         modo = hecho.get("arranque")
         if isinstance(modo, str):
-            vista["vigilante"] = watch.pedido(vista["vigilante"], modo)
-        elif modo:
-            try:
-                vista["vigilante"] = watch.resumen()
-            except Exception:                        # noqa: BLE001
-                vista["vigilante"] = watch.Resumen("no_disponible")
-        vista["nueva"] = update.pending()
-        reajustar()
+            actual = vigilante_actual()
+            if actual is not None:
+                from . import watch
+
+                pedir(watch.pedido(actual, modo))
+                reajustar()
+        elif modo and llavero is None:
+            releer = True
+        if releer:
+            refrescar_instantanea()
+        mirar_pendiente()
+        perf_al_pintar(root, "volver-ajustes")
 
     def expulsar() -> None:
         """Cierra el llavero, la ventana y el contenedor, para poder quitar la unidad.
@@ -1846,9 +2428,13 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         viva no se puede desmontar sin forzar. Lanza el script del vestíbulo,
         que espera a que esta ventana se haya ido, y se cierra. Con la ventana
         abierta no hay servicio en marcha (abrirla lo para), así que no queda
-        nada nuestro con ficheros abiertos dentro.
+        nada nuestro con ficheros abiertos dentro. El script se busca ahora y no
+        en la lectura de la ventana, que puede ser de hace rato.
         """
-        script = vista.get("expulsion")
+        try:
+            script = cifrado.expulsion()
+        except Exception:                            # noqa: BLE001
+            script = None
         con_llavero = vista["config"].pareja_llavero is not None
         if script is None and not con_llavero:
             return
@@ -1864,8 +2450,14 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
             return
         # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
         # y lo que quede sin subir se sube ahora (`keepassxc.cerrar_llavero()`).
-        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
-            return
+        if con_llavero:
+            from . import tk_llavero
+
+            if not tk_llavero.cerrar(root, vista["config"]):
+                return
+        # Lo último que esta ventana escribe o lee en la unidad, antes de soltarla.
+        volcar_seleccion()
+        store.matar_hijos()
         if script is None:
             messagebox.showinfo(TITLE, f"Ya puedes quitarla {QUITAR_UNIDAD}.", parent=root)
             result["choice"] = None
@@ -1876,6 +2468,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         except OSError as e:
             messagebox.showerror(TITLE, f"No he podido lanzar {script.name}: {e}",
                                  parent=root)
+            # La ventana sigue abierta: lo que se leía se acaba de cortar.
+            refrescar_instantanea()
             return
         result["choice"] = None
         root.destroy()
@@ -1888,7 +2482,8 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
         espera a que esta ventana se haya ido (y a la pareja en curso) y
         desmonta sin `/silent`.
         """
-        uid = vista.get("bloqueo")
+        inst = vista["inst"]
+        uid = None if inst is None else inst.bloqueo
         con_llavero = vista["config"].pareja_llavero is not None
         if uid is None or not messagebox.askokcancel(TITLE, (
                 ("Se cierra el llavero (KeePassXC, si está abierto), esta ventana y "
@@ -1899,440 +2494,193 @@ def main_window(config: Config, startup_msg: str | None) -> Choice | None:
                 "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
                 "te preguntará si forzar el cierre."), parent=root):
             return
-        if con_llavero and not tk_llavero.cerrar(root, vista["config"]):
-            return
+        if con_llavero:
+            from . import tk_llavero
+
+            if not tk_llavero.cerrar(root, vista["config"]):
+                return
+        volcar_seleccion()
+        store.matar_hijos()
         if not cifrado.pedir_bloqueo(uid):
             messagebox.showerror(TITLE, (
                 "El agente de este equipo no está en marcha, y es quien cierra el "
                 "contenedor. Ciérralo desde VeraCrypt."), parent=root)
+            refrescar_instantanea()  # sigue abierta, y sus lecturas se han cortado
             return
         result["choice"] = None
         root.destroy()
-
-    def abrir_log(ruta) -> None:
-        """Abre un log con el programa del sistema."""
-        try:
-            abrir(ruta)
-        except OSError as e:
-            messagebox.showerror(TITLE, f"No se ha podido abrir:\n\n{ruta}\n\n{e}",
-                                 parent=root)
 
     def lanzar(titulo: str, args: list[str]) -> None:
         """Ejecuta `sync.py` en la ventana de salida SIN cerrar esta.
 
         La ventana de salida es hija de esta y no la bloquea; mientras corre,
         lo que tocaría el mismo estado (otra pasada, el servicio, las parejas)
-        queda apagado. Al cerrarla se vuelve aquí con las horas, los chips y
-        los avisos ya al día: `sync.py` acaba de escribirlos en `state/`.
+        queda apagado, y se enciende cuando llega la lectura que se lanza al
+        cerrarla, la de lo que `sync.py` acaba de escribir en `state/`. Si la
+        ventana de salida no llega a abrirse, esta vuelve a quedar libre y el
+        error sigue su camino.
+        Con la ventana ya enseñada (la pasada arranca en el turno siguiente) se
+        escribe la última selección de casillas, si quedaba alguna sin escribir.
         """
-        vista["en_curso"] = True
-        reajustar()
+        if not vista["en_curso"]:
+            vista["en_curso"] = True
+            reajustar()
 
         def al_cerrar(_rc) -> None:
-            """Relee el estado y repinta al cerrarse la ventana de salida."""
-            vista["en_curso"] = False
+            """Lee otra vez al cerrarse la de salida, y la ventana queda libre al llegar.
+
+            Hasta entonces sigue ocupada, como durante la pasada: lo que se leyó
+            antes (cosas que revisar, una pareja que pedía resync) puede no ser
+            verdad ya, y enseñarlo otra vez para cambiarlo al llegar la lectura
+            sería un parpadeo con texto viejo. Si la lectura no se puede lanzar,
+            queda libre ya. Si es la principal entera la que se cierra (la de
+            salida cae con ella), no hay nada que leer.
+            """
+            if not frame.winfo_exists():
+                vista["en_curso"] = False
+                return
             try:
-                leer_estado()
-                reajustar()
+                refrescar_instantanea(libera=True)
             except tk.TclError:
                 pass         # se está cerrando la ventana principal entera
+            except BaseException:
+                vista["en_curso"] = False
+                reajustar()
+                raise
+            perf_al_pintar(root, "volver-pasada")
 
-        output_window(titulo, orden_sync(args), parent=root,
-                      subtitulo=subtitulo_sync(args), modal=False, al_cerrar=al_cerrar)
+        try:
+            output_window(titulo, orden_sync(args), parent=root,
+                          subtitulo=subtitulo_sync(args), modal=False, al_cerrar=al_cerrar)
+            # La marca va a la principal: `output_window` no devuelve la de salida, y
+            # `perf_al_pintar` solo usa la raíz de Tk, que es la misma para las dos.
+            perf_al_pintar(root, "sincronizar-ventana")
+        except BaseException:
+            vista["en_curso"] = False
+            reajustar()
+            raise
+        volcar_seleccion()
 
-    def render() -> None:
-        """Pinta la ventana entera, conservando lo marcado a mano."""
-        # Lo marcado a mano se conserva al repintar: esta ventana se repinta
-        # sola (vuelve una sincronización, llega el escaneo de conflictos) y
-        # perder las casillas que se acaban de tocar sería un castigo por
-        # esperar.
-        if vista.get("casillas"):
-            vista["marcadas"] = [n for n, v in vista["casillas"].items() if v.get()]
-            vista["conocidas"] = list(vista["casillas"])
-        for hijo in frame.winfo_children():
-            hijo.destroy()
+    def sincronizar() -> None:
+        """Lanza la pasada manual, aquí mismo.
 
-        config = vista["config"]
-        names = config.names
-        notes = pair_status_notes(config)
-        marcas = pair_times(config)
-        cuentas = {n: k for n, k in vista["conflictos"].items() if n in names}
-        d_pairs, _, _ = prefs.startup_defaults(config)
-        if "marcadas" in vista:
-            d_pairs = [n for n in names
-                       if n in vista["marcadas"] or n not in vista["conocidas"]]
-        en_curso = vista["en_curso"]
-        apagado = "disabled" if en_curso else "normal"
-        fila = 0
+        En el clic solo se ocupa la ventana: la pregunta del resync (que lee el
+        estado de las parejas en ese momento, no la lectura de la ventana) y la
+        ventana de salida van en el turno siguiente, así que el botón responde
+        al momento. Sin ninguna marcada no hace nada.
+        """
+        sel = selected()
+        if not sel:
+            return  # nada marcado, nada que hacer: el botón responde, y no hay pasada que medir
+        # Después de la guarda: con el botón activo y nada marcado, un inicio aquí
+        # quedaría abierto y la próxima pasada lo cerraría con minutos de retraso.
+        perf_empezar("sincronizar-ventana")
+        vista["en_curso"] = True
+        reajustar()
+        root.after(1, continuar, sel)
 
-        # Quién es este dispositivo y cómo está.
-        arriba = ttk.Frame(frame)
-        arriba.grid(row=fila, column=0, sticky="ew")
-        arriba.columnconfigure(0, weight=1)
-        fila += 1
+    def continuar(sel: list[str]) -> None:
+        """Pregunta lo que haga falta y abre la ventana de salida de la pasada manual.
 
-        titulo = ttk.Frame(arriba)
-        titulo.grid(row=0, column=0, sticky="w")
-        ttk.Label(titulo, text="Sincronizar", style="Titulo.TLabel").grid(
-            row=0, column=0, sticky="w")
-        extremos = ttk.Frame(titulo)
-        extremos.grid(row=1, column=0, sticky="w", pady=(theme.E2, 0))
-        remotos = sorted({p.remote_name for p in config.pairs}) or [model.DEFAULT_REMOTE]
-        for col, (icono, texto) in enumerate((("dispositivo", corto(str(model.DEVICE_ROOT))),
-                                              ("nas", corto(", ".join(remotos))))):
-            if col:
-                ttk.Label(extremos, text="·", style="Apagado.TLabel").grid(
-                    row=0, column=2, padx=theme.E2)
-            marca = theme.etiqueta_icono(extremos, icono, theme.TINTA3,
-                                         "mono_pequena", 14)
-            marca.grid(row=0, column=col * 3, sticky="w")
-            ttk.Label(extremos, text=texto, style="MonoPista.TLabel").grid(
-                row=0, column=col * 3 + 1, sticky="w", padx=(theme.E1, 0))
-
-        # El chip dice lo que se sabe sin hablar con nadie: lo que hay apuntado
-        # en state/. La conexión con el remoto NO se comprueba aquí — se
-        # tardaría segundos en abrir la ventana y la respuesta caducaría enseguida.
-        # Es una sola cuenta, la misma que la línea de abajo y la que enseña
-        # «Reparación»: tres maneras de contar lo mismo se contradicen solas.
-        pendientes_chip = revision.cuenta(vista["hallazgos"])
-        if en_curso:
-            chip = theme.chip(arriba, "sincronizando…", "Acento.", "sync")
-        elif pendientes_chip:
-            chip = theme.chip(arriba, f"{pendientes_chip} que revisar"
-                              if pendientes_chip > 1 else "1 que revisar",
-                              "Aviso.", "warn")
-        else:
-            chip = theme.chip(arriba, "al día", "Ok.", "ok")
-        chip.grid(row=0, column=1, sticky="ne", pady=(theme.E1, 0))
-
-        if vista["aviso"]:
-            # Con botón para descartarlo: es el único aviso que no describe un
-            # estado del dispositivo sino algo que acaba de pasar. El hueco del
-            # botón ya lo tiene `bloque_aviso`, que lo estrenó la actualización.
-            bloque_aviso(frame, vista["aviso"], ancho=400,
-                         boton=("Descartar", descartar_aviso)).grid(
-                row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            fila += 1
-
-        # Una línea y no un recuadro por cada cosa: apilados, del mismo ámbar y
-        # con el mismo peso, dejaban de ser jerarquía para ser ruido. Lo que
-        # dicen y lo que se hace con ello está en «Reparación»; aquí queda
-        # cuántas cosas son y por dónde se va. Mientras sincroniza no se
-        # enseña: no se repara bajo los pies de rclone.
-        pendientes = revision.cuenta(vista["hallazgos"])
-        if pendientes and not en_curso:
-            aviso_linea = ttk.Frame(frame)
-            aviso_linea.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            aviso_linea.columnconfigure(1, weight=1)
-            fila += 1
-            marca = theme.etiqueta_icono(aviso_linea, "warn", theme.AVISO)
-            marca.grid(row=0, column=0, sticky="w", padx=(0, theme.E2))
-            ttk.Label(aviso_linea,
-                      text=("Hay 1 cosa que revisar." if pendientes == 1
-                            else f"Hay {pendientes} cosas que revisar."),
-                      ).grid(row=0, column=1, sticky="w")
-            revisar = ttk.Button(aviso_linea, text="Reparación…",
-                                 style="Quiet.TButton", command=abrir_reparacion)
-            theme.boton_icono(revisar, "doctor", theme.ACENTO, theme.PAPEL)
-            revisar.grid(row=0, column=2, sticky="e")
-
-        # Hay versión nueva. Va debajo del aviso de arranque y no encima: ese
-        # cuenta lo que acaba de pasar (el servicio que se ha parado) y esto
-        # puede esperar.
-        nueva = vista["nueva"]
-        if nueva is not None:
-            actual = update.installed_version() or "desconocida"
-            bloque_aviso(
-                frame,
-                f"Hay una actualización: {nueva.tag}\nTienes la {actual}. "
-                "«Actualizar…» baja la versión nueva y reabre la ventana.",
-                ancho=420, icono="down", tono="Azul.",
-                boton=("Actualizar…", abrir_actualizacion),
-            ).grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            fila += 1
-        # Los componentes están anticuados. Es un `elif` y no un bloque suyo:
-        # los pines viajan CON el programa, así que actualizarlo primero puede
-        # mover lo que toca; ofrecer las dos cosas a la vez sería pedir el
-        # mismo trabajo dos veces y en el orden malo.
-        elif vista["componentes"]:
-            # Sin botón si lo único pendiente es el VeraCrypt sin sello de un
-            # dispositivo de antes: eso no lo arregla «Actualizar…» sino
-            # «Añadir plataformas…» del instalador, y el texto ya lo dice.
-            caja = bloque_aviso(
-                frame,
-                "Lo que lleva el dispositivo de fuera (rclone, Python, VeraCrypt) "
-                "no es lo que fija esta versión:\n"
-                + components.resumen(vista["componentes"]),
-                ancho=420, icono="down", tono="Azul.",
-                boton=(("Actualizar…", abrir_componentes)
-                       if components.actualizables(vista["componentes"]) else None))
-            caja.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            # Sustituir el rclone mientras sincroniza sería cambiárselo bajo los
-            # pies; el módulo lo pospondría, pero es mejor no ofrecerlo siquiera.
-            for hijo in caja.acciones.winfo_children():
-                if isinstance(hijo, ttk.Button):
-                    hijo.configure(state=apagado)
-            fila += 1
-
-        # La lista de parejas. Las casillas son las mismas para «Sincronizar
-        # ahora» y «Iniciar servicio» y salen marcadas con lo del servicio
-        # (`prefs`): lo que se ve marcado al abrir es lo que sincroniza el
-        # servicio.
-        rotulo = ttk.Frame(frame)
-        rotulo.grid(row=fila, column=0, sticky="ew", pady=(theme.E5, theme.E2))
-        rotulo.columnconfigure(2, weight=1)
-        fila += 1
-        ttk.Label(rotulo, text=theme.rotulo("Parejas"),
-                  style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
-        ultima = cuando(max((m for m in marcas.values() if m), default=None))
-        resumen = ttk.Label(rotulo, style="Pista.TLabel")
-        resumen.grid(row=0, column=3, sticky="e")
-        todas = None
-        if len(names) > 1:
-            # El texto dice lo que hará, y cambia: se mide el más largo y se le
-            # reserva el sitio, o el resumen de la derecha bailaría con cada clic.
-            todas = ttk.Button(rotulo, text="Desmarcar todas", style="Quiet.TButton")
-            todas.grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
-            todas.update_idletasks()
-            rotulo.columnconfigure(1, minsize=todas.winfo_reqwidth() + 10)
-
-        tarjeta = ttk.Frame(frame, style="Card.TFrame", padding=(theme.E3, theme.E1))
-        tarjeta.grid(row=fila, column=0, sticky="ew")
-        tarjeta.columnconfigure(2, weight=1)
-        fila += 1
-
-        vars_by_name: dict[str, tk.BooleanVar] = {}
-
-        def contar() -> None:
-            """Pone el «N de M» y el texto del botón según las casillas.
-
-            Lo llama cada casilla con su `command` y no un `trace` de la
-            variable: la orden de un widget se borra con él y la de un trace
-            no, así que desde Tcl seguiría sujetando esta función (y con ella
-            la ventana entera y sus imágenes) hasta cerrar el intérprete.
-            """
-            marcadas = sum(1 for v in vars_by_name.values() if v.get())
-            texto = f"{marcadas} de {len(names)}"
-            if ultima:
-                texto += f" · última pasada {ultima}"
-            resumen.configure(text=texto)
-            if todas is not None:
-                todas.configure(text="Desmarcar todas" if marcadas == len(names)
-                                else "Marcar todas")
-
-        def al_marcar() -> None:
-            """Actualiza el «N de M» y recuerda las parejas marcadas.
-
-            Es lo que hace una casilla al tocarla. Se guarda en el momento, no al
-            sincronizar: el servicio y el agente leen esa elección. Sin ninguna
-            marcada no se guarda nada (`prefs.guardar_parejas`) y queda la
-            anterior; si el dispositivo no se deja escribir, recordar no es vital.
-            """
-            contar()
-            prefs.guardar_parejas(vista["config"],
-                                  [n for n, v in vars_by_name.items() if v.get()])
-
-        def marcar_todas() -> None:
-            """Marca todas las casillas, o las desmarca si ya lo están."""
-            valor = not all(v.get() for v in vars_by_name.values())
-            for v in vars_by_name.values():
-                v.set(valor)
-            al_marcar()
-
-        linea = 0
-        for name in names:
-            if linea:
-                separador_fila(tarjeta, linea, 5)
-                linea += 1
-            var = tk.BooleanVar(value=(name in d_pairs))
-            vars_by_name[name] = var
-            ttk.Checkbutton(tarjeta, text=name, variable=var, command=al_marcar,
-                            style="Card.Fuerte.TCheckbutton").grid(
-                row=linea, column=0, sticky="w", pady=theme.E2)
-            pareja = next(p for p in config.pairs if p.name == name)
-            ttk.Label(tarjeta, text=pareja.mode.name, style="Card.Pista.TLabel").grid(
-                row=linea, column=1, sticky="w", padx=(theme.E3, 0))
-            ttk.Label(tarjeta, text=cuando(marcas.get(name)) or "—",
-                      style="Card.MonoPista.TLabel").grid(row=linea, column=3,
-                                                          sticky="e", padx=(theme.E3, theme.E2))
-            if name in notes:
-                theme.chip(tarjeta, notes[name], "Aviso.").grid(
-                    row=linea, column=4, sticky="e")
-            elif name in cuentas:
-                # Se queda hasta que no quede ninguna copia en disco: no es un
-                # suceso que se lee y se olvida, es un estado de la carpeta.
-                texto = "1 conflicto" if cuentas[name] == 1 else f"{cuentas[name]} conflictos"
-                theme.chip(tarjeta, texto, "Aviso.").grid(row=linea, column=4, sticky="e")
-            linea += 1
-        if not names:
-            ttk.Label(tarjeta, text="No hay ninguna pareja configurada.",
-                      style="Card.Pista.TLabel").grid(row=0, column=0, pady=theme.E3)
-
-        if todas is not None:
-            todas.configure(command=marcar_todas)
-        contar()
-
-        # El llavero, si lo lleva: cómo está la base y el botón que la abre. Es
-        # de cada día, así que va aquí y no detrás del engranaje. Apagado
-        # mientras sincroniza, como lo demás que toca `state/`.
-        del_llavero = vista.get("llavero")
-        if del_llavero is not None:
-            llave = theme.linea_estado(
-                frame, "llave", del_llavero.texto, llavero_editor.ABRIR,
-                abrir_llavero, tono="Ambar." if del_llavero.aviso else "",
-                ancho=420)
-            llave.boton.configure(state=apagado if del_llavero.abrir else "disabled")
-            llave.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            fila += 1
-
-        # Las pantallas de las que se vuelve aquí.
-        pantallas = ttk.Frame(frame)
-        pantallas.grid(row=fila, column=0, sticky="ew", pady=(theme.E3, 0))
-        pantallas.columnconfigure(1, weight=1)
-        fila += 1
-        # Mientras sincroniza se apaga lo que toca el mismo estado: la pantalla
-        # de parejas puede apartar un baseline que rclone está usando.
-        boton = ttk.Button(pantallas, text="Parejas…", style="Quiet.TButton",
-                           command=lambda: (tk_pairs.open_dialog(root, vista["config"])
-                                            and recargar()),
-                           state=apagado)
-        theme.boton_icono(boton, "parejas", theme.ACENTO, theme.PAPEL)
-        boton.grid(row=0, column=0, sticky="w")
-        # El engranaje, apartado a la derecha: detrás está lo que se hace de
-        # tarde en tarde —la comprobación del doctor, el intervalo del
-        # servicio, emparejar un móvil, las versiones—, para que esta ventana
-        # no crezca con cada cosa nueva.
-        ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
-                             command=abrir_ajustes,
-                             state=apagado)
-        theme.boton_icono(ajustes, "gear", theme.ACENTO, theme.PAPEL)
-        ajustes.grid(row=0, column=2, sticky="e")
-
-        vista["casillas"] = vars_by_name
-
-        # La línea del arranque automático. Sigue encendida mientras
-        # sincroniza, como el botón al que sustituye: el vigilante no toca nada
-        # del dispositivo.
-        vigilante = vista["vigilante"]
-        dicho = watch.linea(vigilante)
-        if dicho is not None:
-            arranque = theme.linea_estado(
-                frame, "arranque", dicho.texto, dicho.boton, abrir_arranque,
-                tono="Ambar." if dicho.aviso else "", ancho=420)
-            arranque.grid(row=fila, column=0, sticky="ew", pady=(theme.E4, 0))
-            fila += 1
-            pausa = watch.pausa(vigilante)
-            if pausa is not None:
-                # El vigilante no lanza nada mientras esta ventana esté abierta;
-                # sin decirlo, enchufar con la ventana abierta parecería que el
-                # arranque automático se ha roto. Con el agente como servicio,
-                # dice además qué cambia «Pausar».
-                ttk.Label(frame, text=pausa, style="Pista.TLabel",
-                          wraplength=theme.medida(560), justify="left").grid(
-                    row=fila, column=0, sticky="w", pady=(theme.E1, 0))
-                fila += 1
-
-        def selected() -> list[str]:
-            """Devuelve las parejas con la casilla marcada, en el orden del config."""
-            return [n for n in names if vars_by_name[n].get()]
-
-        def sincronizar() -> None:
-            """Lanza la pasada manual, aquí mismo.
-
-            No escribe nada por su cuenta: las parejas ya quedaron guardadas al
-            marcarlas (`al_marcar`).
-            """
-            sel = selected()
-            if not sel:
-                return  # nada marcado, nada que hacer
+        Si algo falla antes de que la ventana de salida exista, la ventana deja
+        de estar ocupada y el error sigue su camino; si la ventana se abre, sigue
+        ocupada hasta que se cierre (`lanzar`).
+        """
+        try:
             args = manual_args(vista["config"], sel,
                                lambda pendientes, carpetas: preguntar_resync(
                                    root, pendientes, carpetas))
-            lanzar("Sincronización manual", args)
+        except BaseException:
+            vista["en_curso"] = False
+            reajustar()
+            raise
+        lanzar("Sincronización manual", args)
 
-        def servicio() -> None:
-            """Cierra la ventana pidiendo arrancar el servicio.
+    def servicio(accion: str) -> None:
+        """El botón del servicio: «Iniciar servicio», o lo que se le pide al agente.
 
-            El servicio sí cierra la ventana: corre en otro proceso, sin ella,
-            y quien lo arranca (y guarda las parejas marcadas) es `runsync` al
-            volver de aquí. El intervalo es el guardado («Ajustes →
-            Configuración»), que se lee ahora y no al pintar: se ha podido
-            cambiar con la ventana abierta.
-            """
-            sel = selected()
-            if not sel:
-                return
-            minutos = prefs.startup_defaults(vista["config"])[1]
-            result["choice"] = Choice("daemon", tuple(sel), minutos)
-            root.destroy()
+        «Iniciar servicio» cierra la ventana pidiendo arrancar el servicio: corre
+        en otro proceso, sin ella, y quien lo arranca es `runsync` al volver de
+        aquí. Antes se escribe la selección que quedara. El intervalo es el
+        guardado («Ajustes → Configuración»), que se lee ahora y no al pintar:
+        se ha podido cambiar con la ventana abierta.
+        """
+        if accion != principal.INICIAR:
+            pausa_del_agente(accion)
+            return
+        sel = selected()
+        if not sel:
+            return
+        volcar_seleccion()
+        minutos = prefs.startup_defaults(vista["config"])[1]
+        result["choice"] = Choice("daemon", tuple(sel), minutos)
+        root.destroy()
 
-        def pausa_del_agente(accion: str) -> None:
-            """«Pausar», «Reanudar» o «Reanudar todo»: se lo pide al agente y sigue aquí.
+    def pausa_del_agente(accion: str) -> None:
+        """«Pausar», «Reanudar» o «Reanudar todo»: se lo pide al agente y sigue aquí.
 
-            A diferencia de «Iniciar servicio», no cierra la ventana: no hay
-            nada que arrancar, el agente ya es el servicio. La línea enseña lo
-            pedido, que el agente aplica en unos segundos (`watch.tras_servicio`).
-            """
-            if not watch.pedir_servicio(accion):
-                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
-                                            "agente.", parent=root)
-                return
-            vista["vigilante"] = watch.tras_servicio(vista["vigilante"], accion)
+        A diferencia de «Iniciar servicio», no cierra la ventana: no hay
+        nada que arrancar, el agente ya es el servicio. La línea enseña lo
+        pedido, que el agente aplica en unos segundos (`watch.tras_servicio`).
+        """
+        from . import watch
+
+        if not watch.pedir_servicio(accion):
+            messagebox.showerror(TITLE, "No he podido dejarle la petición al "
+                                        "agente.", parent=root)
+            return
+        actual = vigilante_actual()
+        if actual is not None:
+            pedir(watch.tras_servicio(actual, accion))
             reajustar()
 
-        # La acción principal, en grande; sin filete encima: la separa el aire.
-        pie = ttk.Frame(frame)
-        pie.grid(row=fila, column=0, sticky="ew", pady=(theme.E5, 0))
-        pie.columnconfigure(0, weight=1)
-        ahora = ttk.Button(pie, text="Sincronizar ahora",
-                           style="Grande.Primary.TButton", command=sincronizar,
-                           state=apagado)
-        theme.boton_icono(ahora, "sync", theme.SOBRE_ACENTO, theme.ACENTO, 16)
-        ahora.grid(row=0, column=0, sticky="ew", padx=(0, theme.E2))
-        # «Iniciar servicio», o, si el agente de este equipo es el servicio de
-        # esta raíz, «Pausar» / «Reanudar» (`watch.boton_servicio`). Estos no
-        # cierran la ventana ni tocan nada de la raíz, así que no se apagan
-        # mientras sincroniza.
-        del_servicio = watch.boton_servicio(vigilante)
-        if del_servicio.accion == watch.INICIAR:
-            ttk.Button(pie, text=del_servicio.texto, style="Grande.TButton",
-                       command=servicio, state=apagado).grid(row=0, column=1)
-        else:
-            accion = del_servicio.accion
-            al_agente = ttk.Button(pie, text=del_servicio.texto,
-                                   style="Grande.TButton",
-                                   command=lambda: pausa_del_agente(accion))
-            theme.boton_icono(al_agente, "pausa" if accion == watch.PAUSAR else "play",
-                              theme.TINTA, theme.SUPERFICIE)
-            al_agente.grid(row=0, column=1)
-        # Solo en un dispositivo que vive en un contenedor VeraCrypt, y apagado
-        # mientras sincroniza: cerrar el contenedor en mitad de una pasada es
-        # arrancarle los ficheros a rclone.
-        if vista.get("bloqueo") is not None:
-            boton_bloquear = ttk.Button(pie, text="Bloquear", style="Grande.TButton",
-                                        command=bloquear, state=apagado)
-            theme.boton_icono(boton_bloquear, "expulsar", theme.TINTA,
-                              theme.SUPERFICIE)
-            boton_bloquear.grid(row=0, column=2, padx=(theme.E2, 0))
-        elif vista.get("expulsion") is not None or (
-                vista.get("llavero") is not None and not vista.get("del_equipo")):
-            # También sin VeraCrypt si lleva el llavero: hay que cerrar KeePassXC
-            # y subir lo pendiente antes de quitar la unidad. Una carpeta de
-            # este equipo no se quita.
-            boton_expulsar = ttk.Button(pie, text="Expulsar", style="Grande.TButton",
-                                        command=expulsar, state=apagado)
-            theme.boton_icono(boton_expulsar, "expulsar", theme.TINTA,
-                              theme.SUPERFICIE)
-            boton_expulsar.grid(row=0, column=2, padx=(theme.E2, 0))
+    def al_destruir(evento) -> None:
+        """Al cerrarse la ventana: la selección que quedara, y fuera sus lecturas.
 
-    render()
+        Ningún rclone que leía para ella se queda con la unidad abierta
+        (`store.matar_hijos`).
+        """
+        if str(evento.widget) != str(root):
+            return
+        volcar_seleccion()
+        store.matar_hijos()
+
+    v = tk_principal.VistaPrincipal(frame, tk_principal.Acciones(
+        sincronizar=sincronizar, servicio=servicio, parejas=abrir_parejas,
+        ajustes=abrir_ajustes, reparacion=abrir_reparacion, llavero=abrir_llavero,
+        expulsar=expulsar, bloquear=bloquear, arranque=abrir_arranque,
+        descartar=descartar_aviso, actualizar=abrir_actualizacion,
+        componentes=abrir_componentes, al_marcar=al_marcar, marcar_todas=marcar_todas))
+    v.aplicar(estado_actual())
+    root.bind("<Destroy>", al_destruir, add="+")
+    root.instantanea = None
+    root.instantanea_lista = False
+    # El ancho de la última vez, ya con la lectura: con él reservado, la ventana
+    # se pinta ya como quedará y no se ensancha al llegar la lectura (en
+    # Windows, cada fila de la lista es una ventana del sistema que se movería).
+    reservar(vista["ancho"] or 0)
+    # Y lo que ocupó lo que la lectura pone encima de la lista (la línea de
+    # «Reparación…»): sin esto la lista, que ya está pintada, baja al llegar.
+    reservar_arriba(vista["arriba"] or 0)
+    # Y lo que ocupó lo que la lectura pone debajo de la lista (la línea del
+    # arranque automático): sin esto el pie baja, y la ventana crece, al llegar.
+    reservar_abajo(vista["abajo"] or 0)
     root.visor.encajar(root)
     centrar(root)
     ensenar(root)
-    # Después de enseñarla, no antes: la comprobación de versión y el recorrido
-    # de las carpetas no pueden retrasar la apertura ni un parpadeo.
+    if perf_activo():
+        # Desde que el proceso existe, no desde aquí: el mismo punto que el cronómetro del chequeo.
+        edad = perf_desde_inicio()
+        if edad is not None:
+            perf_al_pintar(root, "start-main", time.perf_counter() - edad / 1000)
+    # Después de enseñarla, no antes: la lectura del dispositivo, la
+    # comprobación de versión y el recorrido de las carpetas no pueden retrasar
+    # la apertura ni un parpadeo. La lectura va la primera, en cuanto Tk tiene
+    # un momento libre.
+    root.after_idle(refrescar_instantanea)
     root.after(300, mirar_version)
     root.after(300, mirar_conflictos)
+    precargar_a_ratos(root, precarga_de(vista["config"]))
     root.mainloop()
     return result["choice"]
 
@@ -2490,6 +2838,101 @@ def _tono(linea: str) -> str:
     return "normal"
 
 
+LINEAS_VENTANA = 20_000
+"""Líneas que conserva el texto de la ventana de la pasada.
+
+La salida entera no se pierde: está en `_Salida.completa`, que es lo que lleva
+«Guardar el log».
+"""
+
+
+class _Salida:
+    """La salida de la ventana de la pasada: entera, y aparte del texto que se ve.
+
+    Decide qué se inserta en el texto con cada tanda de líneas, sin Tk, para
+    probarlo sin pantalla. La línea de progreso se reescribe en su sitio: varias
+    seguidas son una sola, la última, también dentro de una tanda, y así lo
+    mismo en el texto que en la copia entera.
+
+    Attributes:
+        completa: Las líneas tal como las guarda «Guardar el log»; las de
+            progreso seguidas ya están reducidas a la última.
+        viva: Si la última línea es de progreso, o sea si la siguiente de
+            progreso la sustituye.
+    """
+
+    def __init__(self) -> None:
+        """Empieza sin ninguna línea."""
+        self.completa: list[str] = []
+        self.viva = False
+
+    def anadir(self, lineas: list[str]) -> tuple[bool, list[tuple[str, str]]]:
+        """Apunta una tanda de líneas y dice qué hay que hacerle al texto.
+
+        Returns:
+            `(sustituye, trozos)`. Con `sustituye`, el texto borra antes la
+            línea viva que ya tenía (de la marca `progreso-vivo` al final).
+            `trozos` son `(texto, tono)` para un solo `insert`: las líneas
+            contiguas del mismo tono van juntas y la de progreso va siempre
+            sola.
+        """
+        sustituye = False
+        trozos: list[tuple[str, list[str]]] = []
+        for linea in lineas:
+            tono = _tono(linea)
+            if tono == "progreso" and self.viva:
+                self.completa[-1] = linea
+                if trozos:              # la viva es de esta tanda: su trozo es el último
+                    trozos.pop()
+                else:                   # la viva ya está en el texto
+                    sustituye = True
+            else:
+                self.completa.append(linea)
+            self.viva = tono == "progreso"
+            if trozos and trozos[-1][0] == tono and tono != "progreso":
+                trozos[-1][1].append(linea)
+            else:
+                trozos.append((tono, [linea]))
+        return sustituye, [("".join(juntas), tono) for tono, juntas in trozos]
+
+
+def _volcar(texto, salida: _Salida, lineas: list[str]) -> None:
+    """Pasa a un `tk.Text` una tanda de líneas: un `insert` y un `see`.
+
+    Es lo que hace `poll()` en cada vuelta con lo que haya llegado. Un `insert`
+    por línea costaba 0,42 ms cada una y uno por tanda 0,01 ms. El texto se
+    queda con las últimas `LINEAS_VENTANA`; `salida` guarda todas.
+
+    Args:
+        texto: El `tk.Text` de la ventana, con los tonos ya configurados.
+        salida: La salida de esa ventana.
+        lineas: Lo que ha llegado desde la vuelta anterior.
+    """
+    if not lineas:
+        return
+    if not salida.completa:
+        perf_empezar("log-10k")          # la primera tanda: empieza el volcado de la pasada
+    sustituye, trozos = salida.anadir(lineas)
+    texto.configure(state="normal")
+    try:
+        if sustituye:
+            texto.delete("progreso-vivo", "end-1c")
+        texto.insert("end", *(parte for trozo in trozos for parte in trozo))
+        if salida.viva:
+            # Al principio de esa línea, con gravedad a la izquierda: aunque se
+            # escriba en ella, la marca no se mueve. Acaba en salto de línea,
+            # así que "end-1c" ya está en la siguiente; sin él, no.
+            texto.mark_set("progreso-vivo", "end-2c linestart"
+                           if trozos[-1][0].endswith("\n") else "end-1c linestart")
+            texto.mark_gravity("progreso-vivo", "left")
+        sobran = int(texto.index("end-1c").split(".")[0]) - 1 - LINEAS_VENTANA
+        if sobran > 0:
+            texto.delete("1.0", f"{sobran + 1}.0")
+        texto.see("end")
+    finally:
+        texto.configure(state="disabled")
+
+
 def output_window(title: str, cmd: list[str], parent=None,
                   subtitulo: str = "", modal: bool = True,
                   al_cerrar=None, veredictos: dict[int, str] | None = None) -> int | None:
@@ -2508,6 +2951,14 @@ def output_window(title: str, cmd: list[str], parent=None,
     Con `modal=False` (y `parent`) no espera ni captura: vuelve enseguida con
     `None` y la ventana principal sigue viva debajo, que es lo que necesita
     para no desaparecer al sincronizar.
+
+    La ventana se construye y se enseña antes de que exista el proceso: la
+    orden se lanza en el turno siguiente (`after(1)`), cuando ya se ve. Hasta
+    entonces `ventana.proceso` es `None`; después, el `Popen`. Cerrar la
+    ventana antes de ese turno no lanza nada. Si la orden no se puede lanzar
+    (`OSError`, o `ValueError` por argumentos no válidos), la ventana lo dice
+    en su texto y acaba con el código 127, el de «orden no encontrada»: sigue
+    abierta, con «Guardar el log», hasta que se cierra.
 
     Args:
         title: Qué se está haciendo.
@@ -2529,38 +2980,15 @@ def output_window(title: str, cmd: list[str], parent=None,
     import tkinter as tk
     from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
-    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
-    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
-    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
-    if sys.platform == "win32":
-        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
-    else:
-        aparte = {"start_new_session": True}
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        # Lo que se lee aquí es castellano (sync.py) o UTF-8 de rclone; con la
-        # codificación del sistema las tildes se rompían en la propia ventana.
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        **aparte,
-    )
     q: queue.Queue = queue.Queue()
     DONE = object()
 
-    def reader() -> None:
+    def reader(proc) -> None:
         """Pasa a la cola, en el hilo, cada línea de la salida y marca el final."""
         assert proc.stdout is not None
         for line in proc.stdout:
             q.put(line)
         q.put(DONE)
-
-    threading.Thread(target=reader, daemon=True).start()
 
     if parent is None:
         theme.nitidez()
@@ -2577,7 +3005,7 @@ def output_window(title: str, cmd: list[str], parent=None,
     root.configure(background=theme.PAPEL)
     root.columnconfigure(0, weight=1)
     root.rowconfigure(1, weight=1)
-    arranque = time.monotonic()
+    root.proceso = None      # el `Popen`, cuando `arrancar` lo lance
 
     # La barra de arriba: qué se está haciendo y cómo va.
     barra = ttk.Frame(root, style="Card.TFrame", padding=(theme.E4, theme.E3))
@@ -2634,28 +3062,8 @@ def output_window(title: str, cmd: list[str], parent=None,
             ("progreso", dict(foreground=theme.ACENTO))):
         text.tag_configure(nombre, **opciones)
 
-    state = {"rc": None, "progreso": False}
-
-    def append(line: str) -> None:
-        """Añade una línea al texto, con su color.
-
-        El progreso llega cada pocos segundos mientras dura la pareja: se
-        reescribe en su sitio y no se apila. Es una línea viva por pareja, que
-        al terminar se queda con la última lectura. La marca, con gravedad a la
-        izquierda, se queda al principio de esa línea aunque se escriba en
-        ella.
-        """
-        tono = _tono(line)
-        text.configure(state="normal")
-        if tono == "progreso" and state["progreso"]:
-            text.delete("progreso-vivo", "end-1c")
-        elif tono == "progreso":
-            text.mark_set("progreso-vivo", "end-1c")
-            text.mark_gravity("progreso-vivo", "left")
-        state["progreso"] = tono == "progreso"
-        text.insert("end", line, tono)
-        text.see("end")
-        text.configure(state="disabled")
+    state = {"rc": None, "arranque": time.monotonic()}
+    salida = _Salida()
 
     def guardar() -> None:
         """Se lleva la salida tal cual a un fichero.
@@ -2671,7 +3079,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             return
         try:
             with open(destino, "w", encoding="utf-8") as f:
-                f.write(text.get("1.0", "end"))
+                f.write("".join(salida.completa))
         except OSError as e:
             messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}",
                                  parent=root)
@@ -2689,36 +3097,93 @@ def output_window(title: str, cmd: list[str], parent=None,
     ttk.Button(pie, text="Cerrar", style="Primary.TButton",
                command=lambda: root.destroy()).grid(row=0, column=2)
 
-    def terminado() -> None:
-        """Apunta el código de salida y enseña el veredicto."""
-        state["rc"] = proc.wait()
-        segundos = int(time.monotonic() - arranque)
-        especial = (veredictos or {}).get(state["rc"])
-        bien = state["rc"] == 0 or especial is not None
-        verdict = ("OK" if state["rc"] == 0 else especial if bien
-                   else f"ERROR (código {state['rc']})")
-        append(f"\n=== Terminado: {verdict} ===\n")
+    def terminado(rc: int, sin_lanzar: bool = False) -> None:
+        """Apunta el código de salida y enseña el veredicto.
+
+        Args:
+            rc: El código de salida de la orden.
+            sin_lanzar: Si la orden no llegó a lanzarse. Es un error siempre:
+                `veredictos` habla de lo que la orden devuelve, no de eso.
+        """
+        state["rc"] = rc
+        segundos = int(time.monotonic() - state["arranque"])
+        especial = None if sin_lanzar else (veredictos or {}).get(rc)
+        bien = rc == 0 or especial is not None
+        verdict = ("OK" if rc == 0 else especial if bien
+                   else f"ERROR (código {rc})")
+        impresas = len(salida.completa)
+        _volcar(text, salida, [f"\n=== Terminado: {verdict} ===\n"])
         root.title(f"{TITLE} — {title} — {verdict}")
         nuevo = theme.chip(barra, f"{'terminado' if bien else verdict} · {segundos} s",
                            "Ok." if bien else "Peligro.", "ok" if bien else "warn")
         estado.destroy()
         nuevo.grid(row=0, column=2, rowspan=2, sticky="e")
+        if impresas >= 1000:             # solo los volcados grandes: es lo que `log-10k` mide
+            perf_al_pintar(root, "log-10k", lineas=impresas)
 
     def poll() -> None:
-        """Pasa a la ventana lo que haya en la cola, cada 120 ms."""
+        """Pasa a la ventana, de una vez, lo que haya en la cola, cada 120 ms."""
         # Sin ventana no hay a quién contárselo. Con la principal viva debajo el
         # bucle de eventos sigue, y sin esto el sondeo seguiría para siempre.
         if not root.winfo_exists():
             return
+        lineas: list[str] = []
+        acabo = False
         try:
             while True:
                 item = q.get_nowait()
                 if item is DONE:
-                    terminado()
-                    return
-                append(item)
+                    acabo = True
+                    break
+                lineas.append(item)
         except queue.Empty:
             pass
+        _volcar(text, salida, lineas)
+        if acabo:
+            terminado(root.proceso.wait())
+            return
+        root.after(120, poll)
+
+    # Jefe de su sesión (POSIX) o de su grupo de procesos (Windows): cerrar la
+    # ventana corta el árbol entero con `store.matar_arbol()`, que en POSIX
+    # señala al grupo y por eso necesita que `proc` sea su jefe. Se mira el
+    # sistema de verdad y no `IS_WIN`, que los tests fuerzan.
+    if sys.platform == "win32":
+        aparte: dict = {"creationflags": model.CREATE_NEW_PROCESS_GROUP}
+    else:
+        aparte = {"start_new_session": True}
+    pendiente = {"id": None}
+
+    def arrancar() -> None:
+        """Lanza la orden, con la ventana ya enseñada, y empieza a leer su salida.
+
+        Corre en el turno siguiente al de enseñarla (`ensenar()` no ha vuelto
+        hasta que la ventana está pintada): lo primero que se ve es la ventana
+        y no lo que tarda en lanzarse el proceso. Si no se puede lanzar, la
+        ventana lo cuenta y da la pasada por acabada con el 127.
+        """
+        pendiente["id"] = None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                # Lo que se lee aquí es castellano (sync.py) o UTF-8 de rclone; con la
+                # codificación del sistema las tildes se rompían en la propia ventana.
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **aparte,
+            )
+        except (OSError, ValueError) as e:
+            _volcar(text, salida, [f"No se ha podido lanzar: {e}\n"])
+            terminado(127, sin_lanzar=True)
+            return
+        root.proceso = proc
+        state["arranque"] = time.monotonic()
+        threading.Thread(target=reader, args=(proc,), daemon=True).start()
         root.after(120, poll)
 
     cortado = {"ya": False}
@@ -2726,11 +3191,21 @@ def output_window(title: str, cmd: list[str], parent=None,
     def cortar() -> None:
         """Corta el proceso, con su rclone, si sigue; una sola vez por ventana.
 
+        Si aún no se ha lanzado no hay nada que cortar, y se cancela el
+        arranque: un `after` que sobrevive a su ventana da un error de Tcl.
+
         En Windows `taskkill` vuelve antes de que el proceso haya salido: en el
         siguiente punto de corte `proc.poll()` aún lo vería vivo y se lanzaría
         otro `taskkill` (hasta tres por ventana).
         """
-        if cortado["ya"] or proc.poll() is not None:
+        if pendiente["id"] is not None:
+            try:
+                root.after_cancel(pendiente["id"])
+            except tk.TclError:
+                pass              # la ventana ya no existe
+            pendiente["id"] = None
+        proc = root.proceso
+        if cortado["ya"] or proc is None or proc.poll() is not None:
             return
         cortado["ya"] = True
         store.matar_arbol(proc.pid)
@@ -2753,6 +3228,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         if evento.widget is not root or avisado["ya"]:
             return
         avisado["ya"] = True
+        perf_empezar("volver-pasada")
         cortar()
         if al_cerrar is not None:
             rc = state["rc"] if state["rc"] is not None else 1
@@ -2768,14 +3244,15 @@ def output_window(title: str, cmd: list[str], parent=None,
     sin_espera = parent is not None and not modal
     if sin_espera:
         root.bind("<Destroy>", al_destruir, add="+")
-        root.after(120, poll)
-        return None
-    if parent is not None:
+    elif parent is not None:
         try:
             root.grab_set()  # después de enseñarla: Tk no captura lo que no se ve
         except tk.TclError:
             pass
-    root.after(120, poll)
+    # La orden se lanza cuando la ventana ya se ve, no antes de construirla.
+    pendiente["id"] = root.after(1, arrancar)
+    if sin_espera:
+        return None
     esperar()
     cortar()
     return state["rc"] if state["rc"] is not None else 1

@@ -8,6 +8,10 @@ proceso y todo lo que cuelga de él.
 
 Se prueba con procesos de verdad (un hijo que lanza un nieto dormilón) y no con
 fakes: lo que importa es que el nieto muera de verdad, en cada sistema.
+
+Y que el rclone de `catalog.run()` sea uno de esos nietos: lo lanza `sync.py`
+al publicar la nota de la flota, y `catalog.run()` no le da sesión ni grupo
+propios justamente para que `matar_arbol` lo siga alcanzando.
 """
 
 import os
@@ -16,8 +20,9 @@ import subprocess
 import sys
 import time
 
-from _harness import Checks, tmpdir
+from _harness import REPO, Checks, tmpdir
 
+import _rclone_falso
 from common import llavero, store
 
 c = Checks("matar un proceso con todo su árbol")
@@ -179,11 +184,71 @@ finally:
 c("llavero.matar_arbol corta con la de store", vistos, [4321])
 
 
+# el rclone de catalog.run() muere con la pasada que lo lanzó
+#
+# `sync.py` llama a `catalog.run()` al acabar (`fleet.publicar()`), y esa pasada
+# la lanza la ventana como jefe de su sesión. Si `catalog.run()` pusiera a su
+# rclone en una sesión o grupo propios, `killpg` sobre `sync.py` no llegaría a
+# él y se quedaría vivo con el cwd en el dispositivo. Vale igual para una
+# lectura (que `store` apunta) que para una escritura (que no).
+PADRE = ("import sys\n"
+         "sys.path.insert(0, sys.argv[1])\n"
+         "from common import catalog\n"
+         "catalog._binary = lambda: sys.argv[2]\n"
+         "catalog.run(sys.argv[3:])\n")
+"""Un `sync.py` de mentira: llama a `catalog.run()` con un rclone que duerme."""
+
+if not _rclone_falso.DISPONIBLE:
+    print("  (saltado) el rclone de mentira es un script de sh: solo en POSIX")
+else:
+    carpeta = tmpdir()
+    falso = _rclone_falso.crear(carpeta)
+    entorno = {**os.environ, "PRDRIVE_FALSO_MODO": "dormir",
+               "PRDRIVE_FALSO_PARAR": str(carpeta / "parar")}
+    for que, args in (("una lectura", ["lsjson", "nas:/prdrive-catalog"]),
+                      ("una escritura", ["copyto", "nota.toml", "nas:/c/devices/x.toml"])):
+        fichero = carpeta / "rclone.pid"
+        fichero.unlink(missing_ok=True)
+        padre = subprocess.Popen(
+            [sys.executable, "-c", PADRE, str(REPO), falso, *args],
+            env={**entorno, "PRDRIVE_FALSO_PID": str(fichero)},
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
+        rclone = None
+        try:
+            esperar_a(lambda: leer_pid(fichero) is not None, 15.0)
+            rclone = leer_pid(fichero)
+            c(f"catalog.run({que}): su rclone arrancó y está vivo antes de cortar",
+              rclone is not None and store.pid_alive(rclone), True)
+            c("  y sigue en el grupo de su padre, como en la pasada",
+              rclone is not None and os.getpgid(rclone), padre.pid)
+
+            store.matar_arbol(padre.pid)
+
+            if rclone is not None:
+                esperar_a(lambda: not store.pid_alive(rclone))
+                c("  matar_arbol(padre) lo mata también a él", store.pid_alive(rclone), False)
+            try:
+                padre.wait(timeout=ESPERA)
+            except subprocess.TimeoutExpired:
+                pass
+            c("  y al padre", padre.poll() is not None, True)
+        finally:
+            if padre.poll() is None:
+                liberar(padre.pid)
+                padre.wait()
+            if rclone is not None and store.pid_alive(rclone):
+                liberar(rclone)
+
+
 # cerrar la ventana de salida a media pasada
 #
 # Es el caso que motiva todo esto: la pasada de `output_window` lanza un rclone, y
 # cerrar la ventana con la X tiene que cortarlo también a él. Con la ventana de
-# verdad, oculta y colgada de una raíz que tampoco se enseña.
+# verdad, oculta y colgada de una raíz que tampoco se enseña. La ventana lanza su
+# pasada en el turno siguiente al de enseñarse (`ventana.proceso` es `None` hasta
+# entonces, y cerrarla antes no lanza nada: `test_tk_pasada.py`), así que antes de
+# cerrarla se espera a que haya arrancado.
 try:
     import tkinter as tk
     raiz = tk.Tk()
@@ -194,6 +259,12 @@ except Exception as e:                                       # sin entorno gráf
 
 from ui import tk as uitk  # noqa: E402
 
+
+def esperar_viva(condicion, espera: float = ESPERA) -> bool:
+    """Como `esperar_a`, pero dejando que la ventana siga viva mientras tanto."""
+    return esperar_a(lambda: raiz.update() is None and condicion(), espera)
+
+
 fichero = tmpdir() / "nieto-ventana.pid"
 deiconify = tk.Toplevel.deiconify
 tk.Toplevel.deiconify = lambda self: None                    # nada se enseña en un test
@@ -203,11 +274,8 @@ try:
     uitk.output_window("Prueba", [sys.executable, "-c", HIJO, str(fichero)],
                        parent=raiz, modal=False)
     ventana = next(w for w in raiz.winfo_children() if w not in antes)
-
-    def esperar_viva(condicion, espera: float = ESPERA) -> bool:
-        """Como `esperar_a`, pero dejando que la ventana siga viva mientras tanto."""
-        return esperar_a(lambda: raiz.update() is None and condicion(), espera)
-
+    c("la pasada arranca en el turno siguiente al de enseñar la ventana",
+      esperar_viva(lambda: ventana.proceso is not None), True)
     esperar_viva(lambda: leer_pid(fichero) is not None, 15.0)
     nieto = leer_pid(fichero)
     c("con la ventana abierta, el nieto está vivo",
@@ -243,6 +311,7 @@ try:
     uitk.output_window("Prueba", [sys.executable, "-c", "import time; time.sleep(60)"],
                        parent=raiz, modal=False)
     ventana = next(w for w in raiz.winfo_children() if w not in antes)
+    esperar_viva(lambda: ventana.proceso is not None)
     ventana.tk.eval(ventana.protocol("WM_DELETE_WINDOW"))
     raiz.update()
     c("cerrar la ventana corta el árbol una sola vez", len(cortes), 1)

@@ -28,7 +28,8 @@ import os
 import signal
 import stat
 import subprocess
-from collections.abc import Mapping
+import threading
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -489,6 +490,111 @@ def matar_arbol(pid: int) -> None:
             os.killpg(pid, signal.SIGKILL)
     except (OSError, subprocess.SubprocessError):
         pass                    # ya no estaba, o el sistema no tiene `taskkill`
+
+
+_HIJOS: set[subprocess.Popen] = set()
+"""Los subprocesos de solo lectura de este proceso que siguen corriendo.
+
+Los apunta `correr_apuntado()` mientras dura cada uno y `matar_hijos()` los corta.
+"""
+_CERROJO_HIJOS = threading.Lock()
+"""Protege `_HIJOS`: lo tocan los hilos que leen y quien cierra la ventana."""
+
+
+def apuntar_hijo(proceso: subprocess.Popen) -> None:
+    """Apunta un subproceso de solo lectura para que `matar_hijos()` pueda cortarlo.
+
+    Solo es para lecturas: lo apuntado lo mata quien cierra la ventana, y una
+    escritura cortada a medias deja el remoto peor que acabada.
+
+    Args:
+        proceso: El subproceso, tal como lo devuelve `Popen`. Se guarda el
+            objeto y no su pid: cortarlo por el objeto no puede alcanzar a otro
+            proceso que haya heredado el número cuando este ya salió.
+    """
+    with _CERROJO_HIJOS:
+        _HIJOS.add(proceso)
+
+
+def soltar_hijo(proceso: subprocess.Popen) -> None:
+    """Quita un subproceso de los apuntados; si no estaba, no pasa nada."""
+    with _CERROJO_HIJOS:
+        _HIJOS.discard(proceso)
+
+
+def matar_hijos() -> int:
+    """Corta los subprocesos apuntados que siguen vivos; no lanza nunca.
+
+    Es lo que hace una ventana al cerrarse (o antes de expulsar la unidad) con
+    las lecturas que dejó en marcha: un hilo no se puede cortar, pero el proceso
+    que espera sí, y con él se va lo que tuviera abierto en el dispositivo. Mata
+    a cada hijo por sí mismo (`Popen.kill()`, sin árbol: un rclone de lectura no
+    lanza otros procesos); lo que cuelga de una pasada se corta con
+    `matar_arbol()`. Quien esperaba a un hijo cortado recibe su resultado con un
+    código de fallo, como si el proceso hubiera salido mal.
+
+    Returns:
+        Cuántos estaban vivos y se han cortado. Se olvida de todos los apuntados.
+    """
+    with _CERROJO_HIJOS:
+        apuntados = list(_HIJOS)
+        _HIJOS.clear()
+    cortados = 0
+    for proceso in apuntados:
+        try:
+            if proceso.poll() is None:
+                proceso.kill()
+                cortados += 1
+        except (OSError, subprocess.SubprocessError):
+            pass                # ya había salido, o el sistema no deja cortarlo
+    return cortados
+
+
+def correr_apuntado(cmd: Sequence[str], *, timeout: float, apuntar: bool = True,
+                    **popen) -> subprocess.CompletedProcess:
+    """Ejecuta una orden como `subprocess.run(capture_output=True)`, apuntando al hijo.
+
+    El hijo se crea igual que con `subprocess.run`, sin sesión ni grupo propios
+    y con el stdin heredado: si lo lanza `sync.py`, `matar_arbol()` lo sigue
+    alcanzando con el resto de la pasada. Si pasa `timeout`, se mata al hijo y
+    se lanza `TimeoutExpired`, como con `run`.
+
+    Args:
+        cmd: La orden entera.
+        timeout: Segundos que se espera al hijo.
+        apuntar: Si `matar_hijos()` puede cortarlo mientras corre. Solo para
+            lecturas.
+        **popen: El resto de argumentos de `Popen` (`cwd`, `text`,
+            `creationflags`…); la salida y el error siempre se recogen.
+
+    Returns:
+        El resultado, con la salida y el error recogidos.
+
+    Raises:
+        subprocess.TimeoutExpired: Si el hijo se pasa de `timeout`; ya está muerto.
+        OSError: Si no se puede lanzar.
+    """
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          **popen) as proceso:
+        if apuntar:
+            apuntar_hijo(proceso)
+        try:
+            salida, error = proceso.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as pasado:
+            proceso.kill()
+            if os.name == "nt":
+                # En Windows la salida se acumula en hilos de lectura que solo
+                # recoge un `communicate()` posterior a matarlo.
+                pasado.stdout, pasado.stderr = proceso.communicate()
+            else:
+                proceso.wait()
+            raise
+        except BaseException:
+            proceso.kill()          # incluida la interrupción de teclado
+            raise
+        finally:
+            soltar_hijo(proceso)
+        return subprocess.CompletedProcess(proceso.args, proceso.poll(), salida, error)
 
 
 def procesos_llamados(nombre: str) -> set[int]:

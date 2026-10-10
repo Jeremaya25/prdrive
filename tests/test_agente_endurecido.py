@@ -664,11 +664,11 @@ F.vueltas(ag, 1)
 F.RAICES[:] = []
 F.vueltas(ag, 2)
 (RH2 / ".prdrive" / "sync.py").write_text("import os  # otro\n", encoding="utf-8")
-preguntas_antes = [x for x in F.LANZADOS if "pregunta" in x.args]
+preguntas_antes = F.preguntas()
 F.RAICES[:] = [RH2]
 pasadas_antes = len(F.pasadas(RH2))
 F.vueltas(ag, 4)
-preguntas = [x for x in F.LANZADOS if "pregunta" in x.args][len(preguntas_antes):]
+preguntas = F.preguntas()[len(preguntas_antes):]
 c("con otro código, se vuelve a preguntar, diciéndolo",
   (len(preguntas), "--cambiada" in (preguntas[-1].args if preguntas else [])), (1, True))
 c("  y hasta el sí no se ejecuta nada suyo: ni lock ni pasadas",
@@ -742,10 +742,10 @@ W = "2" * 31 + "9"
 RW = F.unidad(W, parejas=("docs",))
 (RW / ".prdrive" / "VERSION").unlink()
 F.RAICES[:] = [RW]
-antes = [x for x in F.LANZADOS if "pregunta" in x.args]
+antes = F.preguntas()
 F.vueltas(ag, 4)
 c("una desconocida sin VERSION no se pregunta: primero hay que actualizarla",
-  [x for x in F.LANZADOS if "pregunta" in x.args], antes)
+  F.preguntas(), antes)
 
 T = "1" * 32
 RT = F.unidad(T, parejas=("docs",))

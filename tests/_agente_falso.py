@@ -184,6 +184,12 @@ def pasadas(raiz: Path | None = None) -> list[Proc]:
             and (raiz is None or p.args[1].startswith(str(raiz)))]
 
 
+def preguntas() -> list[Proc]:
+    """Las ventanitas de pregunta lanzadas: `pregunta.py` o, sin él, `agente.py pregunta`."""
+    return [p for p in LANZADOS if len(p.args) > 1
+            and (p.args[1].endswith("pregunta.py") or p.args[2:3] == ["pregunta"])]
+
+
 def acabar(proc: Proc, rc: int = 0, salida: str = "") -> None:
     """Termina una pasada falsa como lo haría sync.py: su salida en el fichero."""
     (equipo.DIR / "pasada.out").write_text(salida, encoding="utf-8")

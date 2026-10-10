@@ -3,10 +3,30 @@ name: Tests
 # Los tests son scripts sueltos (sin framework ni dependencias): `run_all.py` lanza
 # cada uno en su proceso. Ninguno toca un dispositivo ni la red. Los de Tk se
 # saltan sin pantalla, así que en Linux se corre bajo xvfb para que se ejecuten.
+#
+# Tk 9 es el único Tk que se admite (decisión del dueño, 09/10/2026): las ventanas se
+# prueban solo con el Python fijado del dispositivo (`common/pins.py`: 3.14.8 con
+# Tk 9.0.4), en Linux y en Windows (trabajo `tests`). Ese Python se baja en un
+# paso previo y no dentro de un test, porque la suite no toca la red:
+# `tests/_runtime_ci.py` lo trae con el propio instalador, comprobado contra el
+# SHA256SUMS de su release, y Actions guarda el archivo entre ejecuciones.
+#
+# `python-minimo` corre la suite con el 3.11 de `setup-python`, sin pantalla ni
+# python3-tk (todo lo de Tk se salta solo), para vigilar el suelo de Python del
+# código que no es de Tk: `sync.py`, `runsync.py`, `penwatch.py`, `common/` e
+# `install/` también corren con el Python del equipo (instalación ligera, equipo
+# sin runtime en el dispositivo). Solo en Linux: un ejecutor de Windows siempre
+# tiene escritorio y el 3.11 de python.org lleva Tk 8.6, así que volvería a
+# probar las ventanas con el Tk que ya no se admite.
 on:
   push:
     branches:
       - main
+    # Un push que solo toca documentos de trabajo no pasa la suite. Los tests leen
+    # docs/agents/, AGENTS.md y .claude/: esas rutas no se excluyen nunca.
+    paths-ignore:
+      - "docs/superpowers/**"
+      - "docs/guia/**"
   pull_request:
 
 permissions:
@@ -18,26 +38,86 @@ concurrency:
 
 jobs:
   tests:
+    name: tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest, plat: linux-x64 }
+          - { os: windows-latest, plat: windows-x64 }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
+      # Solo lanza el paso que baja el runtime (corre `_runtime_ci.py` con 3.11, que
+      # también lo mantiene en el suelo): la suite corre con el del dispositivo.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Tk y xvfb (Linux)
+      # Antes del runtime: su comprobación de Tk carga las bibliotecas de X11.
+      - name: xvfb y letras (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libxft2 fontconfig imagemagick
+
+      - name: Clave de la caché del runtime
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: runtime-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
+
+      - name: Python fijado del dispositivo (Tk 9)
+        run: python tests/_runtime_ci.py runtime ${{ matrix.plat }} "${{ runner.temp }}/runtime" "${{ runner.temp }}/prdrive-cache"
+
+      # Sin pantalla, los tests de Tk se saltan solos y el trabajo saldría en verde
+      # sin haber abierto una ventana: antes de la suite, una ventana de verdad tiene
+      # que poder abrirse y pintarse, o el trabajo falla aquí.
+      - name: Se abre una ventana (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a "$PRDRIVE_PYTHON" -c "import tkinter; r = tkinter.Tk(); r.update(); r.destroy()"
+
+      - name: Se abre una ventana (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          & "$env:PRDRIVE_PYTHON" -c "import tkinter; r = tkinter.Tk(); r.update(); r.destroy()"
 
       - name: Tests (Linux, con pantalla virtual)
         if: runner.os == 'Linux'
-        run: xvfb-run -a python tests/run_all.py
+        run: |
+          "$PRDRIVE_PYTHON" tests/run_all.py -j auto --display xvfb
 
       - name: Tests (Windows)
         if: runner.os == 'Windows'
-        run: python tests/run_all.py
+        run: |
+          & "$env:PRDRIVE_PYTHON" tests/run_all.py -j auto --gui-jobs 1
+
+      # El pintor de iconos de Python sigue (un dispositivo con el runtime 3.13 lo
+      # necesita para llegar a «Actualizar…»): sus tests corren también con él.
+      - name: Iconos con el pintor de Python (Linux)
+        if: runner.os == 'Linux'
+        env:
+          PRDRIVE_SIN_SVG: "1"
+        run: |
+          for t in tests/test_iconos.py tests/test_tema.py tests/test_controles.py; do
+            xvfb-run -a "$PRDRIVE_PYTHON" "$t" || exit 1
+          done
+
+  python-minimo:
+    name: Python 3.11 sin pantalla (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sin xvfb ni python3-tk a propósito: los tests de Tk se saltan solos, y con
+      # ellos se acabaría probando otra vez el Tk 8.6 que ya no se admite.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Tests (Python 3.11, sin pantalla)
+        run: python tests/run_all.py -j auto

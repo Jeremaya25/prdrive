@@ -29,7 +29,7 @@ Qué se escribe al extraer, y qué no:
   el clásico agujero, y un archivo es contenido ajeno aunque venga comprobado.
 - No se crean enlaces simbólicos: exFAT no los tiene y el dispositivo casi
   siempre es exFAT. El único que hace falta (`bin/python3` en Linux, que en el
-  archivo es un enlace a `python3.13`) se materializa escribiendo su destino
+  archivo es un enlace a `python3.14`) se materializa escribiendo su destino
   con ese nombre, y no dos veces: son 30 MB.
 - Se poda lo que no hace falta para ejecutar prdrive: pip, ensurepip, idle, los
   tests, las cabeceras y bibliotecas de C y, en Linux, `share/` (terminfo, man)
@@ -84,7 +84,7 @@ RAIZ_ARCHIVO = "python"
 
 
 def _mm() -> str:
-    """Devuelve `3.13` a partir de `3.13.16`.
+    """Devuelve `3.14` a partir de `3.14.8`.
 
     El tramo que aparece en las rutas del runtime.
     """
@@ -565,11 +565,17 @@ def _relativo(nombre: str) -> str | None:
     return limpio[len(RAIZ_ARCHIVO) + 1:]
 
 
-def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
+def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str, *,
+            entero: bool = False) -> int:
     """Extrae el runtime en `destino` y le pone el sello.
 
     Son dos pasadas: la primera valida y decide sin tocar el disco; la segunda
     escribe. Así un archivo con un solo miembro malo no deja nada a medias.
+
+    Args:
+        entero: Si se extrae entero, sin podar lo que prdrive no usa
+            (`podar()`). Solo el Python con el que se compila el instalador va
+            entero (`tests/_runtime_ci.py compilador`): necesita pip.
 
     Returns:
         Cuántos ficheros ha escrito, el sello incluido.
@@ -615,7 +621,7 @@ def extract(archivo: Path, destino: Path, plat: Plataforma, sha256: str) -> int:
             escribir = []
             for rel, m in regulares.items():
                 salida = renombrar.get(rel, rel)
-                if _podado(salida, prefijos, plat):
+                if not entero and _podado(salida, prefijos, plat):
                     continue
                 escribir.append((salida, m))
 

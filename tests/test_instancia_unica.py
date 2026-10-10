@@ -9,6 +9,7 @@ ventana o servicio vivos.
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -87,6 +88,102 @@ with sandbox():
     runsync.soltar_ui()
     c("soltada, se puede volver a tomar", runsync.tomar_ui(), None)
     runsync.soltar_ui()
+
+    # relanzada por la que se cierra
+    #
+    # Al actualizar, la ventana vieja lanza la nueva y se cierra después: la
+    # nueva llega a `tomar_ui()` con el registro todavía en manos de su padre.
+    # Debe esperarle (hasta `ESPERA_PADRE`) en vez de decir «Ya hay una ventana».
+    class Reloj:
+        """Un `time` de mentira: `sleep` adelanta la hora y, a la hora dada, suelta el registro."""
+
+        def __init__(self, suelta_a=None):
+            self.t = 1000.0
+            self.suelta_a = suelta_a
+
+        def monotonic(self):
+            return self.t
+
+        def sleep(self, segundos):
+            self.t += segundos
+            if self.suelta_a is not None and self.t >= self.suelta_a:
+                runsync.UI_LOCK.unlink(missing_ok=True)
+                self.suelta_a = None
+
+    real_time, real_padre = runsync.time, runsync.padre_pid
+    try:
+        runsync.padre_pid = lambda: os.getpid()         # el padre tiene el registro
+        registro(runsync.UI_LOCK, os.getpid(), runsync.HOST)
+        reloj = runsync.time = Reloj(suelta_a=1000.3)
+        c("el padre suelta el registro a los 0,3 s: la nueva lo toma y no dice nada",
+          runsync.tomar_ui(), None)
+        c("  esperando lo justo, de 0,05 en 0,05", 0.3 <= reloj.t - 1000.0 <= 0.36, True)
+        c("  y el registro pasa a ser el suyo",
+          store.read_json(runsync.UI_LOCK).get("started") != "2026-09-22 08:00:00", True)
+        runsync.soltar_ui()
+
+        registro(runsync.UI_LOCK, os.getpid(), runsync.HOST)
+        reloj = runsync.time = Reloj()                  # el padre no lo suelta nunca
+        runsync.ESPERA_PADRE = 0.5
+        otra = runsync.tomar_ui()
+        c("si el padre no lo suelta, pasado el plazo manda su ventana",
+          (otra or {}).get("pid"), os.getpid())
+        c("  tras esperar el plazo y no más", 0.5 <= reloj.t - 1000.0 <= 0.56, True)
+
+        runsync.padre_pid = lambda: MUERTO              # quien lo tiene NO es el padre
+        reloj = runsync.time = Reloj()
+        otra = runsync.tomar_ui()
+        c("si el registro es de otra ventana, que no es el padre, no se espera",
+          ((otra or {}).get("pid"), reloj.t), (os.getpid(), 1000.0))
+        runsync.UI_LOCK.unlink()
+
+        runsync.padre_pid = lambda: os.getpid()         # el padre ya murió: era un resto
+        registro(runsync.UI_LOCK, MUERTO, runsync.HOST)
+        reloj = runsync.time = Reloj()
+        c("un registro del padre que ya no vive es un resto: se toma sin esperar",
+          (runsync.tomar_ui(), reloj.t), (None, 1000.0))
+        runsync.soltar_ui()
+
+        # El padre muere mientras se le espera, sin soltar el registro: lo que
+        # deja es un resto y la espera no gasta el reintento que lo retira.
+        padre = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            runsync.padre_pid = lambda: padre.pid
+            registro(runsync.UI_LOCK, padre.pid, runsync.HOST)
+
+            class Muere(Reloj):
+                """A los 0,2 s el padre muere con el registro puesto."""
+
+                def sleep(self, segundos):
+                    self.t += segundos
+                    if padre.poll() is None and self.t >= 1000.2:
+                        padre.kill()
+                        padre.wait()
+
+            reloj = runsync.time = Muere()
+            c("el padre muere sin soltarlo: la nueva retira el resto y lo toma",
+              runsync.tomar_ui(), None)
+            c("  y el registro pasa a ser el suyo",
+              store.read_json(runsync.UI_LOCK).get("pid"), os.getpid())
+            runsync.soltar_ui()
+            c("  que suelta al cerrarse", runsync.UI_LOCK.exists(), False)
+        finally:
+            if padre.poll() is None:
+                padre.kill()
+                padre.wait()
+    finally:
+        runsync.time, runsync.padre_pid = real_time, real_padre
+        runsync.ESPERA_PADRE = 3.0
+
+    if sys.prefix == sys.base_prefix:       # en un venv de Windows hay un lanzador por medio
+        hijo = subprocess.run(
+            [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+             "import runsync; print(runsync.padre_pid())", str(Path(__file__).resolve().parent.parent)],
+            capture_output=True, text=True, timeout=60)
+        c("padre_pid() es quien lanzó el proceso (también en Windows)",
+          hijo.stdout.strip(), str(os.getpid()))
+    else:
+        print("  (saltado) padre_pid() real: este Python está en un venv")
 
     registro(runsync.UI_LOCK, MUERTO, runsync.HOST)
     c("un resto de una ventana muerta no impide tomarla", runsync.tomar_ui(), None)

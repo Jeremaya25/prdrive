@@ -483,6 +483,12 @@ def medir_escritura(root: str | Path, muestra: int = SONDA_BYTES) -> float | Non
     sonda = Path(root) / SONDA_NOMBRE
     bloque = b"\0" * (1024 ** 2)
     vueltas = max(1, muestra // len(bloque))
+    # Un temporal de una medida interrumpida (el proceso murió a mitad) no debe
+    # sobrevivir a esta: se quita antes de escribir.
+    try:
+        sonda.unlink()
+    except OSError:
+        pass
     try:
         inicio = time.monotonic()
         with open(sonda, "wb") as f:

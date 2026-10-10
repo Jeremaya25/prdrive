@@ -11,6 +11,7 @@ Checklist rows that need an operating system, not a person, run on throwaway Git
 
 - `ls tests/maquina/`: files are `fNN_<topic>_<linux|windows>.py`; `python tests/maquina/correr.py --lista` gives one line per row.
 - One row's text: `grep -n '^| F14 ' docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`. Never read that file, specs or old results whole.
+- The frontend checklist (stage 4, by a person on real screens and disks): `docs/superpowers/pruebas/2026-10-09-frontend-pendiente-en-real.md`. Its cloud row is F21 (`tests/maquina/f21_pyc_entre_sistemas_*.py`), which runs in the two jobs `pyc-linux` and `pyc-windows`, not in the matrix.
 
 ## 2. Run
 

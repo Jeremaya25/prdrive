@@ -16,13 +16,40 @@ Aquí solo se decide QUÉ se hace al enchufar. Las parejas y el intervalo son lo
 del servicio, que se eligen en la ventana principal (las parejas) y en «Ajustes
 → Configuración» (el intervalo) y viajan con el dispositivo: el servicio es
 uno, se arranque a mano o al enchufar.
+
+**La pantalla se pinta antes de preguntarle al sistema.** Si la tarea está
+registrada lo dice `schtasks` o `systemctl`, que tardan lo que tarden y a veces
+no contestan: esa pregunta, y la detección, que recorre las unidades, van en un
+hilo (`segundo_plano`) mientras la pantalla espera con su línea de espera. El
+diario y si penwatch está instalado son ficheros y se leen en el sitio. Si el
+sistema no contesta en `watch.TOPE_VIGILANTE_S`, la pantalla lo dice en vez de
+quedarse esperando, y si contesta después, lo suyo sustituye a la frase.
+
+**La lectura del estado sale antes que el primer widget.** Dibujar lleva su
+tiempo y la pregunta al sistema también: lanzarla lo primero deja que corran a
+la vez y, si ya ha contestado al acabar de dibujar, la pantalla sale con sus
+filas y sin línea de espera. Cada vez que llegan filas (o el aviso de que el
+sistema no contesta) la ventana crece lo que haga falta (`Panel.ajustar()`).
+Un apartado escondido de «Ajustes» no pinta nada a escondidas: su tope de
+tiempo se aparta mientras está escondido y, al volver, sigue contando desde que
+se lanzó la pregunta.
 """
 
 from __future__ import annotations
 
-from . import theme, watch
+import time
+
+from . import segundo_plano, theme, watch
 from .tk import (TITLE, Panel, cabecera, cuerpo_visible, dialogo, modal, mostrar,
                  output_window, pie)
+
+ESPERA_ESTADO = "Preguntando al sistema si la tarea está registrada…"
+"""Lo que dice la línea de espera mientras se lee el estado del vigilante."""
+ESPERA_DETECCION = "Buscando el dispositivo…"
+"""Lo que dice la línea de espera mientras se recorren las raíces candidatas."""
+SIN_RESPUESTA = ("El sistema no ha contestado en {segundos:g} s: no se sabe si la "
+                 "tarea está registrada.")
+"""La fila que sustituye a las del estado cuando el sistema no contesta a tiempo."""
 
 CHIPS = {
     "Registro en el sistema": ("activo", "sin registrar", "NO registrada"),
@@ -61,10 +88,21 @@ def open_dialog(parent) -> None:
 
 
 def construir(panel: Panel) -> None:
-    """Dibuja la pantalla del vigilante en `panel` (su diálogo o «Ajustes»)."""
+    """Dibuja la pantalla del vigilante en `panel` (su diálogo o «Ajustes»).
+
+    Se pinta entera antes de saber nada del sistema: la tarjeta queda vacía y
+    una línea de espera dice que se le está preguntando. Qué hace cada lectura
+    está en el módulo. La del estado se lanza lo primero, antes de dibujar, y
+    se entrega al `Sondeo` al final.
+    """
+    estado_pedido = segundo_plano.lanzar_sin_repetir("vigilante", None,
+                                                     watch.estado_vigilante)
     from tkinter import messagebox, ttk
 
     dlg, marco = panel.ventana, panel.marco
+    sondeo = panel.sondeo()
+    indicador = panel.indicador(marco, ancho=560)
+    dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
 
     arriba = ttk.Frame(marco)
     arriba.grid(row=0, column=0, sticky="ew")
@@ -74,11 +112,11 @@ def construir(panel: Panel) -> None:
     chip_estado = {"widget": None}
 
     tarjeta = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E1))
-    tarjeta.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
+    tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(1, weight=1)
 
     rotulo_diario = ttk.Frame(marco)
-    rotulo_diario.grid(row=2, column=0, sticky="ew", pady=(theme.E4, theme.E2))
+    rotulo_diario.grid(row=3, column=0, sticky="ew", pady=(theme.E4, theme.E2))
     rotulo_diario.columnconfigure(0, weight=1)
     titulo_diario = ttk.Label(rotulo_diario, style="Rotulo.TLabel")
     titulo_diario.grid(row=0, column=0, sticky="w")
@@ -88,10 +126,10 @@ def construir(panel: Panel) -> None:
     diario = theme.caja_texto(marco, width=92, height=8, state="disabled",
                               font=theme.fuente("mono_pequena"), wrap="char",
                               foreground=theme.TINTA2, highlightbackground=theme.LINEA)
-    diario.grid(row=3, column=0, sticky="ew")
+    diario.grid(row=4, column=0, sticky="ew")
 
-    def pintar(filas, titulo: str, lineas: list[str]) -> None:
-        """Pinta las filas de estado y el texto de debajo."""
+    def pintar_filas(filas) -> None:
+        """Pinta las filas de estado en la tarjeta."""
         for hijo in tarjeta.winfo_children():
             hijo.destroy()
         for i, (etiqueta, valor) in enumerate(filas):
@@ -118,28 +156,148 @@ def construir(panel: Panel) -> None:
                 texto, tipo, icono = chip
                 theme.chip(tarjeta, texto, tipo, icono).grid(
                     row=linea, column=2, sticky="e", pady=theme.E2)
+
+    def pintar_diario(titulo: str, lineas: list[str]) -> None:
+        """Pone el rótulo y el texto de debajo de la tarjeta."""
         titulo_diario.configure(text=theme.rotulo(titulo))
         diario.configure(state="normal")
         diario.delete("1.0", "end")
         diario.insert("end", "\n".join(lineas) or "  (vacío)")
         diario.configure(state="disabled")
 
-    def ver_estado() -> None:
-        """Pinta el estado del vigilante y su diario."""
-        pintar(watch.status_rows(), "Diario del vigilante", watch.log_tail())
+    def instalado_ahora() -> bool:
+        """Indica si penwatch está instalado, que es leer un JSON; si falla, que no."""
+        try:
+            return watch.is_installed()
+        except Exception:                            # noqa: BLE001 — penwatch no se importa
+            return False
+
+    def pintar_instalado(puesto: bool) -> None:
+        """Pone el chip de arriba y el texto del botón de instalar."""
         if chip_estado["widget"] is not None:
             chip_estado["widget"].destroy()
-        puesto = watch.is_installed()
         chip_estado["widget"] = theme.chip(
             arriba, "instalado" if puesto else "sin instalar",
             "Ok." if puesto else "Apagado.", "ok" if puesto else None)
         chip_estado["widget"].grid(row=0, column=1, sticky="ne", pady=(theme.E1, 0))
         instalar_btn.configure(text="Reinstalar…" if puesto else "Instalar…")
 
-    def ver_deteccion() -> None:
+    lectura: dict = {"plazo": None, "limite": 0.0, "en_pausa": False}
+
+    def quitar_plazo() -> None:
+        """Cancela el temporizador del tope de tiempo, si corre."""
+        if lectura["plazo"] is not None:
+            try:
+                marco.after_cancel(lectura["plazo"])
+            except Exception:                        # noqa: BLE001 — ya no está
+                pass
+            lectura["plazo"] = None
+        lectura["en_pausa"] = False
+
+    def armar_plazo(restante: float) -> None:
+        """Programa el aviso de que el sistema no contesta para dentro de `restante` s."""
+        lectura["plazo"] = marco.after(max(0, int(restante * 1000)), sin_respuesta)
+
+    def sin_respuesta() -> None:
+        """Dice que el sistema no ha contestado y para la barra; la lectura sigue esperando."""
+        lectura["plazo"] = None
+        try:
+            if not marco.winfo_exists():
+                return
+        except Exception:                            # noqa: BLE001 — intérprete cerrado
+            return
+        indicador.poner("", False)
+        pintar_filas([("", SIN_RESPUESTA.format(segundos=watch.TOPE_VIGILANTE_S))])
+        panel.ajustar()
+
+    def al_esconder() -> None:
+        """Aparta el tope de tiempo mientras el apartado está escondido."""
+        if lectura["plazo"] is not None:
+            quitar_plazo()
+            lectura["en_pausa"] = True
+
+    def al_volver() -> None:
+        """Retoma el tope apartado: cuenta desde que se lanzó la pregunta, no desde ahora."""
+        if lectura["en_pausa"]:
+            lectura["en_pausa"] = False
+            if sondeo.esperando:
+                armar_plazo(lectura["limite"] - time.monotonic())
+
+    panel.al_ocultar(al_esconder)
+    panel.al_mostrar(al_volver)
+
+    def preguntar(clave: str, funcion, llegada, espera: str, con_tope: bool,
+                  encargo=None) -> None:
+        """Lanza una lectura aparte y llama a `llegada(encargo)` cuando llegue.
+
+        Va por `lanzar_sin_repetir` con la clave de su lectura: pedir la misma
+        otra vez, con la anterior sin contestar, espera al mismo hilo en vez de
+        lanzar otro. Un `Sondeo` espera un encargo cada vez, así que la lectura
+        nueva deja sin respuesta a la anterior.
+
+        La línea de espera y el tope solo se ponen si la lectura sigue sin
+        hacer: con una lectura hecha, `esperar()` llama a `llegada` en el acto
+        y la pantalla no llega a enseñar que esperaba.
+
+        Args:
+            clave: Qué se lee; una por clase de lectura.
+            funcion: La lectura, para el hilo.
+            llegada: `llegada(encargo)`, llamada desde el hilo de Tk.
+            espera: Lo que dice la línea de espera.
+            con_tope: Si la lectura puede no contestar nunca (`TOPE_VIGILANTE_S`).
+            encargo: La lectura ya lanzada, si la hay; sin ella se lanza aquí.
+        """
+        quitar_plazo()
+        if encargo is None:
+            encargo = segundo_plano.lanzar_sin_repetir(clave, None, funcion)
+        if not encargo.hecho:
+            indicador.marco.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
+            indicador.poner(espera, True)
+            # Si la lectura acaba justo ahora, `esperar()` llama a `llegada` en el
+            # acto y es ella quien quita el temporizador.
+            if con_tope:
+                lectura["limite"] = time.monotonic() + watch.TOPE_VIGILANTE_S
+                armar_plazo(watch.TOPE_VIGILANTE_S)
+        sondeo.esperar(encargo, llegada)
+
+    def estado_llegado(encargo) -> None:
+        """Pinta el estado que ha llegado y lo instalado que dice."""
+        quitar_plazo()
+        indicador.poner("", False)
+        if encargo.error is not None:
+            pintar_filas([("", f"No se ha podido leer el estado del vigilante: "
+                               f"{encargo.error}")])
+            pintar_instalado(instalado_ahora())
+        else:
+            pintar_filas(encargo.resultado.filas)
+            pintar_instalado(encargo.resultado.instalado)
+        panel.ajustar()
+
+    def deteccion_llegada(encargo) -> None:
         """Pinta dónde se ha buscado el dispositivo."""
-        filas = [(raiz, nota) for raiz, nota in watch.probe_rows()]
-        pintar(filas, "Dónde se ha buscado el dispositivo", [])
+        indicador.poner("", False)
+        if encargo.error is not None:
+            pintar_filas([("", f"No se ha podido buscar el dispositivo: {encargo.error}")])
+        else:
+            pintar_filas(encargo.resultado)
+        pintar_diario("Dónde se ha buscado el dispositivo", [])
+        panel.ajustar()
+
+    def ver_estado(encargo=None) -> None:
+        """Pinta lo que son ficheros (diario, si está instalado) y pregunta el resto.
+
+        Args:
+            encargo: La lectura del estado ya lanzada, si la hay; sin ella se lanza una.
+        """
+        pintar_instalado(instalado_ahora())
+        pintar_diario("Diario del vigilante", watch.log_tail())
+        preguntar("vigilante", watch.estado_vigilante, estado_llegado,
+                  ESPERA_ESTADO, con_tope=True, encargo=encargo)
+
+    def ver_deteccion() -> None:
+        """Busca el dispositivo en las raíces candidatas, aparte."""
+        preguntar("vigilante-deteccion", watch.deteccion, deteccion_llegada,
+                  ESPERA_DETECCION, con_tope=False)
 
     def lanzar(cmd: list[str], titulo: str) -> None:
         """Lanza una orden en la ventana de salida y repinta el estado."""
@@ -164,7 +322,7 @@ def construir(panel: Panel) -> None:
             return
         lanzar(watch.uninstall_command(), "desinstalar el vigilante")
 
-    botones = pie(marco, 4)
+    botones = pie(marco, 5)
     botones.columnconfigure(2, weight=1)
     for i, (texto, icono, accion) in enumerate((
             ("Actualizar", "reload", ver_estado),
@@ -183,7 +341,7 @@ def construir(panel: Panel) -> None:
     if not panel.incrustado:
         ttk.Button(botones, text="Cerrar", command=panel.cerrar).grid(row=0, column=5)
 
-    ver_estado()
+    ver_estado(estado_pedido)
 
 
 def formulario_instalacion(parent) -> dict | None:

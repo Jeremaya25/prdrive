@@ -6,6 +6,7 @@ Son las parejas y el intervalo del servicio, y una pasada manual no los toca.
 
 import builtins
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, mkcfg, tmpdir
@@ -14,7 +15,7 @@ import ui
 import ui.console
 import ui.tk
 from common import update
-from ui import prefs
+from ui import cifrado, prefs, segundo_plano
 
 c = Checks("precarga de los frontends")
 prefs.PREFS = tmpdir("prdrive-ui-") / "ui_prefs.json"
@@ -77,18 +78,32 @@ except Exception as e:                                   # sin entorno gráfico
     hay_pantalla = False
 
 if hay_pantalla:
+    from _vista import visibles
+
     def walk(w):
-        """Recorre los widgets que cuelgan de `w`, en profundidad."""
-        for hijo in w.winfo_children():
-            yield hijo
-            yield from walk(hijo)
+        """Recorre los widgets de `w` que están a la vista, en profundidad.
+
+        La ventana guarda escondidos los bloques que no enseña: no cuentan.
+        """
+        return visibles(w)
+
+    # La lectura del dispositivo que la ventana hace tras pintarse, en el sitio:
+    # llega con el primer `update_idletasks()`. Ni contenedor VeraCrypt ni
+    # recorrido de unidades.
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+    cifrado.expulsion = lambda **_k: None
 
     marcadas: list[str] = []
     etiquetas: list[str] = []
     botones: list[str] = []
 
     def fake_mainloop(self):
-        """Sustituye al bucle de eventos: inspecciona y pulsa un botón."""
+        """Sustituye al bucle de eventos: deja llegar la lectura, inspecciona y pulsa un botón.
+
+        La ventana de salida se abre en el turno siguiente al clic: se mueve el
+        bucle hasta que llega, como mucho 2 s.
+        """
+        self.update_idletasks()
         for w in walk(self):
             if isinstance(w, ttk.Checkbutton):
                 if w.instate(["selected"]):
@@ -100,6 +115,10 @@ if hay_pantalla:
         for w in walk(self):
             if isinstance(w, ttk.Button) and w.cget("text") == "Sincronizar ahora":
                 w.invoke()
+                limite = time.monotonic() + 2.0
+                while not lanzadas and time.monotonic() < limite:
+                    self.update()
+                    time.sleep(0.005)
                 return
 
     # «Sincronizar ahora» ya no sale de la ventana: lanza la salida colgada de

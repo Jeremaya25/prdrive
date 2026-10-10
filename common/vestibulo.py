@@ -142,6 +142,17 @@ def leer_id(raiz: Path | str) -> str | None:
     return None
 
 
+BUSCAR = object()
+"""Valor de `fisica=` que dice «búscala tú»: es el valor por defecto de quien la recibe.
+
+Es UNO solo para `sin_sitio_fuera()`, `revision.revisar()` y `cifrado.expulsion()`:
+cada uno la busca con `raiz_fisica()` cuando se le pide así y usa tal cual lo que
+se le da (la raíz, o `None` para «no vive en un contenedor»). Un centinela propio
+de cada módulo, reenviado a otro, se tomaría por una raíz y rompería la
+comprobación sin avisar.
+"""
+
+
 def raiz_fisica(device_id: str) -> Path | None:
     """Devuelve la raíz física del contenedor en el que vive este dispositivo.
 
@@ -255,18 +266,25 @@ errores de escritura por dentro.
 """
 
 
-def sin_sitio_fuera(device_id: str) -> tuple[Path, int] | None:
+def sin_sitio_fuera(device_id: str,
+                    fisica: Path | None | object = BUSCAR) -> tuple[Path, int] | None:
     """Avisa si a un contenedor disperso le queda poco sitio fuera.
+
+    Args:
+        device_id: El id del dispositivo, con el que se busca la raíz física.
+        fisica: La raíz física si ya se sabe, y `None` si no vive en un
+            contenedor; con `BUSCAR` se busca por `device_id`.
 
     Returns:
         `(raíz física, bytes libres)` si queda menos de `UMBRAL_LIBRE`; `None`
         si no hay nada que avisar.
     """
-    fisica = raiz_fisica(device_id)
-    if fisica is None or not disperso(fisica / CONTENEDOR):
+    if fisica is BUSCAR:
+        fisica = raiz_fisica(device_id)
+    if fisica is None or not disperso(fisica / CONTENEDOR):    # type: ignore[operator]
         return None
     try:
         libre = shutil.disk_usage(str(fisica)).free
     except OSError:
         return None
-    return (fisica, libre) if libre < UMBRAL_LIBRE else None
+    return (fisica, libre) if libre < UMBRAL_LIBRE else None    # type: ignore[return-value]

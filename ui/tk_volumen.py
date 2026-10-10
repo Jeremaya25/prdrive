@@ -15,17 +15,32 @@ cambio se ve la próxima vez que se conecte (con VeraCrypt, que se abra) y no al
 pulsar «Guardar»; con BitLocker no lo lee mientras esté bloqueada; y con
 VeraCrypt lo que cambia es el volumen que aparece al abrir el contenedor, no el
 pendrive que se enchufa.
+
+**Se pinta antes de leer la unidad.** Qué tiene puesto la unidad (`volumen.leer()`:
+su `autorun.inf`, la raíz física del contenedor, que en Windows recorre las
+letras de unidad) se lee en un hilo (`segundo_plano`) mientras la pantalla ya
+está entera, con una línea de espera; el campo del nombre, los iconos y
+«Guardar» se quedan apagados hasta que llega, y entonces se rellenan.
+
+**La lectura sale antes que el primer widget.** Dibujar la pantalla lleva más
+que leer la unidad, así que casi siempre la lectura ya está hecha al acabar y
+se recoge en el acto: la línea de espera no se llega a colocar y nada cambia de
+sitio después de enseñarse, igual que cuando se leía antes de dibujar. Solo si
+la unidad tarda sale la línea (en su fila) y se va al llegar la lectura.
 """
 
 from __future__ import annotations
 
 from common import autorun
 
-from . import icons, theme, volumen
-from .tk import TITLE, Panel, cabecera, corto, dialogo, mostrar, pie, working
+from . import icons, segundo_plano, theme, volumen
+from .principal import corto
+from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie, working
 
 MUESTRA = 32
 """El lado de las muestras de color, en medidas del diseño."""
+LEYENDO = "Mirando cómo está la unidad…"
+"""Lo que dice la línea de espera mientras se lee la unidad."""
 
 
 def open_dialog(parent) -> None:
@@ -39,14 +54,38 @@ def open_dialog(parent) -> None:
 
 
 def construir(panel: Panel) -> None:
-    """Dibuja «Nombre e icono de la unidad» en `panel` (su diálogo o «Ajustes»)."""
+    """Dibuja «Nombre e icono de la unidad» en `panel` (su diálogo o «Ajustes»).
+
+    Se pinta entera sin saber qué tiene puesto la unidad: lo que depende de
+    ello (el campo del nombre, los iconos, «Guardar») queda apagado y vacío
+    hasta que llega la lectura, y entonces se rellena y se enciende. La
+    lectura se lanza lo primero, antes de dibujar, y se entrega al `Sondeo` al
+    final: si ya está hecha, la pantalla sale entera y sin línea de espera.
+    """
+    encargo = segundo_plano.lanzar_sin_repetir("volumen", None, volumen.leer)
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
-    estado = volumen.leer()
     dlg, marco = panel.ventana, panel.marco
     marco.columnconfigure(0, weight=0)
     marco.columnconfigure(1, weight=1)
+    sondeo = panel.sondeo()
+    indicador = panel.indicador(marco, ancho=560)
+    dlg.indicador, dlg.sondeo = indicador, sondeo   # como `visor`: los tests los miran
+
+    def decir(texto: str, esperando: bool, tono: str = "Pista.") -> None:
+        """Dice algo en la línea de espera, colocándola en su fila si hace falta.
+
+        La línea no se coloca al dibujar: con la lectura ya hecha no llega a
+        verse, y colocarla y quitarla sería mover lo que cuelga de ella.
+        """
+        if texto or esperando:
+            indicador.marco.grid(row=1, column=0, columnspan=2, sticky="w",
+                                 pady=(theme.E3, 0))
+        indicador.poner(texto, esperando, tono)
+
+    leido: dict = {"estado": None}
+    dependientes: list = []
 
     cabecera(marco, "Nombre e icono de la unidad",
              "Con qué nombre y qué icono la enseña el Explorador de Windows al "
@@ -62,19 +101,20 @@ def construir(panel: Panel) -> None:
             pady=(theme.E4, 0))
 
     # El nombre.
-    etiqueta("Nombre", 1)
-    nombre = tk.StringVar(marco, value=estado.nombre)
-    ttk.Entry(marco, textvariable=nombre, width=autorun.MAX_NOMBRE + 2).grid(
-        row=1, column=1, sticky="w", pady=(theme.E4, 0))
-    ttk.Label(marco, style="Pista.TLabel", text=volumen.pista_nombre(estado),
-              wraplength=theme.medida(460), justify="left").grid(
-        row=2, column=1, sticky="w", pady=(theme.E1, 0))
+    etiqueta("Nombre", 2)
+    nombre = tk.StringVar(marco)
+    campo = ttk.Entry(marco, textvariable=nombre, width=autorun.MAX_NOMBRE + 2)
+    campo.grid(row=2, column=1, sticky="w", pady=(theme.E4, 0))
+    dependientes.append(campo)
+    pista = ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(460),
+                      justify="left")
+    pista.grid(row=3, column=1, sticky="w", pady=(theme.E1, 0))
 
     # El icono.
-    etiqueta("Icono", 3, arriba=True)
-    eleccion = tk.StringVar(marco, value=estado.clave)
+    etiqueta("Icono", 4, arriba=True)
+    eleccion = tk.StringVar(marco)
     iconos = ttk.Frame(marco)
-    iconos.grid(row=3, column=1, sticky="w", pady=(theme.E4, 0))
+    iconos.grid(row=4, column=1, sticky="w", pady=(theme.E4, 0))
 
     # Los cinco colores de la marca, en fila y con su muestra encima: es lo que
     # distingue un dispositivo de otro, así que se ve antes de elegirlo.
@@ -89,19 +129,18 @@ def construir(panel: Panel) -> None:
             radio.configure(image=muestra)
             radio.image = muestra           # type: ignore[attr-defined]
         radio.grid(row=0, column=i, sticky="w", padx=(0, theme.E4))
+        dependientes.append(radio)
 
     otros = ttk.Frame(iconos)
     otros.grid(row=1, column=0, sticky="w", pady=(theme.E3, 0))
-    fila = 0
     # Uno propio: el fichero se elige aquí, pero no se copia hasta «Guardar».
     propio: dict = {"datos": None}
-    ttk.Radiobutton(otros, text="Uno tuyo (.ico)", value=volumen.PROPIO,
-                    variable=eleccion).grid(row=fila, column=0, sticky="w")
+    uno_tuyo = ttk.Radiobutton(otros, text="Uno tuyo (.ico)", value=volumen.PROPIO,
+                               variable=eleccion)
+    uno_tuyo.grid(row=0, column=0, sticky="w")
     # El nombre del fichero que hay puesto no le dice nada a nadie (lleva un
     # trozo de hash): se dice que hay uno, y la ruta solo cuando se elige otro.
-    elegido = ttk.Label(otros, style="Pista.TLabel",
-                        text="el que tiene ahora" if estado.clave == volumen.PROPIO
-                        else "")
+    elegido = ttk.Label(otros, style="Pista.TLabel")
 
     def elegir() -> None:
         """Deja elegir un `.ico` propio y lo lee."""
@@ -118,41 +157,26 @@ def construir(panel: Panel) -> None:
         elegido.configure(text=corto(ruta, 40), style="MonoPista.TLabel")
         eleccion.set(volumen.PROPIO)
 
-    ttk.Button(otros, text="Elegir…", command=elegir).grid(
-        row=fila, column=1, sticky="w", padx=(theme.E3, 0))
-    elegido.grid(row=fila, column=2, sticky="w", padx=(theme.E3, 0))
-    fila += 1
+    elegir_btn = ttk.Button(otros, text="Elegir…", command=elegir)
+    elegir_btn.grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
+    elegido.grid(row=0, column=2, sticky="w", padx=(theme.E3, 0))
+    # La fila 1 es para «El que ya tiene», que solo sale si hay un `icon=` que no
+    # es nuestro y eso se sabe al leer; vacía no ocupa nada.
+    ninguno = ttk.Radiobutton(otros, text="Ninguno: el de Windows", value=volumen.NINGUNO,
+                              variable=eleccion)
+    ninguno.grid(row=2, column=0, columnspan=3, sticky="w")
+    dependientes += [uno_tuyo, elegir_btn, ninguno]
 
-    if estado.clave == volumen.OTRO:
-        ttk.Radiobutton(otros, text=f"El que ya tiene ({corto(estado.icono, 40)})",
-                        value=volumen.OTRO, variable=eleccion).grid(
-            row=fila, column=0, columnspan=3, sticky="w")
-        fila += 1
-    ttk.Radiobutton(otros, text="Ninguno: el de Windows", value=volumen.NINGUNO,
-                    variable=eleccion).grid(row=fila, column=0, columnspan=3,
-                                            sticky="w")
-
-    # Dónde se escribe y cuándo se ve.
-    inf = estado.raiz / autorun.FICHERO
-    if estado.fuera is not None:
-        donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}: "
-                 "es el volumen que aparece al abrir el contenedor. El pendrive "
-                 f"que lo lleva ({estado.fuera}) conserva su nombre y su icono.")
-    else:
-        donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}. "
-                 "Con BitLocker, Windows no puede leerlo mientras la unidad "
-                 "esté bloqueada.")
-    notas = [donde,
-             "Ese fichero no ejecuta nada: Windows no arranca programas al "
-             "conectar una unidad extraíble, pero sí lee de ahí el nombre y el "
-             "icono, al llegar la unidad. El cambio se verá "
-             f"{volumen.cuando_se_ve(estado)}."]
-    ttk.Label(marco, text="\n".join(notas), style="Pista.TLabel", justify="left",
-              wraplength=theme.medida(560)).grid(row=4, column=0, columnspan=2,
-                                                 sticky="w", pady=(theme.E4, 0))
+    # Dónde se escribe y cuándo se ve: depende de la unidad, así que llega con ella.
+    notas = ttk.Label(marco, style="Pista.TLabel", justify="left",
+                      wraplength=theme.medida(560))
+    notas.grid(row=5, column=0, columnspan=2, sticky="w", pady=(theme.E4, 0))
 
     def guardar() -> None:
         """Guarda el nombre y el icono, en un hilo, y cierra la ventana."""
+        estado = leido["estado"]
+        if estado is None:
+            return
         try:
             texto = volumen.revisar_nombre(nombre.get())
         except volumen.VolumenError as e:
@@ -169,9 +193,55 @@ def construir(panel: Panel) -> None:
         messagebox.showinfo(TITLE, volumen.mensaje_guardado(estado, texto), parent=dlg)
         panel.terminar("Guardado.")
 
-    botones = pie(marco, 5, columnas=2)
+    botones = pie(marco, 6, columnas=2)
     botones.columnconfigure(0, weight=1)
     ttk.Button(botones, text="Cancelar", command=panel.terminar).grid(
         row=0, column=1, padx=(0, theme.E2))
-    ttk.Button(botones, text="Guardar", style="Primary.TButton",
-               command=guardar).grid(row=0, column=2)
+    guardar_btn = ttk.Button(botones, text="Guardar", style="Primary.TButton",
+                             command=guardar)
+    guardar_btn.grid(row=0, column=2)
+    dependientes.append(guardar_btn)
+    for control in dependientes:
+        control.state(["disabled"])
+
+    def llegada(encargo) -> None:
+        """Rellena la pantalla con lo que tiene la unidad y enciende lo que esperaba."""
+        if encargo.error is not None:
+            decir(f"No se ha podido leer la unidad: {encargo.error}", False, "Aviso.")
+            return
+        estado = encargo.resultado
+        leido["estado"] = estado
+        decir("", False)
+        nombre.set(estado.nombre)
+        eleccion.set(estado.clave)
+        pista.configure(text=volumen.pista_nombre(estado))
+        elegido.configure(text="el que tiene ahora" if estado.clave == volumen.PROPIO
+                          else "")
+        if estado.clave == volumen.OTRO:
+            # Nace después de «Ninguno», pero el Tab sigue el orden de apilado: se
+            # baja justo debajo de él para que se llegue en el orden en que se ve.
+            otro = ttk.Radiobutton(otros, text=f"El que ya tiene ({corto(estado.icono, 40)})",
+                                   value=volumen.OTRO, variable=eleccion)
+            otro.grid(row=1, column=0, columnspan=3, sticky="w")
+            otro.lower(ninguno)
+        inf = estado.raiz / autorun.FICHERO
+        if estado.fuera is not None:
+            donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}: "
+                     "es el volumen que aparece al abrir el contenedor. El pendrive "
+                     f"que lo lleva ({estado.fuera}) conserva su nombre y su icono.")
+        else:
+            donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}. "
+                     "Con BitLocker, Windows no puede leerlo mientras la unidad "
+                     "esté bloqueada.")
+        notas.configure(text="\n".join((
+            donde,
+            "Ese fichero no ejecuta nada: Windows no arranca programas al conectar "
+            "una unidad extraíble, pero sí lee de ahí el nombre y el icono, al "
+            f"llegar la unidad. El cambio se verá {volumen.cuando_se_ve(estado)}.")))
+        for control in dependientes:
+            control.state(["!disabled"])
+        panel.ajustar()
+
+    if not encargo.hecho:
+        decir(LEYENDO, True)
+    sondeo.esperar(encargo, llegada)

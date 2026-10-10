@@ -25,6 +25,7 @@ intérprete de Tk: es reversible y la cogen los widgets que se creen después.
 Las ventanas se crean ocultas y no se entra nunca en el bucle de eventos.
 """
 
+import gc
 import struct
 import sys
 import threading
@@ -224,10 +225,9 @@ def recortado(visor) -> bool:
     """Contenido fuera del recuadro sin barra que lo enseñe: lo que no puede pasar."""
     visor.interior.update_idletasks()
     ancho, alto = visor._medida()
-    return ((visor.interior.winfo_reqheight() > alto
-             and not visor.vertical.grid_info())
-            or (visor.interior.winfo_reqwidth() > ancho
-                and not visor.horizontal.grid_info()))
+    vertical, horizontal = visor.barras()
+    return ((visor.interior.winfo_reqheight() > alto and not vertical)
+            or (visor.interior.winfo_reqwidth() > ancho and not horizontal))
 
 
 def usar_conexion(wiz) -> None:
@@ -1033,8 +1033,7 @@ try:
                         recorrido["cortes"].append(recortado(visor))
                         recorrido["pide"].add((visor.interior.winfo_reqwidth(),
                                                visor.interior.winfo_reqheight()))
-                        recorrido["barras"].add((bool(visor.vertical.grid_info()),
-                                                 bool(visor.horizontal.grid_info())))
+                        recorrido["barras"].add(visor.barras())
 
                 previo = tk_fleet.mostrar
                 tk_fleet.mostrar = recorrer
@@ -1050,6 +1049,10 @@ try:
                   len(recorrido["pide"]), 1)
                 c(f"{nombre}: ni aparece o desaparece una barra",
                   len(recorrido["barras"]), 1)
+        # Antes recoge la basura: una `tkinter.Variable` de una pantalla anterior
+        # que el recolector suelte desde el hilo de `working()` llamaría a Tk desde
+        # allí, y sin `mainloop()` `_tkinter` espera 1 s por cada una.
+        gc.collect()
         # La ventanita de `working()` con avance: no va en un `Visor` —es un
         # párrafo y una barra—, así que lo que se mide es que quepa, y que al
         # llegar la primera cifra no cambie de tamaño: su hueco está reservado

@@ -32,13 +32,15 @@ import json
 import os
 import shutil
 import sys
-import urllib.request
-import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Callable, NamedTuple
+from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from . import APP_NAME, model, store
+
+if TYPE_CHECKING:
+    # Solo para las anotaciones: `zipfile` se importa dentro de `download()`.
+    import zipfile
 
 REPO = "Jeremaya25/prdrive"
 """Repositorio del proyecto, de donde sale este mismo programa.
@@ -248,6 +250,8 @@ def fetch(url: str, timeout: int) -> bytes:
     un flujo porque lo más grande que pasa por aquí son los ~270 KB del zip del
     código: no compensa complicar el punto que hay que poder sustituir.
     """
+    import urllib.request
+
     peticion = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(peticion, timeout=timeout) as resp:
         return resp.read()
@@ -427,6 +431,8 @@ def download(tag: str, destino: Path | str, progreso: Progreso | None = None) ->
         UpdateError: Si no se puede descargar, el zip está dañado o lo
             descargado no es este proyecto.
     """
+    import zipfile
+
     def decir(msg: str) -> None:
         """Pasa un mensaje a `progreso`, si lo hay."""
         if progreso:

@@ -11,6 +11,7 @@ paths:
   - "tests/test_catalog.py"
   - "tests/test_catalog_editor.py"
   - "tests/test_pair_editor.py"
+  - "tests/test_tk_parejas_vista.py"
   - "tests/test_flags_editor.py"
   - "tests/test_remote_picker.py"
   - "tests/test_install_catalogo.py"

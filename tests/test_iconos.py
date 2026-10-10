@@ -26,10 +26,28 @@ from ui import icons, theme  # noqa: E402
 
 theme.nitidez()
 
-import tkinter as tk  # noqa: E402
-from tkinter import font as tkfont, ttk  # noqa: E402
+# ningún glifo toca el borde de su mapa de bits
+#
+# Un trazo sale media anchura por fuera de su punto (`_expandir`), así que un
+# glifo dibujado hasta el borde de la rejilla se recorta al rasterizar y se ve
+# partido. Pasaba con el electrocardiograma del doctor.
+for nombre in sorted(icons.GLIFOS):
+    r = icons._capas_rgba([(theme.ACENTO, icons.TRAZO, icons.GLIFOS[nombre])], 16.0, 15)
+    filas = [y for y in range(15) if any(p[3] > 0.02 for p in r[y])]
+    cols = [x for x in range(15) if any(r[y][x][3] > 0.02 for y in range(15))]
+    c(f"el glifo '{nombre}' no toca el borde",
+      (filas[0], filas[-1], cols[0], cols[-1]) != ()
+      and filas[0] > 0 and filas[-1] < 14 and cols[0] > 0 and cols[-1] < 14, True)
 
-raiz = tk.Tk()
+# Lo de abajo mide botones de verdad: sin Tk o sin pantalla (el suelo de Python 3.11 de
+# la CI no tiene ni `tkinter`) se salta, y lo de arriba, que es solo dibujo, ya ha corrido.
+try:
+    import tkinter as tk
+    from tkinter import font as tkfont, ttk
+    raiz = tk.Tk()
+except Exception as e:                                   # sin Tk o sin entorno gráfico
+    print(f"  (saltado) no hay entorno gráfico: {e}")
+    sys.exit(c.report())
 raiz.withdraw()
 theme.apply(raiz)
 # `icons.px()` escala con `tk scaling`, así que un 15 del diseño solo son 15
@@ -99,19 +117,6 @@ raiz.update_idletasks()
 c("el botón mide lo mismo que antes del ajuste",
   (boton.winfo_reqwidth(), boton.winfo_reqheight()),
   (crudo.winfo_reqwidth(), crudo.winfo_reqheight()))
-
-# ningún glifo toca el borde de su mapa de bits
-#
-# Un trazo sale media anchura por fuera de su punto (`_expandir`), así que un
-# glifo dibujado hasta el borde de la rejilla se recorta al rasterizar y se ve
-# partido. Pasaba con el electrocardiograma del doctor.
-for nombre in sorted(icons.GLIFOS):
-    r = icons._capas_rgba([(theme.ACENTO, icons.TRAZO, icons.GLIFOS[nombre])], 16.0, 15)
-    filas = [y for y in range(15) if any(p[3] > 0.02 for p in r[y])]
-    cols = [x for x in range(15) if any(r[y][x][3] > 0.02 for y in range(15))]
-    c(f"el glifo '{nombre}' no toca el borde",
-      (filas[0], filas[-1], cols[0], cols[-1]) != ()
-      and filas[0] > 0 and filas[-1] < 14 and cols[0] > 0 and cols[-1] < 14, True)
 
 raiz.destroy()
 sys.exit(c.report())

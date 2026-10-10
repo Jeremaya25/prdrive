@@ -28,18 +28,24 @@ from pathlib import Path
 from common import vestibulo
 
 
-def expulsion() -> Path | None:
+def expulsion(fisica: Path | None | object = vestibulo.BUSCAR) -> Path | None:
     """Devuelve el script que cierra el contenedor de ESTE dispositivo, o `None`.
 
     Es `None` cuando el dispositivo no vive en un contenedor o cuando su
     vestíbulo no tiene el script (un dispositivo de antes al que no se le ha
     pasado «Añadir plataformas…»): entonces no hay botón que ofrecer.
+
+    Args:
+        fisica: La raíz física del contenedor si quien llama ya la ha buscado
+            (`ui/instantanea.py` la busca una vez para todas sus lecturas);
+            `None` es «no vive en un contenedor». Por defecto se busca.
     """
-    from common import fleet
-    fisica = vestibulo.raiz_fisica(fleet.device_id())
+    if fisica is vestibulo.BUSCAR:
+        from common import fleet
+        fisica = vestibulo.raiz_fisica(fleet.device_id())
     if fisica is None:
         return None
-    script = fisica / (vestibulo.EXPULSAR_BAT if os.name == "nt"
+    script = fisica / (vestibulo.EXPULSAR_BAT if os.name == "nt"    # type: ignore[operator]
                        else vestibulo.EXPULSAR_SH)
     try:
         return script if script.is_file() else None

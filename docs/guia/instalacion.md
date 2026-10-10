@@ -5,7 +5,7 @@
 Preparar una unidad nueva, para qué sistemas, qué hacer con una unidad que ya existe y el instalador de un solo fichero.
 
 Necesitas un remote de rclone al que puedas escribir y, para ejecutar el
-instalador desde el repositorio, Python 3.11+ con Tkinter en el equipo desde el
+instalador desde el repositorio, Python 3.11+ con Tk 9 en el equipo desde el
 que instalas (el [ejecutable](#un-ejecutable-para-no-repetir-todo-esto) no lo
 necesita). El dispositivo que sale de ahí no necesita nada en ningún equipo.
 
@@ -44,6 +44,12 @@ filtrar por ahí es la forma más rápida de que el tuyo no aparezca.
 El paso 5 no borra nada fuera de `.prdrive/`. Si esa carpeta ya existe, se
 sobrescribe el código y se conserva el resto.
 
+Al terminar de copiar (y tras cada actualización) el dispositivo deja
+preparado el programa para que la primera vez que se abra no tenga que
+compilarlo: unos 6 MB más en `.prdrive/`. Si no se puede (unidad llena o de solo
+lectura, sin Python propio para este equipo), no pasa nada: se instala igual y
+solo el primer arranque es más lento.
+
 ## Plataformas: completa o ligera
 
 En el paso 5 se elige **para qué equipos** va a funcionar el dispositivo: Windows
@@ -55,7 +61,16 @@ hueco libre del dispositivo.
 | instalación | lleva | en la raíz | necesita en cada equipo |
 |---|---|---|---|
 | **completa** (por defecto) | rclone + Python por plataforma | `runsync.bat`, `runsync.sh`, `README.md` | nada |
-| **ligera** | solo rclone | lo mismo, más `runsync.pyw` | Python 3.11+ con Tkinter |
+| **ligera** | solo rclone | lo mismo, más `runsync.pyw` | Python 3.11+ con Tk 9 |
+
+La ligera usa el Python del equipo, y solo se admite uno **con Tk 9**
+(`python -c "import tkinter; print(tkinter.TkVersion)"` debe escribir `9.0` o
+más). Los Python de python.org para Windows y los de muchas distribuciones de
+Linux traen Tk 8.6 y no sirven; el instalador se lo pregunta al Python del
+equipo y lo marca en rojo («Comprobaciones», y la verificación del dispositivo)
+si trae un Tk anterior a 9. El de la instalación completa
+(python-build-standalone 3.14) sí sirve: en un equipo sin un Python así, usa la
+completa, que lleva el suyo.
 
 El Python es [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
 (de astral-sh), no el zip «embebible» de python.org, que no trae tkinter. Va en
@@ -66,9 +81,11 @@ runtime a medias no cuenta como instalado. rclone sigue en `.prdrive/bin/<arch>/
 Las versiones de los dos están **fijadas** en `common/pins.py` y se mueven con un
 commit, no porque alguien publicara algo anoche: se instala lo que se ha probado.
 Python va en 3.14 porque así la ventana usa el mismo Tk (9.0.4) en Windows y en
-Linux: con el 3.13 de antes, Windows llevaba Tk 8.6 y Linux ya Tk 9. Un
-dispositivo instalado con el 3.13 lo verá como componente pendiente en «Ajustes →
-Actualizaciones» y se pone al día desde ahí.
+Linux, y Tk 9 es el único Tk que prdrive prueba y admite: con el 3.13 de antes,
+Windows llevaba Tk 8.6 y Linux ya Tk 9. Un dispositivo instalado con el 3.13 lo
+verá como componente pendiente en «Ajustes → Actualizaciones» y se pone al día
+desde ahí; hasta entonces no está soportado (su ventana se sigue abriendo, para
+que llegues a «Actualizar…»).
 
 En Linux, el Tk de ese runtime no trae suavizado de letra (está compilado sin
 Xft), así que el dispositivo lleva al lado uno compilado con él (1,6 MB) y
@@ -131,12 +148,14 @@ que trae su propia contraseña conserva su conexión.
 ## Un ejecutable, para no repetir todo esto
 
 ```bash
-pip install pyinstaller          # solo para compilar
-python build_installer.py        # -> dist/prdrive-install.exe
+python -m pip install pyinstaller==6.22.3   # solo para compilar
+python build_installer.py                   # -> dist/prdrive-install.exe
 ```
 
-Sale un instalador de un solo fichero que **lleva el programa dentro**. Dos
-variantes, y la diferencia importa:
+Hace falta un Python 3.11 o posterior **con Tk 9** y ese PyInstaller exacto:
+`build_installer.py` no compila sin ellos y dice qué falta. Sale un instalador de
+un solo fichero que **lleva el programa dentro**. Necesita **Windows 10 o
+posterior**. Dos variantes, y la diferencia importa:
 
 - **Sin perfil** (lo normal al clonar el repo): genérico, sin ningún secreto
   dentro, pregunta la conexión al abrirlo. Se puede repartir sin más.
@@ -147,3 +166,22 @@ variantes, y la diferencia importa:
 
 `install/secret.py` es el vehículo del perfil: se genera al compilar, está en
 `.gitignore` y se borra siempre en un `finally`, también si la compilación falla.
+
+El ejecutable **lleva dentro el Python con el que lo compilas, con su Tk**, y Tk 9
+es el único Tk que prdrive admite: con él el asistente pinta sus iconos con SVG.
+Los Python de python.org para Windows traen Tk 8.6 y no sirven para compilar. La
+CI compila con el Python de los dispositivos y prueba el ejecutable, sin abrir
+ninguna ventana, antes de darlo por bueno.
+
+Para compilar el tuyo igual (también el llave en mano, con tu perfil), en Windows
+y desde el repositorio:
+
+```bash
+python tests/_runtime_ci.py compilador windows-x64 C:\prdrive-py C:\prdrive-cache
+C:\prdrive-py\python.exe -m pip install pyinstaller==6.22.3
+C:\prdrive-py\python.exe build_installer.py
+```
+
+La primera orden baja ese Python (python-build-standalone 3.14.8, Tk 9.0.4,
+comprobado contra el `SHA256SUMS` de su release) y lo deja en `C:\prdrive-py`
+entero, con pip.

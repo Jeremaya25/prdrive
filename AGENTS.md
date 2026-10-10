@@ -40,7 +40,7 @@ Specs and real-hardware test plans/results: `docs/superpowers/{specs,pruebas}/` 
 
 ## Layout
 
-`sync.py`, `runsync.py` and `penwatch.py` are located by fixed path by the volume-root launchers and the watcher: do not move them. `agente.py` is copied to the HOST, never to a device.
+`sync.py`, `runsync.py` and `penwatch.py` are located by fixed path by the volume-root launchers and the watcher: do not move them. `agente.py` and `pregunta.py` are copied to the HOST, never to a device.
 
 ```
 prdrive/            the checkout; on a provisioned device it is `.prdrive/`
@@ -48,6 +48,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── runsync.py      window + periodic service; shells out to sync.py
 ├── penwatch.py     mount watcher (self-contained)
 ├── agente.py       resident agent: penwatch's successor on a host
+├── pregunta.py     the agent's «¿Atender esta unidad?» window as a tiny entry (agente.py is recompiled on every use)
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
@@ -57,19 +58,20 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive)
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
-│   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only)
-│   decision halves, no Tk: pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor
+│   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only; `tk_principal` the main window, `tk_tabla` the one-canvas table)
+│   decision halves, no Tk: principal (main window) · instantanea (the shared device read) · pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · watch · versions_editor · volumen · llavero_editor · lecturas_asistente (the wizard's reads: the examinations, the probe, the python and verification checks)
 │   tray: bandeja (PURE) · bandeja_windows · bandeja_linux · tk_agente («¿Atender esta unidad?», a child of the agent)
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)
 │   device (volumes) · crypto (VeraCrypt, BitLocker) · traveler · vestibulo · agente · raiz_equipo · deploy (copy code, runtimes, launchers, config)
-└── tests/          plain scripts; `run_all.py` runs each in its own process
+└── tests/          plain scripts; `run_all.py` runs each in its own process · `rendimiento/` is the CI timing check (not collected by `run_all.py`)
 ```
 
 On a provisioned device the code lives in `.prdrive/` at the volume root (hidden by the dot on POSIX, by `deploy.hide()` on Windows). `model.APP_DIR` = `Path(__file__).parent.parent` and `DEVICE_ROOT` its parent: **nothing depends on the folder name or drive letter**. The control file is **inside** `.prdrive/` (`.prdrive/PRDRIVE`), so identifying the drive needs only a root-relative path and it cannot be deleted without deleting the program.
 
 ## Dependency rules: do not cross them
 
+- **Heavy `common` modules are imported inside the function that uses them** in `ui/__init__.py`, `ui/tk.py`, `common/update.py` and `runsync.py`, and a new lazy import in the main window goes in `ui.tk.PRECARGA` (`ui.md`, `tests/test_imports_perezosos.py`).
 - `tk_*` modules only draw. Every decision and disk touch lives in `pair_editor`/`catalog_editor`/`flags_editor`/`watch`/`install/`, which import no Tk and are tested headlessly.
 - **`import tkinter` goes inside functions, never at module top**: `ui/` is imported by headless paths (`--auto`, the service), and the failure must surface when a window opens so `ui.start()` can fall back to the console menu.
 - `theme.py`/`icons.py` own every colour, font and glyph (a `tk_*` module never writes a hex value); distances go through `theme.medida()`, never a bare integer.
@@ -95,7 +97,8 @@ python tests/run_all.py     # all tests, each in its own process; or run one scr
 
 The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installer.py`) is in `commands-testing.md`.
 
-- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows. Tk tests skip without a display, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows, with the device's pinned runtime (Tk 9), plus one Linux pass on `setup-python` 3.11 with no display that holds the Python floor of everything that is not a window; `rendimiento.yml` times the windows against `main` (`commands-testing.md`). Tk tests skip without a display or without `tkinter`, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- **Tk 9 is the only supported Tk** (owner's decision, 09/10/2026): no Tk 8.6 test leg, and new code writes no Tk 8.6 workaround. The light install needs a host Python with Tk 9, and a device still on the 3.13 runtime (Tk 8.6 on Windows) is unsupported until it updates from «Ajustes → Actualizaciones». The Tk 8.6 paths that exist stay so such a device can still open its window and reach «Actualizar…»: do not delete them outside the stage-4 cleanup (`ui.md` «Which Tk»).
 - `runsync.py` with no args always **stops a previously started service** first.
 - Windows dev machine: the Bash tool is sandboxed. It redirects writes under `%LOCALAPPDATA%` (a `penwatch install` from there registers a task pointing at nothing) and hangs `tasklist | find`. Use PowerShell for both.
 

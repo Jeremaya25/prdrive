@@ -150,22 +150,120 @@ def partir_aviso(texto: str) -> tuple[str, str]:
     return "", texto
 
 
-def rows(config: Config) -> list[PairRow]:
+class LecturaConfig:
+    """Lee `sync_config.toml` y lo parsea solo cuando el fichero ha cambiado.
+
+    La pantalla de parejas lo relee en cada repintado (llega el catálogo, se
+    pulsa «Releer», se cambia de vista) y antes de cada plan: comprobar
+    primero la fecha y el tamaño cuesta un `stat`, y parsear el TOML entero
+    en cada uno de esos pasos, no.
+
+    Args:
+        ruta: El fichero a leer; sin ella, el config de este dispositivo
+            (`model.CONFIG_FILE`, que se mira en cada lectura).
+
+    Attributes:
+        cambio: Si la última `leer()` encontró el fichero distinto del que
+            devolvió la anterior. La primera lectura no tiene con qué
+            compararse: no cuenta como cambio.
+    """
+
+    def __init__(self, ruta: Path | None = None) -> None:
+        """Empieza sin haber leído nada."""
+        self.ruta = ruta
+        self.cambio = False
+        self._huella: tuple[int, int] | None = None
+        self._leido: tuple[dict, Config] | None = None
+
+    def leer(self) -> tuple[dict, Config]:
+        """Devuelve el TOML en bruto y el config resuelto, parseándolos solo si hace falta.
+
+        Mira la fecha de modificación (en nanosegundos) y el tamaño del fichero
+        en cada llamada; mientras no cambien devuelve los mismos objetos que la
+        vez anterior, así que quien los guardó puede comparar por identidad
+        «lo que enseño» con «lo que hay».
+
+        Returns:
+            `(raw, config)`, como `config_file.load_raw()` y `model.parse_config()`.
+
+        Raises:
+            ConfigError: Si el fichero no existe, no es TOML o no es un config
+                válido; no se guarda nada y la siguiente lectura lo vuelve a
+                intentar.
+        """
+        ruta = Path(self.ruta) if self.ruta is not None else model.CONFIG_FILE
+        try:
+            info = ruta.stat()
+        except OSError:
+            raise ConfigError(f"No existe el fichero de configuración: {ruta}") from None
+        huella = (info.st_mtime_ns, info.st_size)
+        if self._leido is not None and huella == self._huella:
+            self.cambio = False
+            return self._leido
+        raw = config_file.load_raw(self.ruta)
+        leido = (raw, model.parse_config(raw, equipo=model.es_equipo()))
+        self.cambio = self._leido is not None
+        self._huella, self._leido = huella, leido
+        return leido
+
+
+def estados_de(config: Config,
+               ya: Mapping[str, tuple[bisync.PairState, bisync.FiltersState]] | None = None
+               ) -> dict[str, tuple[bisync.PairState, bisync.FiltersState]]:
+    """Devuelve el baseline y los filtros de cada pareja bisync, leyendo solo lo que falta.
+
+    Args:
+        config: El config de este dispositivo; la pareja del llavero no cuenta.
+        ya: Lo que ya se sabe, `{nombre: (PairState, FiltersState)}` (lo que
+            trae `ui.instantanea.Instantanea.estados`). No se modifica.
+
+    Returns:
+        Un diccionario nuevo con una entrada por pareja bisync del config: la
+        que venía en `ya` si estaba, y si no la que se lee del disco.
+    """
+    ya = ya or {}
+    salida = {}
+    for pair in config.del_usuario:
+        if not pair.is_bisync:
+            continue
+        salida[pair.name] = ya.get(pair.name) or (
+            bisync.pair_state(pair),
+            bisync.filters_state(bisync.filters_file_for(pair)))
+    return salida
+
+
+def _pide_resync(state: bisync.PairState, filtros: bisync.FiltersState) -> bool:
+    """Dice si esa pareja necesita `--resync`, con los estados ya leídos.
+
+    Es la regla de `bisync.resync_reasons()` (sin baseline utilizable, o filtros
+    que no son los del último resync) sin que ella vuelva a leer los filtros.
+    """
+    return not state.has_baseline or filtros.needs_resync
+
+
+def rows(config: Config,
+         estados: Mapping[str, tuple[bisync.PairState, bisync.FiltersState]] | None = None
+         ) -> list[PairRow]:
     """Devuelve lo que se pinta en la lista, con el estado ya resuelto.
 
     La pareja del llavero no sale: no se elige ni se edita.
+
+    Args:
+        config: El config de este dispositivo.
+        estados: El baseline y los filtros de cada pareja bisync que ya se
+            conocen (`estados_de()`); solo se leen del disco las que falten.
     """
+    estados = estados_de(config, estados)
     salida = []
     for pair in config.del_usuario:
         estado = "—"
         aviso = mirror_warning(pair.mode.name)
         if pair.is_bisync:
-            state = bisync.pair_state(pair)
-            filtros = bisync.filters_state(bisync.filters_file_for(pair))
+            state, filtros = estados[pair.name]
             estado = state.status
             if filtros.needs_resync:
                 estado += f", filtros {filtros.status}"
-            if aviso is None and bisync.resync_reasons(pair, state):
+            if aviso is None and _pide_resync(state, filtros):
                 aviso = "requiere resync"
         salida.append(PairRow(pair.name, pair.mode.name, pair.local_endpoint,
                               pair.remote_endpoint, estado, aviso))
@@ -834,15 +932,20 @@ def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[s
     return mode, local, f"{remote}:{entrada.get('remote_path', '?')}"
 
 
-def catalog_rows(config: Config, raw: Mapping[str, Any],
-                 cat: catalog.Catalog | None) -> list[CatalogRow]:
+def catalog_rows(config: Config, raw: Mapping[str, Any], cat: catalog.Catalog | None,
+                 estados: Mapping[str, tuple[bisync.PairState, bisync.FiltersState]] | None = None
+                 ) -> list[CatalogRow]:
     """Devuelve las filas de la lista: primero el catálogo y luego lo local.
 
     Las del catálogo van en su orden y, detrás, las que solo hay aquí.
+
+    Args:
+        estados: Lo que ya se sabe del baseline y los filtros de cada pareja
+            (`rows()`); solo se lee del disco lo que falte.
     """
     locales = {p["name"]: dict(p) for p in raw.get("pair") or [] if p.get("name")}
     del_cat = catalog.pairs_by_name(cat)
-    filas = {f.name: f for f in rows(config)}
+    filas = {f.name: f for f in rows(config, estados)}
     defaults_cat = cat.defaults if cat is not None else {}
 
     salida: list[CatalogRow] = []
@@ -911,6 +1014,39 @@ def row_status(fila: CatalogRow, del_catalogo: bool = False) -> tuple[str, str]:
         return "aviso", fila.origen
     # Solo bisync tiene un estado que contar; el resto, que se usa y ya está.
     return "ok", fila.estado if fila.estado != "—" else "en uso"
+
+def botones(fila: CatalogRow | None, lect) -> dict[str, bool]:
+    """Dice qué botones de la pantalla de parejas valen para la fila elegida.
+
+    Es la regla de `habilitar()` sin Tk: la pantalla enciende y apaga cada
+    botón con lo que diga aquí.
+
+    Args:
+        fila: La fila elegida, o `None` si no hay ninguna.
+        lect: Lo que se sabe del catálogo (`catalog_editor.Lectura`): si se puede
+            escribir en él (`editable`) y si se está leyendo (`leyendo`).
+
+    Returns:
+        Por texto de botón (y `"Descartar del catálogo"`, el de su barra), si se
+        puede pulsar.
+    """
+    en_pen = fila is not None and fila.en_pen
+    con_fila = fila is not None
+    return {
+        "Usar aquí": con_fila and not en_pen,
+        "Simular": en_pen,
+        "Quitar…": en_pen,
+        "Descartar": en_pen,
+        "Guardar aquí…": en_pen,
+        "Volver al catálogo": en_pen and bool(fila.difiere),
+        "Ajustes del catálogo…": bool(lect.editable),
+        "Nueva pareja…": bool(lect.editable),
+        "Borrar del catálogo…": bool(lect.editable) and con_fila,
+        "Guardar en el catálogo…": bool(lect.editable) and con_fila,
+        "Descartar del catálogo": con_fila,
+        "Releer": not lect.leyendo,
+    }
+
 
 def defaults_origin(raw: Mapping[str, Any],
                     cat: catalog.Catalog | None) -> tuple[str, tuple[str, ...]]:

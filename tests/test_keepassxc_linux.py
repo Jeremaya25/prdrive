@@ -424,11 +424,28 @@ def abrir(cfg, llave=None):
     return hecho, dicho
 
 
+class Reloj:
+    """Un reloj a mano: `dormir()` lo adelanta, así que un bucle con plazo acaba sin esperar.
+
+    Attributes:
+        ahora: Los segundos que lleva el reloj.
+    """
+
+    def __init__(self) -> None:
+        self.ahora = 0.0
+
+    def __call__(self) -> float:
+        return self.ahora
+
+    def dormir(self, segundos: float) -> None:
+        self.ahora += segundos
+
+
 reales = (keepassxc.paquete_del_equipo, keepassxc.del_equipo, keepassxc.version_del_equipo,
           llavero.keepassxc_abierto, keepassxc.otro_abierto, llavero.atiende_el_servicio,
           llavero.pasada, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
           llavero.lanzar_vigilante, keepassxc.cache_equipo, keepassxc.extraer_appimage,
-          registro.escribir, llavero.dormir, keepassxc.bases_navegador)
+          registro.escribir, llavero.dormir, keepassxc.bases_navegador, keepassxc.reloj)
 escritas: list = []
 try:
     with sandbox() as root:
@@ -444,7 +461,15 @@ try:
         llavero.pasada = lambda **k: (0, "")
         keepassxc.lanzar = eq.lanzar
         keepassxc.ESPERA_ARRANQUE = 0.01
-        llavero.dormir = lambda segundos: None
+        reloj = Reloj()
+        llavero.dormir = reloj.dormir
+        keepassxc.reloj = reloj
+        # un KeePassXC que sigue abierto pasa el plazo sin esperarlo de verdad
+        antes, inicio = reloj.ahora, time.monotonic()
+        resultado = keepassxc.esperar_arranque(Proc(), 1.5)
+        c("el arranque que sigue: None al pasar el plazo, sin esperarlo de verdad",
+          (resultado, round(reloj.ahora - antes, 6) >= 1.5, time.monotonic() - inicio < 0.2),
+          (None, True, True))
         llavero.lanzar_vigilante = lambda: None
         keepassxc.cache_equipo = lambda: cache
         keepassxc.extraer_appimage = extraer_falso
@@ -533,7 +558,7 @@ finally:
      llavero.keepassxc_abierto, keepassxc.otro_abierto, llavero.atiende_el_servicio,
      llavero.pasada, keepassxc.lanzar, keepassxc.ESPERA_ARRANQUE,
      llavero.lanzar_vigilante, keepassxc.cache_equipo, keepassxc.extraer_appimage,
-     registro.escribir, llavero.dormir, keepassxc.bases_navegador) = reales
+     registro.escribir, llavero.dormir, keepassxc.bases_navegador, keepassxc.reloj) = reales
     model.APP_DIR = real_app
 
 # --- «Combinar» en Linux: una terminal, y el código que deja su consola

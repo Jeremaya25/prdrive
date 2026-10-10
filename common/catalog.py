@@ -44,7 +44,7 @@ import time
 import tomllib
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping, NamedTuple
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 from . import config_file, model, store
 from .model import ConfigError
@@ -320,24 +320,86 @@ def _binary() -> str:
     return model.rclone_binary()
 
 
-def run(args: list[str]) -> subprocess.CompletedProcess:
+VERBOS_LECTURA = frozenset({"cat", "lsjson", "lsf", "lsd"})
+"""Los verbos de rclone que solo leen del remoto: `run()` los apunta en `store`."""
+VERBOS_COPIA = frozenset({"copy", "copyto"})
+"""Los verbos que leen del remoto si el destino es un temporal local (`es_lectura()`)."""
+
+
+def es_lectura(args: Sequence[str]) -> bool:
+    """Dice si esa orden de rclone solo lee del remoto.
+
+    Son lecturas `cat`, `lsjson`, `lsf` y `lsd`, y `copy`/`copyto` cuyo destino
+    (el segundo argumento, justo tras el origen) es una ruta local dentro de la
+    carpeta temporal del sistema: es como la flota baja las notas de `devices/`.
+    Lo demás no lo es: una subida (`copyto` a un `remote:ruta`), `moveto`,
+    `delete`, `deletefile`, `mkdir`, `purge`, `sync`, y una copia a cualquier
+    otro sitio local, que sería escribir en una carpeta del usuario o del
+    dispositivo. Ante lo que no sabe leer (flags antes de las rutas, sin
+    destino) la respuesta es que no.
+
+    Args:
+        args: Los argumentos de rclone tal como se le dan a `run()`.
+    """
+    if not args:
+        return False
+    if args[0] in VERBOS_LECTURA:
+        return True
+    if args[0] in VERBOS_COPIA and len(args) >= 3 and not args[1].startswith("-"):
+        return _es_temporal_local(args[2])
+    return False
+
+
+def _es_temporal_local(ruta: str) -> bool:
+    """Dice si `ruta` es una carpeta local dentro de la temporal del sistema.
+
+    Una ruta de rclone con `remote:` delante no es absoluta, y una relativa es
+    del dispositivo (el cwd de rclone es `model.APP_DIR`): ninguna cuenta. La
+    propia carpeta temporal tampoco, solo lo que hay dentro. `..` se resuelve
+    antes de comparar, para que `/tmp/../home` no pase por temporal.
+    """
+    if not os.path.isabs(ruta):
+        return False
+    temporal = Path(os.path.abspath(tempfile.gettempdir()))
+    destino = Path(os.path.abspath(ruta))
+    return destino != temporal and destino.is_relative_to(temporal)
+
+
+def run(args: list[str], apuntar: bool | None = None) -> subprocess.CompletedProcess:
     """Ejecuta rclone con el config y el cwd del dispositivo.
 
     El cwd es `model.APP_DIR` porque `rclone.conf` resuelve contra él sus rutas
     relativas (`key_file`, `known_hosts_file`), que es lo que lo hace portable.
     Lleva `CREATE_NO_WINDOW` porque la UI puede correr bajo `pythonw` y cada
-    invocación abriría una consola.
+    invocación abriría una consola. El hijo se crea como con `subprocess.run`,
+    sin sesión ni grupo propios: si lo llama `sync.py` (la nota de la flota),
+    `store.matar_arbol()` sigue alcanzándolo con el resto de la pasada.
+
+    Una lectura se apunta mientras corre (`store.correr_apuntado()`) para que
+    `store.matar_hijos()` la corte cuando se cierra la ventana; una escritura
+    no, que cortarla a medias dejaría el remoto peor.
 
     Args:
         args: Argumentos de rclone tras `--config` y `NET_FLAGS`.
+        apuntar: Si el hijo se apunta. Sin darlo, lo decide `es_lectura(args)`;
+            quien dé `True` responde de que la orden no escribe.
+
+    Returns:
+        El resultado del proceso.
+
+    Raises:
+        ConfigError: Si no hay rclone.
+        subprocess.TimeoutExpired: Si pasa `TIMEOUT`; el hijo ya está muerto.
     """
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
         kwargs["creationflags"] = model.CREATE_NO_WINDOW
-    return subprocess.run(
+    if apuntar is None:
+        apuntar = es_lectura(args)
+    return store.correr_apuntado(
         [_binary(), "--config", str(model.RCLONE_CONF), *NET_FLAGS, *args],
-        cwd=str(model.APP_DIR), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=TIMEOUT, **kwargs)
+        timeout=TIMEOUT, apuntar=apuntar, cwd=str(model.APP_DIR), text=True,
+        encoding="utf-8", errors="replace", **kwargs)
 
 
 def _parse(text: str, where: str) -> dict:

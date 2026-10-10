@@ -1,0 +1,75 @@
+name: Instalador
+
+# Compila el instalador como lo compila la release (la acción .github/actions/compilar-instalador:
+# el Python fijado del dispositivo, 3.14.8 con Tk 9.0.4, entero; PyInstaller fijado) y
+# lo prueba con --autoprueba. Sube el .exe y el informe de la autoprueba (autoprueba.json: Python,
+# Tk, SVG, letra, módulos y ficheros) para leerlos.
+#
+# Es lo que verifica que el PyInstaller fijado sabe meter en el .exe el Tcl/Tk 9 de ese Python. La
+# release (build-installer-release.yml) usa esta misma acción: si esto se rompe, la release no
+# publica nada (sin tag, sin release, sin oferta de actualización) y no hay fallback a Tk 8.6
+# (docs/agents/reference/updating.md, «VERSION»).
+#
+# En un PR que toca lo que compila, y a mano. Que lo lancen también los PR que tocan ui/ o common/
+# (otros 6-10 minutos de máquina Windows por PR) es una pregunta para el dueño.
+on:
+  pull_request:
+    paths:
+      - "build_installer.py"
+      - "prdrive-install.py"
+      - "install/**"
+      - "common/pins.py"
+      - "tests/_runtime_ci.py"
+      - ".github/actions/compilar-instalador/**"
+      - ".github/workflows/instalador.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instalador-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compilar:
+    name: instalador (windows-x64)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compilar y probar el instalador
+        id: instalador
+        uses: ./.github/actions/compilar-instalador
+        timeout-minutes: 35
+
+      # Lo mismo que leerá la release: la salida `exe` de la acción, no una búsqueda en dist/.
+      - name: El .exe es el que dice la acción
+        shell: pwsh
+        env:
+          EXE: ${{ steps.instalador.outputs.exe }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:EXE) -or -not (Test-Path -LiteralPath $env:EXE -PathType Leaf)) {
+            Write-Host "::error::La acción no ha dado un .exe en su salida 'exe' ('$env:EXE')."
+            exit 1
+          }
+          $exe = Get-Item -LiteralPath $env:EXE
+          Write-Host "$($exe.FullName): $([math]::Round($exe.Length / 1MB, 1)) MB"
+          "### Instalador`n`n$($exe.Name): $([math]::Round($exe.Length / 1MB, 1)) MB" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: autoprueba
+          path: ${{ runner.temp }}/autoprueba.json
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prdrive-install
+          path: dist/prdrive-install.exe
+          if-no-files-found: warn

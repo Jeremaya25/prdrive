@@ -619,6 +619,24 @@ def _opciones_hijo(cwd: Path, separado: bool = False, baja: bool = False) -> dic
     return kwargs
 
 
+def orden_pregunta(nombre: str, espera: float, cambiada: bool) -> list[str]:
+    """Devuelve la orden que abre la ventanita que pregunta por una unidad.
+
+    Es `pregunta.py`, que no compila ni carga el agente. Si falta junto a este
+    `agente.py`, vuelve a `agente.py pregunta`, que hace lo mismo más despacio.
+
+    Args:
+        nombre: El nombre de la unidad.
+        espera: Segundos de la cuenta atrás.
+        cambiada: Si la unidad ya estaba en la lista pero con otro código.
+    """
+    entrada = SCRIPT_DIR / "pregunta.py"
+    guion = ([str(entrada)] if entrada.is_file()
+             else [str(SCRIPT_DIR / "agente.py"), "pregunta"])
+    return [python(ventana=True), *guion, "--nombre", nombre, "--segundos", str(int(espera)),
+            *(["--cambiada"] if cambiada else [])]
+
+
 def app(raiz: Path) -> Path:
     """Devuelve la carpeta del programa dentro de una raíz."""
     return raiz / APP_SUBDIR
@@ -1865,10 +1883,7 @@ class Agente:
             return
         con.pregunta = pl.Pregunta(con.id, ahora, espera)
         try:
-            con.hijo = lanzar([python(ventana=True), str(SCRIPT_DIR / "agente.py"),
-                               "pregunta", "--nombre", con.nombre,
-                               "--segundos", str(int(espera)),
-                               *(["--cambiada"] if con.cambiada else [])],
+            con.hijo = lanzar(orden_pregunta(con.nombre, espera, con.cambiada),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               **_opciones_hijo(equipo.DIR))
         except OSError as e:

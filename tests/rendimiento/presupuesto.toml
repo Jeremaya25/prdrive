@@ -1,0 +1,122 @@
+# Lo que la comprobación de tiempos (`correr.py`, `rendimiento.yml`) exige y lo que se propone.
+#
+# [techo]    Cuentas deterministas: un PR que supera uno FALLA. Es un trinquete: se baja en
+#            el PR que consigue la rebaja (el resumen del trabajo avisa cuando se puede) y se
+#            sube solo diciéndolo en la descripción del PR. Las claves:
+#              widgets.<pantalla>[.p5|.p50]   widgets de la pantalla recién abierta, con 5 o 50 parejas
+#              widgets.main_leida[.p5|.p50]   widgets de la principal con la lectura compartida ya aplicada
+#                                             (`llega-instantanea`, flujo `principal`), con 5 o 50 parejas
+#              modulos.<pantalla>             len(sys.modules) al llamar a mainloop() la primera vez
+#              tema.arranque.<pantalla>       pasadas de <<ThemeChanged>> hasta el primer pintado
+#              tema.abrir.<pantalla>          ... al abrir «Parejas» / «Ajustes» con el programa abierto
+#              tema.apartado                  ... al cambiar de apartado en «Ajustes»
+#              estilos.<pantalla>             estilos de ttk creados después del primer widget
+#              escrituras.marcar              escrituras a state/ (store.write_json) dentro del clic en
+#                                             una casilla de la ventana principal: 1 en la 0.7.1
+#              widgets.dispositivos           widgets de «Dispositivos» con la flota de muestra (12 dispositivos)
+#                                             ya llegada, la ficha del primero a la vista
+#              widgets.flags                  widgets del editor de flags de la primera pareja del dispositivo
+#                                             de muestra (sin flags propios)
+#              tema.abrir.dispositivos|flags, estilos.dispositivos|flags   lo mismo que para «Parejas» y «Ajustes»
+#            `[techo.windows]` y `[techo.linux]` sustituyen a `[techo]` en esa plataforma (los
+#            módulos importados son los de cada sistema).
+# [meta]     Las mismas cuentas, a donde quiere llegar el diseño: solo se informan.
+# [meta_ms]  Medianas en Windows x64 al 100 % con 5 parejas (spec «Qué se quiere»): solo se informan.
+#            Los de la ventana ya abierta (marcar, elegir, volver, sincronizar, reabrir) son los de la
+#            tabla «Acción con la ventana abierta»; «llega-instantanea» se informa sin meta.
+#
+# Medidos el 08/10/2026 en el árbol de la 0.7.1, con el Python fijado (3.14.8, Tk 9.0.4); los
+# módulos, en la primera ejecución en CI de la etapa 1a (Rendimiento 37843538665), que es
+# donde se miden: fuera de CI salen distintos. Bajados al cerrar la etapa 2 (09/10/2026) a lo
+# que da la rama con las tareas 2 y 3 de la etapa 3 (la barra horizontal que no se crea hasta
+# hacer falta quita un widget a cada ventana); los módulos, de Rendimiento 37917304018.
+
+[techo]
+"widgets.main.p5" = 45
+"widgets.main.p50" = 225
+# La principal con la lectura compartida ya aplicada (`llega-instantanea`): sus widgets con las
+# parejas que la lectura pone en la lista.
+"widgets.main_leida.p5" = 50
+"widgets.main_leida.p50" = 230
+"widgets.parejas.p5" = 83
+# La lista sobre un lienzo (etapa 2, tarea 14): las mismas piezas con 5 parejas que con 50.
+"widgets.parejas.p50" = 83
+"widgets.ajustes.p5" = 38
+"widgets.ajustes.p50" = 38
+"widgets.agente" = 11
+"widgets.wizard" = 19
+"tema.arranque.main" = 1
+"tema.arranque.agente" = 1
+"tema.arranque.wizard" = 1
+"tema.abrir.parejas" = 0
+"tema.abrir.ajustes" = 0
+"tema.apartado" = 0
+"escrituras.marcar" = 0
+"estilos.main" = 0
+"estilos.parejas" = 0
+"estilos.ajustes" = 0
+"estilos.apartado" = 0
+# «Dispositivos» y el editor de flags (etapa 3, tarea 1): lo que da el árbol al empezar la etapa 3
+# (09/10/2026, Python 3.14.8 con Tk 9.0.4) con la flota y el dispositivo de muestra de `driver.py`.
+# Medidos en Linux (no dependen de la máquina); si Windows da otro número, va en `[techo.windows]`.
+# Solo bajan, con las tareas que las rebajan. Las dos tablas son un lienzo (etapa 3, tarea 7):
+# «Dispositivos» pasó de 134 a 44 widgets (con la flota de muestra; ya no crece con ella) y el
+# editor de flags de 69 a 26 (el recuadro rojo, que se hace con el primer error, suma 5 más).
+"widgets.dispositivos" = 44
+"widgets.flags" = 26
+"tema.abrir.dispositivos" = 0
+"tema.abrir.flags" = 0
+"estilos.dispositivos" = 0
+"estilos.flags" = 0
+
+[techo.linux]
+"modulos.main" = 171
+"modulos.agente" = 157
+"modulos.wizard" = 234
+
+[techo.windows]
+"modulos.main" = 171
+"modulos.agente" = 158
+"modulos.wizard" = 235
+
+[meta]
+"widgets.main.p5" = 26
+"widgets.parejas.p5" = 70
+"widgets.agente" = 11
+"tema.abrir.parejas" = 0
+"tema.abrir.ajustes" = 0
+"tema.apartado" = 0
+"estilos.main" = 0
+"estilos.parejas" = 0
+"estilos.ajustes" = 0
+"estilos.apartado" = 0
+"escrituras.marcar" = 0
+"widgets.dispositivos" = 35
+"widgets.flags" = 34
+"tema.abrir.dispositivos" = 0
+"tema.abrir.flags" = 0
+"estilos.dispositivos" = 0
+"estilos.flags" = 0
+
+[meta_ms]
+"start-main" = 350
+"open-parejas" = 150
+"cold-parejas" = 500
+"open-ajustes" = 150
+"pane-reparacion" = 60
+"pane-volumen" = 60
+"pane-actualizaciones" = 60
+"pane-configuracion" = 60
+"start-agente" = 300
+"start-wizard" = 300
+"catalogo-llega" = 30
+"log-10k" = 200
+"marcar" = 16
+"elegir-fila" = 16
+"elegir-pareja" = 40
+"volver-ajustes" = 30
+"volver-pasada" = 30
+"sincronizar-ventana" = 100
+"reabrir-parejas" = 150
+"pane-otra-vez" = 60
+"elegir-dispositivo" = 16

@@ -309,11 +309,37 @@ class Proc:
         return None
 
 
-esperas: list = []
-llavero.dormir = esperas.append
+class Reloj:
+    """Un reloj a mano: `dormir()` lo adelanta, así que un bucle con plazo acaba sin esperar.
+
+    Attributes:
+        ahora: Los segundos que lleva el reloj.
+        esperas: Lo que se ha pedido dormir, en orden.
+    """
+
+    def __init__(self) -> None:
+        self.ahora = 0.0
+        self.esperas: list = []
+
+    def __call__(self) -> float:
+        return self.ahora
+
+    def dormir(self, segundos: float) -> None:
+        self.esperas.append(segundos)
+        self.ahora += segundos
+
+
+reloj = Reloj()
+llavero.dormir = reloj.dormir
+keepassxc.reloj = reloj
 c("si sale enseguida sin el runtime de VC++, se ve su código",
   keepassxc.esperar_arranque(Proc(0xC0000135, 3), 5), 0xC0000135)
-c("  y si sigue abierto, None", keepassxc.esperar_arranque(Proc(None), 0.05), None)
+# el plazo se mide desde aquí: la llamada de arriba ya adelantó el reloj
+antes, inicio = reloj.ahora, time.monotonic()
+sigue = keepassxc.esperar_arranque(Proc(None), 1.5)
+c("un KeePassXC que sigue abierto: None al pasar el plazo, sin esperarlo de verdad",
+  (sigue, round(reloj.ahora - antes, 6) >= 1.5, time.monotonic() - inicio < 0.2),
+  (None, True, True))
 
 # los procesos: el KeePassXC de la unidad y otro del equipo
 real_procesos = store.procesos

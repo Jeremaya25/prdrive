@@ -2,12 +2,13 @@
 """La ventana principal y el servicio (#14): un servicio, dos maneras de arrancarlo.
 
 Las casillas son las mismas para «Sincronizar ahora» y para «Iniciar servicio»,
-salen marcadas con lo del servicio, y solo «Iniciar servicio» las guarda. El
-intervalo ya no está en la ventana sino en «Ajustes → Configuración» (#65), que
-guarda solo el intervalo. Aquí se comprueba lo que se ve y se toca en la
-ventana:
+salen marcadas con lo del servicio, y lo marcado se guarda al poco de marcarlo
+(no en el mismo clic: `prefs.SeleccionPendiente`). El intervalo ya no está en la
+ventana sino en «Ajustes → Configuración» (#65), que guarda solo el intervalo.
+Aquí se comprueba lo que se ve y se toca en la ventana:
 - El botón de marcar o desmarcar todas, y el «N de M» que sigue a las casillas.
-- Que una pasada manual no escribe la configuración del servicio.
+- Que lo marcado se guarda, y que una pasada manual no escribe por su cuenta la
+  configuración del servicio.
 - Que «Configuración», desde el engranaje, guarda el intervalo sin las parejas,
   y que «Iniciar servicio» sale después con él.
 - Que con el agente como servicio de la raíz el pie ofrece «Pausar» /
@@ -24,11 +25,16 @@ ventana:
 
 Nada se enseña ni se lanza: el bucle de eventos se sustituye por lo que se
 quiere pulsar, y la salida de `sync.py` y la pantalla del vigilante por un
-apunte.
+apunte. La lectura del dispositivo que la ventana hace tras pintarse se hace en
+el sitio (`segundo_plano.en_el_acto`) y llega con el primer
+`update_idletasks()`; se mira solo lo que está a la vista (`_vista.visibles`),
+porque la ventana guarda escondidos los bloques que no enseña.
 """
 
+import gc
 import re
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, mkcfg, sandbox, tmpdir
@@ -45,10 +51,12 @@ except Exception as e:                                   # sin entorno gráfico
 
 import json  # noqa: E402
 
+from _vista import visibles  # noqa: E402
+
 import ui.tk as uitk  # noqa: E402
 from common import config_file, model, update  # noqa: E402
-from ui import (cifrado, llavero_editor, prefs, theme, tk_configuracion,  # noqa: E402
-                tk_doctor, tk_llavero, tk_watch, watch)
+from ui import (cifrado, llavero_editor, prefs, segundo_plano, theme,  # noqa: E402
+                tk_configuracion, tk_doctor, tk_llavero, tk_watch, watch)
 
 # Nada de red ni del estado de quien ejecuta el test.
 update.pending = lambda root=None: None
@@ -58,8 +66,10 @@ uitk.preguntar_resync = lambda root, pendientes, carpetas=None: False
 lanzadas: list = []
 uitk.output_window = lambda titulo, cmd, **k: lanzadas.append(cmd)
 # Ni contenedor VeraCrypt ni recorrido de unidades: «Expulsar» solo sale donde
-# se pide, en la medida de más abajo.
-cifrado.expulsion = lambda: None
+# se pide, en la medida de más abajo. Los sustitutos aceptan las palabras clave
+# que les pasa la lectura de la ventana (`fisica=`).
+cifrado.expulsion = lambda **_k: None
+segundo_plano.lanzar = segundo_plano.en_el_acto
 prefs.PREFS = tmpdir("prdrive-tkservicio-") / "ui_prefs.json"
 
 CUATRO = mkcfg(["upload", "claves", "docs", "prdrive"],
@@ -69,26 +79,22 @@ INSTALADO = watch.Resumen("instalado", "daemon")
 
 
 def recorrer(w):
-    """Recorre los widgets que cuelgan de `w`, en profundidad."""
-    pila = [w]
-    while pila:
-        actual = pila.pop()
-        yield actual
-        pila += list(actual.winfo_children())
+    """Recorre los widgets de `w` que están a la vista, en profundidad."""
+    return visibles(w)
 
 
 def botones(w) -> dict:
-    """Devuelve los botones de `w` por su texto."""
+    """Devuelve los botones a la vista de `w` por su texto."""
     return {b.cget("text"): b for b in recorrer(w) if isinstance(b, ttk.Button)}
 
 
 def textos(w) -> list[str]:
-    """Devuelve los textos de las etiquetas de `w`."""
+    """Devuelve los textos de las etiquetas a la vista de `w`."""
     return [str(x.cget("text")) for x in recorrer(w) if isinstance(x, ttk.Label)]
 
 
 def casillas(w) -> dict:
-    """Devuelve las casillas de `w` por su texto."""
+    """Devuelve las casillas a la vista de `w` por su texto."""
     return {b.cget("text"): b for b in recorrer(w) if isinstance(b, ttk.Checkbutton)}
 
 
@@ -102,16 +108,27 @@ def cuenta(w) -> str:
     return next((t for t in textos(w) if re.match(r"^\d+ de \d+", t)), "")
 
 
+lecturas: list = []
+
+
 def ventana(cfg, conducir, resumen=INSTALADO):
     """Abre la principal con ese arranque automático y la conduce.
 
-    En vez de su bucle de eventos ejecuta `conducir`. Devuelve la elección con
+    En vez de su bucle de eventos deja llegar la lectura del dispositivo,
+    apunta qué no se pudo leer y ejecuta `conducir`. Devuelve la elección con
     que se cierra.
+
+    Antes recoge la basura en este hilo: la principal arranca hilos de lectura,
+    y una `tkinter.Variable` de una ventana anterior que el recolector suelte
+    desde uno llamaría a Tk desde allí (sin `mainloop()`, 1 s por cada una).
     """
+    gc.collect()
     watch.resumen = lambda: resumen
 
     def _mainloop(self):
         """Conduce la ventana y cancela lo que dejó programado."""
+        self.update_idletasks()
+        lecturas.append(dict(self.instantanea.resultado.fallos))
         conducir(self)
         try:
             for pendiente in self.tk.splitlist(self.tk.call("after", "info")):
@@ -160,33 +177,61 @@ with sandbox():
       ("Marcar todas" in nombres, "Desmarcar todas" in nombres), (False, False))
 
 
-# las casillas se guardan al marcarlas; la pasada manual no escribe por su cuenta
+# las casillas se guardan al poco de marcarlas; la pasada manual no escribe por su cuenta
+def hasta(root, condicion) -> bool:
+    """Mueve el bucle de eventos hasta que se cumple `condicion`, como mucho 2 s."""
+    limite = time.monotonic() + 2.0
+    while not condicion() and time.monotonic() < limite:
+        root.update()
+        time.sleep(0.005)
+    return bool(condicion())
+
+
 with sandbox():
     prefs.PREFS.unlink(missing_ok=True)
     lanzadas.clear()
     visto = {}
+    pedidas: list = []
+    real_guardar = prefs.guardar_parejas
+
+    def guardar_apuntando(config, pares) -> bool:
+        """Apunta cada vez que la ventana vuelca lo marcado, y lo guarda."""
+        pedidas.append(list(pares))
+        return real_guardar(config, pares)
 
     def a_mano(root) -> None:
-        """Marca una pareja, mira qué hay guardado y pulsa «Sincronizar ahora»."""
+        """Marca parejas, mira qué queda guardado cada vez y pulsa «Sincronizar ahora»."""
         casillas(root)["claves"].invoke()
+        hasta(root, lambda: len(pedidas) == 1)
         visto["al marcar"] = prefs.startup_defaults(CUATRO)[0]
         botones(root)["Marcar todas"].invoke()
+        hasta(root, lambda: len(pedidas) == 2)
         visto["al marcar todas"] = prefs.startup_defaults(CUATRO)[0]
         botones(root)["Desmarcar todas"].invoke()
+        hasta(root, lambda: len(pedidas) == 3)
         visto["al desmarcar todas"] = prefs.startup_defaults(CUATRO)[0]
         casillas(root)["upload"].invoke()
         casillas(root)["docs"].invoke()
+        hasta(root, lambda: len(pedidas) == 4)
+        visto["dos seguidas"] = pedidas[3:]
         prefs.PREFS.unlink()
         botones(root)["Sincronizar ahora"].invoke()
+        hasta(root, lambda: lanzadas)
         visto["tras sincronizar"] = prefs.PREFS.exists()
 
-    ventana(CUATRO, a_mano)
+    prefs.guardar_parejas = guardar_apuntando
+    try:
+        ventana(CUATRO, a_mano)
+    finally:
+        prefs.guardar_parejas = real_guardar
     c("al marcar una casilla queda guardada, sin pulsar nada más", visto["al marcar"],
       ["claves", "docs"])
     c("«Marcar todas» las guarda todas", visto["al marcar todas"],
       ["upload", "claves", "docs", "prdrive"])
     c("sin ninguna marcada se queda lo último guardado", visto["al desmarcar todas"],
       ["upload", "claves", "docs", "prdrive"])
+    c("dos casillas seguidas se guardan de una vez", visto["dos seguidas"],
+      [["upload", "docs"]])
     c("«Sincronizar ahora» lanza lo marcado", [cmd[2:] for cmd in lanzadas],
       [["upload", "docs"]])
     c("y por sí sola no escribe la configuración del servicio",
@@ -599,10 +644,9 @@ def medir(root) -> None:
     medida["cabe"] = (root.winfo_reqwidth() <= util_x
                       and root.winfo_reqheight() <= util_y)
     medida["expulsar"] = "Expulsar" in botones(root)
-    medida["recortado"] = ((visor.interior.winfo_reqheight() > alto
-                            and not visor.vertical.grid_info())
-                           or (visor.interior.winfo_reqwidth() > ancho
-                               and not visor.horizontal.grid_info()))
+    vertical, horizontal = visor.barras()
+    medida["recortado"] = ((visor.interior.winfo_reqheight() > alto and not vertical)
+                           or (visor.interior.winfo_reqwidth() > ancho and not horizontal))
 
 
 try:
@@ -618,7 +662,7 @@ try:
         llavero_editor.linea = lambda cfg: LLAVERO_LARGO
         # Con «Expulsar» en el pie, el tercer botón: el de un dispositivo que
         # vive en un contenedor VeraCrypt. No se pulsa, solo se mide.
-        cifrado.expulsion = lambda: Path("E:/Expulsar PRDRIVE.bat")
+        cifrado.expulsion = lambda **_k: Path("E:/Expulsar PRDRIVE.bat")
         with sandbox():
             medida: dict = {}
             ventana(DOCE, medir, resumen=watch.Resumen("desfasado", "daemon"))
@@ -635,7 +679,8 @@ try:
             c(f"{nombre}:   y no queda recortada", medida.get("recortado"), False)
 finally:
     uitk.pantalla_util, theme.apply = REAL_UTIL, REAL_APPLY
-    cifrado.expulsion = lambda: None
+    cifrado.expulsion = lambda **_k: None
     llavero_editor.linea = REAL_LINEA
 
+c("cada lectura de la ventana se hizo sin fallos", [f for f in lecturas if f], [])
 sys.exit(c.report())

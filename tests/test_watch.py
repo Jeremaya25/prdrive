@@ -2,6 +2,7 @@
 """El adaptador de penwatch: filas de estado y construcción de las órdenes."""
 
 import sys
+import time
 
 from _harness import Checks, sandbox
 
@@ -38,6 +39,61 @@ else:
 
 c("log_tail devuelve una lista", isinstance(watch.log_tail(), list), True)
 c("is_installed responde un booleano", isinstance(watch.is_installed(), bool), True)
+
+
+# estado_vigilante y deteccion: lo que la pantalla del arranque automático lee en un
+# hilo, aparte de pintarse. La primera no lanza nunca.
+estado = watch.estado_vigilante()
+c("estado_vigilante junta las filas de estado y si está instalado",
+  (isinstance(estado, watch.EstadoVigilante), [e for e, _ in estado.filas] == etiquetas,
+   estado.instalado == watch.is_installed()), (True, True, True))
+c("deteccion es la misma lectura que probe_rows (mismas raíces, una nota cada una)",
+  [r for r, _ in watch.deteccion()], [r for r, _ in filas_probe])
+c("el tope de la pantalla es el de las preguntas al sistema",
+  watch.TOPE_VIGILANTE_S, watch.CONSULTA_S)
+
+real_penwatch_ = watch._penwatch
+
+
+def sin_penwatch():
+    """Un `penwatch` que no se puede importar."""
+    raise ImportError("no hay penwatch")
+
+
+watch._penwatch = sin_penwatch
+try:
+    roto = watch.estado_vigilante()
+finally:
+    watch._penwatch = real_penwatch_
+c("estado_vigilante con penwatch roto no lanza: un aviso suelto y «no instalado»",
+  (roto.filas, roto.instalado),
+  ([("", "No se ha podido leer el estado del vigilante: no hay penwatch")], False))
+
+real_status = watch.status_rows
+watch.status_rows = lambda: (_ for _ in ()).throw(OSError("schtasks no contesta"))
+try:
+    a_medias = watch.estado_vigilante()
+finally:
+    watch.status_rows = real_status
+c("  y si solo fallan las filas, lo instalado se lee igual",
+  (a_medias.filas, a_medias.instalado),
+  ([("", "No se ha podido leer el estado del vigilante: schtasks no contesta")],
+   watch.is_installed()))
+
+
+# consulta: una pregunta al sistema con tope de tiempo (sin tocar penwatch.py)
+mudo = [sys.executable, "-c", "import time; time.sleep(30)"]
+t0 = time.monotonic()
+res = watch.consulta(mudo, timeout=0.5)
+c("una pregunta que no contesta vuelve con el código 124, sin lanzar",
+  (res.returncode, watch.CODIGO_TIEMPO), (124, 124))
+c("  sin esperar a que acabe", time.monotonic() - t0 < 10, True)
+res = watch.consulta([sys.executable, "-c", "print('hola')"], timeout=20)
+c("a tiempo, su resultado tal cual", (res.returncode, res.stdout.strip()), (0, "hola"))
+c("una orden que no existe devuelve 127, sin lanzar",
+  watch.consulta(["/no/existe/de/ninguna/manera"]).returncode, 127)
+c("el tope por defecto es el de la constante",
+  watch.consulta.__defaults__, (watch.CONSULTA_S,))
 
 
 # construcción de órdenes

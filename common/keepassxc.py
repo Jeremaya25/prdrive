@@ -144,6 +144,10 @@ ESPERA_ARRANQUE = 1.5  # segundos
 """Lo que se mira si KeePassXC se cae nada más lanzarlo (sin el runtime, no llega a abrirse)."""
 DESDE_LA_ULTIMA = 120.0  # segundos
 """«Traer lo último»: una pasada antes de abrir si la última buena es más vieja."""
+reloj = time.monotonic
+"""El reloj de los bucles con plazo (`esperar_arranque()`, `esperar_codigo()`, `esperar_salida()`
+y la espera del vigilante al expulsar). Es de módulo para que los tests pongan un reloj a mano,
+que el `dormir()` de `llavero` adelanta: así ningún test espera un plazo de verdad."""
 
 
 # --- dónde está cada cosa
@@ -1094,10 +1098,10 @@ def esperar_arranque(proc, segundos: float = ESPERA_ARRANQUE) -> int | None:
     cargador lo termina con `VC_FALTA`. Uno que le pasa la base al que ya
     estaba abierto (`SingleInstance`) sale con 0.
     """
-    limite = time.monotonic() + segundos
+    limite = reloj() + segundos
     while True:
         codigo = proc.poll()
-        if codigo is not None or time.monotonic() >= limite:
+        if codigo is not None or reloj() >= limite:
             return codigo
         llavero.dormir(0.1)
 
@@ -1224,7 +1228,7 @@ def esperar_codigo(codigo: Path, arranque: float = ESPERA_TERMINAL) -> int:
     se va sin dejar código, alguien cerró la terminal. Las dos son -1.
     """
     pid_ = codigo.with_name("pid")
-    limite = time.monotonic() + arranque
+    limite = reloj() + arranque
     while True:
         try:
             return int(codigo.read_text(encoding="utf-8").strip())
@@ -1234,7 +1238,7 @@ def esperar_codigo(codigo: Path, arranque: float = ESPERA_TERMINAL) -> int:
             pid = int(pid_.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             pid = None
-        if pid is None and time.monotonic() >= limite:
+        if pid is None and reloj() >= limite:
             return -1
         if pid is not None and not store.pid_alive(pid):
             try:
@@ -1693,9 +1697,9 @@ def cerrar_huerfano(app_dir: Path | None = None) -> int:
 
 def esperar_salida(pids: list[int], segundos: float) -> bool:
     """Espera a que salgan esos procesos; indica si han salido todos a tiempo."""
-    limite = time.monotonic() + segundos
+    limite = reloj() + segundos
     while any(store.pid_alive(pid) for pid in pids):
-        if time.monotonic() >= limite:
+        if reloj() >= limite:
             return False
         llavero.dormir(0.5)
     return True
@@ -1752,8 +1756,8 @@ def cerrar_llavero(config: model.Config) -> Cierre:
             llavero.parada_vigilante().touch()
         except OSError:
             pass
-        limite = time.monotonic() + ESPERA_VIGILANTE
-        while llavero.vigilante_vivo() and time.monotonic() < limite:
+        limite = reloj() + ESPERA_VIGILANTE
+        while llavero.vigilante_vivo() and reloj() < limite:
             llavero.dormir(0.5)
     if llavero.pendiente(pareja):
         rc, _ = llavero.pasada(tope=TOPE_PASADA)
