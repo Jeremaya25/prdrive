@@ -176,7 +176,8 @@ TICK = 2.0
 RECORRIDO_WINDOWS = penwatch.POLL_SECONDS
 """Segundos entre recorridos en Windows sin bandeja, como penwatch.
 
-Sin bandeja no llega `WM_DEVICECHANGE`.
+Sin bandeja no llega `WM_DEVICECHANGE`. Con ella, también mientras haya a la
+vista una unidad bloqueada con BitLocker (`Agente.cada_recorrido()`).
 """
 RECORRIDO_RESPALDO = 30.0
 """Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada."""
@@ -1436,6 +1437,8 @@ class Agente:
         retenido: Por qué no se lanza nada ahora, para no repetirlo en el
             diario.
         rafaga_hasta: Hasta cuándo se recorre en cada vuelta.
+        proximo_recorrido: Cuándo toca recorrer aunque nadie avise de un
+            montaje; lo deja dicho cada recorrido (`cada_recorrido()`).
         despertado: La última vuelta de la suspensión apuntada.
         ultimo_estado: Lo último que se escribió en `estado.json`.
         ultima_vista: La última `bandeja.Vista` puesta.
@@ -1509,6 +1512,7 @@ class Agente:
     sin_red_avisado: set[tuple[str, str]] = field(default_factory=set)
     retenido: str | None = None
     rafaga_hasta: float = -math.inf
+    proximo_recorrido: float = -math.inf
     despertado: float = -math.inf
     ultimo_estado: dict | None = None
     ultima_vista: Any = None
@@ -1601,6 +1605,8 @@ class Agente:
         abiertas se reconocen por su fichero de control y las de VeraCrypt
         cerradas por la marca de su vestíbulo.
         """
+        # Por si el recorrido se quedara a medias: el siguiente, al ritmo de antes.
+        self.proximo_recorrido = ahora + self.cada_recorrido()
         abiertas: dict[str, Path] = {}
         cerradas: dict[str, Path] = {}
         resto: list[Path] = []
@@ -1648,6 +1654,8 @@ class Agente:
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
         self._mirar_bitlocker(resto)
+        # Con lo que se acaba de ver: una unidad bloqueada con BitLocker lo acorta.
+        self.proximo_recorrido = ahora + self.cada_recorrido()
         self.recorridos += 1
 
     def _mirar_bitlocker(self, resto: list[Path]) -> None:
@@ -1755,6 +1763,15 @@ class Agente:
         if IS_WIN and (self.bandeja is None or self.bitlocker):
             return RECORRIDO_WINDOWS
         return RECORRIDO_RESPALDO
+
+    def toca_recorrer(self, ahora: float) -> bool:
+        """Indica si en esta vuelta toca recorrer los volúmenes.
+
+        Toca cuando ha pasado lo que el último recorrido dejó dicho
+        (`cada_recorrido()` con lo que acababa de ver), y en cada vuelta
+        mientras dure una racha (`rafaga_hasta`).
+        """
+        return ahora >= self.proximo_recorrido or ahora < self.rafaga_hasta
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
         """Quita de `abiertas` las raíces cifradas que son un volumen fantasma.
@@ -2082,7 +2099,7 @@ class Agente:
 
         Con él se la reconoce cuando vuelve bloqueada y no se puede leer su
         fichero de control. Sin BitLocker se olvida; si Windows no dice el
-        estado o el nombre del volumen, se deja como estaba. Un volumen no
+        nombre del volumen o su estado, se deja como estaba. Un volumen no
         nombra a dos unidades: al apuntarlo a una se le quita a la que lo
         tuviera. Las raíces de este equipo no lo llevan.
         """
@@ -2090,13 +2107,16 @@ class Agente:
         if unidad is None or unidad.es_raiz:
             return
         nombre = bitlocker.volumen_de(con.raiz)
-        if not nombre and not unidad.volumen:
-            return              # ni qué apuntar ni qué olvidar: fuera de Windows, siempre
+        if not nombre:
+            # Fuera de Windows, siempre. Y sin nombre no se pregunta el estado:
+            # el de una carpeta donde se monta la unidad sería el de la letra
+            # en la que está esa carpeta, que es otro volumen.
+            return
         estado = cifrada.bitlocker_de(con.raiz)
         if not estado.known:
             return
         volumen = nombre if estado.present else ""
-        if (estado.present and not volumen) or volumen == unidad.volumen:
+        if volumen == unidad.volumen:
             return
         ajustes = self.ajustes
         if volumen:
@@ -4556,13 +4576,9 @@ def cmd_run(_args: argparse.Namespace) -> int:
     agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
-    proximo = -math.inf
     try:
         while not (agente.terminar and agente.pasada is None):
-            ahora = time.time()
-            recorrer = ahora >= proximo or ahora < agente.rafaga_hasta
-            if recorrer:
-                proximo = ahora + agente.cada_recorrido()
+            recorrer = agente.toca_recorrer(time.time())
             try:
                 agente.vuelta(recorrer)
             except Exception as e:                      # noqa: BLE001

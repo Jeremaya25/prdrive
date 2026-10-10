@@ -85,6 +85,10 @@ hay no cambian.
   - Estado `present`: se guarda `volumen_de(con.raiz)`.
   - Estado conocido y no `present`: se borra (le han quitado BitLocker).
   - Estado sin comprobar (`known=False`): no se toca.
+  - Raíz sin nombre de volumen (una carpeta donde se monta un volumen, o
+    cualquiera fuera de Windows): ni se pregunta su estado ni se toca.
+    `cifrada.bitlocker_de()` contesta por la letra de la ruta, que ahí es otro
+    volumen.
   - Solo se escribe `agente.json` si el valor cambia.
   - Al apuntar un volumen a una unidad se le quita a cualquier otra de la lista que
     lo tuviera: un volumen no nombra a dos unidades.

@@ -19,7 +19,8 @@ de la unidad y el estado `BDE_LOCKED`. Se comprueba:
   línea en el diario por conexión. Nada más cuenta: otro estado, otro volumen,
   el modo `nada`, una unidad que ya no está en la lista. De ella no se lee ni
   se lanza nada, y sin volúmenes apuntados no se pregunta nada de ninguna letra.
-- Con una bloqueada se recorre cada `RECORRIDO_WINDOWS` aunque haya bandeja.
+- Con una bloqueada se recorre cada `RECORRIDO_WINDOWS` aunque haya bandeja, y
+  ya desde el recorrido que la ve: cada uno deja dicho cuándo toca el siguiente.
 - Desbloqueada, se conecta por el camino de siempre, huella incluida.
 - «Desbloquear…» (`PIDE_DESBLOQUEAR` con su id, `agente.py desbloquear ID`) pide
   a Windows su ventana, una sola mientras siga abierta, y recorre en cada
@@ -162,6 +163,14 @@ ESTADOS[RA] = bitlocker.BDE_ON
 del VOLUMENES[RA]
 enchufado(RA)
 c("  y si no da el nombre del volumen, también", volumen(A), V1)
+# Sin nombre no se sabe de qué volumen es el estado: el de una carpeta donde se
+# monta la unidad sería el de la letra en la que está esa carpeta.
+ESTADOS[RA] = bitlocker.BDE_OFF
+PREGUNTADAS.clear()
+enchufado(RA)
+c("  ni se cree un «sin BitLocker» de una raíz sin nombre de volumen: ni lo pregunta",
+  (volumen(A), PREGUNTADAS), (V1, []))
+ESTADOS[RA] = bitlocker.BDE_ON
 VOLUMENES[RA] = V2
 enchufado(RA)
 c("en otro volumen, se apunta el nuevo", volumen(A), V2)
@@ -312,9 +321,32 @@ c("sin ninguna bloqueada, con bandeja se recorre de tarde en tarde y sin ella co
   (agente.RECORRIDO_RESPALDO, agente.RECORRIDO_WINDOWS))
 del ESTADOS[E]
 c("sin poder comprobar su estado, tampoco", recorrido(ag), [])
+
+# El siguiente recorrido se decide con lo que este acaba de ver, no con lo de antes.
 ESTADOS[E] = bitlocker.BDE_LOCKED
+recien = F.nuevo()
+era_windows, agente.IS_WIN, recien.bandeja = agente.IS_WIN, True, BandejaMuda()
+try:
+    c("un agente recién arrancado recorre a la primera", recien.toca_recorrer(F.reloj()), True)
+    recien._recorrer(F.reloj())
+    c("el recorrido que la ve bloqueada ya deja el siguiente a pocos segundos",
+      (bloqueadas(recien), recien.proximo_recorrido - F.reloj()),
+      ([A], agente.RECORRIDO_WINDOWS))
+    c("  y hasta entonces no toca recorrer",
+      (recien.toca_recorrer(F.reloj() + agente.RECORRIDO_WINDOWS - 1),
+       recien.toca_recorrer(F.reloj() + agente.RECORRIDO_WINDOWS)), (False, True))
+    recien.rafaga_hasta = F.reloj() + 2
+    c("  salvo en racha, que toca en cada vuelta", recien.toca_recorrer(F.reloj() + 1), True)
+    del ESTADOS[E]
+    recien._recorrer(F.reloj())
+    c("el recorrido que ya no la ve bloqueada deja el siguiente al de respaldo",
+      recien.proximo_recorrido - F.reloj(), agente.RECORRIDO_RESPALDO)
+finally:
+    agente.IS_WIN, recien.bandeja = era_windows, None
+ESTADOS[E] = bitlocker.BDE_LOCKED
+ya_dichas = len(dichas())
 c("bloqueada otra vez, vuelve", recorrido(ag), [A])
-c("  y se dice otra vez: es otra conexión", len(dichas()), 2)
+c("  y se dice otra vez: es otra conexión", len(dichas()) - ya_dichas, 1)
 VOLUMENES[E] = V2
 c("un volumen bloqueado que no es el de ninguna unidad de la lista no se enseña",
   recorrido(ag), [])
