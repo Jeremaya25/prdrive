@@ -494,7 +494,8 @@ PIDE_PAUSA = "pausa"
 PIDE_SIGUE = "sigue"
 PIDE_PARAR = "parar"            # que termine (el instalador, antes de sustituirlo)
 PIDE_RAIZ = "añadir_raiz"       # id, ruta, nombre[, contenedor]: la raíz de este equipo
-PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada
+PIDE_DESBLOQUEAR = "desbloquear"    # [id]: abrir el contenedor de la raíz cifrada; con el id de
+#                                     una unidad bloqueada con BitLocker, la ventana de Windows
 PIDE_BLOQUEAR = "bloquear"          # [id]: cerrarlo
 PIDE_ABRIR = "abrir"            # id: la ventana de esa raíz (la cifrada, desbloqueándola antes)
 PIDE_EXPLORAR = "explorar"      # id: esa raíz en el explorador de archivos (ídem)

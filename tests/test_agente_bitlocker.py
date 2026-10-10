@@ -21,6 +21,12 @@ de la unidad y el estado `BDE_LOCKED`. Se comprueba:
   se lanza nada, y sin volúmenes apuntados no se pregunta nada de ninguna letra.
 - Con una bloqueada se recorre cada `RECORRIDO_WINDOWS` aunque haya bandeja.
 - Desbloqueada, se conecta por el camino de siempre, huella incluida.
+- «Desbloquear…» (`PIDE_DESBLOQUEAR` con su id, `agente.py desbloquear ID`) pide
+  a Windows su ventana, una sola mientras siga abierta, y recorre en cada
+  vuelta un rato. Cancelada, se puede volver a pedir; si Windows no la abre,
+  se avisa. Desenchufada con la ventana abierta, se olvida sin cerrarla. Sin
+  id, con el de una raíz cifrada, con el de una unidad que no está bloqueada o
+  recién puesta en modo `nada`, no se pide nada a BitLocker.
 """
 
 import contextlib
@@ -366,5 +372,139 @@ c("desbloqueada con otro código: no se atiende y se pregunta, como siempre",
   (ag.conexiones[A].cambiada, len(F.preguntas()) - preguntadas_antes, F.lock(RA)),
   (True, 1, {}))
 (RA / penwatch.APP_SUBDIR / "de_mas.py").unlink()
+
+
+# --- «Desbloquear…»
+DESBLOQUEOS: list[Path] = []
+"""Las raíces para las que se ha pedido la ventana de desbloqueo de Windows."""
+PROCESOS: list[F.Proc] = []
+"""Los `bdeunlock.exe` de mentira que siguen (o no) abiertos."""
+RESPUESTA = ["ventana"]
+"""Qué pasa al pedirla: `ventana`, `nada` (no hay con qué) o `error` (no arranca)."""
+SIN_VENTANA = ("Trabajo: no he podido abrir el desbloqueo de Windows",
+               "Desbloquéala desde el Explorador.")
+
+
+def desbloqueo_falso(raiz):
+    """Hace de `agente.desbloquear_bitlocker()` sin lanzar nada."""
+    DESBLOQUEOS.append(Path(raiz))
+    if RESPUESTA[0] == "nada":
+        return None
+    if RESPUESTA[0] == "error":
+        raise OSError("no arranca")
+    PROCESOS.append(F.Proc(["bdeunlock.exe", str(raiz)]))
+    return PROCESOS[-1]
+
+
+def pedir_desbloqueo(agente_, uid: str, recorrer: bool = False) -> None:
+    """Deja «Desbloquear…» de ese id en el buzón y da una vuelta."""
+    equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": uid})
+    F.vueltas(agente_, 1, recorrer=recorrer)
+
+
+def desbloqueando(agente_) -> list[bool]:
+    """Devuelve, de cada bloqueada del resumen, si su ventana de Windows está abierta."""
+    return [b["desbloqueando"] for b in agente_.resumen()["bitlocker"]]
+
+
+lanzador_de_verdad = getattr(agente, "desbloquear_bitlocker", None)
+agente.desbloquear_bitlocker = desbloqueo_falso
+guardar_de_verdad(equipo.Ajustes())
+lista(A, RA, "Trabajo", volumen=V1)
+F.RAICES[:] = [E]
+for apuntado in (F.DIARIO, F.AVISOS, F.LANZADOS):
+    apuntado.clear()
+ag = F.nuevo()
+F.vueltas(ag, 1)
+pedir_desbloqueo(ag, A)
+c("«Desbloquear…» de una bloqueada pide a Windows su ventana, para su letra",
+  DESBLOQUEOS, [E])
+c("  el resumen dice que se está desbloqueando", desbloqueando(ag), [True])
+c("  y se recorre en cada vuelta un rato, para verla en cuanto se abra",
+  ag.rafaga_hasta, F.reloj() - agente.TICK + agente.RAFAGA)
+pedir_desbloqueo(ag, A)
+c("pedirlo otra vez con la ventana abierta no abre otra", len(DESBLOQUEOS), 1)
+PROCESOS[-1].rc = 1                     # se cierra la ventana sin desbloquear
+F.vueltas(ag, 1)
+c("si se cancela, sigue bloqueada y se puede volver a pedir",
+  (bloqueadas(ag), desbloqueando(ag)), ([A], [False]))
+pedir_desbloqueo(ag, A)
+c("  y entonces sí abre otra", (len(DESBLOQUEOS), desbloqueando(ag)), (2, [True]))
+PROCESOS[-1].rc = 1
+for sin in ("nada", "error"):
+    RESPUESTA[0] = sin
+    F.AVISOS.clear()
+    pedir_desbloqueo(ag, A)
+    c(f"si Windows no abre la ventana ({sin}), se avisa de cómo hacerlo a mano",
+      (F.AVISOS, ag.desbloqueos_bitlocker, desbloqueando(ag)), ([SIN_VENTANA], {}, [False]))
+RESPUESTA[0] = "ventana"
+
+# se desenchufa con la ventana abierta
+pedir_desbloqueo(ag, A)
+F.RAICES[:] = []
+F.vueltas(ag, 1)
+c("desenchufada con la ventana abierta: deja de enseñarse y se olvida su ventana",
+  (ag.resumen()["bitlocker"], ag.desbloqueos_bitlocker, PROCESOS[-1].terminado),
+  ([], {}, False))
+F.RAICES[:] = [E]
+F.vueltas(ag, 1)
+c("  y al volver se ofrece desbloquearla otra vez", (bloqueadas(ag), desbloqueando(ag)),
+  ([A], [False]))
+
+# lo que no es de una unidad bloqueada sigue su camino
+cofre = tmpdir("prdrive-cofre-")
+equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": Q, "ruta": str(cofre / "punto"),
+              "nombre": "Cofre", "contenedor": str(cofre / "PRDRIVE.hc")})
+F.vueltas(ag, 1)
+antes = len(DESBLOQUEOS)
+F.AVISOS.clear()
+pedir_desbloqueo(ag, "")
+pedir_desbloqueo(ag, Q)
+c("«desbloquear» sin id, o con el de una raíz cifrada, va a su contenedor y no a BitLocker",
+  ([t for t, x in F.AVISOS if x.startswith("Tenía que estar en")], len(DESBLOQUEOS) - antes),
+  (["Cofre: no encuentro su contenedor"] * 2, 0))
+ag._guardar(equipo.Ajustes().con_unidad(ag.ajustes.unidades[A]).con_unidad(
+    equipo.Unidad(B, equipo.DAEMON, "Vieja", volumen=V2)))
+F.DIARIO.clear()
+pedir_desbloqueo(ag, B)
+pedir_desbloqueo(ag, "z" * 32)
+c("el de una unidad que ahora no está bloqueada, o que no existe, no abre nada",
+  (len(DESBLOQUEOS) - antes, [d for d in F.DIARIO if "BitLocker" in d]),
+  (0, ["Vieja: no está bloqueada con BitLocker ahora"]))
+equipo.pedir({"pide": equipo.PIDE_MODO, "id": A, "modo": equipo.NADA})
+pedir_desbloqueo(ag, A)                 # en el mismo buzón, antes de que se recorra
+c("puesta en modo `nada` en el mismo buzón, ya no se desbloquea",
+  (len(DESBLOQUEOS) - antes, ag.desbloqueos_bitlocker), (0, {}))
+equipo.pedir({"pide": equipo.PIDE_MODO, "id": A, "modo": equipo.DAEMON})
+F.vueltas(ag, 1)
+
+# se desbloquea de verdad
+pedir_desbloqueo(ag, A)
+c("(pedida otra vez, con su ventana abierta)", desbloqueando(ag), [True])
+F.RAICES[:] = [RA]
+F.vueltas(ag, 4)
+c("al teclear la contraseña la unidad se lee, se conecta y la ventana se olvida",
+  (A in ag.conexiones, ag.resumen()["bitlocker"], ag.desbloqueos_bitlocker),
+  (True, [], {}))
+
+# la orden y el lanzador de verdad
+equipo.buzon().unlink(missing_ok=True)
+sys.argv = ["agente.py", "desbloquear", A]
+agente.main()
+c("`agente.py desbloquear ID` deja la petición en el buzón",
+  [(p["pide"], p["id"]) for p in equipo.recoger()], [(equipo.PIDE_DESBLOQUEAR, A)])
+orden_de_verdad = bitlocker.orden_desbloquear
+F.LANZADOS.clear()
+try:
+    bitlocker.orden_desbloquear = lambda raiz: ["bdeunlock.exe", "E:\\"]
+    proceso = lanzador_de_verdad(E)
+    c("el lanzador de verdad: la orden de Windows tal cual, desde la carpeta del agente",
+      ([p.args for p in F.LANZADOS], proceso in F.LANZADOS, proceso.kwargs.get("cwd")),
+      ([["bdeunlock.exe", "E:\\"]], True, str(equipo.DIR)))
+    bitlocker.orden_desbloquear = lambda raiz: None
+    c("  sin orden (no es Windows, o no trae bdeunlock.exe), ni proceso ni lanzamiento",
+      (lanzador_de_verdad(E), len(F.LANZADOS)), (None, 1))
+finally:
+    bitlocker.orden_desbloquear = orden_de_verdad
 
 sys.exit(c.report())
