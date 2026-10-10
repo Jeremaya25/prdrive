@@ -272,5 +272,39 @@ finally:
     uitk.mostrar = MOSTRAR_REAL
 c("y working(suelto=True) la crea así", visto["transient"], "")
 
+
+# 6. un diálogo que se cierra le devuelve la captura a quien la tenía
+#
+# Tk no guarda una pila de capturas: al cerrarse un diálogo modal abierto desde
+# otro, el de debajo se quedaba sin la suya y se podía tocar lo que tenía detrás
+# (la lista de «Parejas», con la ventana de una pareja abierta encima). Aquí
+# `mostrar()` es el de verdad, con su espera: al hijo lo cierra un `after`.
+def captura() -> str:
+    """Devuelve quién tiene la captura ahora (su nombre de Tk), o `''`."""
+    return str(raiz.grab_current() or "")
+
+
+def abrir_y_cerrar(padre) -> None:
+    """Enseña un diálogo colgado de `padre` con `mostrar()` y lo cierra enseguida."""
+    hijo = uitk.modal(padre, "hijo")
+    tk.Label(hijo, text="hijo").grid()
+    visto["durante"] = None
+    hijo.after(50, lambda: (visto.update(durante=captura()), hijo.destroy()))
+    uitk.mostrar(hijo, padre)
+    visto["hijo"] = str(hijo)
+
+
+debajo = tk.Toplevel(raiz)
+tk.Label(debajo, text="debajo").grid()
+debajo.update()
+debajo.grab_set()
+abrir_y_cerrar(debajo)
+c("mientras está abierto, la captura es del diálogo", visto["durante"], visto["hijo"])
+c("y al cerrarse vuelve a la ventana que la tenía", captura(), str(debajo))
+debajo.grab_release()
+abrir_y_cerrar(debajo)
+c("si nadie la tenía, nadie se la queda", captura(), "")
+debajo.destroy()
+
 raiz.destroy()
 sys.exit(c.report())

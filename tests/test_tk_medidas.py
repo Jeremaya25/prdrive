@@ -721,6 +721,30 @@ try:
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 
+                # La ventana de una pareja, como se abre y en su caso más alto:
+                # con «Avanzado» desplegado, el aviso ámbar de un espejo y, bajo
+                # cada campo, lo que dice el catálogo.
+                def ventana_de_pareja(desplegada: bool) -> None:
+                    """Abre la ventana de la primera pareja sobre una pantalla de parejas."""
+                    parejas = tk_pairs.PantallaParejas(raiz)
+                    parejas.cat, parejas.aviso = catalog.load()
+                    try:
+                        ventana = tk_pairs.VentanaPareja(parejas, "pareja0", False)
+                        if desplegada:
+                            ventana.editor.plegar()
+                            ventana.editor.modo.set("up-mirror")
+                            ventana.editor.modo_cambiado()
+                        ventana.abrir()
+                    finally:
+                        parejas.dlg.destroy()
+
+                for que, desplegada in (("la ventana de una pareja", False),
+                                        ("la ventana de una pareja con todo desplegado", True)):
+                    entra, corta = medir_dialogo(lambda: ventana_de_pareja(desplegada),
+                                                 ancho, alto, escala)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortada", corta, False)
+
                 # El explorador del remoto: una lista de carpetas con nombres
                 # que los pone el usuario, y su diálogo de carpeta nueva.
                 for que, fabricar in (

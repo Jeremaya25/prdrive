@@ -60,7 +60,8 @@ está y se salta si no, y un momento que solo mide el PR se lee «nuevo», nunca
 
 El flujo `flota` abre «Parejas» con el catálogo sin contestar y, desde ella, «Dispositivos» (con
 la flota sin llegar: `open-dispositivos`; luego llegando: `llega-flota` y `elegir-dispositivo`) y el
-editor de flags de la pareja elegida (`open-flags`). El flujo `wizard` pulsa además «Siguiente» en
+editor de flags de la pareja elegida (`open-flags`), pasando antes por la ventana de esa pareja
+(`open-pareja`) en el árbol que la tiene. El flujo `wizard` pulsa además «Siguiente» en
 «¿Dónde?» y apunta lo que tarda en verse «Dispositivo» (`paso-dispositivo`, con la lectura real de
 las unidades del equipo).
 """
@@ -736,11 +737,12 @@ def on_parejas(dlg, t, t_req):
 
 
 def elegir_filas(dlg):
-    """Elige otra fila de la lista (solo el resaltado) y luego otra pareja (con su editor).
+    """Elige otra fila de la lista (solo el resaltado) y luego otra pareja (como un clic).
 
     `elegir-fila` es `lista.elegir(otra, avisar=False)`: lo que cuesta resaltar. `elegir-pareja`
-    es `elegir(otra, avisar=True)`: además comprueba que no se pierda nada escrito y carga la
-    pareja en el editor. Las dos acaban con el `update()` que las pinta.
+    es `elegir(otra, avisar=True)`: además enciende los botones que valen para ella; hasta la
+    0.7.2 cargaba también la pareja en el editor de la pantalla. Las dos acaban con el
+    `update()` que las pinta.
     """
     lista = getattr(dlg, "lista", None)
     orden = list(getattr(lista, "orden", ()))
@@ -1198,14 +1200,46 @@ def elegir_dispositivo(fdlg):
 
 
 def abrir_flags(dlg):
-    """Despliega «Avanzado» en el editor de «Parejas» y abre el de flags de su pareja.
+    """Abre el editor de flags de la primera pareja, por donde lo tenga el árbol.
+
+    Con «Modificar…» en «Parejas», los campos de la pareja están en su propia ventana: se abre
+    antes y se apunta lo que tarda en verse (`open-pareja`, que solo mide ese árbol), y desde
+    ella se llega a los flags. Sin ese botón (hasta la 0.7.2) el editor está en la propia
+    «Parejas».
+    """
+    modificar = find_button(dlg, "Modificar…")
+    if modificar is None:
+        flags_desde(dlg)
+        return
+    dlg.update()
+    if modificar.instate(["disabled"]):
+        NOTES["error"] = "«Modificar…» está apagado: «Parejas» no tiene ninguna pareja elegida"
+        return
+    tema_nuevo(dlg)
+    t_req = time.time()
+    HOOK["on_shown"] = lambda vdlg, t: en_pareja(vdlg, t, t_req)
+    with perfilado("open-pareja"):
+        modificar.invoke()
+
+
+@anotando
+def en_pareja(vdlg, t, t_req):
+    """La ventana de una pareja recién abierta: se apunta y, desde ella, se abren sus flags."""
+    perfil_cerrar("open-pareja")
+    record("open-pareja", ms(t_req, t), **medir(vdlg))
+    shot("pareja", vdlg)
+    flags_desde(vdlg)
+
+
+def flags_desde(dlg):
+    """Despliega «Avanzado» en el editor que hay en `dlg` y abre el de flags de su pareja.
 
     El editor es el de la primera pareja, que es de este dispositivo y se puede editar: si
     «Editar flags…» está apagado (un editor de solo lectura) el flujo no mide nada y lo dice.
     """
     mostrar_avanzado = find_button(dlg, "Mostrar")
     if mostrar_avanzado is None:
-        NOTES["error"] = "el editor de «Parejas» no tiene el botón «Mostrar» de «Avanzado»"
+        NOTES["error"] = "el editor de la pareja no tiene el botón «Mostrar» de «Avanzado»"
         return
     mostrar_avanzado.invoke()
     dlg.update()

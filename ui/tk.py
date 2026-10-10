@@ -621,6 +621,10 @@ def mostrar(dlg, parent=None) -> None:
     `update_idletasks()`: sin él el mapeo puede seguir pendiente. Si aun así
     fallara, se sigue: un diálogo sin captura es un incordio, pero uno que no
     se abre es un cuelgue.
+
+    Al cerrarse le devuelve la captura a quien la tuviera antes: Tk no guarda
+    una pila de capturas y, sin esto, un diálogo modal que abre otro dejaría de
+    serlo al cerrarse el de arriba, y se podría tocar lo que tiene detrás.
     """
     import tkinter as tk
     # Primero encoger el contenido a lo que quepa y solo después centrar: al
@@ -632,6 +636,10 @@ def mostrar(dlg, parent=None) -> None:
     ensenar(dlg)
     dlg.update_idletasks()
     try:
+        previa = dlg.grab_current()
+    except Exception:                                # noqa: BLE001 — una que Tkinter no conoce
+        previa = None
+    try:
         dlg.grab_set()
     except tk.TclError:
         pass
@@ -640,6 +648,7 @@ def mostrar(dlg, parent=None) -> None:
     if momento:
         perf_al_pintar(dlg, momento)
     dlg.wait_window()
+    _devolver_captura(previa)
 
 
 DWMWA_CLOAK = 13
@@ -1433,9 +1442,9 @@ def working(parent, title: str, funcion, mensaje: str = "",
     No hay botón de cancelar a propósito: lo que se lanza así no se puede
     cortar a medias sin dejar las cosas peor (un contenedor a medio formatear).
 
-    Al cerrarse devuelve la captura a quien la tuviera antes: Tk no guarda
-    una pila de capturas y, sin esto, un diálogo modal que espera aquí dejaría
-    de serlo (el explorador del remoto espera en cada carpeta).
+    Al cerrarse, `mostrar()` le devuelve la captura a quien la tuviera antes:
+    un diálogo modal que espera aquí sigue siéndolo (el explorador del remoto
+    espera en cada carpeta).
 
     Args:
         parent: De quién cuelga la ventanita.
@@ -1502,13 +1511,8 @@ def working(parent, title: str, funcion, mensaje: str = "",
         if cifra is not None:
             _pintar_avance(barra, cifra, _medir_avance(progreso))
 
-    try:
-        previa = dlg.grab_current()
-    except Exception:                                # noqa: BLE001 — una que Tkinter no conoce
-        previa = None
     dlg.after(120, mirar)
     mostrar(dlg, parent)
-    _devolver_captura(previa)
     return bool(resultado["ok"]), resultado["valor"]
 
 

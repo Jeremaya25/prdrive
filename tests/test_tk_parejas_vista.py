@@ -11,9 +11,11 @@ Cada pieza se prueba contra lo que se vería si se dibujara de nuevo:
 - los chips de una fila caen sobre el fondo de su fila, también cuando se elige
   (lo que asoma por sus esquinas);
 - la pantalla entera: el catálogo que llega sin cambiar nada no rehace nada, el
-  bloque del catálogo se crea al verlo por primera vez, «Avanzado» se construye
-  al desplegarlo, y lo que se edita a mano en `sync_config.toml` mientras la
-  pantalla está abierta no se pisa.
+  bloque del catálogo se crea al verlo por primera vez, y lo que se edita a mano
+  en `sync_config.toml` mientras la pantalla está abierta no se pisa;
+- la ventana de una pareja (`VentanaPareja`), abierta sobre la pantalla: sus
+  campos solo se recargan cuando cambia la pareja, «Avanzado» se construye al
+  desplegarlo, y lo que llega mientras está abierta la pone al día en su sitio.
 """
 
 from __future__ import annotations
@@ -76,8 +78,7 @@ def sin_chips(widget) -> set:
 
 def lista_nueva(padre, **k):
     """Una `ListaParejas` colocada en una tarjeta, como en la pantalla."""
-    lista = tk_pairs.ListaParejas(padre, k.get("puede_dejar", lambda: True),
-                                  k.get("al_elegir", lambda: None))
+    lista = tk_pairs.ListaParejas(padre, k.get("al_elegir", lambda: None))
     lista.marco.grid(row=0, column=0, sticky="ew")
     return lista
 
@@ -181,7 +182,7 @@ def probar_la_lista(tema: str) -> None:
                              avisar=False)
             sitio = ttk.Frame(tarjeta, style="Card.TFrame")
             sitio.grid(row=1, column=0)
-            fresca = tk_pairs.ListaParejas(sitio, lambda: True, lambda: None)
+            fresca = tk_pairs.ListaParejas(sitio, lambda: None)
             fresca.marco.grid(row=0, column=0, sticky="ew")
             fresca.poner(filas, del_cat)
             fresca.elegir(lista.elegida, avisar=False)
@@ -400,6 +401,22 @@ def probar_el_editor() -> None:
     c("  así que no hay «cambios sin guardar» por abrir «Avanzado»",
       (plegado["include"], plegado["exclude"]), ([""], [""]))
 
+    # Quien lo tiene en su ventana sabe cuándo puede pedir más sitio del que tenía
+    avisos: list = []
+    avisado = tk_pairs.EditorPareja(marco, dlg, al_crecer=lambda: avisos.append(1))
+    avisado.marco.grid()
+    avisado.cargar(RAW_EDITOR, PAREJA, "notas")
+    avisos.clear()
+    avisado.plegar()
+    c("desplegar «Avanzado» avisa de que el editor puede pedir más sitio", len(avisos), 1)
+    avisado.plegar()
+    c("  plegarlo no: una ventana no mengua", len(avisos), 1)
+    avisado.modo.set("up-mirror")
+    avisado.modo_cambiado()
+    c("pasar a un espejo, que trae su aviso ámbar, también avisa", len(avisos), 2)
+    avisado.modo_cambiado()
+    c("  y repetir el mismo modo, no", len(avisos), 2)
+
     # El alta lo trae todo a la vista
     alta = tk_pairs.EditorPareja(marco, dlg, sup="", dos_columnas=False, plegable=False)
     alta.marco.grid()
@@ -428,8 +445,8 @@ CAT_MAS = {"defaults": {"remote": "nas"},
                      "remote_path": "/R/fotos", "mode": "up"}]}
 CUANDO = "2026-09-30 08:00:00"
 ENDPOINT = "nas:/prdrive-catalog/remote.toml"
-BOTONES_CATALOGO = ("Nueva pareja…", "Borrar del catálogo…", "Guardar en el catálogo…",
-                    "Ajustes del catálogo…", "Releer")
+BOTONES_CATALOGO = ("Nueva pareja…", "Borrar del catálogo…", "Ajustes del catálogo…",
+                    "Releer")
 
 
 class RemotoLento:
@@ -574,6 +591,38 @@ def abrir(cfg, conducir, compartida=None, destruir: bool = True):
     return tk_pairs.open_dialog(raiz, cfg, compartida)
 
 
+def en_la_ventana(dlg, hacer, pareja: str | None = None) -> None:
+    """Abre la ventana de la pareja elegida y deja que `hacer(ventana)` la maneje.
+
+    `ventana` es el `Toplevel` de la ventana de la pareja: lleva `editor` (sus
+    campos) y `ventana` (la `VentanaPareja`). Si `hacer` no la cierra, se cierra
+    al volver, sin preguntar.
+
+    Args:
+        dlg: El `Toplevel` de «Parejas».
+        hacer: Lo que se hace con la ventana donde `mostrar()` esperaría.
+        pareja: La fila que se elige antes; `None` deja la elegida.
+    """
+    fuera = tk_pairs.mostrar
+
+    def mostrar(ventana, parent=None, **_k):
+        """Sustituye a `mostrar()` mientras dura la ventana: la conduce y la cierra."""
+        tk_pairs.mostrar = fuera
+        try:
+            hacer(ventana)
+        finally:
+            if ventana.winfo_exists():
+                ventana.destroy()
+
+    if pareja is not None:
+        dlg.lista.elegir(pareja)
+    tk_pairs.mostrar = mostrar
+    try:
+        visibles(dlg, "TButton", "Modificar…")[0].invoke()
+    finally:
+        tk_pairs.mostrar = fuera
+
+
 def con_remoto(texto_remoto: dict, copia: dict | None = CAT_LOCAL, raw: dict = BASE,
                rc: int = 0, stderr: str = ""):
     """Prepara el dispositivo, su copia local y un remoto callado; devuelve `(cfg, remoto)`."""
@@ -600,9 +649,6 @@ def probar_la_pantalla() -> None:
             """Elige una pareja, deja llegar el mismo catálogo y mira qué cambió."""
             enseñada(dlg)
             dlg.lista.elegir("notas")
-            cargas = []
-            real = dlg.editor.cargar
-            dlg.editor.cargar = lambda *a, **k: (cargas.append(1), real(*a, **k))[1]
             crecidas = []
             real_crecer = dlg.visor.crecer
             dlg.visor.crecer = lambda *a, **k: (crecidas.append(1), real_crecer(*a, **k))[1]
@@ -611,7 +657,7 @@ def probar_la_pantalla() -> None:
             remoto.soltar.set()
             visto["llego"] = dar_vueltas(lambda: not dlg.sondeo.esperando)
             visto["despues"] = conjunto(dlg)
-            visto["cargas"], visto["crecidas"] = len(cargas), len(crecidas)
+            visto["crecidas"] = len(crecidas)
             visto["chip"] = [t for t in textos_a_la_vista(dlg) if "catálogo leído" in t]
             visto["nuevos"] = [w for w in todos(dlg) if str(w) in visto["despues"] - visto["antes"]]
             ver_catalogo(dlg)
@@ -625,10 +671,42 @@ def probar_la_pantalla() -> None:
           (1, 1))
         c("  y el que entra dice que está leído",
           (len(visto["nuevos"]), visto["chip"] != [] ), (1, True))
-        c("  el editor no se recarga", visto["cargas"], 0)
         c("  ni la ventana se agranda ni se recoloca", visto["crecidas"], 0)
-        c("  el bloque del catálogo se enciende", visto["botones"], ["normal"] * 5)
+        c("  el bloque del catálogo se enciende", visto["botones"], ["normal"] * 4)
         c("  y la pareja elegida sigue siendo la misma", visto["elegida"], "notas")
+        c("  nada ha reventado", errores, [])
+
+    # 3a2. lo mismo con la ventana de una pareja abierta: sus campos no se recargan
+    with sandbox():
+        cfg, remoto = con_remoto(CAT_LOCAL)
+        visto = {}
+
+        def llega_con_la_ventana(dlg):
+            """Abre la ventana de una pareja y deja llegar el mismo catálogo."""
+            def en_ella(ventana):
+                """Cuenta las recargas de los campos mientras llega el catálogo."""
+                cargas = []
+                real = ventana.editor.cargar
+                ventana.editor.cargar = lambda *a, **k: (cargas.append(1), real(*a, **k))[1]
+                visto["antes"] = (conjunto(ventana), ventana.editor.datos(),
+                                  str(ventana.editor.examinar["remote_path"].cget("state")))
+                remoto.soltar.set()
+                visto["llego"] = dar_vueltas(lambda: not dlg.sondeo.esperando)
+                visto["despues"] = (conjunto(ventana), ventana.editor.datos(),
+                                    str(ventana.editor.examinar["remote_path"].cget("state")))
+                visto["cargas"] = len(cargas)
+            en_la_ventana(dlg, en_ella, "notas")
+            visto["cerrada"] = dlg.pantalla.ventana
+
+        abrir(cfg, llega_con_la_ventana)
+        c("con la ventana de una pareja abierta, el mismo catálogo no recarga sus campos",
+          (visto["llego"], visto["cargas"]), (True, 0))
+        c("  ni crea ni destruye nada en ella, y dice lo mismo",
+          (visto["despues"][0] == visto["antes"][0], visto["despues"][1] == visto["antes"][1]),
+          (True, True))
+        c("  solo enciende lo que pedía conexión: «Examinar…» del remoto",
+          (visto["antes"][2], visto["despues"][2]), ("disabled", "normal"))
+        c("  y al cerrarse la pantalla ya no la tiene", visto["cerrada"], None)
         c("  nada ha reventado", errores, [])
 
     # 3b. el bloque del catálogo se crea al verlo y ya no se rehace
@@ -677,21 +755,35 @@ def probar_la_pantalla() -> None:
           ((True, True, True), True, (True, True, True)))
         c("  nada ha reventado", errores, [])
 
-    # 3c. «Avanzado» se construye al desplegarlo, con la pantalla entera
+    # 3c. «Avanzado» se construye al desplegarlo, en la ventana de la pareja
     with sandbox():
         cfg, remoto = con_remoto(CAT_LOCAL)
         remoto.soltar.set()
         visto = {}
 
         def desplegar(dlg):
-            """Despliega «Avanzado» de la pareja elegida."""
+            """Despliega «Avanzado» en la ventana de la pareja elegida."""
             dar_vueltas(lambda: not dlg.sondeo.esperando)
-            dlg.lista.elegir("notas")
-            visto["antes"] = (dict(dlg.editor.textos), dlg.editor.datos())
-            visto["cambios"] = dlg.pantalla.cargado != dlg.editor.datos()
-            pulsar(dlg, "Mostrar")
-            visto["despues"] = (sorted(dlg.editor.textos), dlg.editor.datos())
-            visto["sin_cambios"] = dlg.pantalla.cargado == dlg.editor.datos()
+            # A la vista antes de abrir la ventana de la pareja: es `transient` suya y,
+            # en Windows, colgada de una oculta no llega a verse (ni, sin verse, crece).
+            enseñada(dlg)
+
+            def en_ella(ventana):
+                """Mira los campos, y lo que mide la ventana, antes y después de «Mostrar»."""
+                def hueco() -> tuple[int, int]:
+                    """El alto que tiene el recuadro de la ventana y el que pide su contenido."""
+                    ventana.update_idletasks()
+                    return ventana.visor._medida()[1], ventana.visor.interior.winfo_reqheight()
+
+                enseñada(ventana)
+                visto["antes"] = (dict(ventana.editor.textos), ventana.editor.datos())
+                visto["cambios"] = ventana.ventana.hay_cambios()
+                visto["hueco_antes"] = hueco()
+                pulsar(ventana, "Mostrar")
+                visto["despues"] = (sorted(ventana.editor.textos), ventana.editor.datos())
+                visto["sin_cambios"] = not ventana.ventana.hay_cambios()
+                visto["hueco_despues"] = hueco()
+            en_la_ventana(dlg, en_ella, "notas")
 
         abrir(cfg, desplegar)
         c("«Avanzado» sin desplegar: sin cajas, y los patrones los trae `datos()`",
@@ -699,6 +791,10 @@ def probar_la_pantalla() -> None:
         c("  «Mostrar» las crea, con lo mismo, y no cuenta como cambio",
           (visto["despues"][0], visto["despues"][1] == visto["antes"][1],
            visto["sin_cambios"]), (["exclude", "include"], True, True))
+        (hueco_a, pide_a), (hueco_d, pide_d) = visto["hueco_antes"], visto["hueco_despues"]
+        c("  y la ventana crece para enseñarlas, en vez de meterlas tras una barra: su "
+          "recuadro pasa a medir lo que pide el contenido",
+          (hueco_a == pide_a, pide_d > pide_a, hueco_d == pide_d), (True, True, True))
 
     # 3d. lo que se edita a mano mientras la pantalla está abierta no se pisa
     with sandbox():
@@ -712,35 +808,44 @@ def probar_la_pantalla() -> None:
             "mode": "up"}]}
 
         def editar_a_mano(dlg):
-            """Cambia el config por fuera y pulsa «Guardar aquí…»."""
+            """Cambia el config por fuera y pulsa «Guardar aquí…» en la ventana de la pareja."""
             dar_vueltas(lambda: not dlg.sondeo.esperando)
-            dlg.lista.elegir("notas")
-            dlg.editor.campos["remote_path"].set("/R/otra")
-            model.CONFIG_FILE.write_text(config_file.dumps(a_mano), encoding="utf-8")
-            pulsar(dlg, "Guardar aquí…")
-            visto["planes"] = len(planes)
-            visto["cambiado"] = dlg.pantalla.cambiado
-            visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
-            visto["filas"] = list(dlg.lista.filas)
-            visto["raw"] = [p["name"] for p in dlg.pantalla.raw["pair"]]
-            visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
-            visto["escrito"] = dlg.editor.campos["remote_path"].get()
-            # y con el config ya releído, guardar sí hace su plan
-            pulsar(dlg, "Guardar aquí…")
-            visto["planes_despues"] = len(planes)
+
+            def en_ella(ventana):
+                """Escribe, edita el config por fuera y guarda dos veces."""
+                ventana.editor.campos["remote_path"].set("/R/otra")
+                model.CONFIG_FILE.write_text(config_file.dumps(a_mano), encoding="utf-8")
+                pulsar(ventana, "Guardar aquí…")
+                visto["planes"] = len(planes)
+                visto["cambiado"] = dlg.pantalla.cambiado
+                visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
+                visto["nota"] = str(ventana.ventana.nota.cget("text"))
+                visto["filas"] = list(dlg.lista.filas)
+                visto["raw"] = [p["name"] for p in dlg.pantalla.raw["pair"]]
+                visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
+                visto["escrito"] = (bool(ventana.winfo_exists()),
+                                    ventana.editor.campos["remote_path"].get())
+                # y con el config ya releído, guardar sí hace su plan
+                pulsar(ventana, "Guardar aquí…")
+                visto["planes_despues"] = len(planes)
+                visto["cerrada"] = not ventana.winfo_exists()
+            en_la_ventana(dlg, en_ella, "notas")
 
         abrir(cfg, editar_a_mano)
         c("una edición a mano entre dos guardados no se pierde: no se hace ningún plan",
           (visto["planes"], visto["cambiado"]), (0, False))
         c("  el pie dice que ha cambiado y que se vuelva a guardar",
           [t for t in visto["pie"] if "Revisa y vuelve a guardar" in t] != [], True)
+        c("  y la ventana de la pareja, que es la que se tiene delante, también",
+          "Revisa y vuelve a guardar" in visto["nota"], True)
         c("  la pantalla ya enseña lo escrito a mano", (visto["filas"], visto["raw"]),
           (["notas", "subida", "manual"], ["notas", "subida", "manual"]))
         c("  y el fichero queda como se escribió", visto["fichero"],
           config_file.dumps(a_mano))
-        c("  lo tecleado en el editor sigue donde estaba", visto["escrito"], "/R/otra")
-        c("  la siguiente vez, con el config ya releído, sí se pide el plan",
-          visto["planes_despues"], 1)
+        c("  la ventana sigue abierta con lo tecleado donde estaba", visto["escrito"],
+          (True, "/R/otra"))
+        c("  la siguiente vez, con el config ya releído, sí se pide el plan, y se cierra",
+          (visto["planes_despues"], visto["cerrada"]), (1, True))
 
     # 3e. ni siquiera con la confirmación abierta: el sí no escribe encima
     with sandbox():
@@ -759,20 +864,28 @@ def probar_la_pantalla() -> None:
         tk_pairs.confirmar_plan = confirmar_y_editar
 
         def guardar(dlg):
-            """Pulsa «Guardar aquí…» con un cambio hecho."""
+            """Pulsa «Guardar aquí…» con un cambio hecho en la ventana de la pareja."""
             dar_vueltas(lambda: not dlg.sondeo.esperando)
-            dlg.lista.elegir("notas")
-            dlg.editor.campos["remote_path"].set("/R/otra")
-            pulsar(dlg, "Guardar aquí…")
-            visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
-            visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
-            visto["filas"] = list(dlg.lista.filas)
+
+            def en_ella(ventana):
+                """Escribe y guarda; la confirmación edita el config por fuera."""
+                ventana.editor.campos["remote_path"].set("/R/otra")
+                pulsar(ventana, "Guardar aquí…")
+                visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
+                visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
+                visto["filas"] = list(dlg.lista.filas)
+                visto["sigue"] = (bool(ventana.winfo_exists()),
+                                  ventana.editor.campos["remote_path"].get(),
+                                  "ha cambiado fuera" in str(ventana.ventana.nota.cget("text")))
+            en_la_ventana(dlg, en_ella, "notas")
 
         cambiado = abrir(cfg, guardar)
         c("confirmar mientras se edita a mano: no se escribe nada encima",
           (visto["fichero"], cambiado), (config_file.dumps(a_mano), False))
         c("  se dice en el pie y la pantalla se vuelve a leer",
           (visto["pie"] != [], visto["filas"]), (True, ["notas", "subida", "manual"]))
+        c("  y la ventana sigue abierta, con lo escrito y diciéndolo también",
+          visto["sigue"], (True, "/R/otra", True))
         tk_pairs.confirmar_plan = lambda *a, **k: True
 
     # 3f. los estados ya leídos no se vuelven a leer
@@ -817,7 +930,7 @@ def probar_la_pantalla() -> None:
         finally:
             bisync.pair_state, bisync.filters_state = real_par, real_fil
 
-    # 3g. el editor solo se recarga cuando cambian sus campos
+    # 3g. los campos de la ventana de una pareja solo se recargan cuando cambia la pareja
     with sandbox():
         cfg, remoto = con_remoto(CAT_LOCAL)
         remoto.soltar.set()
@@ -826,30 +939,45 @@ def probar_la_pantalla() -> None:
                                            *CAT_LOCAL["pair"][1:]]}
 
         def releer(dlg):
-            """Pide el catálogo otra vez y espera a que llegue."""
+            """Pide el catálogo otra vez (por detrás de la ventana) y espera a que llegue."""
             pulsar(dlg, "Releer")
             dar_vueltas(lambda: not dlg.sondeo.esperando)
 
         def recargas(dlg):
-            """Cuántas veces se recarga el editor y qué dice al acabar el catálogo cambiado."""
+            """Cuántas veces se recargan los campos y qué dicen al cambiar el catálogo."""
             dar_vueltas(lambda: not dlg.sondeo.esperando)
             montar_el_catalogo(dlg)
-            dlg.lista.elegir("notas")
-            cargas = []
-            real = dlg.editor.cargar
-            dlg.editor.cargar = lambda *a, **k: (cargas.append(1), real(*a, **k))[1]
-            remoto.texto = config_file.dumps(otra_ruta)
-            releer(dlg)
-            visto["catalogo_cambia"] = (len(cargas), "/R/notas-v2" in str(
-                dlg.editor.pistas["remote_path"].cget("text")))
-            # Lo de este dispositivo cambia por fuera: la pareja elegida es otra y se recarga
-            nuevo = {**BASE, "pair": [{**BASE["pair"][0], "remote_path": "/R/mio"},
-                                      *BASE["pair"][1:]]}
-            model.CONFIG_FILE.write_text(config_file.dumps(nuevo), encoding="utf-8")
-            releer(dlg)
-            visto["local_cambia"] = (len(cargas), dlg.editor.campos["remote_path"].get())
-            releer(dlg)
-            visto["nada"] = len(cargas)
+
+            def en_ella(ventana):
+                """Relee con el catálogo cambiado, con el config cambiado y sin cambios."""
+                cargas = []
+                real = ventana.editor.cargar
+                ventana.editor.cargar = lambda *a, **k: (cargas.append(1), real(*a, **k))[1]
+                visto["chip_antes"] = ventana.ventana.chip.spec
+                remoto.texto = config_file.dumps(otra_ruta)
+                releer(dlg)
+                visto["catalogo_cambia"] = (len(cargas), "/R/notas-v2" in str(
+                    ventana.editor.pistas["remote_path"].cget("text")))
+                visto["chip_despues"] = ventana.ventana.chip.spec[0]
+                # Lo de este dispositivo cambia por fuera: la pareja es otra y se recarga
+                nuevo = {**BASE, "pair": [{**BASE["pair"][0], "remote_path": "/R/mio"},
+                                          *BASE["pair"][1:]]}
+                model.CONFIG_FILE.write_text(config_file.dumps(nuevo), encoding="utf-8")
+                releer(dlg)
+                visto["local_cambia"] = (len(cargas),
+                                         ventana.editor.campos["remote_path"].get())
+                releer(dlg)
+                visto["nada"] = len(cargas)
+                # La pareja desaparece del config y del catálogo: ya no hay nada que cambiar
+                sin_notas = {**BASE, "pair": BASE["pair"][1:]}
+                model.CONFIG_FILE.write_text(config_file.dumps(sin_notas), encoding="utf-8")
+                remoto.texto = config_file.dumps({**CAT_LOCAL, "pair": CAT_LOCAL["pair"][1:]})
+                releer(dlg)
+                visto["ya_no"] = (ventana.ventana.chip.spec[0],
+                                  str(ventana.ventana.boton_guardar.cget("state")),
+                                  str(ventana.editor.entradas["name"].cget("state")),
+                                  str(ventana.ventana.boton_cerrar.cget("text")))
+            en_la_ventana(dlg, en_ella, "notas")
 
         def montar_el_catalogo(dlg):
             """Crea el bloque del catálogo y vuelve a este dispositivo."""
@@ -857,11 +985,17 @@ def probar_la_pantalla() -> None:
             ver_dispositivo(dlg)
 
         abrir(cfg, recargas)
-        c("el catálogo cambia lo que rodea al editor, no sus campos: no se recarga",
+        c("el catálogo cambia lo que rodea a los campos, no los campos: no se recargan",
           visto["catalogo_cambia"], (0, True))
-        c("  la pareja de este dispositivo cambia por fuera: se recarga, una vez",
+        c("  y el chip pasa a decir que la pareja está modificada aquí",
+          (visto["chip_antes"], visto["chip_despues"]), (None, "Modificada aquí"))
+        c("  la pareja de este dispositivo cambia por fuera: se recargan, una vez",
           visto["local_cambia"], (1, "/R/mio"))
         c("  y releer sin cambios no vuelve a cargar nada", visto["nada"], 1)
+        c("  una pareja que desaparece mientras su ventana está abierta: se dice, y no se "
+          "puede cambiar ni guardar", visto["ya_no"],
+          ("Ya no existe", "disabled", "readonly", "Cerrar"))
+        c("  nada ha reventado", errores, [])
 
     # 3h. la ventana solo se agranda cuando algo ha podido pedir más sitio
     with sandbox():
@@ -903,10 +1037,9 @@ def probar_la_pantalla() -> None:
         abrir(cfg, tabular)
         for vista_, franja, barra in (
                 ("dispositivo", "Volver a los del catálogo",
-                 ["Simular", "Quitar…", "Descartar", "Guardar aquí…"]),
+                 ["Simular", "Quitar…", "Modificar…"]),
                 ("catalogo", "Ajustes del catálogo…",
-                 ["Nueva pareja…", "Borrar del catálogo…", "Releer", "Descartar",
-                  "Guardar en el catálogo…"])):
+                 ["Nueva pareja…", "Borrar del catálogo…", "Releer", "Modificar…"])):
             cadena = cadenas[vista_]
             textos = [t for _clase, t in cadena]
             pos = {t: i for i, t in enumerate(textos)}
@@ -914,13 +1047,12 @@ def probar_la_pantalla() -> None:
                             None)
             campos = [i for i, (clase, _t) in enumerate(cadena) if clase in ("TEntry", "Text")]
             en_barra = [t for t in textos if t in barra]
-            c(f"Tab en la vista «{vista_}»: la lista va tras la franja de [defaults] y antes "
-              "del editor",
-              (lista_en, lista_en == min(campos) - 1 if campos else None),
-              (pos.get(franja, -2) + 1, True))
-            c("  la barra de acciones va tras el editor, en su orden, y antes de "
+            c(f"Tab en la vista «{vista_}»: la lista va tras la franja de [defaults], y la "
+              "pantalla no tiene campos donde escribir",
+              (lista_en, campos), (pos.get(franja, -2) + 1, []))
+            c("  la barra de acciones va tras la lista, en su orden, y antes de "
               "«Dispositivos…»",
-              (en_barra, min(pos[t] for t in barra) > max(campos),
+              (en_barra, min(pos[t] for t in barra) > lista_en,
                max(pos[t] for t in barra) < pos.get("Dispositivos…", -1)),
               (barra, True, True))
             c("  y «Cerrar» es lo último", textos[-1], "Cerrar")

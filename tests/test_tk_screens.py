@@ -114,8 +114,8 @@ def elegir_y_pulsar(texto, pareja=None, catalogo=False, cambiar=None):
 
     Args:
         catalogo: Pasar antes a editar el catálogo.
-        cambiar: Lo que se escribe en el editor de la pareja antes de pulsar:
-            `{campo: valor}`.
+        cambiar: Lo que se escribe en la ventana de la pareja antes de pulsar:
+            `{campo: valor}`. Con ello, `texto` es un botón de esa ventana.
     """
     def _wait(self, *_a, **_k):
         """Elige la fila de la lista, pulsa el botón y vuelve."""
@@ -123,22 +123,73 @@ def elegir_y_pulsar(texto, pareja=None, catalogo=False, cambiar=None):
             ver_catalogo(self)
         if pareja is not None:
             self.lista.elegir(pareja)
-        for campo, valor in (cambiar or {}).items():
-            self.editor.campos[campo].set(valor)
-        for boton in botones_de_todos(self):
-            if boton.cget("text") == texto:
-                boton.invoke()
-                return
+        if cambiar is not None:
+            def escribir_y_pulsar(ventana):
+                """Escribe en los campos de la ventana de la pareja y pulsa su botón."""
+                for campo, valor in cambiar.items():
+                    ventana.editor.campos[campo].set(valor)
+                boton_a_la_vista(ventana, texto).invoke()
+            en_la_ventana(self, escribir_y_pulsar)
+            return
+        boton_a_la_vista(self, texto).invoke()
     return _wait
 
 
 def botones_de_todos(ventana) -> list:
-    """Todos los botones de una ventana, en orden."""
+    """Todos los botones de una ventana, en orden; los de sus ventanas hijas no."""
     pila, salida = [ventana], []
     while pila:
         w = pila.pop(0)
-        pila += list(w.winfo_children())
+        pila += [h for h in w.winfo_children() if not isinstance(h, tk.Toplevel)]
         if isinstance(w, ttk.Button):
+            salida.append(w)
+    return salida
+
+
+def boton_a_la_vista(ventana, texto):
+    """El botón con ese texto cuya barra se ve (cada vista de «Parejas» tiene la suya)."""
+    return next(b for b in botones_de_todos(ventana)
+                if b.cget("text") == texto and b.master.winfo_manager())
+
+
+def en_la_ventana(parejas, hacer, pareja=None) -> None:
+    """Abre la ventana de la pareja elegida y deja que `hacer(ventana)` la maneje.
+
+    `ventana` es el `Toplevel` de la ventana de la pareja: lleva `editor` (sus
+    campos) y `ventana` (la `VentanaPareja`). Si `hacer` no la cierra, se cierra
+    al volver, sin preguntar: aquí solo se espera en `wait_window`, que durante
+    esa ventana es `hacer`.
+
+    Args:
+        parejas: El `Toplevel` de «Parejas».
+        hacer: Lo que se hace con la ventana donde `mostrar()` esperaría.
+        pareja: La fila que se elige antes; `None` deja la elegida.
+    """
+    fuera = tk.Toplevel.wait_window
+
+    def _wait(self, *_a, **_k):
+        """Maneja la ventana de la pareja y la cierra si sigue abierta."""
+        tk.Toplevel.wait_window = fuera
+        hacer(self)
+        if self.winfo_exists():
+            self.destroy()
+
+    if pareja is not None:
+        parejas.lista.elegir(pareja)
+    tk.Toplevel.wait_window = _wait
+    try:
+        boton_a_la_vista(parejas, "Modificar…").invoke()
+    finally:
+        tk.Toplevel.wait_window = fuera
+
+
+def de_clase(ventana, clase) -> list:
+    """Los widgets de esa clase de una ventana, sin los de sus ventanas hijas."""
+    pila, salida = [ventana], []
+    while pila:
+        w = pila.pop(0)
+        pila += [h for h in w.winfo_children() if not isinstance(h, tk.Toplevel)]
+        if isinstance(w, clase):
             salida.append(w)
     return salida
 
@@ -245,16 +296,49 @@ with sandbox():
         self.lista.elegir("fotos")
         estados.update({b.cget("text"): str(b.cget("state"))
                         for b in botones_de_todos(self)})
-        estados["campo"] = str(self.editor.entradas["remote_path"].cget("state"))
+
+        def mirar_ventana(ventana):
+            """Apunta cómo enseña la ventana una pareja que aquí no se usa."""
+            estados["campo"] = str(ventana.editor.entradas["remote_path"].cget("state"))
+            estados["guardar"] = str(boton_a_la_vista(ventana, "Guardar aquí…").cget("state"))
+            estados["chip"] = ventana.ventana.chip.spec[0]
+            estados["cierre"] = [b.cget("text") for b in botones_de_todos(ventana)
+                                 if b.cget("text") in ("Cerrar", "Cancelar")]
+        en_la_ventana(self, mirar_ventana)
 
     tk.Toplevel.wait_window = mirar_fotos
     tk_pairs.open_dialog(raiz, cfg)
     c("una pareja que no se usa aquí se puede usar", estados["Usar aquí"], "normal")
-    c("pero no guardar ni simular", (estados["Guardar aquí…"], estados["Simular"]),
-      ("disabled", "disabled"))
-    c("y el editor la enseña sin dejarla cambiar", estados["campo"], "readonly")
+    c("pero no simular", estados["Simular"], "disabled")
+    c("su ventana se abre igual", estados["Modificar…"], "normal")
+    c("  y la enseña sin dejarla cambiar ni guardar",
+      (estados["campo"], estados["guardar"]), ("readonly", "disabled"))
+    c("  diciendo por qué", estados["chip"], "Úsala aquí para cambiarla")
+    c("  y como no hay nada que cancelar, se cierra con «Cerrar»", estados["cierre"],
+      ["Cerrar"])
 
-# «Guardar aquí…» guarda lo del editor y aparta el baseline, como manda el editor
+# La pantalla de parejas ya no lleva el editor: ni campos, ni guardar, ni descartar
+with sandbox():
+    cfg = preparar()
+    visto = {}
+
+    def mirar_pantalla(self, *_a, **_k):
+        """Apunta lo que la pantalla tiene de un editor, con una pareja elegida."""
+        self.lista.elegir("notas")
+        visto["campos"] = len(de_clase(self, ttk.Entry)) + len(de_clase(self, tk.Text))
+        visto["botones"] = sorted(
+            b.cget("text") for b in botones_de_todos(self)
+            if b.cget("text") in ("Guardar aquí…", "Guardar en el catálogo…", "Descartar",
+                                  "Mostrar", "Examinar…"))
+        visto["ventana"] = self.pantalla.ventana
+
+    tk.Toplevel.wait_window = mirar_pantalla
+    tk_pairs.open_dialog(raiz, cfg)
+    c("la pantalla de parejas no tiene campos donde escribir", visto["campos"], 0)
+    c("  ni los botones del editor", visto["botones"], [])
+    c("  ni ninguna ventana de pareja abierta hasta que se pide", visto["ventana"], None)
+
+# «Guardar aquí…» guarda lo de la ventana y aparta el baseline, como manda el editor
 with sandbox():
     cfg = preparar()
     dar_baseline(cfg, "notas")
@@ -268,53 +352,179 @@ with sandbox():
       any(p.name.startswith("notas.old-") for p in model.STATE_DIR.iterdir()), True)
     c("el catálogo sigue sin tocarse", subidos, [])
 
-# Cambiar de pareja con algo sin guardar lo pregunta, y «no» se queda donde estaba
+# Guardar cierra la ventana; si no se llega a guardar, se queda con lo escrito
 with sandbox():
     cfg = preparar()
     visto = {}
 
-    def cambiar_y_dejar(self, *_a, **_k):
-        """Cambia un campo, intenta pasar a otra pareja diciendo que no, y luego que sí."""
-        self.lista.elegir("notas")
-        self.editor.campos["remote_path"].set("/R/a-medias")
-        messagebox.askokcancel = lambda *a, **k: False
-        visto["no"] = (self.lista.elegir("subida"), self.lista.elegida,
-                       self.editor.campos["remote_path"].get())
-        messagebox.askokcancel = lambda *a, **k: True
-        visto["si"] = (self.lista.elegir("subida"), self.lista.elegida,
-                       self.editor.campos["remote_path"].get())
+    def guardar_dos_veces(self, *_a, **_k):
+        """Guarda diciendo que no a la confirmación, y luego diciendo que sí."""
+        def en_ella(ventana):
+            """Pulsa «Guardar aquí…» con un cambio: primero sin confirmar y luego sí."""
+            ventana.editor.campos["remote_path"].set("/R/otro")
+            padres: list = []
+            tk_pairs.confirmar_plan = lambda parent, *a, **k: bool(padres.append(parent))
+            boton_a_la_vista(ventana, "Guardar aquí…").invoke()
+            visto["sobre"] = padres == [ventana]
+            visto["sin_confirmar"] = (
+                bool(ventana.winfo_exists()), ventana.editor.campos["remote_path"].get(),
+                self.pantalla.cambiado, self.pantalla.ventana is ventana.ventana)
+            tk_pairs.confirmar_plan = lambda *a, **k: True
+            boton_a_la_vista(ventana, "Guardar aquí…").invoke()
+            visto["confirmado"] = (bool(ventana.winfo_exists()), self.pantalla.cambiado,
+                                   self.pantalla.ventana)
+        en_la_ventana(self, en_ella, "notas")
+        visto["pie"] = str(self.pantalla.pie_nota.cget("text"))
 
-    tk.Toplevel.wait_window = cambiar_y_dejar
-    c("con cambios sin guardar, «no» no cambia de pareja",
-      tk_pairs.open_dialog(raiz, cfg) or visto["no"], (False, "notas", "/R/a-medias"))
-    c("y «sí» pasa a la otra, con lo suyo", visto["si"], (True, "subida", "/R/subida"))
+    tk.Toplevel.wait_window = guardar_dos_veces
+    try:
+        tk_pairs.open_dialog(raiz, cfg)
+    finally:
+        tk_pairs.confirmar_plan = lambda *a, **k: True
+    c("la confirmación del plan se enseña sobre la ventana de la pareja, no detrás de ella",
+      visto["sobre"], True)
+    c("sin confirmar el plan, la ventana sigue abierta con lo escrito y nada cambia",
+      visto["sin_confirmar"], (True, "/R/otro", False, True))
+    c("confirmado, se guarda y la ventana se cierra", visto["confirmado"],
+      (False, True, None))
+    c("  y lo hecho se dice en el pie de la pantalla de parejas",
+      "Config guardado" in visto["pie"], True)
+
+# Un plan que no se puede ni pedir (el nombre ya existe) se dice, y la ventana sigue
+with sandbox():
+    cfg = preparar()
+    visto = {}
+    errores.clear()
+
+    def guardar_mal(self, *_a, **_k):
+        """Le pone a 'notas' el nombre de otra pareja y pulsa guardar."""
+        def en_ella(ventana):
+            """Escribe un nombre repetido y pulsa «Guardar aquí…»."""
+            ventana.editor.campos["name"].set("subida")
+            boton_a_la_vista(ventana, "Guardar aquí…").invoke()
+            visto["sigue"] = (bool(ventana.winfo_exists()),
+                              ventana.editor.campos["name"].get())
+        en_la_ventana(self, en_ella, "notas")
+
+    tk.Toplevel.wait_window = guardar_mal
+    c("un plan rechazado no cambia nada", tk_pairs.open_dialog(raiz, cfg), False)
+    c("  se dice por qué", len(errores), 1)
+    c("  y la ventana sigue abierta con lo escrito", visto["sigue"], (True, "subida"))
+    errores.clear()
+
+# Cerrar la ventana con algo sin guardar lo pregunta, y «no» la deja como estaba
+with sandbox():
+    cfg = preparar()
+    visto = {}
+
+    def cambiar_y_cerrar(self, *_a, **_k):
+        """Cambia un campo y cierra la ventana diciendo que no, y luego que sí."""
+        preguntas: list = []
+
+        def en_ella(ventana):
+            """Pulsa «Cancelar» sin cambios no hechos, con ellos y «no», y con ellos y «sí»."""
+            ventana.editor.campos["remote_path"].set("/R/a-medias")
+            visto["cierre"] = [b.cget("text") for b in botones_de_todos(ventana)
+                               if b.cget("text") in ("Cerrar", "Cancelar")]
+            messagebox.askokcancel = lambda *a, **k: preguntas.append(a) or False
+            boton_a_la_vista(ventana, "Cancelar").invoke()
+            visto["no"] = (bool(ventana.winfo_exists()),
+                           ventana.editor.campos["remote_path"].get(), len(preguntas))
+            messagebox.askokcancel = lambda *a, **k: preguntas.append(a) or True
+            boton_a_la_vista(ventana, "Cancelar").invoke()
+            visto["si"] = (bool(ventana.winfo_exists()), len(preguntas))
+        en_la_ventana(self, en_ella, "notas")
+
+        def sin_tocar(ventana):
+            """Cierra una ventana en la que no se ha escrito nada."""
+            visto["cargado"] = ventana.editor.campos["remote_path"].get()
+            boton_a_la_vista(ventana, "Cancelar").invoke()
+            visto["limpia"] = (bool(ventana.winfo_exists()), len(preguntas))
+        en_la_ventana(self, sin_tocar, "notas")
+        messagebox.askokcancel = lambda *a, **k: True
+
+    tk.Toplevel.wait_window = cambiar_y_cerrar
+    c("cerrar la ventana no cuenta como un cambio", tk_pairs.open_dialog(raiz, cfg), False)
+    c("una pareja que se puede cambiar se deja con «Cancelar»", visto["cierre"],
+      ["Cancelar"])
+    c("con cambios sin guardar, «no» deja la ventana abierta con lo escrito",
+      visto["no"], (True, "/R/a-medias", 1))
+    c("y «sí» la cierra", visto["si"], (False, 2))
+    c("al abrirla otra vez trae lo guardado, no lo descartado", visto["cargado"],
+      "/R/notas")
+    c("  y sin nada escrito se cierra sin preguntar", visto["limpia"], (False, 2))
 
 # El catálogo que llega (aquí, el de «Releer», que contesta en el acto) no borra lo
-# escrito en el editor: se queda con ello y con su marca de «sin guardar»
+# escrito en la ventana: se queda con ello y con su marca de «sin guardar»
 with sandbox():
     cfg = preparar()
     visto = {}
 
     def escribir_y_releer(self, *_a, **_k):
-        """Escribe en el editor, pide el catálogo otra vez y mira lo que queda."""
+        """Escribe en la ventana, hace llegar el catálogo otra vez y mira lo que queda."""
         montar_catalogo(self)          # «Releer» es del bloque del catálogo, que se crea al verlo
-        self.lista.elegir("notas")
-        self.editor.campos["remote_path"].set("/R/a-medias")
-        next(b for b in botones_de_todos(self) if b.cget("text") == "Releer").invoke()
-        visto["campo"] = self.editor.campos["remote_path"].get()
-        messagebox.askokcancel = lambda *a, **k: False
-        visto["sigue_sucio"] = (self.lista.elegir("subida"), self.lista.elegida)
-        messagebox.askokcancel = lambda *a, **k: True
-        next(b for b in botones_de_todos(self) if b.cget("text") == "Descartar").invoke()
-        visto["descartado"] = self.editor.campos["remote_path"].get()
+
+        def en_ella(ventana):
+            """Escribe, relee el catálogo por detrás e intenta cerrar diciendo que no."""
+            ventana.editor.campos["remote_path"].set("/R/a-medias")
+            next(b for b in botones_de_todos(self) if b.cget("text") == "Releer").invoke()
+            visto["campo"] = ventana.editor.campos["remote_path"].get()
+            messagebox.askokcancel = lambda *a, **k: False
+            boton_a_la_vista(ventana, "Cancelar").invoke()
+            visto["sigue_sucio"] = bool(ventana.winfo_exists())
+            messagebox.askokcancel = lambda *a, **k: True
+        en_la_ventana(self, en_ella, "notas")
 
     tk.Toplevel.wait_window = escribir_y_releer
     tk_pairs.open_dialog(raiz, cfg)
-    c("al llegar el catálogo, lo escrito en el editor sigue ahí",
+    c("al llegar el catálogo, lo escrito en la ventana sigue ahí",
       visto["campo"], "/R/a-medias")
-    c("y sigue contando como sin guardar: cambiar de pareja pregunta",
-      visto["sigue_sucio"], (False, "notas"))
-    c("«Descartar» lo devuelve a lo guardado", visto["descartado"], "/R/notas")
+    c("y sigue contando como sin guardar: cerrarla pregunta", visto["sigue_sucio"], True)
+
+# La ventana guarda la pareja que enseña, se elija lo que se elija detrás en la lista
+with sandbox():
+    cfg = preparar()
+
+    def elegir_otra_detras(self, *_a, **_k):
+        """Con la ventana de 'notas' abierta, la lista pasa a 'subida' y se guarda."""
+        def en_ella(ventana):
+            """Cambia la fila elegida por detrás y guarda lo escrito."""
+            self.lista.elegir("subida", avisar=False)
+            ventana.editor.campos["remote_path"].set("/R/otro")
+            boton_a_la_vista(ventana, "Guardar aquí…").invoke()
+        en_la_ventana(self, en_ella, "notas")
+
+    tk.Toplevel.wait_window = elegir_otra_detras
+    tk_pairs.open_dialog(raiz, cfg)
+    c("lo escrito va a la pareja de la ventana, no a la que quede elegida en la lista",
+      {p.name: p.remote_path for p in model.load_config().pairs},
+      {"notas": "/R/otro", "subida": "/R/subida"})
+
+# Abrir la fila (doble clic o Intro en la lista) es lo mismo que «Modificar…»
+with sandbox():
+    cfg = preparar()
+    visto = {}
+
+    def abrir_la_fila(self, *_a, **_k):
+        """Elige una pareja y la abre como la abre la lista."""
+        self.lista.elegir("subida")
+        fuera = tk.Toplevel.wait_window
+
+        def _wait(ventana, *_a, **_k):
+            """Apunta qué pareja trae la ventana y la cierra."""
+            visto["pareja"] = ventana.editor.campos["name"].get()
+            ventana.destroy()
+
+        tk.Toplevel.wait_window = _wait
+        try:
+            self.lista.tabla.al_activar()
+        finally:
+            tk.Toplevel.wait_window = fuera
+
+    tk.Toplevel.wait_window = abrir_la_fila
+    tk_pairs.open_dialog(raiz, cfg)
+    c("abrir una fila de la lista abre la ventana de esa pareja", visto.get("pareja"),
+      "subida")
 
 # 'Volver al catálogo' deshace la modificación local
 with sandbox():
@@ -367,7 +577,7 @@ with sandbox():
                                               cambiar={"remote_path": "/R/fotos-2026"})
     c("guardar en el catálogo NO cambia este dispositivo", tk_pairs.open_dialog(raiz, cfg),
       False)
-    c("y sube lo del editor",
+    c("y sube lo de la ventana",
       next(p["remote_path"] for p in subidos[-1]["pair"] if p["name"] == "fotos"),
       "/R/fotos-2026")
     c("y nada más que eso", [p["name"] for p in subidos[-1]["pair"]],
@@ -394,19 +604,31 @@ with sandbox():
     estados = {}
 
     def mirar_botones(self, *_a, **_k):
-        """Pasa al catálogo y apunta los botones y si el editor se deja tocar."""
+        """Pasa al catálogo y apunta los botones y si la ventana de una pareja se deja tocar."""
         ver_catalogo(self)
         estados.update({b.cget("text"): str(b.cget("state"))
                         for b in botones_de_todos(self)})
-        estados["campo"] = str(self.editor.entradas["remote_path"].cget("state"))
+        estados["modificar"] = str(boton_a_la_vista(self, "Modificar…").cget("state"))
+
+        def mirar_ventana(ventana):
+            """Apunta cómo enseña la ventana una pareja del catálogo sin conexión."""
+            estados["campo"] = str(ventana.editor.entradas["remote_path"].cget("state"))
+            estados["guardar"] = str(
+                boton_a_la_vista(ventana, "Guardar en el catálogo…").cget("state"))
+            estados["chip"] = ventana.ventana.chip.spec[0]
+        en_la_ventana(self, mirar_ventana, "fotos")
 
     tk.Toplevel.wait_window = mirar_botones
     tk_pairs.open_dialog(raiz, cfg)
     c("desde la copia, el catálogo no se puede tocar",
       [estados[t] for t in ("Ajustes del catálogo…", "Nueva pareja…",
-                            "Borrar del catálogo…", "Guardar en el catálogo…")],
-      ["disabled"] * 4)
-    c("  ni su editor", estados["campo"], "readonly")
+                            "Borrar del catálogo…")],
+      ["disabled"] * 3)
+    c("  la ventana de una pareja se abre, pero no deja cambiarla ni guardarla",
+      (estados["modificar"], estados["campo"], estados["guardar"]),
+      ("normal", "readonly", "disabled"))
+    c("  y avisa de a quién afecta lo que ahí se guarde", estados["chip"],
+      "Afecta a todos los dispositivos")
     c("pero sí se puede releer", estados["Releer"], "normal")
 
     catalog.load = falso_catalogo
