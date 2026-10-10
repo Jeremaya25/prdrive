@@ -115,7 +115,7 @@ agente»**. El diseño completo está en
   el globo del área de notificación. Sin avisos, queda en su diario,
   `agente.log`.
 - **Tiene un icono en la bandeja**, en Windows y en Linux, que dice cómo va (al día,
-  sincronizando, un aviso, en pausa, la raíz cifrada bloqueada) y, con clic
+  sincronizando, un aviso, en pausa, la raíz cifrada o una unidad bloqueada) y, con clic
   derecho o izquierdo, un menú: **Abrir** la raíz de este equipo o una unidad
   de su lista, **Sincronizar ahora**, **Expulsar** (una unidad extraíble de su
   lista: la suelta para que puedas quitarla; si algo la tiene abierta, no la
@@ -137,6 +137,14 @@ agente»**. El diseño completo está en
   Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
   contraseña en su ventana, una vez por conexión.
+- **Una unidad de su lista bloqueada con BitLocker** (Windows) sale en el menú
+  del icono como «(bloqueada)», con **Desbloquear…**, que abre la ventana de
+  BitLocker de Windows: la contraseña la pide Windows, no prdrive, y el agente
+  nunca la pide por su cuenta. En cuanto la desbloqueas se atiende como
+  siempre. La reconoce por el volumen donde la atendió la última vez, así que
+  **la primera vez en un equipo** (o si le pones BitLocker más tarde en otro)
+  tienes que desbloquearla tú desde el Explorador; después ya la conoce. De un
+  disco con BitLocker que no es de prdrive no dice nada.
 - **Sincroniza al cambiar los ficheros, si una pareja lo pide.** Con `watch = true`
   (solo donde el local es origen: bisync, up y up-mirror) el agente escucha los
   avisos del sistema sobre la carpeta de la pareja (inotify en Linux; en
@@ -165,6 +173,7 @@ python agente.py pasada <id> [pareja] # sincronizar ahora
 python agente.py pausa | sigue
 python agente.py abrir [id]           # la ventana de la raíz (o arranca el agente / dice cómo va)
 python agente.py desbloquear | bloquear          # la raíz cifrada de este equipo
+python agente.py desbloquear <id>     # una unidad bloqueada con BitLocker: la ventana de Windows
 python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al entrar
 python agente.py actualizar           # la versión nueva, como «Actualizar» de la bandeja
 python agente.py actualizar <id>      # esa unidad, a la versión del agente

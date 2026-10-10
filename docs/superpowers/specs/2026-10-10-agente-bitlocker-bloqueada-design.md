@@ -1,8 +1,10 @@
 # El agente ve una unidad bloqueada con BitLocker
 
-Fecha: 2026-10-10 · Estado: **propuesta** (diseño aprobado en la conversación; falta
-la revisión de este texto) · Área: `docs/agents/reference/agent.md`, `tray.md` · Sin
-probar en real: nada de esto ha corrido con una unidad bloqueada de verdad.
+Fecha: 2026-10-10 · Estado: **implementado** (texto aprobado; plan en
+`docs/superpowers/plans/2026-10-10-agente-bitlocker-bloqueada.md`) · Área:
+`docs/agents/reference/agent.md`, `tray.md` · Sin probar en real: nada de esto ha
+corrido con una unidad bloqueada de verdad (lista viva, sección «Una unidad
+bloqueada con BitLocker»).
 
 ## Qué se pide
 
