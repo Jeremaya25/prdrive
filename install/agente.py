@@ -508,7 +508,9 @@ def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
         Qué se ha hecho, en una frase.
 
     Raises:
-        InstallError: Si no se puede escribir `agente.json`.
+        InstallError: Si no se puede escribir `agente.json` o dejar una
+            petición en el buzón. Las que ya se dejaron se quedan: volver a
+            pedirlo las repite, y pedir dos veces lo mismo no cambia nada.
     """
     if not equipo.ajustes_json().exists():
         aj = equipo.Ajustes(espera_unidad_nueva=espera,
@@ -523,32 +525,32 @@ def aplicar_unidades(elegidas: dict[str, tuple[str, str]], espera: float,
             raise InstallError(f"No he podido escribir {equipo.ajustes_json()}.")
         return f"Configuración del agente escrita en {equipo.ajustes_json()}."
     actuales = equipo.leer_ajustes()
-    pedidas = 0
+    peticiones: list[dict] = []
     if raiz is not None:
         ya = actuales.unidades.get(raiz.id)
         if (ya is None or ya.ruta != raiz.ruta or ya.modo != raiz.modo
                 or ya.contenedor != raiz.contenedor):
-            equipo.pedir({"pide": equipo.PIDE_RAIZ, "id": raiz.id, "ruta": raiz.ruta,
-                          "nombre": raiz.nombre, "modo": raiz.modo,
-                          **({"contenedor": raiz.contenedor} if raiz.contenedor
-                             else {})})
-            pedidas += 1
+            peticiones.append({"pide": equipo.PIDE_RAIZ, "id": raiz.id, "ruta": raiz.ruta,
+                               "nombre": raiz.nombre, "modo": raiz.modo,
+                               **({"contenedor": raiz.contenedor} if raiz.contenedor
+                                  else {})})
     for uid, (modo, nombre) in elegidas.items():
         ya = actuales.unidades.get(uid)
         if ya is None or ya.modo != modo:
-            equipo.pedir({"pide": equipo.PIDE_MODO, "id": uid, "modo": modo,
-                          "nombre": nombre})
-            pedidas += 1
+            peticiones.append({"pide": equipo.PIDE_MODO, "id": uid, "modo": modo,
+                               "nombre": nombre})
     if actuales.espera_unidad_nueva != espera:
-        equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "espera_unidad_nueva",
-                      "valor": espera})
-        pedidas += 1
+        peticiones.append({"pide": equipo.PIDE_AJUSTE, "clave": "espera_unidad_nueva",
+                           "valor": espera})
     if pedir_al_iniciar is not None and actuales.pedir_al_iniciar != pedir_al_iniciar:
-        equipo.pedir({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar",
-                      "valor": pedir_al_iniciar})
-        pedidas += 1
-    return (f"El agente ya tenía su configuración: se le han pedido {pedidas} cambios."
-            if pedidas else "El agente ya tenía esta configuración.")
+        peticiones.append({"pide": equipo.PIDE_AJUSTE, "clave": "pedir_al_iniciar",
+                           "valor": pedir_al_iniciar})
+    for peticion in peticiones:
+        if not equipo.pedir(peticion):
+            raise InstallError(f"No he podido dejarle la petición al agente en "
+                               f"{equipo.buzon()}.")
+    return (f"El agente ya tenía su configuración: se le han pedido {len(peticiones)} "
+            f"cambios." if peticiones else "El agente ya tenía esta configuración.")
 
 
 def raiz_pedida(uid: str | None) -> bool:
@@ -892,6 +894,10 @@ def parar_agente(avance=None) -> str | None:
     dos minutos: se apunta el corte (`equipo.apuntar_corte()`) y el agente que
     venga deja esa pareja hasta entonces en vez de fallar contra él.
 
+    Un «parar» que no se ha podido dejar en el buzón se vuelve a pedir en cada
+    vuelta de la espera: sin él el agente no sabe que tiene que irse, lanza la
+    pareja siguiente y acaba cortado a la fuerza con ella.
+
     Returns:
         Qué ha pasado, o `None` si no había nada en marcha.
     """
@@ -900,8 +906,7 @@ def parar_agente(avance=None) -> str | None:
     if vivo is None and pasada is None:
         return None
     pid = int((vivo or {}).get("pid", -1))
-    if vivo is not None:
-        equipo.pedir({"pide": equipo.PIDE_PARAR})
+    pedido = vivo is None or equipo.pedir({"pide": equipo.PIDE_PARAR})
     inicio = time.monotonic()
     esperado = False
     sin_pasada = None       # desde cuándo no hay pasada: `PARAR_ESPERA` cuenta desde ahí
@@ -909,6 +914,8 @@ def parar_agente(avance=None) -> str | None:
         vivo, pasada = equipo.agente_vivo(), equipo.pasada_viva()
         if vivo is None and pasada is None:
             break
+        if not pedido and vivo is not None:
+            pedido = equipo.pedir({"pide": equipo.PIDE_PARAR})
         ahora = time.monotonic()
         pasado = ahora - inicio
         if pasada is None:

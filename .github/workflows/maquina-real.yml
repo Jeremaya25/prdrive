@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - "common/avisos_carpeta.py"
+      - "common/equipo.py"
       - "common/expulsar.py"
       - "ui/bandeja_windows.py"
       - "install/deploy.py"

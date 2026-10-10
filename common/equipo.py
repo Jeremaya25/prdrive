@@ -31,9 +31,11 @@ buzón. `instalacion.json` solo lo escriben el instalador y el actualizador, que
 son quienes cambian el código y el Python de sitio.
 
 Un buzón es un fichero con una petición JSON por línea. Quien pide AÑADE una
-línea (varios pueden pedir a la vez sin pisarse); el agente lo recoge
-renombrándolo antes de leerlo, así que lo que llegue mientras lee va a un buzón
-nuevo y no se pierde. Sin puertos ni sockets: la misma forma que `daemon.stop`.
+línea (varios pueden pedir a la vez; en Windows, dos que añadan al mismo buzón
+en el mismo instante todavía pueden pisarse); el agente lo recoge renombrándolo
+antes de leerlo, así que lo que llegue mientras lee va a un buzón nuevo, y lo
+que `pedir()` da por dejado le llega: quien pide y el agente que recoge se
+turnan (`turno()`). Sin puertos ni sockets: la misma forma que `daemon.stop`.
 
 Leer nunca lanza: un fichero que falta o que trae basura se lee como los
 valores de fábrica, con la misma regla que `store.py`.
@@ -47,12 +49,18 @@ import os
 import re
 import socket
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
 from . import APP_NAME, store
 from .planificador import Politica
+
+try:
+    import fcntl
+except ImportError:                     # Windows: ni lo hay ni hace falta (`turno()`)
+    fcntl = None                        # type: ignore[assignment]
 
 IS_WIN = os.name == "nt"
 HOST = socket.gethostname()             # el mismo que apunta `ui/prefs.py`
@@ -524,31 +532,104 @@ al buzón del agente.
 PIDE_SERVICIO = (PIDE_REANUDAR, PIDE_PAUSAR_RAIZ, PIDE_PASADA, PIDE_BLOQUEAR)
 
 
+ESPERA_BUZON = 0.5
+"""Segundos que, como mucho, espera una mitad del buzón a la otra.
+
+En POSIX, quien pide y el agente que recoge se turnan (`turno()`); en Windows,
+quien pide espera a que el agente acabe de renombrar el buzón, que mientras
+tanto no se deja abrir. Las dos esperas duran lo que una llamada al sistema, y
+el plazo es para quien se haya quedado parado en medio: pasado, se sigue sin
+él.
+"""
+PASO_BUZON = 0.002      # segundos entre un intento y el siguiente
+
+
+@contextmanager
+def turno(carpeta: Path, recoge: bool = False):
+    """Turna, en POSIX, a quienes dejan peticiones en un buzón con el agente que lo recoge.
+
+    Allí el agente puede renombrar un buzón que otro tiene abierto, leerlo y
+    borrarlo antes de que ese otro escriba: la línea caería en un fichero ya
+    leído. El turno es un cerrojo (`flock`) sobre la carpeta del buzón, que no
+    cambia de nombre. Quien pide lo toma compartido (varios pueden pedir a la
+    vez) y lo tiene desde antes de abrir el buzón hasta cerrarlo; el agente lo
+    toma exclusivo con el buzón ya renombrado y antes de leerlo. Así el agente
+    lee cuando han cerrado todos los que pudieron abrir ese fichero, y quien
+    llega después abre un buzón nuevo.
+
+    En Windows no hace nada: el renombrado del agente falla mientras alguien
+    tenga el buzón abierto. Tampoco donde el sistema de ficheros no admite
+    cerrojos, ni pasado `ESPERA_BUZON` sin conseguirlo, para que un proceso
+    parado con el turno no detenga a los demás: se sigue sin turno.
+
+    Args:
+        carpeta: La carpeta del buzón.
+        recoge: Si lo pide el agente, para leer el buzón que acaba de renombrar.
+    """
+    fd = None
+    if fcntl is not None:
+        try:
+            fd = os.open(carpeta, os.O_RDONLY)
+            modo = (fcntl.LOCK_EX if recoge else fcntl.LOCK_SH) | fcntl.LOCK_NB
+            limite = time.monotonic() + ESPERA_BUZON
+            while True:
+                try:
+                    fcntl.flock(fd, modo)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= limite:
+                        break
+                    time.sleep(PASO_BUZON)
+        except OSError:
+            pass
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def pedir(peticion: Mapping[str, Any], buzon_de: Path | None = None) -> bool:
     """Deja una petición en el buzón del agente o, con `buzon_de`, en el de una raíz.
 
     Va sellada con la hora (`cuando`): un «parar» que el agente de entonces no
     llegó a leer no puede tumbar al siguiente.
 
+    La línea se escribe con el turno del buzón (`turno()`). En Windows, donde
+    el buzón no se deja abrir mientras el agente lo renombra, se insiste hasta
+    `ESPERA_BUZON`.
+
     Returns:
         True si se ha podido escribir.
     """
     destino = buzon_de if buzon_de is not None else buzon()
+    linea = json.dumps({**dict(peticion), "cuando": time.time()}, ensure_ascii=False) + "\n"
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
-        with destino.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({**dict(peticion), "cuando": time.time()},
-                               ensure_ascii=False) + "\n")
-        return True
     except OSError:
         return False
+    limite = time.monotonic() + ESPERA_BUZON
+    while True:
+        try:
+            # El buzón se cierra, con la línea ya escrita, antes de soltar el turno.
+            with turno(destino.parent), destino.open("a", encoding="utf-8") as f:
+                f.write(linea)
+            return True
+        except PermissionError:
+            if not IS_WIN or time.monotonic() >= limite:
+                return False
+            time.sleep(PASO_BUZON)
+        except OSError:
+            return False
 
 
 def recoger(buzon_de: Path | None = None) -> list[dict]:
     """Devuelve lo que hay en el buzón, vaciándolo; solo lo llama el agente.
 
     Se renombra antes de leer, así que lo que llegue después va a un buzón
-    nuevo. Se ignoran las líneas que no son JSON o no llevan `pide`.
+    nuevo, y se lee con el turno del buzón (`turno()`): cuando ya ha escrito
+    quien lo tenía abierto. Se ignoran las líneas que no son JSON o no llevan
+    `pide`.
     """
     origen = buzon_de if buzon_de is not None else buzon()
     tomado = origen.with_name(f"{origen.name}.{os.getpid()}")
@@ -558,7 +639,9 @@ def recoger(buzon_de: Path | None = None) -> list[dict]:
         return []
     peticiones: list[dict] = []
     try:
-        for linea in tomado.read_text(encoding="utf-8", errors="replace").splitlines():
+        with turno(origen.parent, recoge=True):
+            texto = tomado.read_text(encoding="utf-8", errors="replace")
+        for linea in texto.splitlines():
             try:
                 dato = json.loads(linea)
             except ValueError:
