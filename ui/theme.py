@@ -908,22 +908,34 @@ _imagenes: dict[int, list] = {}
 """Las imágenes de los elementos del tema, por intérprete: Tk no las retiene."""
 
 
+LADO_FILETE = 128  # píxeles
+"""El lado del azulejo liso con que se pinta un filete.
+
+ttk no ESTIRA la imagen de un elemento: la repite como un azulejo hasta llenar
+el hueco, una copia cada vez. Con este lado un separador de 1000 px son ocho
+copias, a lo ancho o a lo alto; con un azulejo de 1×1 serían mil.
+"""
+
+
 def _filetes(widget, style) -> None:
     """Cambia el separador de ttk por un filete plano de 1 px del color de la línea.
 
     El elemento de serie pinta un surco en relieve con dos tonos sacados de su
     fondo, uno más oscuro que el otro, y el diseño pide una línea plana y
-    decorativa. Se pinta con un elemento de imagen de 1×1 que se estira.
+    decorativa. Se pinta con un elemento de imagen: un azulejo liso de
+    `LADO_FILETE` de lado, del que el filete solo pide 1 px.
     """
     import tkinter as tk
     try:
         guardadas = _imagenes.setdefault(id(widget.tk), [])
         for estilo, color in (("TSeparator", LINEA), ("Card.TSeparator", LINEA_SUAVE)):
-            img = tk.PhotoImage(master=widget, width=1, height=1)
-            img.put(color, to=(0, 0))
+            img = tk.PhotoImage(master=widget, width=LADO_FILETE, height=LADO_FILETE)
+            img.put(color, to=(0, 0, LADO_FILETE, LADO_FILETE))
             guardadas.append(img)
             elemento = f"Prdrive.{estilo}.filete"
-            style.element_create(elemento, "image", img, border=0, sticky="nswe")
+            # Sin el mínimo de 1 px el filete pediría lo que mide su azulejo.
+            style.element_create(elemento, "image", img, border=0, sticky="nswe",
+                                 width=1, height=1)
             style.layout(estilo, [(elemento, {"sticky": "nswe"})])
     except Exception:                               # noqa: BLE001
         style.configure("TSeparator", background=LINEA)
