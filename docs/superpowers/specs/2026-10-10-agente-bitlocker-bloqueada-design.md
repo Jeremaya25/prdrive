@@ -93,14 +93,14 @@ hay no cambian.
 
 ### 2. Verla bloqueada (`agente.py`)
 
-En `_recorrer()`, solo en Windows y solo si alguna unidad de la lista tiene
-`volumen`, no es raíz, no está en modo `nada` y no está conectada:
+En `_recorrer()`, solo si alguna unidad de la lista tiene `volumen` (fuera de
+Windows ninguna lo tiene nunca), no es raíz, no está en modo `nada` y no está conectada:
 
 - Las raíces candidatas que no han dado ni fichero de control ni vestíbulo (también
   las que han contestado con `OSError`) se comparan por `bitlocker.volumen_de()`
   con esos volúmenes recordados.
-- Si una coincide, se pregunta `bitlocker.bitlocker_status(letra)`. Solo cuenta
-  `locked`. Cualquier otro estado, o no saberlo, no enseña nada: se falla hacia no
+- Si una coincide, se pregunta `cifrada.bitlocker_de(raiz)` (el punto sustituible
+  que ya usa la ventana, que recibe la raíz y no la letra). Solo cuenta `locked`. Cualquier otro estado, o no saberlo, no enseña nada: se falla hacia no
   decir nada, como `cifrada.estado()`.
 - El resultado es `Agente.bitlocker: dict[str, Path]` (id → raíz), rehecho en cada
   recorrido. No hace falta verla `ESTABLE` veces: de la unidad no se lee ni se
@@ -131,7 +131,7 @@ En `_recorrer()`, solo en Windows y solo si alguna unidad de la lista tiene
 - **`bandeja.estado()`**: el candado (`icons.BLOQUEADO`) y «Trabajo bloqueada», en
   el mismo escalón que la raíz cifrada bloqueada y detrás de ella. No es un aviso:
   no va en `bandeja.avisos()`.
-- **`agente.py estado`**: «Bloqueada con BitLocker: Trabajo en E:
+- **`agente.py status`**: «Bloqueada con BitLocker: Trabajo en E:
   (agente.py desbloquear ID)».
 
 ### 4. Desbloquear (`common/bitlocker.py`, `agente.py`)
@@ -182,7 +182,7 @@ En `_recorrer()`, solo en Windows y solo si alguna unidad de la lista tiene
 su docstring pasa a decir que también lo usa el agente), `common/equipo.py`
 (`Unidad.volumen`, `desde_dict()`, `a_dict()`), `agente.py` (`_apuntar_volumen()`,
 el recorrido, la cadencia, `desbloquear_bitlocker()`, `PIDE_DESBLOQUEAR`,
-`resumen()`, la orden `estado` y la ayuda de `desbloquear`), `ui/bandeja.py`
+`resumen()`, la orden `status` y la ayuda de `desbloquear`), `ui/bandeja.py`
 (`vista()`, `estado()`).
 
 Sin ficheros nuevos fuera de `tests/`: no hay regla ni documento de área nuevos.
@@ -190,7 +190,7 @@ Sin ficheros nuevos fuera de `tests/`: no hay regla ni documento de área nuevos
 Documentación: `docs/agents/reference/agent.md` («Detection» y el fichero
 `agente.json`), `tray.md` (el desplegable y la prioridad del icono),
 `commands-testing.md` (los puntos de indirección: `bitlocker.volumen_de`,
-`bitlocker.bitlocker_status`, `agente.desbloquear_bitlocker`),
+`cifrada.bitlocker_de`, `agente.desbloquear_bitlocker`),
 `docs/guia/agente-residente.md` (para quien lo usa: qué verá y que la primera vez
 hay que desbloquearla a mano) y las pruebas en real
 (`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md`, sección nueva).
@@ -198,9 +198,10 @@ hay que desbloquearla a mano) y las pruebas en real
 ## Pruebas
 
 - **`tests/test_agente_bitlocker.py` (nuevo, sin pantalla, verde en Windows y en
-  Linux forzando `agente.IS_WIN`):** con `bitlocker.volumen_de`,
-  `bitlocker.bitlocker_status`, `agente.desbloquear_bitlocker` y
-  `penwatch.candidate_roots` sustituidos.
+  Linux):** con `bitlocker.volumen_de`, `cifrada.bitlocker_de`,
+  `agente.desbloquear_bitlocker` y `penwatch.candidate_roots` sustituidos. Solo la
+  cadencia fuerza `agente.IS_WIN`: fuera de Windows `volumen_de()` no da nombre,
+  así que no hay nada recordado ni nada que buscar.
   - Se apunta el volumen al conectar una unidad de la lista con BitLocker; no con
     BitLocker apagado; se borra cuando se lo quitan; no se toca si no se sabe; no
     se apunta a una raíz de este equipo, ni a una `cambiada`, ni a una que no está
