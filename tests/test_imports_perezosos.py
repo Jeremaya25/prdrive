@@ -8,7 +8,7 @@ el servicio los pagan aunque no los usen. Esto vigila que no vuelvan a subir:
 
 - Qué módulos quedan cargados al importar `ui`, `ui.tk`, `runsync`,
   `common.update` y `pregunta`, en un proceso limpio cada uno.
-- Que lo que `main_window()` (y la vista que dibuja, `ui/tk_principal.py`)
+- Que lo que `VentanaPrincipal` (y la vista que dibuja, `ui/tk_principal.py`)
   importa tarde está en `PRECARGA`: la lista que se importa a ratos tras el
   primer pintado y, entera, antes de aplicar una actualización (a partir de ahí
   los ficheros cambian bajo el proceso, y un módulo importado por primera vez
@@ -108,15 +108,20 @@ def _importados_en(funcion: ast.AST, cabecera: set[int]) -> set[str]:
 def importados_tarde() -> set[str]:
     """Devuelve lo que la principal importa después de pintarse.
 
-    Es lo de dentro de `main_window()` en `ui/tk.py`, salvo su cabecera (lo
-    que se importa antes del primer pintado), y lo de dentro de cualquier
-    función de `ui/tk_principal.py`, la vista que dibuja.
+    Es lo que importan los métodos de `VentanaPrincipal` en `ui/tk.py`, salvo
+    lo que importa la cabecera de su `__init__` (lo que se carga antes del
+    primer pintado: importarlo otra vez después no carga nada), y lo de dentro
+    de cualquier función de `ui/tk_principal.py`, la vista que dibuja.
     """
     arbol = ast.parse((REPO / "ui" / "tk.py").read_text(encoding="utf-8"))
     nombres: set[str] = set()
-    for funcion in arbol.body:
-        if isinstance(funcion, ast.FunctionDef) and funcion.name == "main_window":
-            nombres |= _importados_en(funcion, {id(n) for n in funcion.body})
+    for clase in arbol.body:
+        if isinstance(clase, ast.ClassDef) and clase.name == "VentanaPrincipal":
+            init = next(n for n in clase.body
+                        if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+            cabecera = set().union(*(_importados_en(n, set()) for n in init.body
+                                     if isinstance(n, ast.ImportFrom)))
+            nombres |= _importados_en(clase, set()) - cabecera
     vista = ast.parse((REPO / "ui" / "tk_principal.py").read_text(encoding="utf-8"))
     for nodo in vista.body:
         if isinstance(nodo, (ast.FunctionDef, ast.ClassDef)):

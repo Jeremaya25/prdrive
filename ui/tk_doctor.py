@@ -167,6 +167,586 @@ def chip_de(clave: str, cuenta: int, nueva, componentes) -> tuple[str, str, str]
     return None
 
 
+def _pendientes_propios() -> list:
+    """Lee aquí mismo los componentes anticuados; vacío si no se puede."""
+    from common import components
+    try:
+        return list(components.pendientes())
+    except Exception:                                # noqa: BLE001
+        return []
+
+
+class VentanaAjustes:
+    """La ventana «Ajustes»: la barra lateral y, a su derecha, el apartado elegido.
+
+    La barra se dibuja una vez (`pintar_barra()`). Cada apartado se dibuja la
+    primera vez que se elige, en un marco suyo dentro de `contenido`; al
+    dejarlo se esconde (`dejar()`) y volver a él es enseñar el mismo marco. Lo
+    que dicen los apartados se apunta en `resultados`, que es lo que devuelve
+    `abrir()`.
+
+    El `Toplevel` lleva, para los tests, los mismos objetos que esta clase:
+    `dlg.resultados`, `dlg.panel`, `dlg.paneles`, `dlg.chips` y, con
+    «Actualizaciones» al día, `dlg.boton_buscar`.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        config: La configuración, que se pasa a los apartados que la necesitan.
+        lanzar: `lanzar(titulo, args)`, el de la ventana principal.
+        raw_local: El `sync_config.toml` en crudo, para el emparejamiento.
+        buscar_version: `buscar_version(responder)` de la ventana principal, o
+            `None` (sin botón «Buscar actualizaciones»).
+        inicial: La clave del apartado con que se abre (`INICIAL` si no).
+        nueva: La versión nueva pendiente (`update.pending()`), si la hay.
+        componentes: Los componentes anticuados que da la ventana principal.
+        vigilante: Qué hace este equipo al enchufar (`watch.resumen()`), o
+            `None` si la ventana principal todavía no lo ha leído.
+        hallazgos: Lo que ha encontrado `revision.revisar()`.
+        marcadas: Las parejas marcadas en la ventana principal.
+        compartida: La lectura compartida de la ventana principal, o `None`.
+
+    Attributes:
+        dlg: El `Toplevel`, retirado hasta `abrir()`.
+        resultados: Por clave de apartado, lo último que devolvió.
+        clave: El apartado a la vista, o `None` antes del primero.
+        nueva: La versión nueva pendiente que enseña la ventana, o `None`.
+        componentes: Los componentes anticuados, o `None` mientras no se sepan.
+        entradas: Por clave, `(Apartado, botón, fila)` de la barra.
+        rotulos: `(etiqueta, claves)` de cada grupo de la barra.
+        chips: Por clave, el `(texto, tipo, icono)` del chip dibujado, o `None`.
+        marcas: Por clave, la etiqueta del chip dibujado.
+        paneles: Por clave, `(marco, Panel)` de los apartados dibujados, a la
+            vista o escondidos.
+        con_nota: Las claves de los apartados dibujados con una nota encima.
+        forma_dibujada: Qué enseñaba «Actualizaciones» al dibujarse
+            (`forma_actualizaciones()`), o `None` si no está dibujado.
+    """
+
+    def __init__(self, parent, config: Config, lanzar, raw_local: dict | None = None,
+                 buscar_version=None, inicial: str | None = None, nueva=None,
+                 componentes=None, vigilante=None, hallazgos=None,
+                 marcadas=None, compartida=None) -> None:
+        """Construye la ventana retirada, con el título, el buscador y los dos huecos."""
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.parent = parent
+        self.config = config
+        self.lanzar = lanzar
+        self.raw_local = raw_local
+        self.buscar_version = buscar_version
+        self.inicial = inicial
+        self.componentes_dados = componentes
+        self.vigilante_dado = vigilante
+        self.hallazgos = hallazgos
+        self.marcadas = marcadas
+        self.compartida = compartida
+        self._baja = None
+
+        self.raw = catalog_editor.raw_del_dispositivo(raw_local)
+        self.resultados: dict = {}
+        self.clave: str | None = None
+        self.nueva = nueva
+        self.componentes: list | None = self.lista_de_componentes()
+
+        dlg = self.dlg = modal(parent, "Ajustes")
+        dlg.resultados = self.resultados               # los tests lo miran
+        # Toda la ventana va en su visor, como cualquier diálogo: en una pantalla
+        # baja la barra lateral sola ya no cabe, y entonces se desplaza todo junto.
+        raiz = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E5))
+        raiz.columnconfigure(1, weight=1, minsize=icons.px(dlg, ANCHO_APARTADO))
+        raiz.rowconfigure(1, weight=1, minsize=icons.px(dlg, ALTO_APARTADO))
+
+        # Arriba: el título y el buscador.
+        arriba = ttk.Frame(raiz)
+        arriba.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.E4))
+        arriba.columnconfigure(0, weight=1)
+        # Todo en una línea y centrado con el título; el rótulo del buscador va
+        # dentro del campo, como pista, y se va al escribir o al entrar en él.
+        ttk.Label(arriba, text="Ajustes", style="Titulo.TLabel").grid(
+            row=0, column=0, sticky="w")
+        self.busqueda = tk.StringVar(dlg)
+        buscador = ttk.Entry(arriba, textvariable=self.busqueda, width=34)
+        buscador.grid(row=0, column=1, sticky="e")
+        buscador.pista = theme.pista_campo(buscador, "Buscar un ajuste…")
+
+        # La barra lateral.
+        self.barra = ttk.Frame(raiz)
+        self.barra.grid(row=1, column=0, sticky="nsw", padx=(0, theme.E5))
+        self.barra.columnconfigure(0, weight=1, minsize=theme.medida(ANCHO_BARRA))
+
+        # El apartado, que ocupa al menos lo que piden los más altos: cambiar de
+        # uno a otro no puede hacer bailar la ventana.
+        self.contenido = ttk.Frame(raiz)
+        self.contenido.grid(row=1, column=1, sticky="nsew")
+        self.contenido.columnconfigure(0, weight=1)
+        self.contenido.rowconfigure(0, weight=1)
+
+        self.hay_renombrado = {c: f(self.raw) for c, f in OCASIONALES.items()}
+        self.del_equipo = model.es_equipo()
+
+        self.entradas: dict = {}
+        self.rotulos: list = []
+        self.chips: dict = {}
+        self.marcas: dict = {}
+        dlg.chips = self.chips                         # los tests lo miran
+
+        self.busqueda.trace_add("write", self.filtrar)
+        buscador.bind("<Return>", self.primero_visible)
+
+        self.paneles: dict = {}
+        self.con_nota: set = set()
+        self.forma_dibujada = None
+        dlg.paneles = self.paneles                     # los tests lo miran
+
+    def abrir(self) -> dict:
+        """Dibuja la barra y el apartado inicial, enseña la ventana y espera a que se cierre.
+
+        Returns:
+            `resultados`, con lo que han dicho los apartados.
+        """
+        dlg = self.dlg
+        self.pintar_barra()
+        if self.compartida is not None:
+            # Las lecturas que llegan con la ventana abierta. La baja es de la
+            # ventana: `<Destroy>` también llega por cada hijo que muere (el marco de
+            # un apartado, el código QR...).
+            self._baja = self.compartida.suscribir(self.al_llegar)
+            dlg.bind("<Destroy>", self._al_destruir, add="+")
+        self.elegir_inicial()
+        try:
+            vivo = bool(dlg.winfo_exists())
+        except Exception:                            # noqa: BLE001
+            vivo = False
+        if vivo:
+            dlg.perf_momento = "open-ajustes"          # lo cierra `mostrar`, al pintarse
+            mostrar(dlg, self.parent)
+        return self.resultados
+
+    def _al_destruir(self, evento) -> None:
+        """Se da de baja de la lectura compartida cuando se destruye la ventana, no un hijo."""
+        if evento.widget is self.dlg:
+            self._baja()
+
+    # La lectura compartida.
+
+    def leida(self, campo: str):
+        """Devuelve la lectura compartida si vale para ese campo, o `None`.
+
+        No vale una vacía (`huella` ausente: el hilo falló y no leyó nada) ni
+        una donde ese campo falló: tendría el valor por defecto, no el real.
+        """
+        inst = self.compartida.actual if self.compartida is not None else None
+        if inst is None or inst.huella is None or campo in inst.fallos:
+            return None
+        return inst
+
+    def lista_de_componentes(self) -> list | None:
+        """Devuelve los componentes anticuados, o `None` si todavía no se saben.
+
+        Sin lectura compartida es lo que dice el parámetro, como siempre. Con
+        ella, de la lectura si vale; si no, del parámetro cuando trae alguno.
+        Si ni uno ni otro y todavía no ha llegado ninguna lectura, no se saben:
+        una lista vacía puede ser «no hay» o «aún no se ha mirado», y darla por
+        buena diría «al día» sin haber mirado. Si ya llegó una pero sin ellos
+        (el hilo falló), se miran aquí.
+        """
+        inst = self.leida("componentes")
+        if inst is not None:
+            return list(inst.componentes)
+        if self.compartida is None or self.componentes_dados:
+            return list(self.componentes_dados or [])
+        if self.compartida.actual is not None:
+            return _pendientes_propios()
+        return None
+
+    def al_llegar(self, inst) -> None:
+        """Recoge una lectura nueva de la ventana principal y repinta lo que depende de ella."""
+        try:
+            if not self.dlg.winfo_exists():
+                return
+        except Exception:                            # noqa: BLE001 — Tk cerrado
+            return
+        if inst.huella is not None and "componentes" not in inst.fallos:
+            self.componentes = list(inst.componentes)
+        elif self.componentes is None:
+            # La lectura llegó sin ellos (el hilo falló): «Actualizaciones» no se
+            # queda esperando para siempre, los mira aquí como hacía la principal.
+            self.componentes = _pendientes_propios()
+        self.poner_chips()
+        if ("actualizaciones" not in self.paneles
+                or self.forma_dibujada == self.forma_actualizaciones()):
+            return
+        if self.clave == "actualizaciones":
+            self.tirar("actualizaciones")
+            self.dibujar("actualizaciones")
+        else:
+            self.tirar("actualizaciones")            # se dibuja al día cuando se vuelva a él
+
+    # La barra.
+
+    def sale(self, apartado: Apartado) -> bool:
+        """Indica si el apartado sale en esta ventana, busque lo que se busque."""
+        return self.hay_renombrado.get(apartado.clave, True)
+
+    def chip_actual(self, clave: str):
+        """Devuelve `(texto, tipo, icono)` del chip que le toca ahora a un apartado, o `None`.
+
+        La cuenta de «Reparación» sale de la lectura compartida si la hay, y si
+        no del parámetro `hallazgos`.
+        """
+        inst = self.leida("hallazgos")
+        cuenta = inst.cuenta if inst is not None else revision.cuenta(self.hallazgos or [])
+        return chip_de(clave, cuenta, self.nueva, self.componentes)
+
+    def pintar_barra(self) -> None:
+        """Dibuja la barra entera, una sola vez: grupos, apartados y la versión al pie."""
+        from tkinter import ttk
+
+        barra = self.barra
+        fila = 0
+        for grupo, apartados in GRUPOS:
+            visibles = [a for a in apartados if self.sale(a)]
+            if not visibles:
+                continue
+            if grupo == "Esta unidad" and self.del_equipo:
+                grupo = "Esta carpeta"
+            rotulo = ttk.Label(barra, text=theme.rotulo(grupo), style="Rotulo.TLabel")
+            rotulo.grid(row=fila, column=0, sticky="w", padx=(theme.E3, 0),
+                        pady=(theme.E3 if fila else 0, theme.E1))
+            fila += 1
+            miembros = []
+            for apartado in visibles:
+                boton = ttk.Button(barra, text=apartado.rotulo, style="Nav.TButton",
+                                   command=lambda c=apartado.clave: self.elegir(c))
+                theme.boton_icono(boton, apartado.icono, theme.TINTA2, theme.PAPEL)
+                boton.grid(row=fila, column=0, sticky="ew", pady=(0, theme.E1))
+                self.entradas[apartado.clave] = (apartado, boton, fila)
+                self.chips[apartado.clave] = None
+                miembros.append(apartado.clave)
+                fila += 1
+            self.rotulos.append((rotulo, miembros))
+        barra.rowconfigure(fila, weight=1)
+        version = update.installed_version() or "desarrollo"
+        try:
+            nombre = fleet.nombre()
+        except Exception:                            # noqa: BLE001 — solo es un rótulo
+            nombre = ""
+        ttk.Label(barra, text=f"prdrive {version}" + (f" · {nombre}" if nombre else ""),
+                  style="Pista.TLabel", wraplength=theme.medida(ANCHO_BARRA - 12),
+                  justify="left").grid(row=fila + 1, column=0, sticky="sw",
+                                       padx=(theme.E3, 0), pady=(theme.E4, 0))
+        self.poner_chips()
+
+    def poner_chips(self) -> None:
+        """Recalcula el chip de cada apartado y cambia solo los que son otros.
+
+        El chip que no cambia es el mismo widget: no se destruye ni se crea.
+        """
+        for clave, (_a, boton, _f) in self.entradas.items():
+            nuevo = self.chip_actual(clave)
+            if nuevo == self.chips.get(clave):
+                continue
+            viejo = self.marcas.pop(clave, None)
+            if viejo is not None:
+                viejo.destroy()
+            self.chips[clave] = nuevo
+            if nuevo is None:
+                continue
+            texto, tipo, icono = nuevo
+            marca = theme.chip(boton, texto, tipo, icono)
+            marca.place(relx=1.0, rely=0.5, x=-icons.px(boton, 8), anchor="e")
+            marca.bind("<Button-1>", lambda _e, c=clave: self.elegir(c))
+            self.marcas[clave] = marca
+
+    def marcar(self, antes: str | None, ahora: str) -> None:
+        """Pasa el botón elegido de `antes` a `ahora`; los demás ni se tocan.
+
+        Un botón que cambia de cara deja a su chip con las esquinas de la cara
+        de antes: se vuelve a asentar (`theme.reasentar()`).
+        """
+        if antes == ahora:
+            return
+        for clave, elegido in ((antes, False), (ahora, True)):
+            if clave is None or clave not in self.entradas:
+                continue
+            apartado, boton, _f = self.entradas[clave]
+            boton.configure(style="NavSel.TButton" if elegido else "Nav.TButton")
+            theme.boton_icono(boton, apartado.icono, theme.TINTA2,
+                              theme.ACENTO_SUAVE if elegido else theme.PAPEL)
+            theme.reasentar(boton)
+
+    def filtrar(self, *_) -> None:
+        """Deja en la barra solo lo que coincide con lo escrito."""
+        texto = self.busqueda.get()
+        for apartado, boton, _f in self.entradas.values():
+            if coincide(apartado, texto):
+                boton.grid()
+            else:
+                boton.grid_remove()
+        for rotulo, miembros in self.rotulos:
+            if any(self.entradas[c][1].grid_info() for c in miembros):
+                rotulo.grid()
+            else:
+                rotulo.grid_remove()
+
+    def primero_visible(self, _evento=None) -> None:
+        """Con Intro en el buscador, abre el primer apartado que queda."""
+        for clave, (_a, boton, _f) in self.entradas.items():
+            if boton.grid_info():
+                self.elegir(clave)
+                return
+
+    # Los apartados.
+
+    def construir_actualizaciones(self, panel: Panel) -> None:
+        """Lo nuevo si lo hay; si no, los componentes; si no, buscar a mano."""
+        from tkinter import ttk
+
+        from . import tk_update
+
+        self.forma_dibujada = self.forma_actualizaciones()
+        if self.nueva is not None:
+            tk_update.construir(panel, self.nueva)
+            return
+        if self.componentes is None:
+            # La lectura de la ventana principal aún no ha llegado: se espera con
+            # un indicador y el apartado se rehace al llegar (`al_llegar`).
+            espera = panel.indicador(panel.marco, ancho=600)
+            espera.marco.grid(row=0, column=0, sticky="ew")
+            espera.poner(ESPERANDO, True)
+            return
+        if self.componentes:
+            tk_update.construir_componentes(panel, self.componentes)
+            return
+        marco = panel.marco
+        actual = update.installed_version() or "desconocida"
+        ttk.Label(marco, text=AL_DIA, style="Dialogo.TLabel", wraplength=theme.medida(600),
+                  justify="left").grid(row=0, column=0, sticky="w")
+        ttk.Label(marco, text=f"Lleva la {actual}. Se comprueba sola cada 24 horas; "
+                              "aquí se puede preguntar ahora.",
+                  style="Pista.TLabel", wraplength=theme.medida(600),
+                  justify="left").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
+        if self.buscar_version is None:
+            return
+        respuesta = ttk.Label(marco, text="", style="Pista.TLabel",
+                              wraplength=theme.medida(600), justify="left")
+        respuesta.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
+        boton = ttk.Button(marco, text="Buscar actualizaciones",
+                           command=lambda: self.buscar(boton, respuesta))
+        theme.boton_icono(boton, "reload", theme.TINTA2, theme.SUPERFICIE)
+        boton.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
+        self.dlg.boton_buscar = boton                  # los tests lo pulsan
+
+    def buscar(self, boton, respuesta) -> None:
+        """Pregunta por una versión nueva y dice la respuesta debajo del botón."""
+        boton.state(["disabled"])
+        respuesta.configure(text="Buscando…")
+        self.buscar_version(lambda texto: self.responder(boton, respuesta, texto))
+
+    def responder(self, boton, respuesta, texto: str) -> None:
+        """Pone la respuesta en su apartado, esté a la vista o escondido.
+
+        Args:
+            boton: El «Buscar actualizaciones» que se pulsó.
+            respuesta: La etiqueta de debajo; si ya no existe, no se hace nada.
+            texto: Lo que hay que decir.
+        """
+        try:
+            if not respuesta.winfo_exists():
+                return
+        except Exception:                            # noqa: BLE001 — Tk cerrado
+            return
+        try:
+            self.nueva = update.pending()
+        except Exception:                            # noqa: BLE001
+            self.nueva = None
+        if self.nueva is not None:
+            self.poner_chips()
+            if self.clave == "actualizaciones":
+                self.rehacer(texto)
+            else:
+                self.tirar("actualizaciones")        # se dibuja con la novedad al volver
+            return
+        respuesta.configure(text=texto)
+        boton.state(["!disabled"])
+
+    def forma_actualizaciones(self):
+        """Devuelve qué enseñaría hoy «Actualizaciones», para saber si el dibujado ya no vale."""
+        if self.nueva is not None:
+            return ("nueva", self.nueva.version)
+        if self.componentes is None:
+            return ("esperando",)
+        if self.componentes:
+            return ("componentes", tuple(self.componentes))
+        return ("al día",)
+
+    def vigilante_ahora(self):
+        """Devuelve qué hace este equipo al enchufar, sin caer nunca a falta de datos.
+
+        La lectura compartida si vale; si no, el parámetro; si tampoco, se lee
+        (`watch.resumen()` solo mira ficheros, como cuando la ventana principal
+        lo leía al pintarse).
+        """
+        inst = self.leida("vigilante")
+        if inst is not None:
+            return inst.vigilante
+        if self.vigilante_dado is not None:
+            return self.vigilante_dado
+        try:
+            return watch.resumen()
+        except Exception:                            # noqa: BLE001
+            return watch.Resumen("no_disponible")
+
+    def construir_arranque(self, panel: Panel) -> None:
+        """El vigilante, o lo que hace el agente si este equipo lo tiene."""
+        from . import tk_watch
+        ahora = self.vigilante_ahora()
+        if ahora.es_agente:
+            modo = self.resultados.get("arranque")
+            res = watch.pedido(ahora, modo) if isinstance(modo, str) else ahora
+            tk_watch.construir_agente(panel, res)
+            return
+        panel.devolver(True)       # al volver, la principal relee el vigilante
+        tk_watch.construir(panel)
+
+    def construir_de(self, clave: str):
+        """Devuelve la función que dibuja el apartado `clave` en un panel."""
+        from . import (tk_configuracion, tk_llavero, tk_qr, tk_renombrar, tk_repair,
+                       tk_versions, tk_volumen)
+        return {
+            "volumen": tk_volumen.construir,
+            "configuracion": lambda p: tk_configuracion.construir(p, self.config),
+            "llavero": lambda p: tk_llavero.construir_ajustes(p, self.raw_local),
+            "versiones": lambda p: tk_versions.construir(p, self.config),
+            "arranque": self.construir_arranque,
+            "qr": lambda p: tk_qr.construir(p, self.raw_local),
+            "renombrar": lambda p: tk_renombrar.construir(p, self.raw),
+            "reparacion": lambda p: tk_repair.construir(p, self.config, self.lanzar,
+                                                        self.marcadas,
+                                                        compartida=self.compartida),
+            "actualizaciones": self.construir_actualizaciones,
+        }[clave]
+
+    def clave_resultado(self, clave: str) -> str:
+        """Bajo qué clave apunta lo suyo un apartado.
+
+        El de actualizaciones dibuja dos pantallas distintas, y lo que
+        devuelve cada una se le dice a la principal por separado.
+        """
+        if clave == "actualizaciones" and self.nueva is None and self.componentes:
+            return "componentes"
+        return clave
+
+    # Los apartados dibujados, a la vista o escondidos.
+
+    def ajustar(self, panel: Panel) -> None:
+        """Hace sitio al apartado recién enseñado, si la ventana sigue ahí."""
+        try:
+            if self.dlg.winfo_exists():
+                panel.ajustar()
+        except Exception:                            # noqa: BLE001 — ya cerrada
+            pass
+
+    def dibujar(self, clave: str, nota: str = "") -> None:
+        """Dibuja el apartado `clave` en un marco suyo, a la vista, con la nota si la hay."""
+        from tkinter import ttk
+
+        hueco = ttk.Frame(self.contenido)
+        hueco.grid(row=0, column=0, sticky="nsew")
+        hueco.columnconfigure(0, weight=1)
+        hueco.rowconfigure(1, weight=1)
+        if nota:
+            theme.aviso(hueco, "", nota, tono="Verde.", icono="ok",
+                        ancho=ANCHO_APARTADO - 80).grid(row=0, column=0, sticky="ew",
+                                                        pady=(0, theme.E4))
+        marco = ttk.Frame(hueco)
+        marco.grid(row=1, column=0, sticky="nsew")
+        marco.columnconfigure(0, weight=1)
+        panel = Panel(self.dlg, marco, incrustado=True, al_terminar=self.rehacer,
+                      al_cerrar=self.dlg.destroy, resultados=self.resultados,
+                      clave=self.clave_resultado(clave))
+        self.dlg.panel = panel                         # los tests lo miran
+        self.paneles[clave] = (hueco, panel)
+        if nota:
+            self.con_nota.add(clave)
+        try:
+            self.construir_de(clave)(panel)
+        except BaseException:
+            self.tirar(clave)                          # ni a medias ni escondido debajo
+            raise
+        self.ajustar(panel)
+
+    def tirar(self, clave: str) -> None:
+        """Destruye el apartado dibujado `clave`, si lo hay."""
+        entrada = self.paneles.pop(clave, None)
+        self.con_nota.discard(clave)
+        if clave == "actualizaciones":
+            self.forma_dibujada = None
+        if entrada is not None:
+            entrada[0].destroy()
+
+    def dejar(self, clave: str) -> None:
+        """Deja el apartado: lo esconde y lo guarda, o lo tira si no se conserva.
+
+        Se tira el que no se conserva (`EFIMEROS`) y el que lleva una nota: al
+        volver a él, como antes, se dibuja sin ella.
+        """
+        hueco, panel = self.paneles[clave]
+        panel.ocultado()
+        if clave in EFIMEROS or clave in self.con_nota:
+            self.tirar(clave)
+        else:
+            hueco.grid_remove()
+
+    def rehacer(self, nota: str = "") -> None:
+        """Vuelve a dibujar el apartado a la vista, con una nota encima si la hay.
+
+        Un apartado que da algo por terminado ha podido cambiar lo que enseñan
+        los demás (el config que guardó, el nombre de la unidad...), así que se
+        tiran los otros ya dibujados en vez de guardar lo que enseñaban.
+        """
+        clave = self.clave
+        if clave == "actualizaciones" and self.resultados.get("componentes") is True:
+            # Ya puestos al día, lo que había que poner se ha quedado viejo.
+            self.componentes = _pendientes_propios()
+        for otra in [k for k in self.paneles if k != clave]:
+            self.tirar(otra)
+        self.tirar(clave)
+        self.dibujar(clave, nota)
+        self.poner_chips()
+
+    def elegir(self, clave: str) -> None:
+        """Pone a la vista el apartado `clave`: el ya dibujado, o uno nuevo la primera vez."""
+        if clave not in self.entradas:
+            clave = INICIAL
+        antes = self.clave
+        if clave == antes:
+            return
+        momento = f"pane-{clave}"
+        perf_empezar(momento)
+        self.marcar(antes, clave)
+        self.clave = clave
+        if antes in self.paneles:
+            self.dejar(antes)
+        if clave in self.paneles:
+            hueco, panel = self.paneles[clave]
+            hueco.grid()
+            self.dlg.panel = panel
+            panel.mostrado()
+            self.ajustar(panel)
+        else:
+            self.dibujar(clave)
+        perf_al_pintar(self.dlg, momento)
+
+    def elegir_inicial(self) -> None:
+        """Elige el apartado con que se abre, restilando solo los botones que cambian."""
+        clave = self.inicial if self.inicial in self.entradas else INICIAL
+        self.marcar(None, clave)
+        self.clave = clave
+        self.dibujar(clave)
+
+
 def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
                 buscar_version=None, inicial: str | None = None, nueva=None,
                 componentes=None, vigilante=None, hallazgos=None,
@@ -176,7 +756,7 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
     La ventana lleva, para los tests: `resultados`, `panel` (el `Panel` del
     apartado a la vista), `paneles` (`{clave: (marco, Panel)}` de los
     apartados dibujados) y `chips` (`{clave: (texto, tipo, icono) o None}` de
-    los chips de la barra).
+    los chips de la barra). Todo eso es `VentanaAjustes`.
 
     Args:
         config: La configuración, que se pasa a los apartados que la necesitan.
@@ -216,489 +796,6 @@ def open_dialog(parent, config: Config, lanzar, raw_local: dict | None = None,
         pedido al agente, o `True` si se tocó el vigilante) y
         `'configuracion'`.
     """
-    import tkinter as tk
-    from tkinter import ttk
-
-    from . import tk_update
-
-    raw = catalog_editor.raw_del_dispositivo(raw_local)
-    resultados: dict = {}
-
-    def leida(campo: str):
-        """Devuelve la lectura compartida si vale para ese campo, o `None`.
-
-        No vale una vacía (`huella` ausente: el hilo falló y no leyó nada) ni
-        una donde ese campo falló: tendría el valor por defecto, no el real.
-        """
-        inst = compartida.actual if compartida is not None else None
-        if inst is None or inst.huella is None or campo in inst.fallos:
-            return None
-        return inst
-
-    def pendientes_propios() -> list:
-        """Lee aquí mismo los componentes anticuados; vacío si no se puede."""
-        from common import components
-        try:
-            return list(components.pendientes())
-        except Exception:                            # noqa: BLE001
-            return []
-
-    def lista_de_componentes() -> list | None:
-        """Devuelve los componentes anticuados, o `None` si todavía no se saben.
-
-        Sin lectura compartida es lo que dice el parámetro, como siempre. Con
-        ella, de la lectura si vale; si no, del parámetro cuando trae alguno.
-        Si ni uno ni otro y todavía no ha llegado ninguna lectura, no se saben:
-        una lista vacía puede ser «no hay» o «aún no se ha mirado», y darla por
-        buena diría «al día» sin haber mirado. Si ya llegó una pero sin ellos
-        (el hilo falló), se miran aquí.
-        """
-        inst = leida("componentes")
-        if inst is not None:
-            return list(inst.componentes)
-        if compartida is None or componentes:
-            return list(componentes or [])
-        if compartida.actual is not None:
-            return pendientes_propios()
-        return None
-
-    # `componentes` es `None` mientras no se sepa; el resto, lo de siempre.
-    estado: dict = {"clave": None, "nueva": nueva, "componentes": lista_de_componentes()}
-
-    dlg = modal(parent, "Ajustes")
-    dlg.resultados = resultados                    # los tests lo miran
-    # Toda la ventana va en su visor, como cualquier diálogo: en una pantalla
-    # baja la barra lateral sola ya no cabe, y entonces se desplaza todo junto.
-    raiz = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E5))
-    raiz.columnconfigure(1, weight=1, minsize=icons.px(dlg, ANCHO_APARTADO))
-    raiz.rowconfigure(1, weight=1, minsize=icons.px(dlg, ALTO_APARTADO))
-
-    # Arriba: el título y el buscador.
-    arriba = ttk.Frame(raiz)
-    arriba.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.E4))
-    arriba.columnconfigure(0, weight=1)
-    # Todo en una línea y centrado con el título; el rótulo del buscador va
-    # dentro del campo, como pista, y se va al escribir o al entrar en él.
-    ttk.Label(arriba, text="Ajustes", style="Titulo.TLabel").grid(
-        row=0, column=0, sticky="w")
-    busqueda = tk.StringVar(dlg)
-    buscador = ttk.Entry(arriba, textvariable=busqueda, width=34)
-    buscador.grid(row=0, column=1, sticky="e")
-    buscador.pista = theme.pista_campo(buscador, "Buscar un ajuste…")
-
-    # La barra lateral.
-    barra = ttk.Frame(raiz)
-    barra.grid(row=1, column=0, sticky="nsw", padx=(0, theme.E5))
-    barra.columnconfigure(0, weight=1, minsize=theme.medida(ANCHO_BARRA))
-
-    # El apartado, que ocupa al menos lo que piden los más altos: cambiar de
-    # uno a otro no puede hacer bailar la ventana.
-    contenido = ttk.Frame(raiz)
-    contenido.grid(row=1, column=1, sticky="nsew")
-    contenido.columnconfigure(0, weight=1)
-    contenido.rowconfigure(0, weight=1)
-
-    hay_renombrado = {c: f(raw) for c, f in OCASIONALES.items()}
-    del_equipo = model.es_equipo()
-
-    def sale(apartado: Apartado) -> bool:
-        """Indica si el apartado sale en esta ventana, busque lo que se busque."""
-        return hay_renombrado.get(apartado.clave, True)
-
-    def chip_actual(clave: str):
-        """Devuelve `(texto, tipo, icono)` del chip que le toca ahora a un apartado, o `None`.
-
-        La cuenta de «Reparación» sale de la lectura compartida si la hay, y si
-        no del parámetro `hallazgos`.
-        """
-        inst = leida("hallazgos")
-        cuenta = inst.cuenta if inst is not None else revision.cuenta(hallazgos or [])
-        return chip_de(clave, cuenta, estado["nueva"], estado["componentes"])
-
-    # Los botones de la barra, por clave, y los rótulos de los grupos.
-    entradas: dict = {}
-    rotulos: list = []
-    chips: dict = {}                               # lo dibujado: clave -> chip o None
-    marcas: dict = {}                              # las etiquetas de los chips dibujados
-    dlg.chips = chips                              # los tests lo miran
-
-    def pintar_barra() -> None:
-        """Dibuja la barra entera, una sola vez: grupos, apartados y la versión al pie."""
-        fila = 0
-        for grupo, apartados in GRUPOS:
-            visibles = [a for a in apartados if sale(a)]
-            if not visibles:
-                continue
-            if grupo == "Esta unidad" and del_equipo:
-                grupo = "Esta carpeta"
-            rotulo = ttk.Label(barra, text=theme.rotulo(grupo), style="Rotulo.TLabel")
-            rotulo.grid(row=fila, column=0, sticky="w", padx=(theme.E3, 0),
-                        pady=(theme.E3 if fila else 0, theme.E1))
-            fila += 1
-            miembros = []
-            for apartado in visibles:
-                boton = ttk.Button(barra, text=apartado.rotulo, style="Nav.TButton",
-                                   command=lambda c=apartado.clave: elegir(c))
-                theme.boton_icono(boton, apartado.icono, theme.TINTA2, theme.PAPEL)
-                boton.grid(row=fila, column=0, sticky="ew", pady=(0, theme.E1))
-                entradas[apartado.clave] = (apartado, boton, fila)
-                chips[apartado.clave] = None
-                miembros.append(apartado.clave)
-                fila += 1
-            rotulos.append((rotulo, miembros))
-        barra.rowconfigure(fila, weight=1)
-        version = update.installed_version() or "desarrollo"
-        try:
-            nombre = fleet.nombre()
-        except Exception:                            # noqa: BLE001 — solo es un rótulo
-            nombre = ""
-        ttk.Label(barra, text=f"prdrive {version}" + (f" · {nombre}" if nombre else ""),
-                  style="Pista.TLabel", wraplength=theme.medida(ANCHO_BARRA - 12),
-                  justify="left").grid(row=fila + 1, column=0, sticky="sw",
-                                       padx=(theme.E3, 0), pady=(theme.E4, 0))
-        poner_chips()
-
-    def poner_chips() -> None:
-        """Recalcula el chip de cada apartado y cambia solo los que son otros.
-
-        El chip que no cambia es el mismo widget: no se destruye ni se crea.
-        """
-        for clave, (_a, boton, _f) in entradas.items():
-            nuevo = chip_actual(clave)
-            if nuevo == chips.get(clave):
-                continue
-            viejo = marcas.pop(clave, None)
-            if viejo is not None:
-                viejo.destroy()
-            chips[clave] = nuevo
-            if nuevo is None:
-                continue
-            texto, tipo, icono = nuevo
-            marca = theme.chip(boton, texto, tipo, icono)
-            marca.place(relx=1.0, rely=0.5, x=-icons.px(boton, 8), anchor="e")
-            marca.bind("<Button-1>", lambda _e, c=clave: elegir(c))
-            marcas[clave] = marca
-
-    def marcar(antes: str | None, ahora: str) -> None:
-        """Pasa el botón elegido de `antes` a `ahora`; los demás ni se tocan.
-
-        Un botón que cambia de cara deja a su chip con las esquinas de la cara
-        de antes: se vuelve a asentar (`theme.reasentar()`).
-        """
-        if antes == ahora:
-            return
-        for clave, elegido in ((antes, False), (ahora, True)):
-            if clave is None or clave not in entradas:
-                continue
-            apartado, boton, _f = entradas[clave]
-            boton.configure(style="NavSel.TButton" if elegido else "Nav.TButton")
-            theme.boton_icono(boton, apartado.icono, theme.TINTA2,
-                              theme.ACENTO_SUAVE if elegido else theme.PAPEL)
-            theme.reasentar(boton)
-
-    def filtrar(*_) -> None:
-        """Deja en la barra solo lo que coincide con lo escrito."""
-        texto = busqueda.get()
-        for clave, (apartado, boton, _f) in entradas.items():
-            if coincide(apartado, texto):
-                boton.grid()
-            else:
-                boton.grid_remove()
-        for rotulo, miembros in rotulos:
-            if any(entradas[c][1].grid_info() for c in miembros):
-                rotulo.grid()
-            else:
-                rotulo.grid_remove()
-
-    busqueda.trace_add("write", filtrar)
-
-    def primero_visible(_evento=None) -> None:
-        """Con Intro en el buscador, abre el primer apartado que queda."""
-        for clave, (_a, boton, _f) in entradas.items():
-            if boton.grid_info():
-                elegir(clave)
-                return
-
-    buscador.bind("<Return>", primero_visible)
-
-    # Los apartados.
-
-    def construir_actualizaciones(panel: Panel) -> None:
-        """Lo nuevo si lo hay; si no, los componentes; si no, buscar a mano."""
-        dibujado["actualizaciones"] = forma_actualizaciones()
-        if estado["nueva"] is not None:
-            tk_update.construir(panel, estado["nueva"])
-            return
-        if estado["componentes"] is None:
-            # La lectura de la ventana principal aún no ha llegado: se espera con
-            # un indicador y el apartado se rehace al llegar (`al_llegar`).
-            espera = panel.indicador(panel.marco, ancho=600)
-            espera.marco.grid(row=0, column=0, sticky="ew")
-            espera.poner(ESPERANDO, True)
-            return
-        if estado["componentes"]:
-            tk_update.construir_componentes(panel, estado["componentes"])
-            return
-        marco = panel.marco
-        actual = update.installed_version() or "desconocida"
-        ttk.Label(marco, text=AL_DIA, style="Dialogo.TLabel", wraplength=theme.medida(600),
-                  justify="left").grid(row=0, column=0, sticky="w")
-        ttk.Label(marco, text=f"Lleva la {actual}. Se comprueba sola cada 24 horas; "
-                              "aquí se puede preguntar ahora.",
-                  style="Pista.TLabel", wraplength=theme.medida(600),
-                  justify="left").grid(row=1, column=0, sticky="w", pady=(theme.E1, 0))
-        if buscar_version is None:
-            return
-        respuesta = ttk.Label(marco, text="", style="Pista.TLabel",
-                              wraplength=theme.medida(600), justify="left")
-        respuesta.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
-
-        def buscar() -> None:
-            """Pregunta por una versión nueva y dice la respuesta debajo."""
-            boton.state(["disabled"])
-            respuesta.configure(text="Buscando…")
-
-            def responder(texto: str) -> None:
-                """Pone la respuesta en su apartado, esté a la vista o escondido."""
-                try:
-                    if not respuesta.winfo_exists():
-                        return
-                except Exception:                    # noqa: BLE001 — Tk cerrado
-                    return
-                try:
-                    estado["nueva"] = update.pending()
-                except Exception:                    # noqa: BLE001
-                    estado["nueva"] = None
-                if estado["nueva"] is not None:
-                    poner_chips()
-                    if estado["clave"] == "actualizaciones":
-                        rehacer(texto)
-                    else:
-                        tirar("actualizaciones")     # se dibuja con la novedad al volver
-                    return
-                respuesta.configure(text=texto)
-                boton.state(["!disabled"])
-
-            buscar_version(responder)
-
-        boton = ttk.Button(marco, text="Buscar actualizaciones", command=buscar)
-        theme.boton_icono(boton, "reload", theme.TINTA2, theme.SUPERFICIE)
-        boton.grid(row=2, column=0, sticky="w", pady=(theme.E4, 0))
-        dlg.boton_buscar = boton                   # los tests lo pulsan
-
-    def forma_actualizaciones():
-        """Devuelve qué enseñaría hoy «Actualizaciones», para saber si el dibujado ya no vale."""
-        if estado["nueva"] is not None:
-            return ("nueva", estado["nueva"].version)
-        if estado["componentes"] is None:
-            return ("esperando",)
-        if estado["componentes"]:
-            return ("componentes", tuple(estado["componentes"]))
-        return ("al día",)
-
-    def vigilante_ahora():
-        """Devuelve qué hace este equipo al enchufar, sin caer nunca a falta de datos.
-
-        La lectura compartida si vale; si no, el parámetro; si tampoco, se lee
-        (`watch.resumen()` solo mira ficheros, como cuando la ventana principal
-        lo leía al pintarse).
-        """
-        inst = leida("vigilante")
-        if inst is not None:
-            return inst.vigilante
-        if vigilante is not None:
-            return vigilante
-        try:
-            return watch.resumen()
-        except Exception:                            # noqa: BLE001
-            return watch.Resumen("no_disponible")
-
-    def construir_arranque(panel: Panel) -> None:
-        """El vigilante, o lo que hace el agente si este equipo lo tiene."""
-        from . import tk_watch
-        ahora = vigilante_ahora()
-        if ahora.es_agente:
-            modo = resultados.get("arranque")
-            res = watch.pedido(ahora, modo) if isinstance(modo, str) else ahora
-            tk_watch.construir_agente(panel, res)
-            return
-        panel.devolver(True)       # al volver, la principal relee el vigilante
-        tk_watch.construir(panel)
-
-    def construir_de(clave: str):
-        """Devuelve la función que dibuja el apartado `clave` en un panel."""
-        from . import (tk_configuracion, tk_llavero, tk_qr, tk_renombrar, tk_repair,
-                       tk_versions, tk_volumen)
-        return {
-            "volumen": tk_volumen.construir,
-            "configuracion": lambda p: tk_configuracion.construir(p, config),
-            "llavero": lambda p: tk_llavero.construir_ajustes(p, raw_local),
-            "versiones": lambda p: tk_versions.construir(p, config),
-            "arranque": construir_arranque,
-            "qr": lambda p: tk_qr.construir(p, raw_local),
-            "renombrar": lambda p: tk_renombrar.construir(p, raw),
-            "reparacion": lambda p: tk_repair.construir(p, config, lanzar, marcadas,
-                                                        compartida=compartida),
-            "actualizaciones": construir_actualizaciones,
-        }[clave]
-
-    def clave_resultado(clave: str) -> str:
-        """Bajo qué clave apunta lo suyo un apartado.
-
-        El de actualizaciones dibuja dos pantallas distintas, y lo que
-        devuelve cada una se le dice a la principal por separado.
-        """
-        if (clave == "actualizaciones" and estado["nueva"] is None
-                and estado["componentes"]):
-            return "componentes"
-        return clave
-
-    # Los apartados dibujados, a la vista o escondidos.
-    paneles: dict = {}                             # clave -> (marco, Panel)
-    con_nota: set = set()                          # los dibujados con una nota encima
-    dibujado: dict = {}                            # qué forma tenía «Actualizaciones» al dibujarse
-    dlg.paneles = paneles                          # los tests lo miran
-
-    def ajustar(panel: Panel) -> None:
-        """Hace sitio al apartado recién enseñado, si la ventana sigue ahí."""
-        try:
-            if dlg.winfo_exists():
-                panel.ajustar()
-        except Exception:                            # noqa: BLE001 — ya cerrada
-            pass
-
-    def dibujar(clave: str, nota: str = "") -> None:
-        """Dibuja el apartado `clave` en un marco suyo, a la vista, con la nota si la hay."""
-        hueco = ttk.Frame(contenido)
-        hueco.grid(row=0, column=0, sticky="nsew")
-        hueco.columnconfigure(0, weight=1)
-        hueco.rowconfigure(1, weight=1)
-        if nota:
-            theme.aviso(hueco, "", nota, tono="Verde.", icono="ok",
-                        ancho=ANCHO_APARTADO - 80).grid(row=0, column=0, sticky="ew",
-                                                        pady=(0, theme.E4))
-        marco = ttk.Frame(hueco)
-        marco.grid(row=1, column=0, sticky="nsew")
-        marco.columnconfigure(0, weight=1)
-        panel = Panel(dlg, marco, incrustado=True, al_terminar=rehacer,
-                      al_cerrar=dlg.destroy, resultados=resultados,
-                      clave=clave_resultado(clave))
-        dlg.panel = panel                          # los tests lo miran
-        paneles[clave] = (hueco, panel)
-        if nota:
-            con_nota.add(clave)
-        try:
-            construir_de(clave)(panel)
-        except BaseException:
-            tirar(clave)                           # ni a medias ni escondido debajo
-            raise
-        ajustar(panel)
-
-    def tirar(clave: str) -> None:
-        """Destruye el apartado dibujado `clave`, si lo hay."""
-        entrada = paneles.pop(clave, None)
-        con_nota.discard(clave)
-        dibujado.pop(clave, None)
-        if entrada is not None:
-            entrada[0].destroy()
-
-    def dejar(clave: str) -> None:
-        """Deja el apartado: lo esconde y lo guarda, o lo tira si no se conserva.
-
-        Se tira el que no se conserva (`EFIMEROS`) y el que lleva una nota: al
-        volver a él, como antes, se dibuja sin ella.
-        """
-        hueco, panel = paneles[clave]
-        panel.ocultado()
-        if clave in EFIMEROS or clave in con_nota:
-            tirar(clave)
-        else:
-            hueco.grid_remove()
-
-    def rehacer(nota: str = "") -> None:
-        """Vuelve a dibujar el apartado a la vista, con una nota encima si la hay.
-
-        Un apartado que da algo por terminado ha podido cambiar lo que enseñan
-        los demás (el config que guardó, el nombre de la unidad...), así que se
-        tiran los otros ya dibujados en vez de guardar lo que enseñaban.
-        """
-        clave = estado["clave"]
-        if clave == "actualizaciones" and resultados.get("componentes") is True:
-            # Ya puestos al día, lo que había que poner se ha quedado viejo.
-            estado["componentes"] = pendientes_propios()
-        for otra in [k for k in paneles if k != clave]:
-            tirar(otra)
-        tirar(clave)
-        dibujar(clave, nota)
-        poner_chips()
-
-    def elegir(clave: str) -> None:
-        """Pone a la vista el apartado `clave`: el ya dibujado, o uno nuevo la primera vez."""
-        if clave not in entradas:
-            clave = INICIAL
-        antes = estado["clave"]
-        if clave == antes:
-            return
-        momento = f"pane-{clave}"
-        perf_empezar(momento)
-        marcar(antes, clave)
-        estado["clave"] = clave
-        if antes in paneles:
-            dejar(antes)
-        if clave in paneles:
-            hueco, panel = paneles[clave]
-            hueco.grid()
-            dlg.panel = panel
-            panel.mostrado()
-            ajustar(panel)
-        else:
-            dibujar(clave)
-        perf_al_pintar(dlg, momento)
-
-    def elegir_inicial() -> None:
-        """Elige el apartado con que se abre, restilando solo los botones que cambian."""
-        clave = inicial if inicial in entradas else INICIAL
-        marcar(None, clave)
-        estado["clave"] = clave
-        dibujar(clave)
-
-    def al_llegar(inst) -> None:
-        """Recoge una lectura nueva de la ventana principal y repinta lo que depende de ella."""
-        try:
-            if not dlg.winfo_exists():
-                return
-        except Exception:                            # noqa: BLE001 — Tk cerrado
-            return
-        if inst.huella is not None and "componentes" not in inst.fallos:
-            estado["componentes"] = list(inst.componentes)
-        elif estado["componentes"] is None:
-            # La lectura llegó sin ellos (el hilo falló): «Actualizaciones» no se
-            # queda esperando para siempre, los mira aquí como hacía la principal.
-            estado["componentes"] = pendientes_propios()
-        poner_chips()
-        entrada = paneles.get("actualizaciones")
-        if entrada is None or dibujado.get("actualizaciones") == forma_actualizaciones():
-            return
-        if estado["clave"] == "actualizaciones":
-            tirar("actualizaciones")
-            dibujar("actualizaciones")
-        else:
-            tirar("actualizaciones")                 # se dibuja al día cuando se vuelva a él
-
-    pintar_barra()
-    if compartida is not None:
-        # Las lecturas que llegan con la ventana abierta. La baja es de la
-        # ventana: `<Destroy>` también llega por cada hijo que muere (el marco de
-        # un apartado, el código QR...).
-        baja = compartida.suscribir(al_llegar)
-        dlg.bind("<Destroy>", lambda evento: baja() if evento.widget is dlg else None,
-                 add="+")
-    elegir_inicial()
-    try:
-        vivo = bool(dlg.winfo_exists())
-    except Exception:                                # noqa: BLE001
-        vivo = False
-    if vivo:
-        dlg.perf_momento = "open-ajustes"              # lo cierra `mostrar`, al pintarse
-        mostrar(dlg, parent)
-    return resultados
+    return VentanaAjustes(parent, config, lanzar, raw_local, buscar_version, inicial,
+                          nueva, componentes, vigilante, hallazgos, marcadas,
+                          compartida).abrir()

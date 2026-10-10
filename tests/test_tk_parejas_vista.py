@@ -688,10 +688,10 @@ def probar_la_pantalla() -> None:
             dar_vueltas(lambda: not dlg.sondeo.esperando)
             dlg.lista.elegir("notas")
             visto["antes"] = (dict(dlg.editor.textos), dlg.editor.datos())
-            visto["cambios"] = dlg.estado["cargado"] != dlg.editor.datos()
+            visto["cambios"] = dlg.pantalla.cargado != dlg.editor.datos()
             pulsar(dlg, "Mostrar")
             visto["despues"] = (sorted(dlg.editor.textos), dlg.editor.datos())
-            visto["sin_cambios"] = dlg.estado["cargado"] == dlg.editor.datos()
+            visto["sin_cambios"] = dlg.pantalla.cargado == dlg.editor.datos()
 
         abrir(cfg, desplegar)
         c("«Avanzado» sin desplegar: sin cajas, y los patrones los trae `datos()`",
@@ -719,10 +719,10 @@ def probar_la_pantalla() -> None:
             model.CONFIG_FILE.write_text(config_file.dumps(a_mano), encoding="utf-8")
             pulsar(dlg, "Guardar aquí…")
             visto["planes"] = len(planes)
-            visto["cambiado"] = dlg.estado["cambiado"]
+            visto["cambiado"] = dlg.pantalla.cambiado
             visto["pie"] = [t for t in textos_a_la_vista(dlg) if "ha cambiado fuera" in t]
             visto["filas"] = list(dlg.lista.filas)
-            visto["raw"] = [p["name"] for p in dlg.estado["raw"]["pair"]]
+            visto["raw"] = [p["name"] for p in dlg.pantalla.raw["pair"]]
             visto["fichero"] = model.CONFIG_FILE.read_text(encoding="utf-8")
             visto["escrito"] = dlg.editor.campos["remote_path"].get()
             # y con el config ya releído, guardar sí hace su plan
