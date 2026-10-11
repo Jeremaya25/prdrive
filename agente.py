@@ -18,8 +18,8 @@ Se usa como `python agente.py ORDEN`:
 - `abrir [ID]`: la ventana de la raíz de este equipo (o de esa).
 - `desbloquear [ID]` y `bloquear [ID]`: abrir y cerrar el contenedor de la raíz
   cifrada.
-- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no`, `estirar_intervalo sí|no` o
-  `espera_unidad_nueva SEG`.
+- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no`, `estirar_intervalo sí|no`,
+  `avisos_veracrypt sí|no` (al arrancar) o `espera_unidad_nueva SEG`.
 - `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
 - `actualizar ID`: pone en esa raíz el código de la versión del agente.
 - `expulsar ID`: suelta esa unidad extraíble para poder quitarla (el «Expulsar» de
@@ -298,6 +298,12 @@ SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las
               "unidades. Reinstala el agente o actualízalo.")
 """Lo que se dice cuando el agente no tiene rclone propio."""
 SIN_MOTOR_DE_AVISOS = "este sistema no avisa de los cambios de las carpetas"
+REARMAR_INTENTOS = 5
+"""Cuántas veces, en una conexión, se intenta volver a oír los avisos de una pareja que los perdió."""
+REARMAR_CADA = 120.0
+"""Segundos, como poco, entre perder los avisos de una pareja y volver a intentarlo."""
+VUELVEN = (avisos_carpeta.MOTIVO_SE_FUE, avisos_carpeta.MOTIVO_SIN_RESPUESTA)
+"""Los motivos de quedarse sin avisos que tienen arreglo: la carpeta puede volver a estar."""
 """Por qué se recorre una carpeta vigilada cuando el agente no tiene motor de avisos."""
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
@@ -1499,6 +1505,9 @@ class Agente:
             dejar de servirlas.
         rearmar: Las parejas cuya vigilancia hay que rehacer (se movió una
             carpeta o se perdieron avisos).
+        rearmes: De cada pareja que perdió los avisos del sistema, cuántas
+            veces se ha intentado volver a oírlos en esta conexión y cuándo se
+            perdieron (o se intentó) por última vez.
         keepassxc: Las raíces atendidas con su KeePassXC abierto en este
             equipo, por id (`_mirar_keepassxc()`).
         keepassxc_mirado: Cuándo se miró.
@@ -1557,6 +1566,7 @@ class Agente:
     avisos_carpeta: Any = None
     sin_avisos: dict[tuple[str, str], str] = field(default_factory=dict)
     rearmar: set[tuple[str, str]] = field(default_factory=set)
+    rearmes: dict[tuple[str, str], tuple[int, float]] = field(default_factory=dict)
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
     navegador_mirado: bool = False
@@ -2665,6 +2675,7 @@ class Agente:
         self.vigiladas = {k: v for k, v in self.vigiladas.items() if k[0] != uid}
         self.sin_avisos = {k: v for k, v in self.sin_avisos.items() if k[0] != uid}
         self.rearmar = {k for k in self.rearmar if k[0] != uid}
+        self.rearmes = {k: v for k, v in self.rearmes.items() if k[0] != uid}
         if self.avisos_carpeta is not None:
             self.avisos_carpeta.dejar_raiz(uid)
 
@@ -2672,6 +2683,7 @@ class Agente:
         """Deja la vigilancia de una pareja que ya no se sirve, y olvida por qué se recorría."""
         self.sin_avisos.pop(clave, None)
         self.rearmar.discard(clave)
+        self.rearmes.pop(clave, None)
         if self.avisos_carpeta is not None:
             self.avisos_carpeta.dejar(clave)
 
@@ -2733,6 +2745,17 @@ class Agente:
                         armar.append(clave)
                     elif v.avisos and clave in self.rearmar:
                         armar.append(clave)
+                    elif self._toca_volver_a_oir(clave, v, ahora):
+                        # Su carpeta vuelve a dejarse mirar (hay foto): se
+                        # intenta oírla otra vez, que es lo barato.
+                        veces = self.rearmes.get(clave, (0, 0.0))[0]
+                        self.rearmes[clave] = (veces + 1, ahora)
+                        del self.sin_avisos[clave]
+                        self.vigiladas[clave] = pl.Vigilada(avisos=True, cambio=v.cambio,
+                                                            movida=v.movida)
+                        armar.append(clave)
+                        diario(f"[{self.conexiones[raiz.clave].nombre}] {pareja.nombre}: su "
+                               f"carpeta vuelve a estar; se intenta oír sus avisos otra vez")
             self.rearmar -= set(armar)
         motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
                                self.ajustes.politica)
@@ -2778,9 +2801,28 @@ class Agente:
             if aviso.tipo == avisos_carpeta.PERDIDA:
                 self._sin_avisos(con, clave, aviso.motivo)
                 continue
+            if aviso.tipo == avisos_carpeta.RETIRADO:
+                # Lo que se avisó se ha deshecho solo (un temporal que nació
+                # y murió): ya no hay nada que adelantar.
+                self.vigiladas[clave] = pl.retirado(v)
+                continue
             if aviso.tipo == avisos_carpeta.DESBORDADO:
                 self.rearmar.add(clave)
             self.vigiladas[clave] = pl.avisado(v, ahora)
+
+    def _toca_volver_a_oir(self, clave: tuple[str, str], v: pl.Vigilada, ahora: float) -> bool:
+        """Indica si a una pareja que se recorre le toca intentar oír otra vez los avisos del sistema.
+
+        Solo si los perdió por algo con arreglo (`VUELVEN`: movieron o
+        borraron su carpeta), su carpeta se deja mirar otra vez (ya hay una
+        foto), ha pasado `REARMAR_CADA` y no se ha intentado ya
+        `REARMAR_INTENTOS` veces en esta conexión. Sin esto una pareja cuya
+        carpeta se renombró y se volvió a crear se recorría para siempre.
+        """
+        veces, cuando = self.rearmes.get(clave, (0, -math.inf))
+        return (self.sin_avisos.get(clave) in VUELVEN and not v.avisos and not v.abandonada
+                and v.huella is not None and veces < REARMAR_INTENTOS
+                and ahora - cuando >= REARMAR_CADA)
 
     def _sin_avisos(self, con: Conexion, clave: tuple[str, str], motivo: str) -> None:
         """Deja una pareja vigilada recorriéndose, sin avisos del sistema, y dice por qué.
@@ -2793,6 +2835,7 @@ class Agente:
             self.avisos_carpeta.dejar(clave)
         self.vigiladas[clave] = pl.Vigilada()
         self.sin_avisos[clave] = motivo
+        self.rearmes[clave] = (self.rearmes.get(clave, (0, 0.0))[0], self.reloj())
         self.rearmar.discard(clave)
         diario(f"[{con.nombre}] {clave[1]}: sin avisos del sistema, se recorre su carpeta: "
                f"{motivo}")
@@ -4660,7 +4703,7 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
             diario(f"sin bandeja no se dejan carpetas abiertas en las unidades: {recorre}")
             return None
     try:
-        motor = avisos_carpeta.abrir(hwnd=hwnd)
+        motor = avisos_carpeta.abrir(hwnd=hwnd, veracrypt=agente.ajustes.avisos_veracrypt)
     except OSError as e:
         diario(f"no oigo los cambios de las carpetas ({e}): {recorre}")
         return None
@@ -4671,9 +4714,12 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
         vigia.oir(motor.fd, motor.leer)
     if IS_WIN:
         agente.bandeja.dispositivo = motor.dispositivo
+        agente.bandeja.volumen = motor.volumen
     diario("oigo los cambios de las carpetas de las parejas con watch ("
            + ("ReadDirectoryChangesW" if IS_WIN else "inotify")
-           + "); se recorre solo la que no avisa")
+           + "); se recorre solo la que no avisa"
+           + ("; también oigo los volúmenes de VeraCrypt (avisos_veracrypt)"
+              if IS_WIN and agente.ajustes.avisos_veracrypt else ""))
     return motor
 
 
@@ -5003,7 +5049,7 @@ def valor_ajuste(clave: str, texto: str) -> Any:
     Raises:
         ValueError: Si no es un sí o un no, o un número.
     """
-    if clave in ("pedir_al_iniciar", "estirar_intervalo"):
+    if clave in ("pedir_al_iniciar", "estirar_intervalo", "avisos_veracrypt"):
         valor = VERDAD.get(texto.strip().lower())
         if valor is None:
             raise ValueError(f"{clave} es sí o no, no {texto!r}")

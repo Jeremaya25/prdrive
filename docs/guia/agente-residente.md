@@ -168,8 +168,14 @@ agente»**. El diseño completo está en
   que un cambio tras un rato quieta se ve hasta 2 minutos después;
   `agente.py status` dice qué parejas se recorren y por qué. En Windows el
   agente tiene abierta la carpeta que escucha: «Quitar hardware de forma
-  segura» y «Expulsar» la sueltan antes de quitar la unidad. Si los avisos no
-  traen cambios (un programa que crea y borra temporales), esas pasadas se van
+  segura» y «Expulsar» la sueltan antes de quitar la unidad, y también cuando
+  otro programa pide la unidad entera (comprobar el disco, formatearla,
+  bloquearla), así que nadie la encuentra «en uso» por el agente. Mientras la
+  escucha, eso sí, Windows no deja **renombrar ni mover las carpetas de
+  arriba** de la pareja (la propia carpeta de la pareja sí, y entonces el
+  agente deja de oírla y la recorre hasta que vuelve a estar). Un fichero que
+  un programa crea y borra enseguida (un temporal, un `index.lock`) no cuenta
+  como cambio; si aun así los avisos no traen cambios, esas pasadas se van
   separando solas, hasta 15 minutos. Es una pasada
   corriente: en pausa, con batería, en ahorro de energía o en una red de uso
   medido espera como las demás. No ve los cambios del remoto, ni lo que se

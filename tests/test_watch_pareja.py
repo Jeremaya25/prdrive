@@ -595,4 +595,39 @@ c("el llavero va siempre al sondeo, también quieto y a batería",
   pl.a_recorrer([llave], {("u", "keychain"): pl.Vigilada(H1, None, T0)}, T0 + 10,
                 con_bateria=True), [("u", "keychain")])
 
+# --- un cambio retirado por el sistema
+c("retirado quita el cambio pendiente y conserva que la carpeta se mueve",
+  pl.retirado(pl.avisado(pl.Vigilada(avisos=True), T0)), pl.Vigilada(avisos=True, movida=T0))
+c("  una abandonada no cambia", pl.retirado(pl.Vigilada(abandonada=True)),
+  pl.Vigilada(abandonada=True))
+
+# --- la foto ve también lo que queda a más de 260 caracteres de ruta (Windows)
+c("ruta_larga: fuera de Windows, o si ya lo lleva, la deja igual",
+  huella.ruta_larga("\\\\?\\C:\\x") if os.name == "nt" else huella.ruta_larga("/a/b"),
+  "\\\\?\\C:\\x" if os.name == "nt" else "/a/b")
+if os.name == "nt":
+    c("  una ruta con letra lleva el prefijo", huella.ruta_larga("C:\\datos\\docs"),
+      "\\\\?\\C:\\datos\\docs")
+    c("  y una de red, el de UNC", huella.ruta_larga("\\\\nas\\c\\docs"),
+      "\\\\?\\UNC\\nas\\c\\docs")
+    honda = tmpdir("prdrive-larga-")
+    tramo = honda
+    while len(str(tramo)) < 300:
+        tramo = tramo / ("carpeta-de-nombre-largo-" + "x" * 20)
+    os.makedirs(huella.ruta_larga(str(tramo)))
+    fondo = huella.ruta_larga(str(tramo / "al-fondo.txt"))
+    with open(fondo, "w", encoding="utf-8") as f:
+        f.write("uno")
+    antes = huella.de_carpeta(honda)
+    c("  la foto entra en una carpeta a más de 260 caracteres y cuenta su fichero",
+      (antes is not None, len(str(tramo)) > 260,
+       antes.entradas == len(tramo.relative_to(honda).parts) + 1), (True, True, True))
+    with open(fondo, "w", encoding="utf-8") as f:
+        f.write("otro contenido")
+    c("  y un cambio ahí dentro cambia la foto", huella.de_carpeta(honda) != antes, True)
+    import shutil
+    shutil.rmtree(huella.ruta_larga(str(honda)), ignore_errors=True)
+else:
+    print("  (saltado) las rutas de más de 260 caracteres son cosa de Windows")
+
 sys.exit(c.report())

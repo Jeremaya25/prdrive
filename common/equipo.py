@@ -254,6 +254,11 @@ class Ajustes:
         estirar_intervalo: Si el intervalo de una pareja se estira mientras sus
             pasadas no mueven nada (`planificador.estirado()`). Es también
             `politica.estirar`, que es lo que lee el planificador.
+        avisos_veracrypt: En Windows, si las parejas con `watch` de un volumen
+            de VeraCrypt se oyen con los avisos del sistema en vez de
+            recorrerse (`avisos_carpeta.ReadDirectoryChanges.volumen()`).
+            Apagado de fábrica hasta verlo en equipos reales; se lee al
+            arrancar el agente.
     """
     unidades: Mapping[str, Unidad] = field(default_factory=dict)
     espera_unidad_nueva: float = ESPERA_UNIDAD_NUEVA
@@ -261,6 +266,7 @@ class Ajustes:
     extra_roots: tuple[str, ...] = ()
     pedir_al_iniciar: bool = True
     estirar_intervalo: bool = True
+    avisos_veracrypt: bool = False
 
     def con_unidad(self, unidad: Unidad) -> "Ajustes":
         """Devuelve unos ajustes iguales con esa unidad añadida o sustituida."""
@@ -340,7 +346,8 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         if isinstance(extra, list) else (),
         pedir_al_iniciar=datos["pedir_al_iniciar"]
         if isinstance(datos.get("pedir_al_iniciar"), bool) else True,
-        estirar_intervalo=estirar)
+        estirar_intervalo=estirar,
+        avisos_veracrypt=datos.get("avisos_veracrypt") is True)
 
 
 def a_dict(aj: Ajustes) -> dict:
@@ -361,6 +368,7 @@ def a_dict(aj: Ajustes) -> dict:
         "extra_roots": list(aj.extra_roots),
         "pedir_al_iniciar": aj.pedir_al_iniciar,
         "estirar_intervalo": aj.estirar_intervalo,
+        **({"avisos_veracrypt": True} if aj.avisos_veracrypt else {}),
     }
 
 
@@ -526,7 +534,8 @@ PIDE_ACTUALIZAR_UNIDAD = "actualizar_unidad"  # id: ponerle el código de la ver
 PIDE_BUSCAR_VERSION = "buscar_version"  # preguntarle a GitHub ya, sin esperar a la caché
 PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa propia, y volver ya
 PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
-AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo")
+AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo",
+                    "avisos_veracrypt")
 
 BUZON_SERVICIO = "servicio.pide"
 """Nombre del buzón de UNA raíz, dentro de su `state/`.

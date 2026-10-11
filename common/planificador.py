@@ -760,6 +760,18 @@ def avisado(vigilada: Vigilada, ahora: float) -> Vigilada:
     return replace(vigilada, cambio=ahora, movida=ahora)
 
 
+def retirado(vigilada: Vigilada) -> Vigilada:
+    """Devuelve lo recordado de una pareja cuando el sistema dice que su cambio se ha deshecho.
+
+    Lo que se avisó (`avisado()`) nació y murió sin que ninguna pasada lo viera
+    (`avisos_carpeta.Neto`): no queda nada que adelantar. `movida` se conserva:
+    alguien anda por ahí.
+    """
+    if vigilada.abandonada:
+        return vigilada
+    return replace(vigilada, cambio=None)
+
+
 def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigilada:
     """Devuelve lo recordado de una pareja cuando termina una pasada suya.
 

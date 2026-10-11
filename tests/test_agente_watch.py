@@ -846,6 +846,16 @@ terminar(aga, RAIZA)
 quieto(aga, 140)
 
 n = docsa()
+motor.pendientes[DOCSA] = ac.Aviso(ac.CAMBIO)
+F.vueltas(aga, 2)
+c("(un aviso deja un cambio pendiente)", aga.vigiladas[DOCSA].cambio is not None, True)
+motor.pendientes[DOCSA] = ac.Aviso(ac.RETIRADO)
+quieto(aga, 200)
+c("un cambio que el motor retira (un temporal que nació y murió) no lanza la pasada",
+  (docsa() - n, aga.vigiladas[DOCSA].cambio), (0, None))
+c("  y la pareja sigue oyendo avisos", aga.vigiladas[DOCSA].avisos, True)
+
+n = docsa()
 motor.pendientes[DOCSA] = ac.Aviso(ac.PERDIDA, "su carpeta ya no está donde estaba")
 F.vueltas(aga, 1)
 c("perder la vigilancia vuelve a recorrer", aga.vigiladas[DOCSA].avisos, False)
@@ -869,6 +879,34 @@ equipo.lock_json().unlink()
 FIRMAS["docs"] += 1
 c("  y un cambio lo ve el recorrido", hasta_pasada_a(60) is not None, True)
 terminar(aga, RAIZA)
+
+# Perdidos por algo con arreglo (movieron o borraron su carpeta): se vuelve a intentar.
+quieto(aga, 140)
+antes = pedidas("vigilar", DOCSA)
+quieto(aga, 4 * agente.REARMAR_CADA)
+c("perdidos por un motivo sin arreglo conocido, no se reintenta", pedidas("vigilar", DOCSA), antes)
+aga.sin_avisos[DOCSA] = ac.MOTIVO_SE_FUE
+aga.rearmes[DOCSA] = (0, F.reloj())
+quieto(aga, agente.REARMAR_CADA - 20)
+c("perdidos porque su carpeta se movió: antes del plazo no se reintenta",
+  pedidas("vigilar", DOCSA), antes)
+motor.motivos[DOCSA] = ac.MOTIVO_SE_FUE                 # y todavía no se deja abrir
+quieto(aga, 60)
+c("  pasado el plazo, con su carpeta otra vez a la vista, se vuelven a pedir",
+  pedidas("vigilar", DOCSA), antes + 1)
+c("  si no se puede, sigue recorriéndose y se cuenta el intento",
+  (aga.vigiladas[DOCSA].avisos, aga.rearmes[DOCSA][0]), (False, 1))
+quieto(aga, 12 * agente.REARMAR_CADA)
+c("  se insiste unas pocas veces por conexión, no para siempre",
+  pedidas("vigilar", DOCSA) - antes, agente.REARMAR_INTENTOS)
+del motor.motivos[DOCSA]
+aga.rearmes[DOCSA] = (0, F.reloj() - agente.REARMAR_CADA)
+quieto(aga, 30)
+c("  y cuando se deja, vuelve a oír los avisos y deja de recorrer",
+  (aga.vigiladas[DOCSA].avisos, DOCSA in aga.sin_avisos), (True, False))
+c("  se dice en el diario", any("se intenta oír sus avisos otra vez" in m for m in F.DIARIO), True)
+aga.sin_avisos[DOCSA] = "su carpeta ya no está donde estaba"    # como estaba, para lo que sigue
+aga.vigiladas[DOCSA] = pl.Vigilada()
 
 equipo.pedir({"pide": equipo.PIDE_PAUSAR_RAIZ}, BUZONA)
 F.vueltas(aga, 2)
@@ -950,11 +988,27 @@ c("«Expulsar» deja las vigilancias de la raíz antes de expulsarla",
 agente.huella_local = foto
 
 # ---------------------------------------------------------------------------
-# 11e. Con el inotify de verdad (Linux)
+# 11e. Con los avisos de verdad: inotify en Linux, ReadDirectoryChangesW en Windows
 # ---------------------------------------------------------------------------
-motor_real = ac.abrir()
+if os.name == "nt":
+    api_real = ac.Win32()
+    api_real.registrar = lambda hwnd, h: 1              # sin ventana en la prueba
+    api_real.desregistrar = lambda aviso: None
+    motor_real = ac.ReadDirectoryChanges(api_real, 1, agrupar=0.1, callar=0.3)
+    NOMBRE_REAL = "ReadDirectoryChangesW"
+
+    def llega() -> None:
+        """Deja al hilo del motor recoger lo que se acaba de escribir (el reloj del agente es de mentira)."""
+        time.sleep(0.5)
+else:
+    motor_real = ac.abrir()
+    NOMBRE_REAL = "inotify"
+
+    def llega() -> None:
+        """Con inotify no hay que esperar: el agente lee el descriptor al recoger."""
+
 if motor_real is None:
-    print("  (saltado) sin inotify: no se prueba el agente con los avisos de verdad")
+    print("  (saltado) sin motor de avisos: no se prueba el agente con los avisos de verdad")
 else:
     F.preparar()
     RECORRIDAS: list[str] = []
@@ -968,14 +1022,21 @@ else:
     F.vueltas(agr, 2)
     terminar(agr, RAIZR)
     F.vueltas(agr, 2)
-    c("con inotify de verdad, la pareja se vigila con avisos",
+    c(f"con {NOMBRE_REAL} de verdad, la pareja se vigila con avisos",
       (agr.vigiladas[(UIDR, "docs")].avisos, motor_real.vigilancias() > 0), (True, True))
     n = len(F.pasadas(RAIZR))
     (RAIZR / ".prdrive" / "state" / "algo.json").write_text("{}", encoding="utf-8")
+    llega()
     quieto(agr, 60)
     c("  lo que se escribe en .prdrive/ (local = \".\") no lanza nada",
       len(F.pasadas(RAIZR)), n)
+    (RAIZR / "tmp.lock").write_text("x", encoding="utf-8")
+    (RAIZR / "tmp.lock").unlink()
+    llega()
+    quieto(agr, 60)
+    c("  un temporal que nace y muere, tampoco", len(F.pasadas(RAIZR)), n)
     (RAIZR / "nota.md").write_text("hola", encoding="utf-8")
+    llega()
     for _ in range(int(60 / TICK)):
         F.vueltas(agr, 1)
         if len(F.pasadas(RAIZR)) > n:
@@ -984,6 +1045,7 @@ else:
       (len(F.pasadas(RAIZR)) - n, agr.pasada.tarea.por_cambios, RECORRIDAS), (1, True, []))
     (RAIZR / "de-rclone.md").write_text("bajado", encoding="utf-8")
     terminar(agr, RAIZR)
+    llega()
     quieto(agr, 200)
     c("  y lo que escribe la pasada no lanza otra", len(F.pasadas(RAIZR)) - n, 1)
     F.RAICES[:] = []
@@ -1004,15 +1066,20 @@ class MotorFalso:
     """Un motor de avisos de Windows de mentira: sin descriptor, con `dispositivo`."""
     fd = None
 
-    def dispositivo(self, evento, handle):
-        """Lo que la bandeja le pasaría."""
+    def dispositivo(self, evento, handle, guid=""):
+        """Lo que la bandeja le pasaría de un handle."""
+
+    def volumen(self, evento, letras):
+        """Lo que la bandeja le pasaría de unas letras."""
 
     def leer(self):
         """Nada que leer."""
 
 
 motor_w = MotorFalso()
-ac.abrir = lambda hwnd=None: VENTANAS.append(hwnd) or motor_w
+ABIERTO_CON: list = []
+ac.abrir = lambda hwnd=None, veracrypt=False: (VENTANAS.append(hwnd), ABIERTO_CON.append(veracrypt),
+                                               motor_w)[-1]
 agente.IS_WIN = True
 agw = nuevo()
 agw.bandeja = None
@@ -1025,7 +1092,17 @@ c("con bandeja, el motor se abre con su ventana",
   (agente.poner_avisos_carpeta(agw, agente.Vigia()) is motor_w, VENTANAS), (True, [0x55]))
 c("  y la bandeja le pasa los avisos de extracción",
   agw.bandeja.dispositivo == motor_w.dispositivo, True)
+c("  y los de desmontaje que llegan por letra (VeraCrypt)",
+  agw.bandeja.volumen == motor_w.volumen, True)
 c("  y se dice", any("(ReadDirectoryChangesW)" in m for m in F.DIARIO), True)
+c("  de fábrica, sin oír los volúmenes de VeraCrypt", ABIERTO_CON, [False])
+agw.ajustes = replace(agw.ajustes, avisos_veracrypt=True)
+agente.poner_avisos_carpeta(agw, agente.Vigia())
+c("  con el ajuste `avisos_veracrypt`, el motor se abre oyéndolos, y se dice",
+  (ABIERTO_CON[-1], any("avisos_veracrypt" in m for m in F.DIARIO)), (True, True))
+c("  el ajuste va y vuelve de agente.json, y de fábrica no se escribe",
+  (equipo.desde_dict(equipo.a_dict(agw.ajustes)).avisos_veracrypt,
+   "avisos_veracrypt" in equipo.a_dict(equipo.Ajustes())), (True, False))
 agente.IS_WIN = real_is_win
 ac.abrir = real_abrir
 

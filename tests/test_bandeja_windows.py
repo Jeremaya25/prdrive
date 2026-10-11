@@ -94,9 +94,14 @@ class ApiFalsa:
         """Lo que manda Windows (una difusión, un clic en el icono)."""
         self.cola.put((msg, w, l))
 
-    def handle_de(self, lparam):
-        """El handle de un aviso `DBT_DEVTYP_HANDLE`: aquí, el `lParam` si es un número."""
-        return lparam if isinstance(lparam, int) and lparam >= 1000 else None
+    def aviso_de(self, lparam):
+        """De qué es un aviso: aquí el `lParam` es el handle (un número de 1000 arriba),
+        `(handle, guid)` o las letras de un volumen (`("P:",)`)."""
+        if isinstance(lparam, int):
+            return (lparam if lparam >= 1000 else None), "", ()
+        if lparam and isinstance(lparam[0], int):
+            return lparam[0], lparam[1], ()
+        return None, "", tuple(lparam)
 
     def icono(self, ruta):
         """Devuelve un manejador de icono de mentira."""
@@ -212,7 +217,7 @@ DISPOSITIVO: list = []
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
 time.sleep(0.05)
 c("sin quien atienda los avisos de extracción no pasa nada", (DISPOSITIVO, MONTAJES), ([], [1]))
-b.dispositivo = lambda evento, h: DISPOSITIVO.append((evento, h))
+b.dispositivo = lambda evento, h, guid="": DISPOSITIVO.append((evento, h))
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
 c("el sistema pide la unidad de un handle nuestro: se le pasa al motor de avisos",
   esperar(lambda: DISPOSITIVO == [(bw.DBT_DEVICEQUERYREMOVE, 4242)]), True)
@@ -228,7 +233,30 @@ c("  la extracción acabada sigue despertando el recorrido", esperar(lambda: MON
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 7)       # un volumen, no un handle
 time.sleep(0.05)
 c("  un aviso que no es de un handle no se le pasa", len(DISPOSITIVO), 4)
-b.dispositivo = lambda evento, h: 1 / 0
+GUID_BLOQUEO = "50708874-c9af-11d1-8fef-00a0c9a06d32"
+CON_GUID: list = []
+b.dispositivo = lambda evento, h, guid="": CON_GUID.append((evento, h, guid))
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_CUSTOMEVENT, (4242, GUID_BLOQUEO))
+c("alguien pide el volumen (DBT_CUSTOMEVENT): se le pasa con su GUID",
+  esperar(lambda: CON_GUID == [(bw.DBT_CUSTOMEVENT, 4242, GUID_BLOQUEO)]), True)
+VOLUMEN: list = []
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEREMOVEPENDING, ("P:",))
+time.sleep(0.05)
+c("sin quien oiga los volúmenes, un aviso de desmontaje por letra no pasa a nadie",
+  (VOLUMEN, len(CON_GUID)), ([], 1))
+b.volumen = lambda evento, letras: VOLUMEN.append((evento, letras))
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEREMOVEPENDING, ("P:",))
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEREMOVECOMPLETE, ("P:", "Q:"))
+c("VeraCrypt anuncia un desmontaje por letra: se le pasa a quien oye los volúmenes",
+  esperar(lambda: len(VOLUMEN) == 2) and VOLUMEN,
+  [(bw.DBT_DEVICEREMOVEPENDING, ("P:",)), (bw.DBT_DEVICEREMOVECOMPLETE, ("P:", "Q:"))])
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, ("P:",))
+time.sleep(0.05)
+c("  solo los de desmontaje: una pregunta por letra no", len(VOLUMEN), 2)
+b.volumen = None
+c("el GUID de un aviso se lee de sus 16 bytes, como texto en minúsculas",
+  bw.guid_de(bytes.fromhex("74887050afc9d1118fef00a0c9a06d32")), GUID_BLOQUEO)
+b.dispositivo = lambda evento, h, guid="": 1 / 0
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEARRIVAL, 0)
 c("  y si el motor falla, la bandeja sigue", esperar(lambda: MONTAJES == [1, 1, 1]), True)

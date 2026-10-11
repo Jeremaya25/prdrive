@@ -46,6 +46,36 @@ def se_ignora(nombre: str, patrones: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(minusculas, p) for p in patrones)
 
 
+def ruta_larga(ruta: str) -> str:
+    """Devuelve la ruta con el prefijo que deja a Windows pasar de 260 caracteres.
+
+    Sin él (`\\\\?\\`, o `\\\\?\\UNC\\` para una carpeta de red) y con las rutas largas
+    apagadas en el sistema, `scandir` no entra en lo que queda a más de 260
+    caracteres y la foto no ve lo que cambia ahí (medido el 11/10/2026: lo
+    saltaba en silencio; `sync.py` y los avisos del sistema sí lo ven). Fuera
+    de Windows, o si ya lo lleva, la devuelve igual.
+    """
+    if os.name != "nt" or ruta.startswith("\\\\?\\"):
+        return ruta
+    absoluta = os.path.abspath(ruta)
+    if absoluta.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absoluta[2:]
+    return "\\\\?\\" + absoluta
+
+
+LARGA = 240
+"""Caracteres de la ruta de una carpeta a partir de los que se abre con `ruta_larga()`.
+
+Windows no lista una carpeta cuya ruta pasa de 248 (260 menos lo que ocupa un
+nombre 8.3); las más cortas se abren como siempre, sin prefijo.
+"""
+
+
+def _abrible(carpeta: str) -> str:
+    """Devuelve la ruta con la que abrir una carpeta: con prefijo solo si es larga."""
+    return ruta_larga(carpeta) if os.name == "nt" and len(carpeta) >= LARGA else carpeta
+
+
 def _hash(relativa: str, tamano: int, mtime_ns: int) -> int:
     """Devuelve el hash de 64 bits de una entrada."""
     datos = f"{relativa}\0{tamano}\0{mtime_ns}".encode("utf-8", "surrogatepass")
@@ -88,7 +118,7 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
         while pendientes:
             carpeta, prefijo = pendientes.pop()
             try:
-                with os.scandir(carpeta) as it:
+                with os.scandir(_abrible(carpeta)) as it:
                     for e in it:
                         if not prefijo and se_ignora(e.name, patrones):
                             continue
@@ -108,7 +138,7 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
             except (FileNotFoundError, NotADirectoryError, PermissionError):
                 if carpeta == raiz:
                     return None
-        os.stat(raiz)
+        os.stat(_abrible(raiz))
     except OSError:
         return None
     return Huella(entradas, firma & MASCARA)

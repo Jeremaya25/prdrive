@@ -94,7 +94,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Iterable, NamedTuple
 
 from .huella import se_ignora
 
@@ -131,7 +131,8 @@ LEER = 64 * 1024  # bytes por lectura del descriptor
 CAMBIO = "cambio"
 DESBORDADO = "desbordado"
 PERDIDA = "perdida"
-GRAVEDAD = {CAMBIO: 0, DESBORDADO: 1, PERDIDA: 2}
+RETIRADO = "retirado"
+GRAVEDAD = {RETIRADO: -1, CAMBIO: 0, DESBORDADO: 1, PERDIDA: 2}
 """Lo que llega a la vez para una pareja se queda con lo más grave."""
 
 DEJADA = "dejada"
@@ -174,12 +175,103 @@ class Aviso(NamedTuple):
 
     Args:
         tipo: `CAMBIO`; `DESBORDADO`, que cuenta como cambio y pide volver a
-            `vigilar()` la pareja; o `PERDIDA`: la pareja se ha dejado y se
-            recorre.
+            `vigilar()` la pareja; `PERDIDA`: la pareja se ha dejado y se
+            recorre; o `RETIRADO`: lo que se avisó como cambio se ha deshecho
+            solo (`Neto`) y ya no hay nada que sincronizar.
         motivo: En una `PERDIDA`, por qué, para el diario.
     """
     tipo: str
     motivo: str = ""
+
+
+class Neto:
+    """El efecto neto de los avisos de la carpeta de una pareja desde su última pasada.
+
+    Un nombre que nace y muere sin que nadie lo haya sincronizado (el temporal
+    de un programa, un `index.lock`) no deja nada que sincronizar: mientras solo
+    haya de esos, cuando el último muere el cambio se retira (`RETIRADO`) y la
+    pasada no sale. Cualquier otra cosa es un cambio firme, y ante la duda
+    también: tocar o borrar algo que ya estaba, un renombrado, un desbordado,
+    más de `TOPE` nombres vivos. Empieza de cero tras cada pasada
+    (`descartar()`), que ya ha subido lo que hubiera.
+
+    Attributes:
+        nacidos: Los nombres creados desde la última pasada que siguen vivos.
+        firme: Si hay un cambio que ya no se puede deshacer.
+    """
+
+    TOPE = 512
+    """Nombres vivos que se llevan en cuenta; con más, es un cambio y ya está."""
+
+    def __init__(self) -> None:
+        """Sin nada que sincronizar."""
+        self.nacidos: set = set()
+        self.firme = False
+
+    @property
+    def hay(self) -> bool:
+        """Indica si queda algo que sincronizar."""
+        return self.firme or bool(self.nacidos)
+
+    def _firme(self) -> None:
+        self.firme = True
+        self.nacidos.clear()
+
+    def nace(self, nombre: Any) -> None:
+        """Apunta un nombre recién creado."""
+        if self.firme:
+            return
+        if len(self.nacidos) >= self.TOPE:
+            self._firme()
+        else:
+            self.nacidos.add(nombre)
+
+    def muere(self, nombre: Any, separador: str = "") -> None:
+        """Apunta un nombre borrado: si había nacido aquí, se deshace; si no, es un cambio.
+
+        Args:
+            separador: Con él, mueren también los nombres que cuelgan de ese
+                (`nombre` + `separador` + …): se han ido con su carpeta.
+        """
+        if self.firme:
+            return
+        if nombre not in self.nacidos:
+            self._firme()
+            return
+        self.nacidos.discard(nombre)
+        if separador:
+            prefijo = nombre + separador
+            self.nacidos = {n for n in self.nacidos if not n.startswith(prefijo)}
+
+    def toca(self, nombre: Any) -> None:
+        """Apunta un nombre cambiado: en uno nacido aquí no añade nada; en otro, es un cambio."""
+        if not self.firme and nombre not in self.nacidos:
+            self._firme()
+
+    def limpiar(self) -> None:
+        """Vuelve a no haber nada: lo ha sincronizado una pasada."""
+        self.nacidos.clear()
+        self.firme = False
+
+
+def apuntar_neto(pendientes: dict, clave: tuple[str, str], neto: Neto, conto: bool) -> None:
+    """Deja en `pendientes` lo que el agente tiene que saber tras unos avisos de una pareja.
+
+    Un `CAMBIO` mientras quede algo que sincronizar; si lo que había se ha
+    deshecho solo, un `RETIRADO`, que sustituye al `CAMBIO` que aún no se
+    hubiera recogido. Lo más grave (un desbordado, una pérdida) no se toca.
+
+    Args:
+        conto: Si entre esos avisos había alguno que cuente (no ignorado).
+    """
+    if not conto:
+        return
+    antes = pendientes.get(clave)
+    if neto.hay:
+        if antes is None or GRAVEDAD[CAMBIO] > GRAVEDAD[antes.tipo]:
+            pendientes[clave] = Aviso(CAMBIO)
+    elif antes is None or antes.tipo in (CAMBIO, RETIRADO):
+        pendientes[clave] = Aviso(RETIRADO)
 
 
 def limite_de_vigilancias() -> int:
@@ -233,12 +325,13 @@ def sistema_de(carpeta: Path | str) -> str:
         return ""
 
 
-def abrir(hwnd: Any = None) -> Inotify | ReadDirectoryChanges | None:
+def abrir(hwnd: Any = None, veracrypt: bool = False) -> Inotify | ReadDirectoryChanges | None:
     """Abre el motor de avisos de este sistema.
 
     Args:
         hwnd: En Windows, la ventana de la bandeja: recibe los avisos de
             extracción de cada handle abierto. Sin ella no hay motor.
+        veracrypt: En Windows, si se oyen también los volúmenes de VeraCrypt.
 
     Returns:
         El motor, o `None` donde no lo hay (Windows sin bandeja, otro sistema).
@@ -248,7 +341,7 @@ def abrir(hwnd: Any = None) -> Inotify | ReadDirectoryChanges | None:
             acabado los de este usuario, `fs.inotify.max_user_instances`).
     """
     if ES_WINDOWS:
-        return ReadDirectoryChanges(Win32(), hwnd) if hwnd else None
+        return ReadDirectoryChanges(Win32(), hwnd, veracrypt=veracrypt) if hwnd else None
     if not ES_LINUX:
         return None
     try:
@@ -306,6 +399,7 @@ class Inotify:
         self._raiz: dict[tuple[str, str], int] = {}
         self._parejas: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
         self._pendientes: dict[tuple[str, str], Aviso] = {}
+        self._netos: dict[tuple[str, str], Neto] = {}
 
     # -- las llamadas al sistema (los tests las sustituyen en la instancia) --
 
@@ -431,6 +525,7 @@ class Inotify:
         """
         self.leer()
         with self._cerrojo:
+            self._netos.pop(clave, None)    # lo que hubiera ya lo ha visto la pasada
             aviso = self._pendientes.get(clave)
             if aviso is None or aviso.tipo == PERDIDA:
                 return None
@@ -447,7 +542,7 @@ class Inotify:
                     pass
             self.fd = -1
             for mapa in (self._ruta, self._de, self._wds, self._raiz, self._parejas,
-                         self._pendientes):
+                         self._pendientes, self._netos):
                 mapa.clear()
 
     # -- por dentro --
@@ -536,6 +631,10 @@ class Inotify:
         """Olvida una vigilancia que ya no está (la quitó el núcleo o este motor)."""
         for k in self._de.pop(wd, set()):
             self._wds.get(k, set()).discard(wd)
+            neto = self._netos.get(k)
+            if neto is not None:
+                # Lo nacido en esa carpeta se ha ido con ella.
+                neto.nacidos = {n for n in neto.nacidos if n[0] != wd}
         self._ruta.pop(wd, None)
 
     def _quitar(self, clave: tuple[str, str]) -> None:
@@ -546,6 +645,7 @@ class Inotify:
         self._raiz.pop(clave, None)
         self._parejas.pop(clave, None)
         self._pendientes.pop(clave, None)
+        self._netos.pop(clave, None)
 
     def _marcar(self, clave: tuple[str, str], aviso: Aviso) -> None:
         """Apunta un aviso de una pareja, quedándose con lo más grave."""
@@ -580,6 +680,7 @@ class Inotify:
         with self._cerrojo:
             if mask & IN_Q_OVERFLOW:
                 for k in self._parejas:
+                    self._netos.setdefault(k, Neto()).firme = True
                     self._marcar(k, Aviso(DESBORDADO))
                 return
             claves = set(self._de.get(wd, ()))
@@ -602,10 +703,22 @@ class Inotify:
                     continue
                 if carpeta and mask & IN_ATTRIB:
                     continue
+                neto = self._netos.setdefault(k, Neto())
                 if carpeta and mask & (IN_MOVED_FROM | IN_MOVED_TO):
+                    neto.firme = True
                     self._marcar(k, Aviso(DESBORDADO))
                     continue
-                self._marcar(k, Aviso(CAMBIO))
+                # El efecto neto (`Neto`): lo que nace y muere aquí sin que
+                # ninguna pasada lo haya visto no es un cambio.
+                if mask & IN_CREATE:
+                    neto.nace((wd, nombre))
+                elif mask & IN_DELETE:
+                    neto.muere((wd, nombre))
+                elif mask & (IN_MOVED_FROM | IN_MOVED_TO):
+                    neto.firme = True
+                else:
+                    neto.toca((wd, nombre))
+                apuntar_neto(self._pendientes, k, neto, True)
                 if carpeta and mask & IN_CREATE:
                     nuevas.add(k)
             if nuevas:
@@ -652,8 +765,38 @@ DBT_DEVICEQUERYREMOVE = 0x8001
 DBT_DEVICEQUERYREMOVEFAILED = 0x8002
 DBT_DEVICEREMOVEPENDING = 0x8003
 DBT_DEVICEREMOVECOMPLETE = 0x8004
+DBT_CUSTOMEVENT = 0x8006
 DBT_DEVTYP_HANDLE = 6
+FILE_ATTRIBUTE_DIRECTORY = 0x10
+ATRIBUTOS_INVALIDOS = 0xFFFFFFFF
+# ioevent.h: lo que el sistema de ficheros dice a quien tiene un handle registrado.
+GUID_IO_VOLUME_LOCK = "50708874-c9af-11d1-8fef-00a0c9a06d32"
+GUID_IO_VOLUME_LOCK_FAILED = "ae2eed10-0ba8-11d2-8ffb-00a0c9a06d32"
+GUID_IO_VOLUME_UNLOCK = "9a8c3d68-d0cb-11d1-8fef-00a0c9a06d32"
+GUID_IO_VOLUME_DISMOUNT = "d16a55e8-1059-11d2-8ffd-00a0c9a06d32"
+GUID_IO_VOLUME_MOUNT = "b5804878-1a96-11d2-8ffd-00a0c9a06d32"
 
+AGRUPAR = 1.0
+"""Segundos entre recoger una lectura de una carpeta y lanzar la siguiente.
+
+Windows guarda en el búfer de la carpeta lo que pase mientras y lo entrega
+junto: un despertar por segundo en vez de uno por aviso. La pasada no sale hasta
+`PoliticaCambios.calma` después del último cambio, así que ese segundo no se nota.
+"""
+CALLAR_TRAS_DESCARTE = 2.0
+"""Segundos, tras acabar la pasada de una pareja, en que se tira lo que llegue de su carpeta.
+
+Lo último que escribió rclone puede estar todavía en el búfer de Windows
+(`AGRUPAR`), y NTFS entrega tarde algún aviso.
+"""
+MIRAR_CARPETAS = 8
+"""Cuántos nombres «modificados» de una lectura se miran en el disco para saber si son carpetas."""
+REABRIR_VERACRYPT = 5.0
+"""Segundos tras el anuncio de un desmontaje de VeraCrypt en que se vuelve a abrir la carpeta si no se fue.
+
+VeraCrypt no dice que un desmontaje ha fallado o se ha cancelado; reintenta
+durante segundo y medio (30 veces cada 50 ms, `Common/Dlgcode.c`).
+"""
 MAX_PAREJAS_WINDOWS = 63
 """Las que caben en un `WaitForMultipleObjects` (64) junto al evento de control."""
 TAM_BUFER = 64 * 1024
@@ -760,6 +903,10 @@ class Win32:
         k.GetDriveTypeW.argtypes = [wt.LPCWSTR]
         k.QueryDosDeviceW.restype = wt.DWORD
         k.QueryDosDeviceW.argtypes = [wt.LPCWSTR, wt.LPWSTR, wt.DWORD]
+        k.GetFileAttributesW.restype = wt.DWORD
+        k.GetFileAttributesW.argtypes = [wt.LPCWSTR]
+        k.GetFinalPathNameByHandleW.restype = wt.DWORD
+        k.GetFinalPathNameByHandleW.argtypes = [wt.HANDLE, wt.LPWSTR, wt.DWORD, wt.DWORD]
         u.RegisterDeviceNotificationW.restype = wt.HANDLE
         u.RegisterDeviceNotificationW.argtypes = [wt.HANDLE, wt.LPVOID, wt.DWORD]
         u.UnregisterDeviceNotification.restype = wt.BOOL
@@ -779,6 +926,21 @@ class Win32:
         if not self.kernel32.QueryDosDeviceW(unidad, bufer, len(bufer)):
             return ""
         return bufer.value
+
+    def es_carpeta(self, ruta: str) -> bool:
+        """Indica si esa ruta es ahora una carpeta (`GetFileAttributesW`); si no está, no."""
+        atributos = self.kernel32.GetFileAttributesW(ruta)
+        return atributos != ATRIBUTOS_INVALIDOS and bool(atributos & FILE_ATTRIBUTE_DIRECTORY)
+
+    def ruta_final(self, h: int) -> str:
+        """Devuelve dónde está de verdad lo que abre un handle, o `""` si no se sabe.
+
+        `GetFinalPathNameByHandleW`: sigue a la carpeta si la mueven o la
+        renombran, que es como el motor se entera (40–66 µs, medido).
+        """
+        bufer = self.ct.create_unicode_buffer(1024)
+        n = self.kernel32.GetFinalPathNameByHandleW(h, bufer, len(bufer), 0)
+        return bufer.value if 0 < n < len(bufer) else ""
 
     def abrir_carpeta(self, ruta: str) -> int:
         """Abre una carpeta para leer sus cambios, sin impedir a nadie tocarla."""
@@ -879,6 +1041,21 @@ class _Vigilancia:
         clave: `(raíz, pareja)`.
         ruta: La carpeta.
         patrones: Lo que no se mira de su raíz.
+
+    Attributes:
+        relanzar: Cuándo toca lanzar su siguiente lectura (`AGRUPAR` después de
+            recoger la anterior), o `None` si hay una lanzada.
+        callar_hasta: Hasta cuándo se tira lo que llegue: lo dejó su pasada
+            (`descartar()`).
+        neto: El efecto neto de sus avisos desde la última pasada.
+        final: La ruta de verdad de la carpeta al abrirla
+            (`GetFinalPathNameByHandleW`): si cambia, la han movido.
+        desmontada: Callada por un bloqueo del volumen, si después se ha
+            desmontado: entonces no se vuelve a abrir al soltarse el bloqueo.
+        letra: Su letra (`P:`) si es un volumen de VeraCrypt; sus avisos llegan
+            por letra y no por handle.
+        reabrir_en: En un volumen de VeraCrypt callado, cuándo se vuelve a
+            abrir si no ha llegado a desmontarse.
     """
 
     def __init__(self, clave: tuple[str, str], ruta: str, patrones: tuple[str, ...]) -> None:
@@ -890,37 +1067,67 @@ class _Vigilancia:
         self.ov: Any = None
         self.bufer: Any = None
         self.leyendo = False
+        self.relanzar: float | None = None
+        self.callar_hasta = 0.0
+        self.neto = Neto()
+        self.final = ""
+        self.desmontada = False
+        self.letra = ""
+        self.reabrir_en: float | None = None
 
 
 class ReadDirectoryChanges:
     """El motor de avisos de Windows: un handle por pareja y un hilo que los espera.
 
     Tiene los mismos métodos que `Inotify` (sin descriptor: `fd` es `None` y
-    `leer()` no hace nada) y `dispositivo()`, que la bandeja llama con los
-    avisos de extracción de cada handle.
+    `leer()` no hace nada), `dispositivo()`, que la bandeja llama con los avisos
+    de cada handle, y `volumen()`, con los de una letra.
+
+    Las lecturas se agrupan: recogida una, la siguiente se lanza `agrupar`
+    segundos después, y Windows entrega junto lo que haya pasado mientras (lo
+    guarda en el búfer de la carpeta). El primer aviso de una ráfaga llega en el
+    acto; los demás, una vez por segundo en vez de uno a uno (medido el
+    11/10/2026: 5 000 ficheros, de 5 041 despertares a 11, sin perder ninguno).
+
+    Lo que mira el disco (abrir una carpeta, preguntar si un nombre es una
+    carpeta) va FUERA del cerrojo: `dispositivo()` corre en el hilo de la
+    bandeja, dentro de un aviso al que Windows espera, y no puede quedarse
+    detrás de un disco lento.
 
     Args:
         api: Las llamadas a Windows (`Win32`, o una de mentira).
         hwnd: La ventana de la bandeja, que recibe los avisos de extracción.
         tam_bufer: Bytes del búfer de cada lectura.
+        agrupar: Segundos entre recoger una lectura y lanzar la siguiente.
+        callar: Segundos que se tira lo que llegue tras `descartar()`.
+        veracrypt: Si se oyen también los volúmenes de VeraCrypt (`volumen()`).
+        reloj: De dónde sale la hora de los plazos; los tests lo sustituyen.
 
     Attributes:
         fd: `None`: no hay nada que el vigía del agente tenga que oír.
     """
 
-    def __init__(self, api: Any, hwnd: Any, tam_bufer: int = TAM_BUFER) -> None:
+    def __init__(self, api: Any, hwnd: Any, tam_bufer: int = TAM_BUFER, *,
+                 agrupar: float = AGRUPAR, callar: float = CALLAR_TRAS_DESCARTE,
+                 veracrypt: bool = False, reloj: Any = time.monotonic) -> None:
         """Arranca el hilo que espera las lecturas."""
         self.fd = None
         self._api = api
         self._hwnd = hwnd
         self._tam = tam_bufer
+        self._agrupar = agrupar
+        self._callar = callar
+        self._veracrypt = veracrypt
+        self._reloj = reloj
         self._cerrojo = threading.RLock()
         self._queridas: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
         self._activas: dict[tuple[str, str], _Vigilancia] = {}
         self._calladas: dict[int, _Vigilancia] = {}
+        self._de_letra: dict[tuple[str, str], _Vigilancia] = {}
         self._acabando: list[_Vigilancia] = []
         self._pendientes: dict[tuple[str, str], Aviso] = {}
         self._peticiones: list[tuple[tuple[str, str], threading.Event | None, list]] = []
+        self._reabiertas: set[tuple[str, str]] = set()
         self._parar = False
         self._control = api.evento()
         self._hilo = threading.Thread(target=self._correr, name="avisos-carpeta", daemon=True)
@@ -948,8 +1155,7 @@ class ReadDirectoryChanges:
         unidad = ntpath.splitdrive(ruta)[0]
         if self._api.tipo_de_unidad(unidad.rstrip("\\") + "\\") == DRIVE_REMOTE:
             return MOTIVO_RED_WINDOWS
-        if len(unidad) == 2 and self._api.dispositivo_de(unidad).startswith(
-                DISPOSITIVOS_VERACRYPT):
+        if not self._veracrypt and self._es_de_veracrypt(unidad):
             return MOTIVO_VERACRYPT
         patrones = tuple(p.lower() for p in ignorar)
         with self._cerrojo:
@@ -963,6 +1169,8 @@ class ReadDirectoryChanges:
         with self._cerrojo:
             self._queridas.pop(clave, None)
             self._pendientes.pop(clave, None)
+            self._reabiertas.discard(clave)
+            self._de_letra.pop(clave, None)
             v = self._activas.pop(clave, None)
             if v is not None:
                 self._cerrar(v)
@@ -977,6 +1185,7 @@ class ReadDirectoryChanges:
             claves = {k for k in self._queridas if k[0] == uid}
             claves |= {k for k in self._activas if k[0] == uid}
             claves |= {v.clave for v in self._calladas.values() if v.clave[0] == uid}
+            claves |= {k for k in self._de_letra if k[0] == uid}
         for clave in claves:
             self.dejar(clave)
 
@@ -990,36 +1199,74 @@ class ReadDirectoryChanges:
         return avisos
 
     def descartar(self, clave: tuple[str, str]) -> Aviso | None:
-        """Tira lo que ha llegado de una pareja (lo escribió su pasada); como `Inotify.descartar()`."""
-        with self._cerrojo:
-            aviso = self._pendientes.get(clave)
-            if aviso is None or aviso.tipo == PERDIDA:
-                return None
-            del self._pendientes[clave]
-            return aviso
+        """Tira lo que ha llegado de una pareja (lo escribió su pasada); como `Inotify.descartar()`.
 
-    def dispositivo(self, evento: int, handle: int) -> None:
-        """Atiende un aviso de extracción de un handle; lo llama la bandeja, desde su hilo.
+        Con las lecturas agrupadas, lo último que escribió la pasada puede
+        seguir en el búfer de Windows: lo que llegue en los próximos `callar`
+        segundos también se tira. Lo que la persona cambie en ese instante
+        espera al intervalo, como lo que cambia mientras la pasada corre. De
+        paso se mira si la carpeta sigue donde estaba: moverla o renombrarla
+        no avisa, y el handle se va con ella.
+        """
+        with self._cerrojo:
+            v = self._activas.get(clave)
+            handle = None
+            if v is not None:
+                v.neto.limpiar()
+                v.callar_hasta = self._reloj() + self._callar
+                handle = v.handle if v.final else None
+            aviso = self._pendientes.get(clave)
+            if aviso is not None and aviso.tipo != PERDIDA:
+                del self._pendientes[clave]
+            else:
+                aviso = None
+        if handle is not None and self._se_ha_movido(v, handle):
+            with self._cerrojo:
+                if self._activas.get(clave) is v and v.handle == handle:
+                    del self._activas[clave]
+                    self._cerrar(v)
+                    self._perder(clave, MOTIVO_SE_FUE)
+        return aviso
+
+    def dispositivo(self, evento: int, handle: int, guid: str = "") -> None:
+        """Atiende un aviso de un handle; lo llama la bandeja, desde su hilo.
+
+        Los de extracción cierran la carpeta antes de que Windows decida, y los
+        del volumen también (`DBT_CUSTOMEVENT`, con los GUID de ioevent.h):
+        quien pide el volumen en exclusiva (expulsarlo, comprobarlo,
+        formatearlo, bloquearlo con BitLocker) lo consigue a la primera en vez
+        de encontrarlo «en uso» por el agente. Si al final no se lo lleva, la
+        carpeta se vuelve a abrir, y eso cuenta como un cambio: entre cerrar y
+        abrir no se ha oído nada.
 
         Args:
             evento: `DBT_DEVICEQUERYREMOVE`, `…QUERYREMOVEFAILED`,
-                `…REMOVEPENDING` o `…REMOVECOMPLETE`.
+                `…REMOVEPENDING`, `…REMOVECOMPLETE` o `DBT_CUSTOMEVENT`.
             handle: El handle del aviso (`dbch_handle`).
+            guid: En un `DBT_CUSTOMEVENT`, su `dbch_eventguid` en minúsculas.
         """
         with self._cerrojo:
-            if evento == DBT_DEVICEQUERYREMOVE:
+            if evento == DBT_DEVICEQUERYREMOVE or (evento == DBT_CUSTOMEVENT
+                                                   and guid == GUID_IO_VOLUME_LOCK):
                 v = next((x for x in self._activas.values() if x.handle == handle), None)
                 if v is not None:
                     del self._activas[v.clave]
                     self._cerrar(v, desregistrar=False)
+                    v.desmontada = False
                     self._calladas[handle] = v
             elif evento == DBT_DEVICEQUERYREMOVEFAILED:
-                v = self._calladas.pop(handle, None)
-                if v is not None:
-                    self._desregistrar(v)
-                    if v.clave in self._queridas:
-                        self._peticiones.append((v.clave, None, []))
-                        self._api.poner(self._control)
+                self._reabrir(handle)
+            elif evento == DBT_CUSTOMEVENT:
+                v = self._calladas.get(handle)
+                if v is None:
+                    return
+                if guid == GUID_IO_VOLUME_DISMOUNT:
+                    # Abrirla ahora volvería a montar lo que alguien acaba de
+                    # desmontar para quitarlo.
+                    v.desmontada = True
+                elif guid in (GUID_IO_VOLUME_LOCK_FAILED, GUID_IO_VOLUME_MOUNT) \
+                        or (guid == GUID_IO_VOLUME_UNLOCK and not v.desmontada):
+                    self._reabrir(handle)
             elif evento in (DBT_DEVICEREMOVEPENDING, DBT_DEVICEREMOVECOMPLETE):
                 v = self._calladas.pop(handle, None)
                 if v is None:
@@ -1030,6 +1277,42 @@ class ReadDirectoryChanges:
                 if v is not None:
                     self._desregistrar(v)
                     self._perder(v.clave, MOTIVO_DESMONTADA)
+
+    def volumen(self, evento: int, letras: Iterable[str]) -> None:
+        """Atiende un aviso de volumen de unas letras; lo llama la bandeja, desde su hilo.
+
+        Es lo único que anuncia VeraCrypt al desmontar un volumen
+        (`BroadcastDeviceChange`, `Common/Dlgcode.c`): sus volúmenes no admiten
+        el registro por handle. Solo cuentan las letras que este motor vigila
+        como de VeraCrypt.
+
+        - `DBT_DEVICEREMOVEPENDING`: va a desmontarse. La carpeta se cierra en
+          el acto para no estorbar, y si en `REABRIR_VERACRYPT` segundos la
+          letra sigue siendo de VeraCrypt (el desmontaje falló o se canceló, y
+          VeraCrypt no lo dice) se vuelve a abrir.
+        - `DBT_DEVICEREMOVECOMPLETE`: se ha desmontado; la pareja se pierde.
+
+        Args:
+            evento: Uno de esos dos; los demás no hacen nada.
+            letras: Las letras del aviso, como `P:`.
+        """
+        letras = {x.upper() for x in letras}
+        with self._cerrojo:
+            for clave, v in list(self._de_letra.items()):
+                if v.letra not in letras:
+                    continue
+                if evento == DBT_DEVICEREMOVEPENDING:
+                    if self._activas.get(clave) is v:
+                        del self._activas[clave]
+                        self._cerrar(v)
+                    v.reabrir_en = self._reloj() + REABRIR_VERACRYPT
+                    self._api.poner(self._control)
+                elif evento == DBT_DEVICEREMOVECOMPLETE:
+                    if self._activas.get(clave) is v:
+                        del self._activas[clave]
+                        self._cerrar(v)
+                    del self._de_letra[clave]
+                    self._perder(clave, MOTIVO_DESMONTADA)
 
     def cerrar(self) -> None:
         """Para el hilo y cierra todo lo abierto."""
@@ -1044,9 +1327,26 @@ class ReadDirectoryChanges:
             for v in self._calladas.values():
                 self._desregistrar(v)
             self._calladas.clear()
+            self._de_letra.clear()
             self._queridas.clear()
 
     # -- por dentro --
+
+    def _es_de_veracrypt(self, unidad: str) -> bool:
+        """Indica si esa letra (`P:`) es ahora un volumen de VeraCrypt."""
+        return len(unidad) == 2 and self._api.dispositivo_de(unidad).startswith(
+            DISPOSITIVOS_VERACRYPT)
+
+    def _reabrir(self, handle: int) -> None:
+        """Vuelve a abrir la carpeta que se calló por ese handle: lo pide al hilo del motor."""
+        v = self._calladas.pop(handle, None)
+        if v is None:
+            return
+        self._desregistrar(v)
+        if v.clave in self._queridas:
+            self._reabiertas.add(v.clave)
+            self._peticiones.append((v.clave, None, []))
+            self._api.poner(self._control)
 
     def _pedir_armar(self, clave: tuple[str, str], ruta: str,
                      patrones: tuple[str, ...]) -> str | None:
@@ -1063,98 +1363,238 @@ class ReadDirectoryChanges:
         return respuesta[0]
 
     def _armar(self, clave: tuple[str, str]) -> str | None:
-        """Abre la carpeta de una pareja y lanza su primera lectura; lo hace el hilo del motor."""
-        if clave not in self._queridas:
-            return DEJADA
-        if clave in self._activas:
-            return None
-        if len(self._activas) + len(self._acabando) >= MAX_PAREJAS_WINDOWS:
-            return (f"ya hay {MAX_PAREJAS_WINDOWS} parejas vigiladas con avisos en este "
-                    f"equipo")
-        ruta, patrones = self._queridas[clave]
+        """Abre la carpeta de una pareja y lanza su primera lectura; lo hace el hilo del motor.
+
+        Abrirla es lo único que puede tardar (un disco que se despierta) y va
+        sin el cerrojo; después se comprueba que la pareja se siga queriendo.
+        """
+        with self._cerrojo:
+            if clave not in self._queridas:
+                return DEJADA
+            if clave in self._activas:
+                return None
+            if len(self._activas) + len(self._acabando) >= MAX_PAREJAS_WINDOWS:
+                return (f"ya hay {MAX_PAREJAS_WINDOWS} parejas vigiladas con avisos en este "
+                        f"equipo")
+            ruta, patrones = self._queridas[clave]
         v = _Vigilancia(clave, ruta, patrones)
+        unidad = ntpath.splitdrive(ruta)[0].upper()
         try:
-            v.handle = self._api.abrir_carpeta(ruta)
+            cifrada = self._veracrypt and self._es_de_veracrypt(unidad)
+            handle = self._api.abrir_carpeta(ruta)
         except OSError as e:
             return f"no se puede vigilar su carpeta: {e.strerror or e}"
-        v.aviso = self._api.registrar(self._hwnd, v.handle)
-        if not v.aviso:
-            self._api.cerrar(v.handle)
-            return MOTIVO_SIN_REGISTRO
-        v.evento = self._api.evento()
-        v.ov = self._api.overlapped(v.evento)
-        v.bufer = self._api.bufer(self._tam)
-        try:
-            self._api.leer_cambios(v.handle, v.bufer, v.ov, self._tam)
-        except OSError as e:
-            self._api.cerrar(v.handle)
-            self._desregistrar(v)
-            self._api.cerrar_evento(v.evento)
-            return f"su carpeta no da avisos: {e.strerror or e}"
-        v.leyendo = True
-        self._activas[clave] = v
-        return None
+        final = self._api.ruta_final(handle)
+        with self._cerrojo:
+            if self._parar or clave not in self._queridas or clave in self._activas:
+                self._api.cerrar(handle)
+                return DEJADA if clave not in self._queridas else None
+            v.handle, v.final = handle, final
+            if cifrada:
+                # Sus avisos llegan por letra (`volumen()`): no admite el registro.
+                v.letra = unidad
+            else:
+                v.aviso = self._api.registrar(self._hwnd, v.handle)
+                if not v.aviso:
+                    self._api.cerrar(v.handle)
+                    return MOTIVO_SIN_REGISTRO
+            v.evento = self._api.evento()
+            v.ov = self._api.overlapped(v.evento)
+            v.bufer = self._api.bufer(self._tam)
+            try:
+                self._api.leer_cambios(v.handle, v.bufer, v.ov, self._tam)
+            except OSError as e:
+                self._api.cerrar(v.handle)
+                self._desregistrar(v)
+                self._api.cerrar_evento(v.evento)
+                return f"su carpeta no da avisos: {e.strerror or e}"
+            v.leyendo = True
+            self._activas[clave] = v
+            if cifrada:
+                self._de_letra[clave] = v
+            if clave in self._reabiertas:
+                # Entre cerrarla y abrirla no se ha oído nada: algo pudo cambiar.
+                self._reabiertas.discard(clave)
+                v.neto.firme = True
+                self._marcar(clave, Aviso(CAMBIO))
+            return None
+
+    def _plazo(self, ahora: float) -> int:
+        """Devuelve los milisegundos que el hilo puede esperar sin que venza nada suyo."""
+        vencen = [v.relanzar for v in self._activas.values()
+                  if not v.leyendo and v.relanzar is not None]
+        vencen += [v.reabrir_en for v in self._de_letra.values() if v.reabrir_en is not None]
+        if not vencen:
+            return INFINITO
+        return max(0, int((min(vencen) - ahora) * 1000) + 1)
 
     def _correr(self) -> None:
-        """Es el hilo del motor: atiende las peticiones y las lecturas que acaban."""
+        """Es el hilo del motor: atiende las peticiones, las lecturas que acaban y los plazos."""
         while True:
             with self._cerrojo:
                 if self._parar:
                     break
-                vivas = list(self._activas.values()) + self._acabando
+                vivas = [v for v in self._activas.values() if v.leyendo] + self._acabando
                 eventos = [self._control] + [v.evento for v in vivas]
+                plazo = self._plazo(self._reloj())
             try:
-                self._api.esperar(eventos, INFINITO)
+                self._api.esperar(eventos, plazo)
             except OSError:
                 time.sleep(1.0)
                 continue
             with self._cerrojo:
                 self._api.quitar(self._control)
                 peticiones, self._peticiones = self._peticiones, []
-                for clave, hecho, respuesta in peticiones:
-                    motivo = self._armar(clave)
-                    if hecho is not None:
-                        respuesta.append(motivo)
-                        hecho.set()
-                    elif motivo is not None and clave in self._queridas:
-                        self._perder(clave, motivo)
+            for clave, hecho, respuesta in peticiones:
+                motivo = self._armar(clave)
+                if hecho is not None:
+                    respuesta.append(motivo)
+                    hecho.set()
+                elif motivo is not None and motivo != DEJADA:
+                    with self._cerrojo:
+                        if clave in self._queridas:
+                            self._perder(clave, motivo)
+            tandas = []
+            with self._cerrojo:
                 for v in vivas:
                     if v.leyendo and self._api.senalado(v.evento):
-                        self._acabada(v)
+                        tanda = self._acabada(v)
+                        if tanda is not None:
+                            tandas.append(tanda)
+            for v, handle, registros, nacidos in tandas:
+                self._juzgar(v, handle, registros, nacidos)
+            self._vencidos()
 
-    def _acabada(self, v: _Vigilancia) -> None:
-        """Recoge una lectura que ha acabado y lanza la siguiente."""
+    def _acabada(self, v: _Vigilancia) -> tuple | None:
+        """Recoge una lectura que ha acabado y deja apuntado cuándo lanzar la siguiente.
+
+        Returns:
+            `(vigilancia, handle, registros, nacidos)` para `_juzgar()`, con
+            `registros` a `None` si el búfer se desbordó; `None` si no hay nada
+            que juzgar.
+        """
         v.leyendo = False
         if v.handle is None:
             # Su handle ya se cerró: la lectura acaba cancelada y ya se puede soltar todo.
             if v in self._acabando:
                 self._acabando.remove(v)
             self._api.cerrar_evento(v.evento)
-            return
+            return None
         try:
             n = self._api.resultado(v.handle, v.ov)
         except OSError as e:
             if _winerror(e) != ERROR_NOTIFY_ENUM_DIR:
                 del self._activas[v.clave]
+                self._de_letra.pop(v.clave, None)
+                self._cerrar(v)
+                self._perder(v.clave, MOTIVO_SE_FUE)
+                return None
+            n = 0
+        self._api.quitar(v.evento)
+        v.relanzar = self._reloj() + self._agrupar
+        registros = avisos_de_windows(self._api.bytes_de(v.bufer, n)) if n else None
+        return v, v.handle, registros, set(v.neto.nacidos)
+
+    def _se_ha_movido(self, v: _Vigilancia, handle: int) -> bool:
+        """Indica si la carpeta de una vigilancia ya no está donde se abrió (sin el cerrojo)."""
+        if not v.final:
+            return False
+        ahora = self._api.ruta_final(handle)
+        return bool(ahora) and ahora != v.final
+
+    def _juzgar(self, v: _Vigilancia, handle: int, registros: list | None,
+                nacidos: set) -> None:
+        """Decide qué cuenta de una lectura recogida; lo que mira el disco va sin el cerrojo."""
+        movida = self._se_ha_movido(v, handle)
+        carpetas: set[str] = set()
+        if registros is not None and not movida:
+            vistos, mirados = set(nacidos), 0
+            for accion, nombre in registros:
+                clave = nombre.lower()
+                if accion == FILE_ACTION_ADDED:
+                    vistos.add(clave)
+                    continue
+                if accion != FILE_ACTION_MODIFIED or clave in vistos or clave in carpetas \
+                        or se_ignora(nombre.split("\\", 1)[0], v.patrones):
+                    continue
+                if mirados >= MIRAR_CARPETAS:
+                    break
+                mirados += 1
+                if self._api.es_carpeta(v.ruta + "\\" + nombre):
+                    carpetas.add(clave)
+                else:
+                    break                   # un fichero cambiado ya es un cambio: no se mira más
+        with self._cerrojo:
+            if self._activas.get(v.clave) is not v or v.handle != handle:
+                return                      # la dejaron o se calló mientras tanto
+            if movida:
+                del self._activas[v.clave]
+                self._de_letra.pop(v.clave, None)
                 self._cerrar(v)
                 self._perder(v.clave, MOTIVO_SE_FUE)
                 return
-            n = 0
-        if n == 0:
-            self._marcar(v.clave, Aviso(DESBORDADO))
-        else:
-            for _accion, nombre in avisos_de_windows(self._api.bytes_de(v.bufer, n)):
-                if not se_ignora(nombre.split("\\", 1)[0], v.patrones):
-                    self._marcar(v.clave, Aviso(CAMBIO))
-                    break
-        try:
-            self._api.quitar(v.evento)
-            self._api.leer_cambios(v.handle, v.bufer, v.ov, self._tam)
-            v.leyendo = True
-        except OSError:
-            del self._activas[v.clave]
-            self._cerrar(v)
-            self._perder(v.clave, MOTIVO_SE_FUE)
+            if self._reloj() < v.callar_hasta:
+                return                      # lo dejó su pasada (`descartar()`)
+            if registros is None:
+                v.neto.firme = True
+                self._marcar(v.clave, Aviso(DESBORDADO))
+                return
+            conto = False
+            for accion, nombre in registros:
+                if se_ignora(nombre.split("\\", 1)[0], v.patrones):
+                    continue
+                clave = nombre.lower()
+                if accion == FILE_ACTION_MODIFIED and clave in carpetas \
+                        and clave not in v.neto.nacidos:
+                    # La fecha de una carpeta: lo que la movió ya ha avisado por su nombre.
+                    continue
+                conto = True
+                if accion == FILE_ACTION_ADDED:
+                    v.neto.nace(clave)
+                elif accion == FILE_ACTION_REMOVED:
+                    v.neto.muere(clave, "\\")
+                elif accion == FILE_ACTION_MODIFIED:
+                    v.neto.toca(clave)
+                else:
+                    v.neto.firme = True     # un renombrado: no se sigue la cuenta
+            apuntar_neto(self._pendientes, v.clave, v.neto, conto)
+
+    def _vencidos(self) -> None:
+        """Lanza las lecturas cuyo plazo de agrupar ha pasado y reabre los volúmenes de VeraCrypt que no se fueron."""
+        reabrir = []
+        with self._cerrojo:
+            ahora = self._reloj()
+            for v in list(self._activas.values()):
+                if v.leyendo or v.relanzar is None or ahora < v.relanzar:
+                    continue
+                v.relanzar = None
+                try:
+                    self._api.leer_cambios(v.handle, v.bufer, v.ov, self._tam)
+                    v.leyendo = True
+                except OSError:
+                    del self._activas[v.clave]
+                    self._de_letra.pop(v.clave, None)
+                    self._cerrar(v)
+                    self._perder(v.clave, MOTIVO_SE_FUE)
+            for clave, v in list(self._de_letra.items()):
+                if v.reabrir_en is not None and ahora >= v.reabrir_en:
+                    v.reabrir_en = None
+                    del self._de_letra[clave]
+                    reabrir.append((clave, v.letra))
+        for clave, letra in reabrir:
+            sigue = self._es_de_veracrypt(letra)
+            with self._cerrojo:
+                if clave not in self._queridas or clave in self._activas:
+                    continue
+                if not sigue:
+                    self._perder(clave, MOTIVO_DESMONTADA)
+                    continue
+                self._reabiertas.add(clave)
+            motivo = self._armar(clave)
+            if motivo is not None and motivo != DEJADA:
+                with self._cerrojo:
+                    if clave in self._queridas:
+                        self._perder(clave, motivo)
 
     def _cerrar(self, v: _Vigilancia, desregistrar: bool = True) -> None:
         """Cierra el handle de una vigilancia; su evento y su búfer, cuando acabe su lectura."""
@@ -1163,6 +1603,7 @@ class ReadDirectoryChanges:
                 self._api.cancelar(v.handle, v.ov)
             self._api.cerrar(v.handle)
             v.handle = None
+        v.relanzar = None
         if desregistrar:
             self._desregistrar(v)
         if v.leyendo:
@@ -1187,4 +1628,5 @@ class ReadDirectoryChanges:
     def _perder(self, clave: tuple[str, str], motivo: str) -> None:
         """Olvida una pareja y apunta que se ha perdido, con el motivo."""
         self._queridas.pop(clave, None)
+        self._reabiertas.discard(clave)
         self._pendientes[clave] = Aviso(PERDIDA, motivo)
