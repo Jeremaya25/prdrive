@@ -9,6 +9,8 @@ paths:
   - "common/dbus.py"
   - "common/store.py"
   - "common/prioridad.py"
+  - "common/consumo.py"
+  - "tests/test_agente_consumo.py"
   - "tests/test_prioridad.py"
   - "ui/tk_agente.py"
   - "tests/test_agente_contrato.py"

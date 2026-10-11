@@ -390,4 +390,32 @@ c("  y el que no falla, que pasa",
   "**Pasa.**" in informe.markdown(igual, {"plataforma": "x", "pr": "a", "base": "b", "rondas": 7,
                                            "suelo": "-", "python": "-", "tk": "-"}), True)
 
+# --- lo que gasta el agente y una pasada (`consumo.py`): cada cuenta con su nombre y su techo
+pres_consumo = {"techo": {"consumo.servida.toques_unidad": 33240, "consumo.servida.pasadas": 48}}
+
+
+def servida(arbol, toques, pasadas):
+    return cuenta(arbol, "consumo-servida", pares=None, toques_unidad=toques, pasadas=pasadas)
+
+
+igual = veredicto([servida("base", 33240, 48), servida("pr", 33240, 48)], pres_consumo)
+c("las cuentas de consumo llevan el nombre del flujo y el suyo",
+  [f["clave"] for f in igual["cuentas"]],
+  ["consumo.servida.pasadas", "consumo.servida.toques_unidad"])
+c("  y en su techo no fallan", igual["fallos"], [])
+peor = veredicto([servida("base", 33240, 48), servida("pr", 33240, 60)], pres_consumo)
+c("más pasadas que su techo: falla y nombra la cuenta",
+  [("consumo.servida.pasadas" in f) for f in peor["fallos"]], [True])
+mejor = veredicto([servida("base", 33240, 48), servida("pr", 9000, 20)], pres_consumo)
+c("menos toques y menos pasadas: no falla y avisa de que se bajan los techos",
+  (mejor["fallos"], len(mejor["avisos"])), ([], 2))
+c("los flujos de consumo están en el plan, y la pasada de verdad solo con rclone",
+  ([f for f, _, _ in correr.PLAN if f.startswith("consumo-")],
+   [f for f, _, _ in correr.PLAN_CON_RCLONE]),
+  (["consumo-reposo", "consumo-servida"], ["consumo-pasada"]))
+c("  lo que se añade con rclone también tiene sus momentos esperados y su etiqueta",
+  [f in correr.ESPERADOS and f in informe.ETIQUETAS for f, _, _ in correr.PLAN_CON_RCLONE], [True])
+c("  y los que no usan el dispositivo de muestra no llevan parejas",
+  [n for f, n, _ in correr.PLAN if f in correr.SOLO_CODIGO], [None] * len(correr.SOLO_CODIGO))
+
 sys.exit(c.report())

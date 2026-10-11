@@ -14,6 +14,7 @@ recoge `test_*.py`). Solo biblioteca estándar.
     python tests/_runtime_ci.py clave
     python tests/_runtime_ci.py runtime PLATAFORMA DESTINO CACHE
     python tests/_runtime_ci.py compilador PLATAFORMA DESTINO CACHE
+    python tests/_runtime_ci.py rclone PLATAFORMA CACHE
 
 `clave` escribe la clave de la caché de Actions (la release de Python y el
 paquete del Tk con Xft que fija `common/pins.py`). `runtime` deja el runtime
@@ -23,7 +24,10 @@ que es con el que se compila el `.exe`; solo de Windows. En Actions, además, la
 órdenes la dejan donde lo lee el resto del trabajo: `clave` en `$GITHUB_OUTPUT`,
 `runtime` en `$GITHUB_ENV` como `PRDRIVE_PYTHON` y `compilador` como
 `PRDRIVE_PYTHON_COMPILAR`, sin pasar por el intérprete de órdenes del paso (que
-en Windows con bash cambia las barras).
+en Windows con bash cambia las barras). `rclone` deja en CACHE el rclone de la
+versión fijada (`install/rclone_bin.py`, comprobado contra su SHA256SUMS) y
+escribe su ruta, en Actions como `PRDRIVE_RCLONE_CI`: con él la comprobación de
+tiempos mide también una pasada de verdad (`tests/rendimiento/consumo.py`).
 """
 
 from __future__ import annotations
@@ -50,7 +54,8 @@ def clave() -> int:
     """Escribe la clave de la caché: cambia cuando cambia lo que se descarga."""
     from common import pins
 
-    valor = f"{pins.PYTHON_RELEASE}-{pins.PYTHON_VERSION}-{pins.TK_XFT_TAG}"
+    valor = (f"{pins.PYTHON_RELEASE}-{pins.PYTHON_VERSION}-{pins.TK_XFT_TAG}"
+             f"-{pins.RCLONE_VERSION}")
     print(valor)
     _anotar("GITHUB_OUTPUT", "clave", valor)
     return 0
@@ -194,14 +199,41 @@ def compilador(plataforma: str, destino: Path, cache: Path) -> int:
     return 0
 
 
+def rclone(plataforma: str, cache: Path) -> int:
+    """Baja (o toma de la caché) y comprueba el rclone fijado de esa plataforma.
+
+    Args:
+        plataforma: Clave de `pins.PLATAFORMAS` (`linux-x64`, `windows-x64`).
+        cache: Carpeta de descargas, la que Actions guarda entre ejecuciones.
+
+    Returns:
+        0 si el binario queda comprobado; 1 si no.
+    """
+    from common import pins
+
+    os.environ["LOCALAPPDATA"] = str(cache)     # `rclone_bin.cache_dir()` la lee en cada llamada
+    from install import InstallError, rclone_bin
+
+    try:
+        binario = rclone_bin.pinned_rclone(pins.plataforma(plataforma), _decir)
+    except (InstallError, OSError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(binario)
+    _anotar("GITHUB_ENV", "PRDRIVE_RCLONE_CI", str(binario))
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    """Despacha `clave`, `runtime` o `compilador`."""
+    """Despacha `clave`, `runtime`, `compilador` o `rclone`."""
     if argv[1:] == ["clave"]:
         return clave()
     if len(argv) == 5 and argv[1] == "runtime":
         return runtime(argv[2], Path(argv[3]), Path(argv[4]))
     if len(argv) == 5 and argv[1] == "compilador":
         return compilador(argv[2], Path(argv[3]), Path(argv[4]))
+    if len(argv) == 4 and argv[1] == "rclone":
+        return rclone(argv[2], Path(argv[3]))
     print(__doc__, file=sys.stderr)
     return 2
 

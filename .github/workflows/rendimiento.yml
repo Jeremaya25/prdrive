@@ -7,7 +7,9 @@ name: Rendimiento
 # de un árbol a otro del mismo trabajo. Cada pasada abre, en frío y en un proceso nuevo, la
 # ventana principal, «Parejas» y «Ajustes» (con 5 y con 50 parejas, y al 150 %), el asistente, la
 # pregunta del agente y la ventana de la pasada, y cuenta widgets, módulos y pasadas de
-# <<ThemeChanged>>.
+# <<ThemeChanged>>. Sin ventanas, mide además lo que gasta el agente residente (vueltas y toques
+# al disco en reposo y con una unidad quieta) y una pasada de verdad sin cambios, con el rclone
+# fijado contra un remoto local.
 #
 # Falla un PR solo por (1) una cuenta determinista por encima de su techo de
 # tests/rendimiento/presupuesto.toml o (2) un momento más de un 25 % Y más de 30 ms más lento
@@ -107,6 +109,10 @@ jobs:
 
       - name: Python fijado del dispositivo (Tk 9)
         run: python pr/tests/_runtime_ci.py runtime ${{ matrix.plat }} "${{ runner.temp }}/runtime" "${{ runner.temp }}/prdrive-cache"
+
+      # Con él se mide también una pasada de verdad, sin cambios (tests/rendimiento/consumo.py).
+      - name: rclone fijado
+        run: python pr/tests/_runtime_ci.py rclone ${{ matrix.plat }} "${{ runner.temp }}/prdrive-cache"
 
       - name: Medir (Linux)
         if: runner.os == 'Linux'

@@ -5,9 +5,11 @@ paths:
   - "common/bisync.py"
   - "common/config_file.py"
   - "common/progress.py"
+  - "common/parte.py"
   - "tests/test_bisync_prefijo.py"
   - "tests/test_config_file.py"
   - "tests/test_progress.py"
+  - "tests/test_parte.py"
   - "tests/test_run_pair.py"
   - "tests/test_log_sin_dispositivo.py"
 ---

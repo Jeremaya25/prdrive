@@ -154,8 +154,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, avisos_carpeta, bitlocker, catalog,  # noqa: E402
-                    cifrada, components, equipo, expulsar, keepassxc, llavero, model,
-                    moderacion, prioridad, store, update, vestibulo)
+                    cifrada, components, consumo, equipo, expulsar, keepassxc, llavero,
+                    model, moderacion, parte, prioridad, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
@@ -2948,6 +2948,12 @@ class Agente:
 
         clave = (tarea.raiz, tarea.pareja)
         como = resultado(rc, texto)
+        # Lo que cuenta el propio `sync.py` de esa pareja; uno de antes no dice nada.
+        dicho = parte.leer(texto).get(tarea.pareja)
+        consumo.apuntar(con.id, consumo.Cuenta(
+            1, int(dicho is not None and dicho.vacia),
+            1 + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
+            segundos, dicho.escrito if dicho is not None else 0))
         antes = self.marcas.get(clave, pl.Marca())
         despues = pl.registrar(antes, como, ahora)
         self.marcas[clave] = despues
@@ -4639,6 +4645,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"{'Raíz' if u.get('del_equipo') else 'Conectada'}: {u.get('nombre')} "
               f"en {u.get('raiz')}"
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
+        gastado = consumo.del_dia(str(u.get("id") or ""))
+        if gastado.pasadas:
+            print(f"  Hoy: {consumo.texto(gastado)}")
         if u.get("actualizable"):
             print(f"  Lleva la {u.get('version') or 'versión desconocida'}; para ponerla a "
                   f"la {estado.get('version')}: agente.py actualizar {u.get('id')}")
