@@ -8,6 +8,12 @@ ningún aviso al desmontar» no vale para un equipo de verdad. Lo que hay hoy
 está en `docs/agents/reference/agent-scheduling.md` («Windows,
 `ReadDirectoryChangesW`»). Estado: **propuesta, sin código**.
 
+**Revisión de la tarde del 11/10/2026** (`2026-10-11-watch-y-energia-hoja-de-ruta-design.md`): se
+parte en dos. Soltar la carpeta al `GUID_IO_VOLUME_LOCK` en un volumen normal va en la entrega 2 de
+esa hoja de ruta; los avisos en volúmenes de VeraCrypt, en la 5, detrás de un ajuste y sin activar
+hasta verlos en un equipo real. En las dos, ninguna E/S con el cerrojo del motor tomado:
+`dispositivo()` lo toma desde el hilo de la bandeja y VeraCrypt solo reintenta 1,5 s.
+
 ## Qué se quiere
 
 Que en Windows una pareja vigilada se comporte como en Linux: avisos del sistema
