@@ -18,6 +18,7 @@ from common import consumo, equipo, parte
 c = Checks("agente: la cuenta de lo gastado")
 
 F.preparar()
+agente.LOTE = 1                         # de una en una: aquí se cuenta cada pasada por separado
 UID = "cuenta-0001"
 raiz = F.unidad(UID, parejas=("docs", "fotos"),
                 daemon='[daemon]\npairs = ["docs", "fotos"]\ninterval_minutes = 5\n')

@@ -257,6 +257,12 @@ def flujo_pasada() -> None:
     despues = foto(raiz)
     if rc != 0 or "Saltada" in texto:
         raise RuntimeError("la pasada sin cambios no fue bien:\n" + texto[-1500:])
+    partes = [json.loads(linea[len(MARCA_PARTE):]) for linea in texto.splitlines()
+              if linea.startswith(MARCA_PARTE)]
+    if partes and partes[-1].get("movio") is not False:
+        # El árbol escribe partes (`common/parte.py`): de una pasada sin cambios, con el rclone
+        # de verdad, tiene que decir que no movió nada. Si no, el agente no estiraría nunca.
+        raise RuntimeError(f"la pasada sin cambios no dice «no movió»: {partes[-1]}")
     escritos = {k: v for k, v in despues.items() if antes.get(k) != v}
     cuentas = {"ordenes": sum(1 for linea in texto.splitlines()
                               if linea.lstrip().startswith("ejecutando")),

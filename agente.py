@@ -187,6 +187,10 @@ Es el respaldo: los montajes los dice el sistema, y en Windows además una letra
 que aparece o se va se ve en cada vuelta (`letras_de_unidad()`). Eran 30 s; en
 un equipo sin unidades el recorrido era la mitad de lo que gastaba el agente.
 """
+LOTE = 8
+"""Cuántas parejas de una raíz se pasan, como mucho, en un mismo `sync.py`."""
+MARGEN_LOTE = 60.0
+"""Segundos que se le puede adelantar la pasada a una pareja para que vaya en el `sync.py` de otra."""
 REPOSO = 30.0
 """Segundos, como mucho, entre dos vueltas cuando no hay nada que mirar de cerca (`cuanto_esperar()`)."""
 MIRAR_CONFIG = 20.0
@@ -1235,6 +1239,7 @@ class Conexion:
     compatible: bool | None = None
     compatible_leido: float = -math.inf
     vista: dict | None = None
+    con_partes: bool = False
     leidos: dict = field(default_factory=dict)
     config_visto: int | None = None
     config_mirado: float = -math.inf
@@ -1374,12 +1379,25 @@ class Pasada:
         desde: Cuándo empezó.
         salida: Fichero temporal donde va su salida.
         nombre: Nombre de la unidad a la que pertenece.
+        otras: Las demás parejas de la misma raíz que pasa ese mismo proceso,
+            detrás de la de `tarea` (`Agente._acompanan()`).
     """
     proc: Any
     tarea: pl.Tarea
     desde: float
     salida: Path
     nombre: str
+    otras: tuple[pl.Tarea, ...] = ()
+
+    @property
+    def tareas(self) -> tuple[pl.Tarea, ...]:
+        """Devuelve todo lo que pasa este proceso, en orden."""
+        return (self.tarea, *self.otras)
+
+    @property
+    def claves(self) -> set[tuple[str, str]]:
+        """Devuelve las parejas que pasa este proceso, como `(raíz, pareja)`; ninguna si es una sonda."""
+        return {(t.raiz, t.pareja) for t in self.tareas if t.tipo == pl.PASADA}
 
 
 class Sospecha(NamedTuple):
@@ -2708,7 +2726,8 @@ class Agente:
                 if not parejas:
                     continue
             if cortada is not None and cortada.get("raiz") == con.id:
-                parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
+                cortadas = {cortada.get("pareja"), *(cortada.get("parejas") or ())}
+                parejas = tuple(p for p in parejas if p.nombre not in cortadas)
             if con.id in self.keepassxc:
                 parejas = tuple(replace(p, intervalo=min(intervalo, llavero.REMOTO_ABIERTO))
                                 if p.nombre == model.LLAVERO else p for p in parejas)
@@ -2821,8 +2840,58 @@ class Agente:
                    else "se vuelve a sincronizar")
             self.retenido = decision.retenido
         if decision.tarea is not None:
-            self._lanzar(decision.tarea, ahora)
+            self._lanzar(decision.tarea, ahora, self._acompanan(decision.tarea, entorno, ahora))
         return decision
+
+    def _acompanan(self, tarea: pl.Tarea, entorno: pl.Entorno,
+                   ahora: float) -> tuple[pl.Tarea, ...]:
+        """Devuelve las demás parejas de la raíz a las que también les toca ya: van en el mismo `sync.py`.
+
+        Cada `sync.py` es un Python que arranca (0,26 s de procesador de los
+        0,65 de una pasada sin cambios): cuatro parejas con el mismo intervalo
+        son cuatro arranques seguidos para hacer lo que hace uno. Se le
+        pregunta al planificador qué tocaría después, quitando lo ya elegido,
+        así que valen las mismas reglas (moderación, remoto sin conexión,
+        espera tras un fallo). Solo si el `sync.py` de esa raíz ya ha dicho
+        cómo le fue a una pareja con su parte (`Conexion.con_partes`): el de
+        una unidad sin actualizar no lo escribe, y con varias parejas en un
+        proceso no se sabría cuál falló. El llavero va siempre solo.
+        """
+        con = self.conexiones.get(tarea.raiz)
+        if tarea.tipo != pl.PASADA or con is None or not con.con_partes \
+                or tarea.pareja == model.LLAVERO:
+            return ()
+        raiz = next((r for r in self._raices() if r.clave == tarea.raiz), None)
+        if raiz is None:
+            return ()
+        elegidas, otras = {tarea.pareja}, []
+        while len(otras) < LOTE - 1:
+            resto = replace(raiz, parejas=tuple(p for p in raiz.parejas
+                                                if p.nombre not in elegidas and not p.llavero))
+            if not resto.parejas:
+                break
+            # «Ya» es con un margen: cada pareja se apunta al acabar la suya,
+            # así que las de un mismo intervalo van unos segundos una detrás
+            # de otra y sin él nunca coincidirían. Una vez juntas, acaban a la
+            # vez y siguen juntas.
+            d = pl.decidir([resto], self.marcas, entorno, ahora + MARGEN_LOTE,
+                           self.ajustes.politica, urgentes=self.urgentes,
+                           vigiladas=self.vigiladas, cambios=self.cambios)
+            if d.tarea is None or d.tarea.tipo != pl.PASADA:
+                break
+            elegidas.add(d.tarea.pareja)
+            if d.tarea.por_cambios:
+                # La adelantan sus cambios: esa espera a su calma, no se le
+                # quita el margen (subiría a media ráfaga).
+                sola = replace(raiz, parejas=tuple(p for p in raiz.parejas
+                                                   if p.nombre == d.tarea.pareja))
+                ya = pl.decidir([sola], self.marcas, entorno, ahora, self.ajustes.politica,
+                                urgentes=self.urgentes, vigiladas=self.vigiladas,
+                                cambios=self.cambios)
+                if ya.tarea is None or ya.tarea.tipo != pl.PASADA:
+                    continue
+            otras.append(d.tarea)
+        return tuple(otras)
 
     def _olvidar_vigiladas(self, uid: str) -> None:
         """Olvida lo recordado de las parejas vigiladas de una raíz, y deja sus avisos."""
@@ -2914,8 +2983,7 @@ class Agente:
         motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
                                self.ajustes.politica)
         pasada = self.pasada
-        ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
-            if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
+        ocupadas = sorted(pasada.claves) if pasada is not None else []
         claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
                                ocupadas=ocupadas, motivo=motivo,
                                con_bateria=self.entorno.con_bateria)
@@ -3026,8 +3094,7 @@ class Agente:
             return
         self.muestreo = None
         pasada = self.pasada
-        en_curso = (pasada.tarea.raiz, pasada.tarea.pareja) \
-            if pasada is not None and pasada.tarea.tipo == pl.PASADA else None
+        en_curso = pasada.claves if pasada is not None else set()
         for mirar in m.trabajo:
             clave = mirar.clave
             con = self.conexiones.get(clave[0])
@@ -3035,7 +3102,7 @@ class Agente:
                 self._recoger_armado(m, mirar, con, ahora, validas)
                 continue
             if con is not mirar.con or clave not in validas or clave in m.descartar \
-                    or clave == en_curso:
+                    or clave in en_curso:
                 continue
             antes = self.vigiladas.get(clave, pl.Vigilada())
             if clave in m.fuera:
@@ -3116,8 +3183,12 @@ class Agente:
             self.vigiladas[clave] = replace(pl.tras_pasada(antes, None, ahora),
                                             revisada=None)
 
-    def _lanzar(self, tarea: pl.Tarea, ahora: float) -> None:
+    def _lanzar(self, tarea: pl.Tarea, ahora: float,
+                otras: tuple[pl.Tarea, ...] = ()) -> None:
         """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
+
+        Con `otras`, ese mismo `sync.py` pasa también esas parejas de la raíz,
+        detrás (`_acompanan()`).
 
         Antes de una pasada se comprueba otra vez que el lock sigue siendo
         nuestro y se lee de nuevo el config de la raíz (`leer_config()`): el
@@ -3140,8 +3211,10 @@ class Agente:
                 con.firma = ()              # la vuelta que viene lo lee entero otra vez
                 diario(f"[{con.nombre}] no lanzo {tarea.pareja}: {e}")
                 return
-        if tarea.urgente:
-            self.urgentes = [u for u in self.urgentes if u != (tarea.raiz, tarea.pareja)]
+        todas = (tarea, *otras)
+        pedidas = {(t.raiz, t.pareja) for t in todas if t.urgente}
+        if pedidas:
+            self.urgentes = [u for u in self.urgentes if u not in pedidas]
         if tarea.tipo == pl.SONDA:
             args = orden_sonda(con.raiz, tarea.remoto)
             if args is None:
@@ -3155,9 +3228,9 @@ class Agente:
             que = f"¿contesta {tarea.remoto}?"
         else:
             # `--`: lo que sigue es un nombre, nunca una opción de sync.py.
-            args = [python(), str(app(con.raiz) / "sync.py"), "--", tarea.pareja]
+            args = [python(), str(app(con.raiz) / "sync.py"), "--", *(t.pareja for t in todas)]
             cwd = equipo.DIR
-            que = tarea.pareja
+            que = ", ".join(t.pareja for t in todas)
         salida = equipo.DIR / "pasada.out"
         try:
             equipo.DIR.mkdir(parents=True, exist_ok=True)
@@ -3173,14 +3246,16 @@ class Agente:
         except OSError as e:
             diario(f"[{con.nombre}] no he podido lanzar {que}: {e}")
             if tarea.tipo == pl.PASADA:
-                self.marcas[(tarea.raiz, tarea.pareja)] = pl.registrar(
-                    self.marcas.get((tarea.raiz, tarea.pareja), pl.Marca()), FALLO, ahora)
+                for t in todas:
+                    self.marcas[(t.raiz, t.pareja)] = pl.registrar(
+                        self.marcas.get((t.raiz, t.pareja), pl.Marca()), FALLO, ahora)
             return
-        self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre)
+        self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre, tuple(otras))
         if tarea.tipo == pl.PASADA:
             equipo.apuntar_pasada({"pid": getattr(proc, "pid", None), "agente": os.getpid(),
                                    "raiz": tarea.raiz,
                                    "unidad": con.nombre, "pareja": tarea.pareja,
+                                   **({"parejas": [t.pareja for t in todas]} if otras else {}),
                                    "desde": store.stamp()})
         diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente
                                           else " (han cambiado sus ficheros)"
@@ -3224,14 +3299,52 @@ class Agente:
             self._fin_de_sonda(con, tarea.remoto, rc, texto, ahora)
             return
 
+        # Lo que cuenta el propio `sync.py` de cada pareja; uno de antes no dice nada.
+        partes = parte.leer(texto)
+        if tarea.pareja in partes:
+            con.con_partes = True           # desde ahora sus parejas pueden ir juntas
+        if not pasada.otras:
+            self._fin_de_pareja(con, tarea, rc, resultado(rc, texto), texto, segundos,
+                                partes.get(tarea.pareja), ahora)
+            return
+        # Varias parejas en un proceso: cada una con su parte y con su trozo de
+        # la salida. La que no llegó a escribirlo (el proceso murió antes)
+        # cuenta como fallo, con el código del proceso.
+        trozos = parte.trozos(texto)
+        for i, t in enumerate(pasada.tareas):
+            dicho = partes.get(t.pareja)
+            if dicho is None:
+                suyo, codigo = texto, rc or 1
+                como = resultado(codigo, suyo)
+            elif dicho.rc == parte.SALTADA:
+                suyo, codigo, como = trozos.get(t.pareja, ""), 0, SALTADA
+            else:
+                suyo, codigo = trozos.get(t.pareja, ""), dicho.rc
+                como = resultado(codigo, suyo)
+            self._fin_de_pareja(con, t, codigo, como, suyo, segundos, dicho, ahora,
+                                primera=i == 0)
+
+    def _fin_de_pareja(self, con: Conexion, tarea: pl.Tarea, rc: int, como: str, texto: str,
+                       segundos: float, dicho: "parte.Parte | None", ahora: float,
+                       primera: bool = True) -> None:
+        """Apunta cómo le fue a una pareja en la pasada que acaba de terminar.
+
+        Args:
+            con: La conexión de su raíz.
+            tarea: La pareja.
+            rc: Su código: el del proceso si iba sola, el de su parte si no.
+            como: `OK`, `FALLO`, `RED` o `SALTADA`.
+            texto: Su salida: la del proceso, o su trozo.
+            segundos: Lo que duró el proceso entero.
+            dicho: Su parte, si `sync.py` lo escribió.
+            primera: Si es la primera del proceso: es la que carga con el
+                proceso y con su duración en la cuenta de lo gastado.
+        """
         clave = (tarea.raiz, tarea.pareja)
-        como = resultado(rc, texto)
-        # Lo que cuenta el propio `sync.py` de esa pareja; uno de antes no dice nada.
-        dicho = parte.leer(texto).get(tarea.pareja)
         consumo.apuntar(con.id, consumo.Cuenta(
             1, int(dicho is not None and dicho.vacia),
-            1 + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
-            segundos, dicho.escrito if dicho is not None else 0))
+            int(primera) + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
+            segundos if primera else 0.0, dicho.escrito if dicho is not None else 0))
         antes = self.marcas.get(clave, pl.Marca())
         despues = pl.registrar(antes, como, ahora,
                                vacia=dicho is not None and dicho.vacia,
@@ -3685,8 +3798,7 @@ class Agente:
                     and (v is None or v.cambio is None):
                 continue
             pasada = self.pasada
-            if pasada is not None and pasada.tarea.tipo == pl.PASADA \
-                    and (pasada.tarea.raiz, pasada.tarea.pareja) == (con.id, p.nombre) \
+            if pasada is not None and (con.id, p.nombre) in pasada.claves \
                     and ahora - pasada.desde < RECIEN_PASADA:
                 continue                    # la que está en marcha acaba de empezar
             nombres.append(p.nombre)
@@ -3738,18 +3850,18 @@ class Agente:
             if e.subir:
                 # Lo pendiente sube antes de soltarla: son urgentes de esta
                 # raíz, y cada una sale de la cola al lanzarse.
-                en_curso = self.pasada.tarea.pareja if self.pasada is not None \
-                    and self.pasada.tarea.raiz == uid else None
-                e.subir = [n for n in e.subir if (uid, n) in self.urgentes or n == en_curso]
+                en_curso = {p for r, p in self.pasada.claves if r == uid} \
+                    if self.pasada is not None else set()
+                e.subir = [n for n in e.subir if (uid, n) in self.urgentes or n in en_curso]
                 servida = con is not None and con.lock is not None and con.servicio is not None
                 # La cola es una para todo el equipo: a la pasada de otra raíz
                 # se la espera poco, que quien pide expulsar está delante.
-                ajena = self.pasada is not None and en_curso is None
+                ajena = self.pasada is not None and not en_curso
                 plazo = ESPERA_TURNO if ajena else ESPERA_SUBIR
                 if e.subir and (not servida or ahora - e.desde >= plazo):
                     # No ha dado tiempo, o ya no la sirve el agente (su ventana,
                     # otro servicio): no hay quien las pase.
-                    e.sin_subir += [n for n in e.subir if n != en_curso]
+                    e.sin_subir += [n for n in e.subir if n not in en_curso]
                     self.urgentes = [u for u in self.urgentes if u[0] != uid]
                     e.subir = []
                 if e.subir:
@@ -4524,7 +4636,9 @@ class Agente:
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
                 "pasada": None if self.pasada is None else {
-                    "unidad": self.pasada.nombre, "pareja": self.pasada.tarea.pareja,
+                    "unidad": self.pasada.nombre,
+                    "pareja": ", ".join(t.pareja for t in self.pasada.tareas)
+                    if self.pasada.tarea.pareja else None,
                     "tipo": self.pasada.tarea.tipo},
                 "sin_conexion": sorted(f"{self.conexiones[r].nombre}: {m}"
                                        for r, m in self.entorno.sin_conexion

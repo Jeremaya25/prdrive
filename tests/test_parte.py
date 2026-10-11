@@ -54,8 +54,12 @@ with sandbox():
     c("sin base no hay foto", parte.base(par), {})
     listados("2026-10-11T10:00:00")
     c("la foto lleva los dos listados", sorted(parte.base(par)), sorted([l1.name, l2.name]))
-    (par.workdir / "otra-cosa.lst").write_text("x", encoding="utf-8")
-    c("  y nada que no lleve su prefijo", len(parte.base(par)), 2)
+    c("  cada uno con la firma de su cuerpo", [bool(f) for _t, _m, f in parte.base(par).values()],
+      [True, True])
+    (par.workdir / "otra-cosa.lst-old").write_text("x", encoding="utf-8")
+    c("  lo demás que haya en su workdir se cuenta (por si se reescribe) pero no lleva firma",
+      parte.base(par)["otra-cosa.lst-old"][2], b"")
+    (par.workdir / "otra-cosa.lst-old").unlink()
 
     m = parte.Medida(par, 3)
     listados("2026-10-11T10:05:00")
@@ -88,6 +92,24 @@ with sandbox():
 
     m = parte.Medida(par, 0, medir=False)
     c("un simulacro no mide", (m.antes, m.acabar(0, 1).movio), (None, None))
+
+    # rclone nombra la base con la ruta de verdad de un remote `alias`: no es el prefijo esperado.
+    l1.unlink(missing_ok=True)
+    l2.unlink(missing_ok=True)
+    l1 = par.workdir / ("C__datos_docs..C__otro_sitio_docs" + bisync.PATH1_SUFFIX)
+    l2 = par.workdir / ("C__datos_docs..C__otro_sitio_docs" + bisync.PATH2_SUFFIX)
+    listados("2026-10-11T11:00:00")
+    m = parte.Medida(par, 0)
+    listados("2026-10-11T11:05:00")
+    c("una base que no se llama como se esperaría (un remote alias) se reconoce igual",
+      (l1.name.startswith(pre), m.acabar(0, 1).movio), (False, False))
+    vieja = par.workdir / ("otra-base" + bisync.PATH1_SUFFIX)
+    vieja.write_text("# cabecera\n- x\n", encoding="utf-8")
+    m = parte.Medida(par, 0)
+    listados("2026-10-11T11:10:00")
+    c("con dos bases en el workdir no se sabe cuál es la buena: cuenta como que movió",
+      m.acabar(0, 1).movio, True)
+    vieja.unlink()
 
     # una pareja que no es bisync: lo que diga su log
     sube = mkcfg(["fotos"], pairs=[{"name": "fotos", "local": "sync-data/fotos",

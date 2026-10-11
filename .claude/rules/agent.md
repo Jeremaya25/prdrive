@@ -12,6 +12,7 @@ paths:
   - "common/consumo.py"
   - "common/avisos_buzon.py"
   - "tests/test_agente_reposo.py"
+  - "tests/test_agente_lote.py"
   - "tests/test_agente_consumo.py"
   - "tests/test_prioridad.py"
   - "ui/tk_agente.py"

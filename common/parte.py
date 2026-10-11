@@ -29,6 +29,8 @@ from typing import NamedTuple
 
 MARCA = "@prdrive "
 """Cómo empieza la línea del parte; el resto es un objeto JSON."""
+SALTADA = -1
+"""El `rc` del parte de una pareja que se saltó (pedía `--resync`): es `sync.SKIPPED`."""
 TOPE_LOG = 256 * 1024
 """Bytes de log que se leen como mucho para saber si una pasada movió algo."""
 NADA_QUE_MOVER = "There was nothing to transfer"
@@ -88,6 +90,29 @@ def leer(texto: str) -> dict[str, Parte]:
     return partes
 
 
+def trozos(texto: str) -> dict[str, str]:
+    """Devuelve la salida de cada pareja de un `sync.py` que pasó varias.
+
+    El trozo de una pareja es lo que hay desde el parte de la anterior (o
+    desde el principio) hasta su propio parte, sin él. Lo que va detrás del
+    último parte (el resumen «Hecho. …») no es de ninguna. Así un fallo de
+    red, o un «Saltada», se le apunta a la pareja que lo dijo y no a todas.
+    """
+    salida: dict[str, str] = {}
+    actual: list[str] = []
+    for renglon in texto.splitlines():
+        if renglon.startswith(MARCA):
+            try:
+                pareja = str(json.loads(renglon[len(MARCA):])["pareja"])
+            except (ValueError, TypeError, KeyError):
+                continue
+            salida[pareja] = "\n".join(actual)
+            actual = []
+        else:
+            actual.append(renglon)
+    return salida
+
+
 def _cuerpo(ruta: str) -> bytes:
     """Devuelve la firma de un listado sin su primera línea, que lleva la fecha."""
     firma = hashlib.blake2b(digest_size=16)
@@ -101,24 +126,36 @@ def _cuerpo(ruta: str) -> bytes:
 def base(pair) -> dict[str, tuple[int, int, bytes]]:
     """Devuelve la foto de la base de bisync de una pareja.
 
+    Los listados se buscan por lo que hay en su workdir, no por el nombre que
+    se esperaría (`bisync.expected_prefix()`): rclone resuelve un remote de tipo
+    `alias` y nombra la base con la ruta de verdad (visto el 11/10/2026), y
+    aquí no hace falta saber cómo se llama, solo si cambia. Con más de una
+    base en el workdir (una vieja sin aparcar) no se sabe cuál es la buena:
+    ninguno lleva firma, y la pasada cuenta como que movió.
+
     Returns:
         `{nombre: (tamaño, mtime en ns, firma del cuerpo)}` de los ficheros de
-        su workdir que llevan su prefijo. La firma solo la tienen los dos
-        listados (`.path1.lst`, `.path2.lst`); `{}` si no se puede leer.
+        su workdir. La firma solo la tienen los dos listados (`.path1.lst`,
+        `.path2.lst`) de su única base; `{}` si no se puede leer.
     """
     from common import bisync
 
-    prefijo = bisync.expected_prefix(pair)
-    listados = (prefijo + bisync.PATH1_SUFFIX, prefijo + bisync.PATH2_SUFFIX)
     foto: dict[str, tuple[int, int, bytes]] = {}
+    rutas: dict[str, str] = {}
     try:
         with os.scandir(pair.workdir) as entradas:
             for e in entradas:
-                if not e.name.startswith(prefijo) or not e.is_file():
+                if not e.is_file():
                     continue
                 st = e.stat()
-                foto[e.name] = (st.st_size, st.st_mtime_ns,
-                                _cuerpo(e.path) if e.name in listados else b"")
+                foto[e.name] = (st.st_size, st.st_mtime_ns, b"")
+                rutas[e.name] = e.path
+        unos = [n for n in foto if n.endswith(bisync.PATH1_SUFFIX)]
+        otros = [n for n in foto if n.endswith(bisync.PATH2_SUFFIX)]
+        if len(unos) == 1 and len(otros) == 1 \
+                and unos[0][:-len(bisync.PATH1_SUFFIX)] == otros[0][:-len(bisync.PATH2_SUFFIX)]:
+            for nombre in (unos[0], otros[0]):
+                foto[nombre] = (*foto[nombre][:2], _cuerpo(rutas[nombre]))
     except OSError:
         return {}
     return foto
