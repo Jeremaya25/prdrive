@@ -116,6 +116,31 @@ acabar(salida(bien(orden[0])) + f"\n=== {orden[1]} (bisync) ===\nTraceback: algo
 c("si el proceso muere a medias, la que dejó su parte vale y las demás cuentan como fallo",
   [ag.marcas[(UID, n)].fallos for n in orden], [0, 1, 1])
 
+# Una pareja que tarda en mover lo suyo llena la salida de líneas de progreso: el parte de
+# la que fue delante no puede perderse por leer solo la cola.
+for clave in list(ag.marcas):
+    ag.marcas[clave] = pl.Marca(F.reloj() - 5 * MIN - 1, 0)
+F.vueltas(ag, 2)
+orden = nombres(ag.pasada.proc)
+relleno = "  progreso: 1,0 MB de 9,9 GB · 0 % · 1,1 MB/s\n" * (3 * agente.COLA_SALIDA // 40)
+larga = (parte.Parte(orden[1], 0, True, 1, 100), relleno + f"[{orden[1]}] OK.\n")
+acabar(salida(bien(orden[0], False), larga, bien(orden[2])))
+c("con una salida de varias veces la cola, el parte de la primera se lee igual",
+  ([ag.marcas[(UID, n)].fallos for n in orden], ag.marcas[(UID, orden[0])].vacias),
+  ([0, 0, 0], 1))
+for clave in list(ag.marcas):
+    ag.marcas[clave] = pl.Marca(F.reloj() - 5 * MIN - 1, 0)
+F.vueltas(ag, 2)
+orden = nombres(ag.pasada.proc)
+F.AVISOS.clear()
+acabar(salida(bien(orden[0]), bien(orden[2])))           # falta el parte de la segunda, y rc = 0
+c("si falta un parte pero el proceso acabó en 0, a esa pareja no se le apunta un fallo",
+  ([ag.marcas[(UID, n)].fallos for n in orden], [t for t, _ in F.AVISOS if "falla" in t]),
+  ([0, 0, 0], []))
+c("resto: lo que salió detrás del último parte",
+  (parte.resto("a\n" + parte.linea(parte.Parte("x", 0)) + "\nb\nc"), parte.resto("a\nb")),
+  ("b\nc", "a\nb"))
+
 # Lo que no toca todavía no se arrastra.
 for clave in list(ag.marcas):
     ag.marcas[clave] = pl.Marca(F.reloj(), 0)

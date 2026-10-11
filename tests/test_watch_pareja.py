@@ -600,6 +600,11 @@ c("retirado quita el cambio pendiente y conserva que la carpeta se mueve",
   pl.retirado(pl.avisado(pl.Vigilada(avisos=True), T0)), pl.Vigilada(avisos=True, movida=T0))
 c("  una abandonada no cambia", pl.retirado(pl.Vigilada(abandonada=True)),
   pl.Vigilada(abandonada=True))
+visto = pl.Vigilada(avisos=True, cambio=T0, firme=True)
+c("  un cambio firme (lo vio una foto antes de volver a oír avisos) no lo retira un aviso",
+  pl.retirado(visto), visto)
+c("  lo borra su pasada, que deja de ser firme", pl.tras_pasada(visto, None, T0 + 5),
+  pl.Vigilada(avisos=True, revisada=T0 + 5))
 
 # --- la foto ve también lo que queda a más de 260 caracteres de ruta (Windows)
 c("ruta_larga: fuera de Windows, o si ya lo lleva, la deja igual",

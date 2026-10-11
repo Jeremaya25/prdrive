@@ -712,6 +712,9 @@ class Vigilada:
         movida: Cuándo se vio su último cambio, por una foto o por un aviso, o
             `None` si no se ha visto ninguno. Una pasada no lo toca: lo que
             escribe rclone no dice que la persona esté trabajando ahí.
+        firme: Si el cambio pendiente no lo puede retirar un aviso
+            (`retirado()`): lo vio una foto, antes de volver a oír los avisos
+            del sistema, y el motor no sabe nada de él. Lo borra la pasada.
     """
     huella: Huella | None = None
     cambio: float | None = None
@@ -720,6 +723,7 @@ class Vigilada:
     fallidas: int = 0
     avisos: bool = False
     movida: float | None = None
+    firme: bool = False
 
 
 def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
@@ -767,7 +771,7 @@ def retirado(vigilada: Vigilada) -> Vigilada:
     (`avisos_carpeta.Neto`): no queda nada que adelantar. `movida` se conserva:
     alguien anda por ahí.
     """
-    if vigilada.abandonada:
+    if vigilada.abandonada or vigilada.firme:
         return vigilada
     return replace(vigilada, cambio=None)
 
@@ -791,7 +795,7 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     """
     if vigilada.abandonada:
         return vigilada
-    return replace(vigilada, huella=huella, cambio=None, revisada=ahora,
+    return replace(vigilada, huella=huella, cambio=None, revisada=ahora, firme=False,
                    fallidas=vigilada.fallidas if huella is None else 0)
 
 

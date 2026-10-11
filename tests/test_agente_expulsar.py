@@ -259,6 +259,29 @@ c("  y si no le llega, expulsa diciendo lo que se queda sin sincronizar",
 F.pasar(agente.GRACIA_EXPULSION)
 servida_otra_vez()
 
+# Si la pasada de antes de expulsar no llega ni a lanzarse, también se dice.
+F.EXPULSADAS.clear()
+F.AVISOS.clear()
+F.pasar(agente.RECIEN_PASADA + 1)
+lanzar_de_mentira = agente.lanzar
+
+
+def lanzar_roto(args, **kw):
+    raise OSError("no se puede lanzar")
+
+
+agente.lanzar = lanzar_roto
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+F.vueltas(ag, 3)
+agente.lanzar = lanzar_de_mentira
+c("si su pasada no se puede ni lanzar, expulsa diciendo lo que se queda sin sincronizar",
+  (F.EXPULSADAS, [x for t, x in F.AVISOS if "ya puedes quitarla" in t]),
+  ([RA], ["Ya puedes quitarla. Se ha quedado sin sincronizar: docs."]))
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+ag.marcas.pop((A, "docs"), None)
+asentar()
+
 # --- lo que no es expulsable, o no está
 F.EXPULSADAS.clear()
 F.DIARIO.clear()

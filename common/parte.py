@@ -113,6 +113,16 @@ def trozos(texto: str) -> dict[str, str]:
     return salida
 
 
+def resto(texto: str) -> str:
+    """Devuelve lo que un `sync.py` escribió detrás de su último parte (todo, si no hay ninguno).
+
+    En uno que murió a medias es la salida de la pareja que estaba en marcha.
+    """
+    renglones = texto.splitlines()
+    ultimo = max((i for i, r in enumerate(renglones) if r.startswith(MARCA)), default=-1)
+    return "\n".join(renglones[ultimo + 1:])
+
+
 def _cuerpo(ruta: str) -> bytes:
     """Devuelve la firma de un listado sin su primera línea, que lleva la fecha."""
     firma = hashlib.blake2b(digest_size=16)

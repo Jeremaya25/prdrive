@@ -248,6 +248,8 @@ vuelve a atender.
 """
 COLA_SALIDA = 64 * 1024
 """Bytes que se leen de la salida de una pasada."""
+SALIDA_DE_LOTE = 16 * 1024 * 1024
+"""Bytes que se leen de la salida de un `sync.py` que pasó varias parejas: hacen falta todos sus partes."""
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
 MIRAR_EMBLEMA = 60.0
@@ -2974,8 +2976,11 @@ class Agente:
                         veces = self.rearmes.get(clave, (0, 0.0))[0]
                         self.rearmes[clave] = (veces + 1, ahora)
                         del self.sin_avisos[clave]
+                        # El cambio que ya vio el recorrido va como firme: el
+                        # motor no sabe de él y no puede retirarlo.
                         self.vigiladas[clave] = pl.Vigilada(avisos=True, cambio=v.cambio,
-                                                            movida=v.movida)
+                                                            movida=v.movida,
+                                                            firme=v.cambio is not None)
                         armar.append(clave)
                         diario(f"[{self.conexiones[raiz.clave].nombre}] {pareja.nombre}: su "
                                f"carpeta vuelve a estar; se intenta oír sus avisos otra vez")
@@ -3246,9 +3251,15 @@ class Agente:
         except OSError as e:
             diario(f"[{con.nombre}] no he podido lanzar {que}: {e}")
             if tarea.tipo == pl.PASADA:
+                expulsion = self.expulsiones.get(tarea.raiz)
                 for t in todas:
                     self.marcas[(t.raiz, t.pareja)] = pl.registrar(
                         self.marcas.get((t.raiz, t.pareja), pl.Marca()), FALLO, ahora)
+                    # Si era lo que «Expulsar» subía antes de soltarla, se dice
+                    # con el resultado: ya no está en la cola y no va a subir.
+                    if expulsion is not None and t.pareja in expulsion.subir \
+                            and t.pareja not in expulsion.sin_subir:
+                        expulsion.sin_subir.append(t.pareja)
             return
         self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre, tuple(otras))
         if tarea.tipo == pl.PASADA:
@@ -3281,7 +3292,10 @@ class Agente:
         try:
             with pasada.salida.open("rb") as f:
                 f.seek(0, os.SEEK_END)
-                f.seek(max(0, f.tell() - COLA_SALIDA))
+                # Con varias parejas en el proceso se lee (casi) entera: el
+                # parte de la primera va muy arriba si otra tardó en mover lo
+                # suyo, y sin él contaría como que falló.
+                f.seek(max(0, f.tell() - (SALIDA_DE_LOTE if pasada.otras else COLA_SALIDA)))
                 texto = f.read().decode("utf-8", errors="replace")
         except OSError:
             pass
@@ -3311,10 +3325,19 @@ class Agente:
         # la salida. La que no llegó a escribirlo (el proceso murió antes)
         # cuenta como fallo, con el código del proceso.
         trozos = parte.trozos(texto)
+        resto = parte.resto(texto)          # lo que salió tras el último parte
         for i, t in enumerate(pasada.tareas):
             dicho = partes.get(t.pareja)
-            if dicho is None:
-                suyo, codigo = texto, rc or 1
+            if dicho is None and rc == 0:
+                # Sin su parte pero con el proceso acabado en 0: `sync.py` sale
+                # con 1 si alguna falla, así que esta no falló (su parte quedó
+                # fuera de lo leído). No se le apunta un fallo que no tuvo.
+                suyo, codigo, como = "", 0, OK
+            elif dicho is None:
+                # El proceso murió antes de escribirlo: lo que quedó al final
+                # de la salida es de la que estaba en marcha, y es lo que dice
+                # si fue la red.
+                suyo, codigo = resto, rc
                 como = resultado(codigo, suyo)
             elif dicho.rc == parte.SALTADA:
                 suyo, codigo, como = trozos.get(t.pareja, ""), 0, SALTADA
