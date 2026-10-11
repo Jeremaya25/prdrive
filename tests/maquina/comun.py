@@ -253,6 +253,29 @@ def soltar_vhd(fichero: Path) -> None:
 _letras_usadas: set[str] = set()
 
 
+def es_administrador() -> bool:
+    """Indica si este proceso corre elevado (lo que piden diskpart y el VeraCrypt Portable)."""
+    import ctypes
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+def _de_red(letra: str) -> bool:
+    """Indica si la persona tiene esa letra para una unidad de red (`HKCU\\Network`).
+
+    Una sesión elevada no la ve montada, pero la letra no está libre: VeraCrypt
+    la rechaza.
+    """
+    import winreg
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Network\\{letra}"))
+    except OSError:
+        return False
+    return True
+
+
 def letra_libre() -> str:
     """Una letra de unidad libre que esta ejecución no ha usado todavía.
 
@@ -260,7 +283,8 @@ def letra_libre() -> str:
     nunca se repite una.
     """
     for letra in "RSTUVWXYZQPON":
-        if letra not in _letras_usadas and not Path(f"{letra}:\\").exists():
+        if letra not in _letras_usadas and not Path(f"{letra}:\\").exists() \
+                and not _de_red(letra):
             _letras_usadas.add(letra)
             return letra
     raise Saltada("no quedan letras de unidad libres")
