@@ -1,6 +1,7 @@
 # `watch = true` y el consumo del agente: hoja de ruta — diseño
 
-Fecha: 11/10/2026. Estado: **propuesta, sin código**. No es una especificación para construir de una
+Fecha: 11/10/2026. Estado: **construida en su mayor parte ese mismo día** (ver «Lo construido», al
+final); el texto de abajo es la propuesta tal como se aprobó. No es una especificación para construir de una
 vez: son cinco entregas independientes, cada una con su propia especificación y su plan cuando le
 toque. Las cifras salen de `docs/superpowers/pruebas/2026-10-11-watch-energia-windows-medidas.md`
 (un sobremesa sin batería: la energía se estima con CPU, despertares, procesos y escrituras).
@@ -151,6 +152,53 @@ Un portátil (lo único que puede decir cuánto de todo esto son vatios); un pen
 (extracción segura con la vigilancia puesta, suspensión del puerto, escritura sin caché); un remoto
 de red (lo que cuesta listarlo: ahí el intervalo que se estira ahorra más de lo medido); un NAS para
 los avisos por SMB (en bucle local contra Windows no se perdió ninguno).
+
+## Lo construido (11/10/2026)
+
+Un commit por entrega, cada uno con la suite entera en Windows, sus tests nuevos también en Linux
+(WSL) y la comprobación de tiempos (`tests/rendimiento/`) contra el commit anterior. Medido con
+`tests/rendimiento/consumo.py` (reloj de mentira, una instalación con bandeja) y, donde se dice,
+con el motor de verdad:
+
+| | Antes (0.7.2) | Después |
+|---|---|---|
+| Agente sin unidades, vueltas por hora | 1 800 | 120 |
+| Unidad quieta dos horas: `sync.py` lanzados (dos parejas cada 5 min) | 48 | 16 con la entrega 1; 8 con la 4 |
+| Unidad quieta dos horas: operaciones de fichero en la unidad | 30 048 | 5 035 |
+| Bloquear el volumen con una carpeta vigilada (`FSCTL_LOCK_VOLUME`, motor de verdad) | falla los 4 intentos | sale al primero, 38 ms |
+| Ráfaga de 300 ficheros en una carpeta vigilada (motor de verdad) | una lectura por aviso | 8 lecturas como mucho |
+
+- **0, medir**: hecho. El parte de cada pareja (`common/parte.py`), la cuenta por unidad y día
+  (`common/consumo.py`, en `agente.py status`) y los presupuestos (`consumo.*` en
+  `tests/rendimiento/presupuesto.toml`, con una pasada de verdad en la CI).
+- **1, menos pasadas**: hecho. El intervalo que se estira (de fábrica, x4 y 30 min; se apaga con
+  `agente.py ajuste estirar_intervalo no`), la separación que aprende, la pareja saltada, los
+  conflictos que no se rebuscan y «Expulsar», que sube antes lo pendiente. **Cambio respecto de la
+  propuesta**: un aviso de `watch` no devuelve el intervalo al de fábrica por sí solo; lo devuelve
+  la pasada que ese aviso adelanta, si mueve algo. Así el ruido no lo desestira. De la política
+  opcional (intervalo por pareja, por N con batería, sesión ausente, tope por duración), nada.
+- **2, el motor de Windows**: hecho. Agrupar, el efecto neto (también en Linux), la carpeta movida
+  y volver a oír, soltar al pedir el volumen, la ruta larga, la prueba del agente con el motor de
+  verdad. Sin hacer: las uniones (`mklink /J`) y los dos extras «con más riesgo» (las exclusiones
+  de la pareja en los avisos, la lista de ruido de editor).
+- **3, el agente sin reloj**: hecho en lo que más pesa. La espera de `cmd_run`
+  (`cuanto_esperar()`, 30 s sin nada a la vista), el oyente del buzón, una lectura de `state/` por
+  vuelta, el recorrido de respaldo a 2 min con `GetLogicalDrives`, y batería y red solo con algo a
+  la vista. Con una unidad a la vista el tic sigue siendo de 2 s (cada uno, mucho más barato).
+  Sin hacer: que un hijo que acaba despierte, el llavero (una foto de procesos por mirada) y la
+  red de uso medido por su aviso.
+- **4, menos procesos**: hecho «un `sync.py` por ciclo y raíz» (las parejas a las que les toca a
+  la vez, con un minuto de margen; solo cuando el `sync.py` de la unidad ya escribe partes, y el
+  llavero siempre aparte). Comprobado con `sync.py` y rclone de verdad sobre cuatro parejas. **Sin hacer, a propósito: el
+  workdir de bisync fuera de la unidad.** Toca las invariantes del baseline y esta hoja ya pedía
+  su propia especificación; no se construye sin ella ni sin una unidad de verdad delante.
+- **5, VeraCrypt**: construido detrás de `agente.py ajuste avisos_veracrypt sí`, apagado de
+  fábrica. Probado solo con un Windows de mentira: el controlador de VeraCrypt de la máquina de
+  pruebas quedó a medio descargar por la mañana y no arranca hasta reiniciar.
+
+Lo que solo puede decir un equipo real está en
+`docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` («Menos consumo y el motor de
+avisos de Windows»).
 
 ## Preguntas para el dueño
 

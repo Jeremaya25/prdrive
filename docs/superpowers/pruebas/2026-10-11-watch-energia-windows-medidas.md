@@ -116,3 +116,31 @@ rápida, la suspensión del puerto USB, la extracción segura con la vigilancia 
 - Una unidad de mentira con `.prdrive\PRDRIVE` en la raíz de un disco virtual: el agente real del
   usuario la tomó por una unidad nueva y le avisó. En una subcarpeta no la ve.
 - `tests/maquina/correr.py --de-verdad` F15 y F16 dejan sus discos virtuales conectados.
+
+## 8. Lo medido después de construir (11/10/2026, tarde)
+
+Mismo equipo. Las cuentas son las de `tests/rendimiento/consumo.py` (el agente de verdad sobre el
+equipo de mentira de sus tests, con reloj de mentira, como una instalación con bandeja); lo demás,
+con el motor de verdad. Cada entrega se midió contra la anterior con `tests/rendimiento/correr.py`
+(3 vueltas, escritorio aparte): ninguna empeora un momento de la interfaz.
+
+| Qué | Antes | Después | Entrega |
+|---|---|---|---|
+| Agente sin unidades: vueltas por hora | 1 800 | 120 | 3 |
+| Agente sin unidades: procesador de su bucle en una hora de vueltas | 273 ms | 19 ms | 3 |
+| Unidad quieta, dos horas: `sync.py` lanzados (2 parejas cada 5 min) | 48 | 16, y 8 con las dos parejas en un proceso | 1 y 4 |
+| Unidad quieta, dos horas: operaciones de fichero en la unidad | 30 048 | 5 035 (Linux: 5 215) | 3 |
+| Unidad quieta, dos horas: procesador del bucle del agente | 8,8 s | 2,8 s | 1 y 3 |
+| `FSCTL_LOCK_VOLUME` con una carpeta vigilada (disco virtual NTFS, motor y ventana de verdad) | falla 4 de 4 | al primer intento, 38 ms | 2 |
+| `expulsar._expulsar_windows()` sin `dejar_raiz()` antes | — | ok en 0,02 s (`LOCK`, `DISMOUNT`, `UNLOCK`; al volver a montarse el disco virtual, `MOUNT` y se reabre) | 2 |
+| Ráfaga de 300 ficheros en una carpeta vigilada (motor de verdad, agrupando 0,3 s) | una lectura por aviso | 8 lecturas como mucho | 2 |
+| Un fichero que nace y muere en una carpeta vigilada (Windows y Linux de verdad) | una pasada | ninguna | 2 |
+
+Con `sync.py` y rclone de verdad (cuatro parejas contra un remoto local, en un `sync.py`): la bisync
+sin cambios dice «no movió» y lo que reescribió (5 040 bytes de listados con 20 ficheros); la que
+tenía un fichero cambiado, «movió»; la `up` sin cambios, «no movió»; la que no tiene base, saltada,
+y solo ella. Esa prueba encontró que con un remoto `alias` la base no se llama como se esperaría:
+el parte busca ahora los listados por lo que hay en disco.
+
+No se ha vuelto a medir con vatios (no hay con qué) ni en un pendrive de verdad: sigue valiendo el
+apartado 6, y la lista de `2026-09-25-equipo-pendiente-en-real.md` (C1 a C11).

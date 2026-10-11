@@ -172,7 +172,11 @@ agente»**. El diseño completo está en
   red, un volumen de VeraCrypt en Windows) recorre la carpeta sin abrir
   ficheros: cada 10 s mientras cambia y cada 2 minutos cuando está quieta, así
   que un cambio tras un rato quieta se ve hasta 2 minutos después;
-  `agente.py status` dice qué parejas se recorren y por qué. En Windows el
+  `agente.py status` dice qué parejas se recorren y por qué. En un volumen de
+  VeraCrypt se puede probar a escuchar los avisos en vez de recorrer, con
+  `python agente.py ajuste avisos_veracrypt sí` y reiniciando el agente: viene
+  apagado porque todavía no se ha visto en suficientes equipos (si al
+  desmontar el volumen VeraCrypt pregunta si forzar, apágalo). En Windows el
   agente tiene abierta la carpeta que escucha: «Quitar hardware de forma
   segura» y «Expulsar» la sueltan antes de quitar la unidad, y también cuando
   otro programa pide la unidad entera (comprobar el disco, formatearla,

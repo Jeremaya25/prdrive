@@ -6,7 +6,11 @@ contestó en una máquina de GitHub sin escritorio interactivo, que no entrega
 `WM_DEVICECHANGE` a las ventanas (lo vio F15 el mismo día), así que su «no llega
 ningún aviso al desmontar» no vale para un equipo de verdad. Lo que hay hoy
 está en `docs/agents/reference/agent-scheduling.md` («Windows,
-`ReadDirectoryChangesW`»). Estado: **propuesta, sin código**.
+`ReadDirectoryChangesW`»). Estado: **construido el 11/10/2026** (rama de la hoja de ruta): la
+primera mitad (soltar al pedir el volumen) siempre puesta y comprobada con el motor de verdad en
+un disco virtual; la segunda (VeraCrypt), detrás del ajuste `avisos_veracrypt`, apagado de
+fábrica y probado solo con un Windows de mentira. Lo que cambió respecto de este texto: el plazo
+se llama `REABRIR_VERACRYPT`, y `dispositivo()` recibe el GUID como tercer argumento.
 
 **Revisión de la tarde del 11/10/2026** (`2026-10-11-watch-y-energia-hoja-de-ruta-design.md`): se
 parte en dos. Soltar la carpeta al `GUID_IO_VOLUME_LOCK` en un volumen normal va en la entrega 2 de
