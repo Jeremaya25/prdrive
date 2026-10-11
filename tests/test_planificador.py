@@ -241,4 +241,92 @@ c("«Atender» tardío no cuenta",
 c("una respuesta que no es ninguna de las dos se ignora",
   pl.resolver(q, "quizá", T0 + 30), None)
 
+# --- el intervalo se estira mientras las pasadas no mueven nada
+c("sin pasadas vacías, el intervalo es el suyo", pl.estirado(5 * MIN, 0, P), 5 * MIN)
+c("  dos seguidas todavía no lo tocan", pl.estirado(5 * MIN, 2, P), 5 * MIN)
+c("  a la tercera se dobla", pl.estirado(5 * MIN, 3, P), 10 * MIN)
+c("  a la sexta, otra vez", pl.estirado(5 * MIN, 6, P), 20 * MIN)
+c("  y ahí se queda: cuatro veces como mucho", pl.estirado(5 * MIN, 600, P), 20 * MIN)
+c("nunca más de media hora por haberse estirado", pl.estirado(15 * MIN, 9, P), 30 * MIN)
+c("  y un intervalo que ya es mayor no se acorta", pl.estirado(45 * MIN, 9, P), 45 * MIN)
+c("el modo sync (sin intervalo) no se toca", pl.estirado(math.inf, 9, P), math.inf)
+c("apagado, no se estira", pl.estirado(5 * MIN, 9, pl.Politica(estirar=False)), 5 * MIN)
+
+m = pl.Marca()
+for _ in range(3):
+    m = pl.registrar(m, pl.OK, T0, vacia=True)
+c("tres pasadas buenas sin mover nada: tres vacías", (m.vacias, m.fallos), (3, 0))
+c("  una que mueve algo las pone a cero", pl.registrar(m, pl.OK, T0).vacias, 0)
+c("  una de la que no se sabe (un sync.py de antes) cuenta como que movió",
+  pl.registrar(m, pl.OK, T0, vacia=False).vacias, 0)
+c("  un fallo también", (pl.registrar(m, pl.FALLO, T0).vacias, pl.registrar(m, pl.FALLO, T0).fallos),
+  (0, 1))
+c("  y una pedida a mano, aunque no mueva nada: quien está delante quiere el de fábrica",
+  pl.registrar(m, pl.OK, T0, vacia=True, urgente=True).vacias, 0)
+c("  una de red no cuenta ni como intento ni como nada: se conservan",
+  pl.registrar(m, pl.RED, T0), pl.Marca(None, 0, 3))
+c("despertarla la devuelve a fábrica sin tocar cuándo se intentó",
+  pl.despierta(pl.Marca(T0, 0, 7, 2, True)), pl.Marca(T0, 0))
+c("  y a una que no está estirada no le hace nada", pl.despierta(pl.Marca(T0, 2)), pl.Marca(T0, 2))
+
+CINCO = pl.Raiz("u", (pl.Pareja("docs", "nas"), pl.Pareja("llaves", "nas", llavero=True)), 5 * MIN)
+estirada = {("u", "docs"): pl.Marca(T0, 0, 3), ("u", "llaves"): pl.Marca(T0, 0, 3)}
+d = dec((CINCO,), estirada, ahora=T0 + 5 * MIN + 1, politica=LARGA)
+c("con tres vacías, a los 5 min no le toca a la pareja; al llavero sí (no se estira nunca)",
+  que(d), ("pasada", "u", "llaves"))
+d = dec((CINCO,), {**estirada, ("u", "llaves"): pl.Marca(T0 + 5 * MIN, 0, 4)},
+        ahora=T0 + 5 * MIN + 1, politica=LARGA)
+c("  la pareja espera a los 10", (que(d), round(d.mirar_en)), (None, round(5 * MIN - 1)))
+d = dec((CINCO,), {("u", "docs"): pl.Marca(T0, 0, 3), ("u", "llaves"): pl.Marca(T0 + 10 * MIN, 0)},
+        ahora=T0 + 10 * MIN + 1, politica=LARGA)
+c("  y entonces sí", que(d), ("pasada", "u", "docs"))
+d = dec((CINCO,), {("u", "docs"): pl.Marca(T0, 0, 3), ("u", "llaves"): pl.Marca(T0 + 5 * MIN, 0)},
+        ahora=T0 + 5 * MIN + 1, politica=pl.Politica(estirar=False))
+c("con el ajuste apagado va a su intervalo", que(d), ("pasada", "u", "docs"))
+d = dec((CINCO,), {("u", "docs"): pl.Marca(T0, 0, 6), ("u", "llaves"): pl.Marca(T0 + 5 * MIN, 0)},
+        ahora=T0 + 5 * MIN + 1, politica=LARGA, urgentes=[("u", "docs")])
+c("«Sincronizar ahora» no espera al intervalo estirado", (que(d), d.tarea.urgente),
+  (("pasada", "u", "docs"), True))
+c("cada(): lo que se enseña, estirado y sin estirar",
+  (pl.cada(CINCO, CINCO.parejas[0], pl.Marca(T0, 0, 6), P),
+   pl.cada(CINCO, CINCO.parejas[1], pl.Marca(T0, 0, 6), P)), (20 * MIN, 5 * MIN))
+
+# --- una pareja saltada no se relanza en cada intervalo
+saltada = pl.registrar(pl.Marca(T0 - 1, 0, 5), pl.SALTADA, T0)
+c("saltada: ni un fallo ni vacías, pero queda dicho", saltada, pl.Marca(T0, 0, saltada=True))
+SOLA = pl.Raiz("u", (pl.Pareja("docs", "nas"),), 5 * MIN)
+d = dec((SOLA,), {("u", "docs"): saltada}, ahora=T0 + 5 * MIN + 1, politica=LARGA)
+c("  a su intervalo no se relanza para saltarse igual", que(d), None)
+d = dec((SOLA,), {("u", "docs"): saltada}, ahora=T0 + P.espera_saltada + 1, politica=LARGA)
+c("  pasada la espera, se prueba otra vez", que(d), ("pasada", "u", "docs"))
+d = dec((SOLA,), {("u", "docs"): pl.despierta(saltada)}, ahora=T0 + 5 * MIN + 1, politica=LARGA)
+c("  y despertada (el agente retoma la raíz), vuelve a su intervalo", que(d),
+  ("pasada", "u", "docs"))
+c("  una pasada buena la saca de saltada", pl.registrar(saltada, pl.OK, T0).saltada, False)
+LENTA = pl.Raiz("u", (pl.Pareja("docs", "nas"),), 3 * pl.HORA)
+c("  con un intervalo mayor que esa espera manda el intervalo",
+  pl.cada(LENTA, LENTA.parejas[0], saltada, P), 3 * pl.HORA)
+
+# --- la separación aprende de las pasadas adelantadas que salen vacías
+C = pl.PoliticaCambios()
+c("sin pasadas adelantadas vacías, la separación de fábrica",
+  pl.separacion_de(pl.Marca(T0), C), C.separacion)
+c("  una sola no la mueve", pl.separacion_de(pl.Marca(T0, 0, 1, 1), C), C.separacion)
+c("  dos seguidas la doblan", pl.separacion_de(pl.Marca(T0, 0, 2, 2), C), 2 * C.separacion)
+c("  tres, otra vez", pl.separacion_de(pl.Marca(T0, 0, 3, 3), C), 4 * C.separacion)
+c("  hasta su tope", pl.separacion_de(pl.Marca(T0, 0, 40, 40), C), C.separacion_tope)
+m = pl.registrar(pl.Marca(T0, 0, 0, 0), pl.OK, T0, vacia=True, por_cambios=True)
+c("una adelantada que sale vacía cuenta de las dos maneras", (m.vacias, m.vacias_por_cambios),
+  (1, 1))
+c("  una por intervalo que sale vacía no alarga la separación",
+  pl.registrar(m, pl.OK, T0, vacia=True).vacias_por_cambios, 1)
+c("  y una que mueve algo la devuelve a la de fábrica",
+  pl.registrar(pl.Marca(T0, 0, 4, 4), pl.OK, T0, por_cambios=True).vacias_por_cambios, 0)
+v = pl.Vigilada(cambio=T0 + 10, avisos=True)
+c("con la separación doblada, el cambio espera más",
+  (pl.toca_por_cambios(v, pl.Marca(T0), C), pl.toca_por_cambios(v, pl.Marca(T0, 0, 2, 2), C)),
+  (T0 + C.separacion, T0 + 2 * C.separacion))
+c("una pareja que se está saltando no se adelanta por sus cambios",
+  pl.toca_por_cambios(v, saltada, C), math.inf)
+
 raise SystemExit(c.report())

@@ -172,6 +172,13 @@ class Medida:
         """Si la pasada es un `--resync`: rehace la base, así que siempre «mueve»."""
         self.quieta: bool | None = None
         """Lo que diga el log en una pareja que no es bisync (`sin_actividad()`)."""
+        self.parte: Parte | None = None
+        """El parte ya cerrado (`cerrar()`), si `sync.py` lo necesitó antes de acabar."""
+
+    def cerrar(self, rc: int, ordenes: int) -> Parte:
+        """Calcula el parte ahora y lo guarda en `parte`: lo que venga después no cuenta."""
+        self.parte = self.acabar(rc, ordenes)
+        return self.parte
 
     def acabar(self, rc: int, ordenes: int) -> Parte:
         """Devuelve el parte de la pareja al terminar.

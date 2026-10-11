@@ -89,26 +89,26 @@
 #                       descansar a un USB), las de su carpeta y los `sync.py` que lanza
 #   consumo.pasada.*    una pasada bisync de verdad sin cambios (100 ficheros, solo con
 #                       `--rclone`): órdenes de rclone, y ficheros y KB escritos en la unidad
-# Los toques con una unidad atendida van por sistema (`[techo.windows]`, `[techo.linux]`): el
-# agente no mira lo mismo en cada uno.
+# Los toques a la unidad van por sistema (`[techo.windows]`, `[techo.linux]`): el agente no
+# mira lo mismo en cada uno.
 "consumo.reposo.vueltas" = 1800
 "consumo.reposo.toques_equipo" = 1800
 "consumo.servida.vueltas" = 3600
-"consumo.servida.pasadas" = 48
+"consumo.servida.toques_equipo" = 3880
+# 48 en la 0.7.2; con el intervalo que se estira (entrega 1), 16.
+"consumo.servida.pasadas" = 16
 "consumo.pasada.ordenes" = 1
 "consumo.pasada.ficheros" = 6
 "consumo.pasada.kb" = 29
 
 [techo.linux]
-"consumo.servida.toques_equipo" = 4488
-"consumo.servida.toques_unidad" = 30840
+"consumo.servida.toques_unidad" = 30228
 "modulos.main" = 171
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
-"consumo.servida.toques_equipo" = 4296
-"consumo.servida.toques_unidad" = 33240
+"consumo.servida.toques_unidad" = 32928
 "modulos.main" = 171
 "modulos.agente" = 158
 "modulos.wizard" = 235

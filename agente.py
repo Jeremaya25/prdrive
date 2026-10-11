@@ -18,7 +18,8 @@ Se usa como `python agente.py ORDEN`:
 - `abrir [ID]`: la ventana de la raíz de este equipo (o de esa).
 - `desbloquear [ID]` y `bloquear [ID]`: abrir y cerrar el contenedor de la raíz
   cifrada.
-- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no` o `espera_unidad_nueva SEG`.
+- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no`, `estirar_intervalo sí|no` o
+  `espera_unidad_nueva SEG`.
 - `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
 - `actualizar ID`: pone en esa raíz el código de la versión del agente.
 - `expulsar ID`: suelta esa unidad extraíble para poder quitarla (el «Expulsar» de
@@ -216,6 +217,12 @@ GRACIA_ABRIR = 20.0
 
 Si no se ve, se da por cancelada.
 """
+ESPERA_SUBIR = 120.0
+"""Segundos que «Expulsar» espera, como mucho, a que suba lo pendiente de la unidad."""
+ESPERA_TURNO = 20.0
+"""Segundos que «Expulsar» espera a que la cola, ocupada por la pasada de otra raíz, llegue a lo suyo."""
+RECIEN_PASADA = 30.0
+"""Una pareja pasada hace menos que esto no se vuelve a pasar antes de expulsar."""
 ESPERA_EXPULSION = 60.0
 """Segundos que se espera a que acabe una expulsión ya lanzada."""
 GRACIA_EXPULSION = 30.0
@@ -1166,11 +1173,17 @@ class Expulsion:
         resultado: Cómo acabó, o `None` si sigue en marcha. Lo escribe el hilo
             y lo lee el agente.
         avisada: Si ya se ha dicho cómo acabó.
+        subir: Las parejas que se pasan antes de soltar la unidad y todavía no
+            han acabado (`Agente._por_subir()`).
+        sin_subir: Las que no ha dado tiempo a pasar, o han fallado: se dicen
+            con el resultado.
     """
     desde: float
     lanzada: float | None = None
     resultado: expulsar.Resultado | None = None
     avisada: bool = False
+    subir: list[str] = field(default_factory=list)
+    sin_subir: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -2289,9 +2302,11 @@ class Agente:
                 self._soltar(con)
             con.motivo = "bloqueándose"
             return
-        if con.id in self.expulsiones:
+        if con.id in self.expulsiones and not self.expulsiones[con.id].subir:
             # Se está expulsando: igual que al bloquearla, y tampoco se
             # vuelve a tomar el lock mientras la unidad siga a la vista.
+            # Mientras sube lo pendiente (`Expulsion.subir`) se la sigue
+            # sirviendo como siempre.
             if not ocupada:
                 self._soltar(con)
             con.motivo = "expulsándose"
@@ -2418,6 +2433,10 @@ class Agente:
         if tomado:
             con.lock = datos
             con.soltando = False        # el fichero vuelve a ser uno vivo
+            # Lo que pasó mientras no la servía no lo ha visto (su ventana
+            # pudo aprobar un --resync, o mover media carpeta): sus parejas
+            # vuelven al intervalo de fábrica.
+            self._despertar(con.id)
             dlog(con.raiz, f"servicio (agente del equipo, pid {os.getpid()}) atendiendo: "
                            f"{', '.join(datos['pairs'])}"
                            + ("" if unidad.modo == equipo.SYNC
@@ -2444,6 +2463,62 @@ class Agente:
                 return
         con.soltando = False
 
+    def _despertar(self, uid: str, remoto: str | None = None) -> None:
+        """Devuelve al intervalo de fábrica las parejas de una raíz (`pl.despierta()`).
+
+        Args:
+            uid: La raíz.
+            remoto: Si se da, solo las que van a ese remote.
+        """
+        con = self.conexiones.get(uid)
+        de_ese = None if remoto is None or con is None or con.servicio is None \
+            else {p.nombre for p in con.servicio.parejas if p.remoto == remoto}
+        for clave, marca in list(self.marcas.items()):
+            if clave[0] == uid and (de_ese is None or clave[1] in de_ese):
+                self.marcas[clave] = pl.despierta(marca)
+
+    def _ritmo(self, con: Conexion, pareja: str, marca: pl.Marca) -> tuple[float, float] | None:
+        """Devuelve `(intervalo de fábrica, intervalo de ahora)` de una pareja, en segundos.
+
+        `None` si no es del servicio del agente o la raíz va en modo `sync`,
+        que no tiene intervalo.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if con.servicio is None or unidad is None or unidad.modo != equipo.DAEMON:
+            return None
+        p = next((x for x in con.servicio.parejas if x.nombre == pareja), None)
+        if p is None:
+            return None
+        raiz = pl.Raiz(con.id, con.servicio.parejas, con.servicio.minutos * 60)
+        return pl.intervalo_de(raiz, p), pl.cada(raiz, p, marca, self.ajustes.politica)
+
+    def _decir_ritmo(self, con: Conexion, pareja: str, antes: pl.Marca,
+                     despues: pl.Marca) -> None:
+        """Dice en los diarios cuándo una pareja pasa a sincronizarse menos, y cuándo vuelve."""
+        a, d = self._ritmo(con, pareja, antes), self._ritmo(con, pareja, despues)
+        if a is None or d is None or a[1] == d[1] or despues.saltada or antes.saltada:
+            return
+        if d[1] > d[0]:
+            texto = (f"lleva {despues.vacias} pasadas sin nada que hacer; ahora cada "
+                     f"{d[1] / 60:g} min (hasta que algo cambie)")
+        else:
+            texto = f"vuelve a sincronizarse cada {d[0] / 60:g} min"
+        diario(f"[{con.nombre}] {pareja}: {texto}")
+        dlog(con.raiz, f"[{pareja}] {texto}")
+
+    def _estiradas(self, con: Conexion) -> dict[str, float]:
+        """Devuelve las parejas de una raíz que ahora se pasan menos, con sus minutos."""
+        if con.lock is None:
+            return {}
+        salida = {}
+        for (uid, pareja), marca in self.marcas.items():
+            if uid != con.id or not (marca.vacias or marca.saltada):
+                continue
+            ritmo = self._ritmo(con, pareja, marca)
+            if ritmo is not None and ritmo[1] > ritmo[0]:
+                salida[pareja] = round(ritmo[1] / 60, 1)
+        return salida
+
     def _raices(self) -> list[pl.Raiz]:
         """Devuelve las raíces que el planificador puede atender.
 
@@ -2457,11 +2532,17 @@ class Agente:
         cortada = self._cortada()
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None or con.id in self.bloqueos \
-                    or con.id in self.expulsiones or con.actualizacion is not None:
+                    or con.actualizacion is not None:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
             parejas = con.servicio.parejas
+            expulsion = self.expulsiones.get(con.id)
+            if expulsion is not None:
+                # Expulsándose: solo lo que se sube antes de soltarla, y nada más.
+                parejas = tuple(p for p in parejas if p.nombre in expulsion.subir)
+                if not parejas:
+                    continue
             if cortada is not None and cortada.get("raiz") == con.id:
                 parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
             if con.id in self.keepassxc:
@@ -2955,8 +3036,11 @@ class Agente:
             1 + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
             segundos, dicho.escrito if dicho is not None else 0))
         antes = self.marcas.get(clave, pl.Marca())
-        despues = pl.registrar(antes, como, ahora)
+        despues = pl.registrar(antes, como, ahora,
+                               vacia=dicho is not None and dicho.vacia,
+                               por_cambios=tarea.por_cambios, urgente=tarea.urgente)
         self.marcas[clave] = despues
+        self._decir_ritmo(con, tarea.pareja, antes, despues)
         self._rehacer_foto(clave, ahora)
         if como == FALLO or como == RED:
             dlog(con.raiz, f"[{tarea.pareja}] FALLÓ (rc={rc}, {segundos:.0f}s); salida:")
@@ -2975,6 +3059,9 @@ class Agente:
         if tarea.pareja == model.LLAVERO:
             self._copias_del_llavero(con, ahora, ya=True)
 
+        expulsion = self.expulsiones.get(tarea.raiz)
+        if expulsion is not None and como != OK and tarea.pareja not in expulsion.sin_subir:
+            expulsion.sin_subir.append(tarea.pareja)
         if como == RED:
             # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
             # aquel fallo era de la pareja y se apunta como tal
@@ -3032,6 +3119,7 @@ class Agente:
             if not apuntadas and clave in self.sin_red_avisado:
                 self.sin_red_avisado.discard(clave)
                 diario(f"[{con.nombre}] vuelve la conexión con {remoto}")
+            self._despertar(con.id, remoto)
             return
         self.entorno = pl.sin_conexion(
             self.entorno, con.id, remoto,
@@ -3361,9 +3449,51 @@ class Agente:
             diario(f"{con.nombre}: no se puede expulsar desde aquí (no es un volumen "
                    f"extraíble de la lista, o está ocupada)")
         else:
-            self.expulsiones[uid] = Expulsion(ahora)
+            subir = self._por_subir(con, ahora)
+            self.expulsiones[uid] = Expulsion(ahora, subir=subir)
             self.urgentes = [u for u in self.urgentes if u[0] != uid]
-            diario(f"{con.nombre}: se pide expulsarla")
+            self.urgentes += [(uid, n) for n in subir]
+            diario(f"{con.nombre}: se pide expulsarla"
+                   + (f"; antes se sincroniza {', '.join(subir)}" if subir else ""))
+
+    def _por_subir(self, con: Conexion, ahora: float) -> list[str]:
+        """Devuelve las parejas de una unidad que se pasan antes de expulsarla.
+
+        Son las que pueden tener algo sin subir: todas las del servicio en modo
+        `daemon`, menos las que se sabe que no (oyen los avisos del sistema y
+        no hay ningún cambio pendiente; se acaban de pasar), las que no iban a
+        subir nada (saltándose, su remoto sin conexión) y, si el
+        agente se está moderando (pausa, batería, red de uso medido), ninguna:
+        expulsar no se salta lo que la persona pidió. Sin esto una unidad se
+        iría con lo cambiado desde la última pasada, que con el intervalo
+        estirado pueden ser muchos minutos.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if con.lock is None or con.servicio is None or unidad is None \
+                or unidad.modo != equipo.DAEMON or self.heredada is not None \
+                or pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                                 self.ajustes.politica) is not None:
+            return []
+        nombres = []
+        for p in con.servicio.parejas:
+            marca = self.marcas.get((con.id, p.nombre), pl.Marca())
+            v = self.vigiladas.get((con.id, p.nombre))
+            if (con.id, p.remoto) in self.entorno.sin_conexion or marca.saltada:
+                continue
+            if v is not None and v.avisos and v.cambio is None \
+                    and marca.ultimo_intento is not None:
+                continue                    # si hubiera cambiado algo, se sabría
+            if marca.ultimo_intento is not None \
+                    and ahora - marca.ultimo_intento < RECIEN_PASADA \
+                    and (v is None or v.cambio is None):
+                continue
+            pasada = self.pasada
+            if pasada is not None and pasada.tarea.tipo == pl.PASADA \
+                    and (pasada.tarea.raiz, pasada.tarea.pareja) == (con.id, p.nombre) \
+                    and ahora - pasada.desde < RECIEN_PASADA:
+                continue                    # la que está en marcha acaba de empezar
+            nombres.append(p.nombre)
+        return nombres
 
     def _expulsiones(self, ahora: float) -> None:
         """Lleva los «Expulsar» pedidos hasta ver la unidad suelta o el motivo de que no.
@@ -3386,7 +3516,9 @@ class Agente:
                     e.avisada = True
                     if e.resultado.ok:
                         diario(f"{nombre}: expulsada")
-                        avisar(f"{nombre}: ya puedes quitarla", e.resultado.texto)
+                        avisar(f"{nombre}: ya puedes quitarla", e.resultado.texto
+                               + (f" Se ha quedado sin sincronizar: {', '.join(e.sin_subir)}."
+                                  if e.sin_subir else ""))
                     else:
                         diario(f"{nombre}: no se ha podido expulsar: {e.resultado.texto}")
                         avisar(f"{nombre}: no la expulso", e.resultado.texto, True)
@@ -3406,6 +3538,25 @@ class Agente:
                            "El sistema no ha contestado a tiempo. Comprueba que se puede "
                            "quitar antes de tirar del cable.", True)
                 continue
+            if e.subir:
+                # Lo pendiente sube antes de soltarla: son urgentes de esta
+                # raíz, y cada una sale de la cola al lanzarse.
+                en_curso = self.pasada.tarea.pareja if self.pasada is not None \
+                    and self.pasada.tarea.raiz == uid else None
+                e.subir = [n for n in e.subir if (uid, n) in self.urgentes or n == en_curso]
+                servida = con is not None and con.lock is not None and con.servicio is not None
+                # La cola es una para todo el equipo: a la pasada de otra raíz
+                # se la espera poco, que quien pide expulsar está delante.
+                ajena = self.pasada is not None and en_curso is None
+                plazo = ESPERA_TURNO if ajena else ESPERA_SUBIR
+                if e.subir and (not servida or ahora - e.desde >= plazo):
+                    # No ha dado tiempo, o ya no la sirve el agente (su ventana,
+                    # otro servicio): no hay quien las pase.
+                    e.sin_subir += [n for n in e.subir if n != en_curso]
+                    self.urgentes = [u for u in self.urgentes if u[0] != uid]
+                    e.subir = []
+                if e.subir:
+                    continue
             if self.pasada is not None and self.pasada.tarea.raiz == uid:
                 continue                    # acaba la pareja en curso
             if self._mirando(uid) and ahora - e.desde < ESPERA_VENTANA:
@@ -4154,6 +4305,7 @@ class Agente:
                                                 if r == con.id and m.fallos > 0),
                              "saltadas": sorted(p for r, p in self.saltadas
                                                 if r == con.id),
+                             "estiradas": self._estiradas(con),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
                              "vigila_recorre": recorre,
@@ -4648,6 +4800,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
         gastado = consumo.del_dia(str(u.get("id") or ""))
         if gastado.pasadas:
             print(f"  Hoy: {consumo.texto(gastado)}")
+        if u.get("estiradas"):
+            print("  Sin nada que hacer desde hace rato, se pasan menos: "
+                  + ", ".join(f"{n} cada {m:g} min" for n, m in sorted(u["estiradas"].items())))
         if u.get("actualizable"):
             print(f"  Lleva la {u.get('version') or 'versión desconocida'}; para ponerla a "
                   f"la {estado.get('version')}: agente.py actualizar {u.get('id')}")
@@ -4848,7 +5003,7 @@ def valor_ajuste(clave: str, texto: str) -> Any:
     Raises:
         ValueError: Si no es un sí o un no, o un número.
     """
-    if clave == "pedir_al_iniciar":
+    if clave in ("pedir_al_iniciar", "estirar_intervalo"):
         valor = VERDAD.get(texto.strip().lower())
         if valor is None:
             raise ValueError(f"{clave} es sí o no, no {texto!r}")

@@ -618,10 +618,29 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
                                        final.hecho if final is not None else None))
 
 
+def sin_conflictos_nuevos(pair: Pair, dicho: parte.Parte | None) -> bool:
+    """Indica si se puede dar por sabido que la pasada no ha dejado conflictos.
+
+    Solo cuando se sabe que no movió nada (`Parte.vacia`) y el último recorrido
+    de la pareja no apuntó ninguna copia: rclone renombra al perdedor al
+    detectar el conflicto, y eso cambia los listados. Con alguna copia apuntada
+    se sigue recorriendo, para que la lista se vacíe cuando la persona las
+    resuelva. Ahorra recorrer con `os.walk` toda la carpeta local tras cada
+    pasada sin cambios.
+    """
+    if dicho is None or not dicho.vacia or not pair.is_bisync:
+        return False
+    try:
+        return conflicts.sin_apuntar(pair.name)
+    except OSError:
+        return False
+
+
 def report_conflicts(ctx: RunContext, pair: Pair) -> None:
     """Apunta y avisa de los ficheros en conflicto que haya dejado bisync.
 
-    Va tras CADA pasada, buena o mala: rclone renombra al perdedor al
+    Va tras cada pasada, buena o mala, que haya podido dejarlos
+    (`sin_conflictos_nuevos()`): rclone renombra al perdedor al
     detectarlo y un fallo posterior no quita el conflicto. Si el recorrido
     falla (dispositivo desaparecido a medias) se calla: es un aviso y no puede
     tumbar la sincronización.
@@ -653,7 +672,7 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     medida = parte.Medida(pair, ORDENES[0], medir=not ctx.dry_run)
     rc = _pasar_pareja(ctx, pair, medida)
     if not ctx.dry_run:
-        print(parte.linea(medida.acabar(rc, ORDENES[0])))
+        print(parte.linea(medida.parte or medida.acabar(rc, ORDENES[0])))
     return rc
 
 
@@ -720,7 +739,11 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
         print_log_tail(saved)
         explain_failure(saved)
     record_result(ctx, pair, rc, saved, reloj, final)
-    report_conflicts(ctx, pair)
+    if not pair.llavero and not ctx.dry_run:
+        # El llavero puede dar otra pasada aquí debajo: su parte se cierra al final.
+        medida.cerrar(rc, ORDENES[0])
+    if not sin_conflictos_nuevos(pair, medida.parte):
+        report_conflicts(ctx, pair)
     if rc == 0 and pair.llavero and not ctx.dry_run:
         reapuntar_llavero(ctx, pair, ffile)
     return rc

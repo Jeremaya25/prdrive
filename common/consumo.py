@@ -72,20 +72,30 @@ def leer() -> dict[str, dict[str, Cuenta]]:
             for dia, unidades in dias.items() if isinstance(unidades, dict)}
 
 
+_MEMORIA: dict = {"ruta": None, "dias": {}}
+"""Lo último que este proceso escribió, y dónde: el agente es el único que escribe el
+fichero, así que no lo vuelve a leer para sumar cada pasada."""
+
+
 def apuntar(uid: str, cuenta: Cuenta, dia: str | None = None) -> None:
     """Suma `cuenta` a lo gastado hoy en esa unidad y tira los días viejos.
 
     No lanza: lo que no se pueda apuntar se pierde y la pasada no se entera.
     """
     dia = dia or hoy()
-    dias = leer()
+    ruta = equipo.DIR / FICHERO
+    if _MEMORIA["ruta"] != ruta:
+        _MEMORIA.update(ruta=ruta, dias=leer())
+    dias = _MEMORIA["dias"]
     de_hoy = dias.setdefault(dia, {})
     de_hoy[uid] = de_hoy.get(uid, Cuenta()).mas(cuenta)
+    for viejo in sorted(dias)[:-DIAS]:
+        del dias[viejo]
     guardar = {d: {u: {**c._asdict(), "segundos": round(c.segundos, 1)}
                    for u, c in unidades.items()}
-               for d, unidades in sorted(dias.items())[-DIAS:]}
+               for d, unidades in sorted(dias.items())}
     try:
-        store.write_json(equipo.DIR / FICHERO, {"dias": guardar})
+        store.write_json(ruta, {"dias": guardar})
     except OSError:
         pass
 

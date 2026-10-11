@@ -357,8 +357,20 @@ def _guardar(parejas: dict[str, list[Conflicto]], data: dict | None = None) -> N
     store.write_json(ruta_estado(), {"cuando": store.stamp(), "parejas": guardadas})
 
 
+def sin_apuntar(nombre: str) -> bool:
+    """Indica si el último escaneo de esa pareja se apuntó y no encontró ninguna copia.
+
+    No recorre nada: lee `state/conflicts.json`. Es lo que deja a `sync.py`
+    ahorrarse el recorrido tras una pasada que no movió nada: si no había
+    ninguna copia y nada ha cambiado en ningún lado, no puede haber aparecido
+    una. Una pareja que nunca se escaneó (no está en el fichero) da `False`.
+    """
+    parejas = store.read_json(ruta_estado()).get("parejas")
+    return isinstance(parejas, dict) and parejas.get(nombre) == []
+
+
 def actualizar_pareja(pair: Pair) -> list[Conflicto]:
-    """Escanea una pareja y apunta el resultado; lo llama `sync.py` tras cada pasada."""
+    """Escanea una pareja y apunta el resultado; lo llama `sync.py` tras las pasadas."""
     encontrados = escanear(pair)
     _guardar({pair.name: encontrados})
     return encontrados
