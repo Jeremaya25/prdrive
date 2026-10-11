@@ -141,6 +141,19 @@ def simular(F, agente, ag, segundos: float) -> int:
     return vueltas
 
 
+class BandejaMuda:
+    """Una bandeja que no enseña nada: basta con que esté para que el agente no recorra como sin ella."""
+
+    hwnd = None
+    puesta = True
+
+    def poner(self, vista) -> None:
+        """No pinta nada."""
+
+    def cerrar(self) -> None:
+        """Nada que cerrar."""
+
+
 def agente_de_mentira():
     """Importa el agente del árbol que se mide y lo apunta a su equipo de mentira."""
     sys.path[:0] = [APP, os.path.join(APP, "tests")]
@@ -162,6 +175,11 @@ def flujo_agente() -> None:
         F.RAICES[:] = [raiz]
         raices["unidad"] = str(raiz)
     ag = F.nuevo()
+    # Como en una instalación corriente: con bandeja (los montajes los dice el sistema y el
+    # recorrido es solo el de respaldo) y con el buzón avisando (`poner_buzon()`).
+    ag.bandeja = BandejaMuda()
+    if hasattr(ag, "oye_buzon"):
+        ag.oye_buzon = True
     simular(F, agente, ag, ASENTAR)
     contar_en(raices)
     lanzados = len(F.pasadas())

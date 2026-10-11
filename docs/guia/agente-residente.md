@@ -119,6 +119,12 @@ agente»**. El diseño completo está en
   hoy en cada unidad. Se apaga con `python agente.py ajuste estirar_intervalo no`.
   Una pareja que pide un `--resync` deja de intentarse en cada intervalo: se
   prueba cada hora, y en cuanto cierras su ventana.
+- **Apenas gasta cuando no hay nada que hacer.** Sin ninguna unidad a la vista
+  el agente mira dos veces por minuto en vez de cada dos segundos (lo que le
+  pidas desde la bandeja, la ventana o la línea de órdenes le llega al momento,
+  y enchufar una unidad también). Con una unidad atendida y quieta, lo que mira
+  de ella en cada vuelta es una sola lectura de carpeta, para que un pendrive
+  pueda descansar.
 - **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una
   pareja **empieza** a fallar, **empieza** a pedir un `--resync` (no se
   sincroniza sola hasta que lo apruebes en «Reparación»; también sale arriba en

@@ -91,8 +91,9 @@
 #                       `--rclone`): órdenes de rclone, y ficheros y KB escritos en la unidad
 # Los toques a la unidad van por sistema (`[techo.windows]`, `[techo.linux]`): el agente no
 # mira lo mismo en cada uno.
-"consumo.reposo.vueltas" = 1800
-"consumo.reposo.toques_equipo" = 1800
+# 1800 y 1800 en la 0.7.2 (una vuelta cada 2 s); oyendo el buzón (entrega 3), una cada 30 s.
+"consumo.reposo.vueltas" = 120
+"consumo.reposo.toques_equipo" = 120
 "consumo.servida.vueltas" = 3600
 "consumo.servida.toques_equipo" = 3880
 # 48 en la 0.7.2; con el intervalo que se estira (entrega 1), 16.
@@ -101,14 +102,16 @@
 "consumo.pasada.ficheros" = 6
 "consumo.pasada.kb" = 29
 
+# 30 000 en la 0.7.2 (nueve operaciones por vuelta); con una sola lectura de `state/` por
+# vuelta (entrega 3), unas 5 000.
 [techo.linux]
-"consumo.servida.toques_unidad" = 30228
+"consumo.servida.toques_unidad" = 5215
 "modulos.main" = 171
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
-"consumo.servida.toques_unidad" = 32928
+"consumo.servida.toques_unidad" = 5035
 "modulos.main" = 171
 "modulos.agente" = 158
 "modulos.wizard" = 235

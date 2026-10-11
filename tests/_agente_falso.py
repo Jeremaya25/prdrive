@@ -87,6 +87,8 @@ def preparar() -> Path:
     agente.hilo = lambda funcion: funcion()
     # Ni el registro de verdad, en un Windows: las claves del navegador.
     agente.limpiar_navegador = lambda: (0, [])
+    # Ni las letras de unidad de verdad (Windows): que aparezca una no es cosa del test.
+    agente.letras_de_unidad = lambda: None
     # Ni los procesos de verdad: el KeePassXC de una raíz que se va (Linux).
     agente.cerrar_keepassxc_huerfano = lambda raiz: 0
     agente.keepassxc_huerfano_abierto = lambda raiz: False

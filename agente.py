@@ -154,7 +154,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, avisos_carpeta, bitlocker, catalog,  # noqa: E402
+from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
                     cifrada, components, consumo, equipo, expulsar, keepassxc, llavero,
                     model, moderacion, parte, prioridad, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
@@ -180,8 +180,19 @@ RECORRIDO_WINDOWS = penwatch.POLL_SECONDS
 Sin bandeja no llega `WM_DEVICECHANGE`. Con ella, también mientras haya a la
 vista una unidad bloqueada con BitLocker (`Agente.cada_recorrido()`).
 """
-RECORRIDO_RESPALDO = 30.0
-"""Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada."""
+RECORRIDO_RESPALDO = 120.0
+"""Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada.
+
+Es el respaldo: los montajes los dice el sistema, y en Windows además una letra
+que aparece o se va se ve en cada vuelta (`letras_de_unidad()`). Eran 30 s; en
+un equipo sin unidades el recorrido era la mitad de lo que gastaba el agente.
+"""
+REPOSO = 30.0
+"""Segundos, como mucho, entre dos vueltas cuando no hay nada que mirar de cerca (`cuanto_esperar()`)."""
+MIRAR_CONFIG = 20.0
+"""Segundos entre dos miradas a la fecha del `sync_config.toml` de una raíz atendida."""
+RELEER_REGISTROS = 20.0
+"""Segundos tras los que un registro del `state/` de una raíz se relee aunque su fecha no haya cambiado."""
 RAFAGA = 60.0
 """Segundos tras un cambio de montajes en que se recorre en cada vuelta."""
 ESTABLE = penwatch.STABLE_CHECKS
@@ -949,6 +960,63 @@ def presente(raiz: Path) -> bool:
         return False
 
 
+NOMBRE_LOCK = Path(penwatch.DAEMON_LOCK_REL).name
+NOMBRE_VENTANA = Path(penwatch.UI_LOCK_REL).name
+NOMBRE_STOP = "daemon.stop"
+NOMBRE_PREFS = "ui_prefs.json"
+ESTADO_QUE_SE_MIRA = frozenset({NOMBRE_LOCK, NOMBRE_VENTANA, NOMBRE_STOP, NOMBRE_PREFS,
+                                equipo.BUZON_SERVICIO})
+"""Los ficheros del `state/` de una raíz con los que se cumple su contrato de servicio."""
+
+
+def mirar_estado(raiz: Path) -> dict[str, tuple[int, int]] | None:
+    """Devuelve lo que hay del contrato en el `state/` de una raíz, con UNA lectura de la carpeta.
+
+    Es lo que el agente mira de cada raíz conectada en cada vuelta. Antes eran
+    nueve operaciones sueltas (existe el stop, lee el lock dos veces, lee el de
+    la ventana, intenta renombrar el buzón, dos fechas, el fichero de
+    control): en un pendrive, 273 por minuto, y el USB no descansaba nunca.
+    Listar la carpeta dice de una vez qué hay y con qué fecha, y solo se abre
+    lo que ha cambiado (`Agente._registro()`).
+
+    Returns:
+        `{nombre: (mtime en ns, tamaño)}` de los ficheros de
+        `ESTADO_QUE_SE_MIRA` que están; `None` si la raíz ya no está a la vista.
+    """
+    visto: dict[str, tuple[int, int]] = {}
+    try:
+        with os.scandir(estado_de(raiz)) as entradas:
+            for e in entradas:
+                if e.name not in ESTADO_QUE_SE_MIRA:
+                    continue
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue                # se fue entre listarlo y mirarlo
+                visto[e.name] = (st.st_mtime_ns, st.st_size)
+    except (FileNotFoundError, NotADirectoryError):
+        # Sin `state/` todavía (una raíz recién puesta), o ya sin unidad.
+        return {} if presente(raiz) else None
+    except OSError:
+        return None
+    return visto
+
+
+def letras_de_unidad() -> int | None:
+    """Devuelve las letras de unidad que hay ahora en Windows, como máscara, o `None` fuera de él.
+
+    `GetLogicalDrives`: un par de microsegundos, sin tocar ningún disco. Que
+    cambie es que ha aparecido o se ha ido un volumen, lo diga o no la bandeja.
+    """
+    if not IS_WIN:
+        return None
+    try:
+        import ctypes
+        return int(ctypes.windll.kernel32.GetLogicalDrives())
+    except (OSError, AttributeError):
+        return None
+
+
 def _registro_vivo(raiz: Path, rel: Path) -> dict | None:
     """Devuelve ese registro de la raíz si es de un proceso vivo de este equipo y arranque.
 
@@ -1166,6 +1234,10 @@ class Conexion:
     copias_avisadas: frozenset[str] = frozenset()
     compatible: bool | None = None
     compatible_leido: float = -math.inf
+    vista: dict | None = None
+    leidos: dict = field(default_factory=dict)
+    config_visto: int | None = None
+    config_mirado: float = -math.inf
 
 
 @dataclass
@@ -1569,6 +1641,8 @@ class Agente:
     rearmes: dict[tuple[str, str], tuple[int, float]] = field(default_factory=dict)
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
+    oye_buzon: bool = False
+    letras: int | None = None
     navegador_mirado: bool = False
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
 
@@ -1598,7 +1672,10 @@ class Agente:
             self._al_iniciar(ahora)
         self._seguir_desbloqueos(ahora)
         for con in list(self.conexiones.values()):
-            if not presente(con.raiz):
+            # La única mirada de esta vuelta al `state/` de cada raíz: dice si
+            # sigue ahí y qué ha cambiado de su contrato.
+            con.vista = mirar_estado(con.raiz)
+            if con.vista is None:
                 self._desconectar(con.id, ahora, {})
         self._tras_cierre()
         self._preguntas(ahora)
@@ -1619,6 +1696,8 @@ class Agente:
         if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
         self._escribir_estado()
+        for con in self.conexiones.values():
+            con.vista = None                # la mirada vale para esta vuelta, no para la siguiente
         return decision
 
     def _recorrer(self, ahora: float) -> None:
@@ -1794,7 +1873,32 @@ class Agente:
         (`cada_recorrido()` con lo que acababa de ver), y en cada vuelta
         mientras dure una racha (`rafaga_hasta`).
         """
+        letras = letras_de_unidad()
+        if letras != self.letras:
+            if self.letras is not None:
+                # Ha aparecido o se ha ido una letra: como un aviso de montajes.
+                self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
+            self.letras = letras
         return ahora >= self.proximo_recorrido or ahora < self.rafaga_hasta
+
+    def en_reposo(self) -> bool:
+        """Indica si no hay nada que el agente tenga que mirar de cerca.
+
+        Ni unidades a la vista (atendidas o no: su contrato, su pregunta, su
+        vestíbulo), ni una pasada u otro hijo en marcha, ni nada a medias, ni
+        una racha de montajes. Entonces lo único que puede pasar llega avisado:
+        un montaje, la bandeja, la red, una petición en el buzón.
+        """
+        return not (self.terminar or self.pasada is not None
+                    or self.conexiones or self.vistas or self.cerradas or self.vestibulos
+                    or self.desbloqueos or self.bloqueos or self.expulsiones
+                    or self.bitlocker or self.desbloqueos_bitlocker
+                    or self.actualizando is not None or self.buscando
+                    or self.muestreo is not None or self.heredada is not None
+                    or self.cortada is not None or self.urgentes
+                    or self.cambio_de_red is not None or self.navegador_tras_cierre
+                    or not self.navegador_mirado or not self.peticiones.empty()
+                    or self.reloj() < self.rafaga_hasta)
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
         """Quita de `abiertas` las raíces cifradas que son un volumen fantasma.
@@ -2254,13 +2358,23 @@ class Agente:
 
         La ventana los edita mientras el agente sigue vivo.
         """
-        firma = []
-        for ruta in (app(con.raiz) / "sync_config.toml",
-                     estado_de(con.raiz) / "ui_prefs.json"):
+        ahora = self.reloj()
+        if con.vista is None or not con.firma or ahora - con.config_mirado >= MIRAR_CONFIG:
+            # La fecha del TOML, de tarde en tarde: `_lanzar()` lo relee antes
+            # de cada pasada, y aquí solo sirve para enseñar pronto lo editado.
             try:
-                firma.append(ruta.stat().st_mtime_ns)
+                con.config_visto = (app(con.raiz) / "sync_config.toml").stat().st_mtime_ns
             except OSError:
-                firma.append(None)
+                con.config_visto = None
+            con.config_mirado = ahora
+        if con.vista is None:
+            try:
+                prefs = (estado_de(con.raiz) / NOMBRE_PREFS).stat().st_mtime_ns
+            except OSError:
+                prefs = None
+        else:
+            prefs = con.vista.get(NOMBRE_PREFS, (None,))[0]
+        firma = [con.config_visto, prefs]
         if tuple(firma) == con.firma and (con.servicio or con.error):
             return
         con.firma = tuple(firma)
@@ -2292,10 +2406,39 @@ class Agente:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
 
         Es `None` si no hay otro, o si el registro es de antes de reiniciar.
+        Dentro de una vuelta vale lo leído mientras el fichero no haya cambiado
+        (`_registro()`, con la mirada de esa vuelta); fuera, se lee de verdad.
         """
-        info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
+        info = self._registro(con, NOMBRE_LOCK)
         if not store.vivo_en_este_arranque(info, HOST) or info.get("pid") == os.getpid():
             return None
+        return info
+
+    def _registro(self, con: Conexion, nombre: str) -> dict:
+        """Devuelve un registro JSON del `state/` de una raíz, releyéndolo solo si ha cambiado.
+
+        Manda lo que vio la mirada de esta vuelta (`Conexion.vista`): si el
+        fichero no está, `{}` sin tocar la unidad; si su fecha y su tamaño son
+        los de la última lectura y esta tiene menos de `RELEER_REGISTROS`, lo
+        leído entonces. Con dos segundos de resolución de fecha (FAT, exFAT)
+        un registro reescrito con el mismo tamaño puede no notarse hasta esa
+        relectura: por eso lo que decide de verdad no pasa por aquí
+        (`_lanzar()` y `_soltar()` leen el lock, y `_tomar()` lo crea con
+        `O_EXCL`).
+        """
+        ruta = estado_de(con.raiz) / nombre
+        if con.vista is None:
+            return store.read_json(ruta)
+        firma = con.vista.get(nombre)
+        if firma is None:
+            con.leidos.pop(nombre, None)
+            return {}
+        ahora = self.reloj()
+        antes = con.leidos.get(nombre)
+        if antes is not None and antes[0] == firma and 0 <= ahora - antes[1] < RELEER_REGISTROS:
+            return antes[2]
+        info = store.read_json(ruta)
+        con.leidos[nombre] = (firma, ahora, info)
         return info
 
     def _contrato(self, con: Conexion, ahora: float) -> None:
@@ -2341,11 +2484,14 @@ class Agente:
                 self.sin_rclone_avisado = True
                 avisar(f"{APP_NAME}: el agente no tiene su rclone", SIN_RCLONE, True)
             return
-        stop = estado_de(con.raiz) / "daemon.stop"
-        try:
-            parar = stop.exists()
-        except OSError:
-            parar = False
+        stop = estado_de(con.raiz) / NOMBRE_STOP
+        if con.vista is not None:
+            parar = NOMBRE_STOP in con.vista
+        else:
+            try:
+                parar = stop.exists()
+            except OSError:
+                parar = False
         otro = self._otro_servicio(con)
         if parar and not ocupada and otro is None:
             # Lo que hace runsync al abrir su ventana (o con `--auto`, o con
@@ -2358,7 +2504,7 @@ class Agente:
             con.pausa = ahora
             diario(f"{con.nombre}: runsync ha pedido parar el servicio; en pausa")
             dlog(con.raiz, "servicio (agente del equipo) en pausa: lo ha pedido runsync")
-        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None
+        ventana = store.vivo_en_este_arranque(self._registro(con, NOMBRE_VENTANA), HOST)
         if ventana:
             con.pausa = ahora
         if otro is not None and con.lock is not None:
@@ -2384,7 +2530,7 @@ class Agente:
             con.motivo = ""
             if con.lock is None:
                 self._tomar(con)
-            elif not self._lock_es_nuestro(con):
+            elif not self._lock_es_nuestro(con, de_memoria=True):
                 con.lock = None             # lo borró runsync al cansarse de esperar
             return
         if not ocupada:
@@ -2410,9 +2556,16 @@ class Agente:
             return "en pausa desde su ventana: no se sincroniza hasta «Reanudar»"
         return f"modo {unidad.modo}: {equipo.TEXTO_MODO[unidad.modo]}"
 
-    def _lock_es_nuestro(self, con: Conexion) -> bool:
-        """Indica si el `daemon.lock.json` de la raíz es de este agente."""
-        info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
+    def _lock_es_nuestro(self, con: Conexion, de_memoria: bool = False) -> bool:
+        """Indica si el `daemon.lock.json` de la raíz es de este agente.
+
+        Args:
+            de_memoria: Si vale lo leído mientras el fichero no haya cambiado
+                (`_registro()`): es la mirada de cada vuelta. Sin ello se lee
+                de verdad, que es lo que hace quien va a lanzar o a soltar.
+        """
+        info = self._registro(con, NOMBRE_LOCK) if de_memoria \
+            else store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
         return info.get("pid") == os.getpid() and info.get("host") == HOST
 
     def _tomar(self, con: Conexion) -> None:
@@ -2440,6 +2593,7 @@ class Agente:
                 and otro.get("host") == HOST:
             # El nuestro, que no se pudo borrar al soltarlo (`soltando`).
             tomado = store.write_json(destino, datos)
+        con.leidos.pop(NOMBRE_LOCK, None)   # lo que hubiera leído ya no vale
         if tomado:
             con.lock = datos
             con.soltando = False        # el fichero vuelve a ser uno vivo
@@ -3629,6 +3783,11 @@ class Agente:
         """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
+        if not self.conexiones:
+            # Sin ninguna unidad a la vista no hay pasada que moderar: ni se
+            # pregunta por la batería ni por la red (en Windows, una llamada
+            # COM que despierta a otros procesos). Al llegar una, se lee ya.
+            return
         self.entorno_leido = ahora
         energia = moderacion.energia()
         self.entorno = replace(self.entorno, con_bateria=energia.con_bateria,
@@ -3933,6 +4092,8 @@ class Agente:
             if con.id not in self.ajustes.unidades or con.cambiada \
                     or self._por_actualizar(con):
                 continue
+            if con.vista is not None and equipo.BUZON_SERVICIO not in con.vista:
+                continue                    # la mirada de esta vuelta dice que no hay buzón
             for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
                 if p.get("pide") not in equipo.PIDE_SERVICIO:
                     diario(f"{con.nombre}: su buzón pide {p.get('pide')!r}, que no es "
@@ -4463,6 +4624,7 @@ class Vigia:
         self._montajes = False
         self._pipe: tuple[int, int] | None = None
         self._oido: tuple[int, Any] | None = None
+        self._buzon: tuple[int, Any] | None = None
         if IS_WIN:
             return
         try:
@@ -4521,6 +4683,25 @@ class Vigia:
             return
         self._oido = (fd, leer)
 
+    def oir_buzon(self, fd: int, leer) -> bool:
+        """Espera también en el descriptor del oyente del buzón (`avisos_buzon`, Linux).
+
+        Cuando tiene algo se llama a `leer()`, que lo vacía y dice si era el
+        buzón: entonces la espera acaba, como con `despertar()`.
+
+        Returns:
+            `True` si queda oído; `False` sin `poll` o si no se deja registrar.
+        """
+        if self._poll is None:
+            return False
+        import select
+        try:
+            self._poll.register(fd, select.POLLIN)
+        except (OSError, ValueError):
+            return False
+        self._buzon = (fd, leer)
+        return True
+
     def _leer_avisos(self) -> None:
         """Vacía el descriptor oído; si falla, deja de oírlo y lo dice."""
         fd, leer = self._oido
@@ -4577,6 +4758,18 @@ class Vigia:
                     if self._pipe is not None and fd == self._pipe[0]:
                         os.read(fd, 4096)
                         despierto = True
+                    elif self._buzon is not None and fd == self._buzon[0]:
+                        try:
+                            if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+                                raise OSError("descriptor cerrado")
+                            if self._buzon[1]():
+                                despierto = True
+                        except Exception:               # noqa: BLE001
+                            try:
+                                self._poll.unregister(fd)
+                            except (OSError, KeyError, ValueError):
+                                pass
+                            self._buzon = None
                     elif self._oido is not None and fd == self._oido[0]:
                         if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
                             self._dejar_de_oir()
@@ -4723,6 +4916,49 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
     return motor
 
 
+def poner_buzon(agente: Agente, vigia: Vigia) -> Any:
+    """Devuelve el oyente del buzón del agente, o `None` si aquí no se puede oír.
+
+    Punto de indirección: los tests no ponen ninguno. Es `common/avisos_buzon.py`:
+    el sistema dice cuándo alguien escribe `agente.pide`, y entonces el vigía
+    despierta. Con él (`Agente.oye_buzon`) el agente deja de mirar el buzón
+    cada 2 s cuando no tiene nada a la vista (`cuanto_esperar()`).
+    """
+    try:
+        equipo.DIR.mkdir(parents=True, exist_ok=True)
+        oyente = avisos_buzon.abrir(equipo.DIR, equipo.buzon().name, vigia.despertar)
+    except OSError:
+        oyente = None
+    if oyente is not None and oyente.fd is not None \
+            and not vigia.oir_buzon(oyente.fd, oyente.leer):
+        oyente.cerrar()
+        oyente = None
+    agente.oye_buzon = oyente is not None
+    diario("oigo el buzón del agente: sin nada a la vista, miro cada "
+           f"{REPOSO:g} s" if oyente is not None
+           else f"no oigo el buzón del agente: lo miro cada {TICK:g} s")
+    return oyente
+
+
+def cuanto_esperar(agente: Agente, decision: pl.Decision | None = None) -> float:
+    """Devuelve cuántos segundos puede esperar el bucle del agente hasta su vuelta siguiente.
+
+    El tic de siempre (`TICK`) mientras haya algo que mirar de cerca
+    (`Agente.en_reposo()`): una pasada u otro hijo, una unidad a la vista, una
+    racha de montajes, algo a medias. Sin nada de eso, y solo si el buzón avisa
+    (`Agente.oye_buzon`), hasta `REPOSO`, o hasta que toque el recorrido de
+    respaldo si es antes: todo lo demás que puede pasar (un montaje, la
+    bandeja, la red, una petición) despierta al vigía.
+
+    Args:
+        decision: Lo que decidió la vuelta; no se usa todavía (con una unidad
+            a la vista manda su contrato, que se mira cada `TICK`).
+    """
+    if not agente.oye_buzon or not agente.en_reposo():
+        return TICK
+    return max(TICK, min(REPOSO, agente.proximo_recorrido - agente.reloj()))
+
+
 def _enganchar_penwatch() -> None:
     """Lleva a penwatch al diario del agente.
 
@@ -4778,18 +5014,20 @@ def cmd_run(_args: argparse.Namespace) -> int:
     agente.bandeja = poner_bandeja(agente, vigia)
     agente.avisos_de_red = poner_red(agente, vigia)
     agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
+    oyente_del_buzon = poner_buzon(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
     try:
         while not (agente.terminar and agente.pasada is None):
             recorrer = agente.toca_recorrer(time.time())
+            decision = None
             try:
-                agente.vuelta(recorrer)
+                decision = agente.vuelta(recorrer)
             except Exception as e:                      # noqa: BLE001
                 # Un fallo de una vuelta no puede tumbar al agente de todas las
                 # unidades: se apunta y se sigue en la siguiente.
                 diario(f"error en una vuelta: {type(e).__name__}: {e}")
-            if vigia.esperar(TICK):
+            if vigia.esperar(cuanto_esperar(agente, decision)):
                 agente.rafaga_hasta = time.time() + RAFAGA
     except KeyboardInterrupt:
         diario("interrumpido por teclado")
@@ -4799,6 +5037,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
             agente.avisos_de_red.cerrar()
         if agente.avisos_carpeta is not None:
             agente.avisos_carpeta.cerrar()
+        if oyente_del_buzon is not None:
+            oyente_del_buzon.cerrar()
         if agente.bandeja is not None:
             agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
