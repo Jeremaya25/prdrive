@@ -113,6 +113,32 @@ for etiqueta, extra, esperado in (
         ("sin la clave", {}, False)):
     c(f"pide_watch: {etiqueta}", model.pide_watch({**RAW, **extra}), esperado)
 
+# Lo que la pareja excluye por su nombre: lo que los avisos pueden dejar de contar.
+for etiqueta, pareja, defaults, esperado in (
+        ("los de nombre, de [defaults] y de la pareja",
+         {"exclude": ["*.log", "~$*"]}, {"exclude": "*.bak"}, ("*.bak", "*.log", "~$*")),
+        ("los que llevan carpeta, no",
+         {"exclude": ["cache/**", "/raiz.txt", "a/b.txt", "*.log"]}, {}, ("*.log",)),
+        ("ni los de `**`, clases, alternativas o escapes",
+         {"exclude": ["**.tmp", "[ab].txt", "{a,b}.txt", "x\\*", " x", ""]}, {}, ()),
+        ("con un include, ninguno: lo demás ya queda fuera, y el orden cuenta",
+         {"exclude": ["*.log"], "include": ["*.md"]}, {}, ()),
+        ("con un include en [defaults], ninguno",
+         {"exclude": ["*.log"]}, {"include": "*.md"}, ()),
+        ("con extra_flags, ninguno: pueden traer otros filtros",
+         {"exclude": ["*.log"], "extra_flags": ["--include-from", "x"]}, {}, ()),
+        ("con un flag que incluye, ninguno",
+         {"exclude": ["*.log"], "flags": {"files_from": "x"}}, {}, ()),
+        ("y en [defaults.flags], tampoco",
+         {"exclude": ["*.log"]}, {"flags": {"include-from": "x"}}, ()),
+        ("con otros flags, sí",
+         {"exclude": ["*.log"], "flags": {"max-delete": 10, "ignore-case": True}}, {},
+         ("*.log",)),
+        ("un exclude que no es lista ni texto", {"exclude": 3}, {}, ()),
+        ("sin exclude", {}, {}, ())):
+    c(f"excluidos_por_nombre: {etiqueta}", model.excluidos_por_nombre(pareja, defaults),
+      esperado)
+
 # la clave sobrevive al TOML y a la ventana de parejas
 raw = {"defaults": {"remote": "nas"}, "pair": [{**RAW, "mode": "up", "watch": True}]}
 c("watch se escribe y se relee igual (dumps_checked)",
@@ -204,6 +230,48 @@ if enlace:
     c("quitar el enlace deja la foto de antes", huella.de_carpeta(base), h0)
 else:
     print("  (saltado) enlaces simbólicos: este sistema no deja crearlos")
+
+# ni entra en una unión de Windows (`mklink /J`): rclone, sin `--copy-links`, tampoco
+if os.name == "nt":
+    import subprocess
+    union = base / "union"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(union), str(fuera)], check=True,
+                   capture_output=True)
+    h_union = huella.de_carpeta(base)
+    c("una unión cuenta como una entrada y no se entra en ella",
+      h_union.entradas, h0.entradas + 1)
+    escribe(fuera / "detras.txt", "detrás de la unión", MTIME)
+    c("  y lo que cambia al otro lado no cambia la foto", huella.de_carpeta(base), h_union)
+    (base / "bucle").mkdir()
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(base / "bucle" / "arriba"), str(base)],
+                   check=True, capture_output=True)
+    c("  ni una que apunta a su propia carpeta la hace dar vueltas",
+      huella.de_carpeta(base, tope=1000).entradas, h0.entradas + 3)
+    os.rmdir(base / "bucle" / "arriba")
+    os.rmdir(base / "bucle")
+    os.rmdir(union)
+    c("quitar la unión deja la foto de antes", huella.de_carpeta(base), h0)
+else:
+    print("  (saltado) uniones (`mklink /J`): son de Windows")
+
+# el ruido de editor no entra en la foto, esté donde esté
+CON_RUIDO = huella.IGNORAR + huella.RUIDO_DE_EDITOR
+h_limpia = huella.de_carpeta(base, ignorar=CON_RUIDO)
+c("sin ruido que quitar, la foto es la misma con sus patrones", h_limpia, h0)
+escribe(base / "sub" / "~$informe.docx", "bloqueo", MTIME)
+escribe(base / ".~lock.hoja.ods#", "bloqueo", MTIME)
+escribe(base / "sub" / "Thumbs.db", "miniaturas", MTIME)
+c("el ruido de editor no cambia la foto de quien lo deja fuera",
+  huella.de_carpeta(base, ignorar=CON_RUIDO), h_limpia)
+c("  y sí la de quien no", huella.de_carpeta(base) != h0, True)
+(base / "~$carpeta").mkdir()
+escribe(base / "~$carpeta" / "dentro.txt", "contenido", MTIME)
+c("  una carpeta que se llame así es de alguien: cuenta, con lo que tiene",
+  huella.de_carpeta(base, ignorar=CON_RUIDO).entradas, h_limpia.entradas + 2)
+for sobra in (base / "sub" / "~$informe.docx", base / ".~lock.hoja.ods#",
+              base / "sub" / "Thumbs.db", base / "~$carpeta" / "dentro.txt"):
+    sobra.unlink()
+(base / "~$carpeta").rmdir()
 
 # el tope
 base_grande = tmpdir("prdrive-grande-")
@@ -594,5 +662,45 @@ llave = pl.Raiz("u", (pl.Pareja("keychain", "nas", vigila=True, llavero=True),),
 c("el llavero va siempre al sondeo, también quieto y a batería",
   pl.a_recorrer([llave], {("u", "keychain"): pl.Vigilada(H1, None, T0)}, T0 + 10,
                 con_bateria=True), [("u", "keychain")])
+
+# --- un cambio retirado por el sistema
+c("retirado quita el cambio pendiente y conserva que la carpeta se mueve",
+  pl.retirado(pl.avisado(pl.Vigilada(avisos=True), T0)), pl.Vigilada(avisos=True, movida=T0))
+c("  una abandonada no cambia", pl.retirado(pl.Vigilada(abandonada=True)),
+  pl.Vigilada(abandonada=True))
+visto = pl.Vigilada(avisos=True, cambio=T0, firme=True)
+c("  un cambio firme (lo vio una foto antes de volver a oír avisos) no lo retira un aviso",
+  pl.retirado(visto), visto)
+c("  lo borra su pasada, que deja de ser firme", pl.tras_pasada(visto, None, T0 + 5),
+  pl.Vigilada(avisos=True, revisada=T0 + 5))
+
+# --- la foto ve también lo que queda a más de 260 caracteres de ruta (Windows)
+c("ruta_larga: fuera de Windows, o si ya lo lleva, la deja igual",
+  huella.ruta_larga("\\\\?\\C:\\x") if os.name == "nt" else huella.ruta_larga("/a/b"),
+  "\\\\?\\C:\\x" if os.name == "nt" else "/a/b")
+if os.name == "nt":
+    c("  una ruta con letra lleva el prefijo", huella.ruta_larga("C:\\datos\\docs"),
+      "\\\\?\\C:\\datos\\docs")
+    c("  y una de red, el de UNC", huella.ruta_larga("\\\\nas\\c\\docs"),
+      "\\\\?\\UNC\\nas\\c\\docs")
+    honda = tmpdir("prdrive-larga-")
+    tramo = honda
+    while len(str(tramo)) < 300:
+        tramo = tramo / ("carpeta-de-nombre-largo-" + "x" * 20)
+    os.makedirs(huella.ruta_larga(str(tramo)))
+    fondo = huella.ruta_larga(str(tramo / "al-fondo.txt"))
+    with open(fondo, "w", encoding="utf-8") as f:
+        f.write("uno")
+    antes = huella.de_carpeta(honda)
+    c("  la foto entra en una carpeta a más de 260 caracteres y cuenta su fichero",
+      (antes is not None, len(str(tramo)) > 260,
+       antes.entradas == len(tramo.relative_to(honda).parts) + 1), (True, True, True))
+    with open(fondo, "w", encoding="utf-8") as f:
+        f.write("otro contenido")
+    c("  y un cambio ahí dentro cambia la foto", huella.de_carpeta(honda) != antes, True)
+    import shutil
+    shutil.rmtree(huella.ruta_larga(str(honda)), ignore_errors=True)
+else:
+    print("  (saltado) las rutas de más de 260 caracteres son cosa de Windows")
 
 sys.exit(c.report())

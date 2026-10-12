@@ -2,7 +2,8 @@
 """Mide la interfaz de dos árboles de código en el mismo trabajo y compara (CI: `rendimiento.yml`).
 
     python tests/rendimiento/correr.py --pr DIR --base DIR --trabajo DIR
-        [--python PY] [--rondas 7] [--salida DIR] [--capturas] [--env CLAVE=VALOR]...
+        [--python PY] [--rondas 7] [--salida DIR] [--capturas] [--rclone RCLONE]
+        [--env CLAVE=VALOR]...
 
 `--pr` es el árbol que se prueba y `--base` el de la rama a la que irá (otro
 `checkout` en otra carpeta). Los dos se miden con el MISMO Python (el runtime
@@ -64,10 +65,16 @@ PLAN = (
     ("principal", 5, "1.0"), ("principal", 50, "1.0"),
     ("flota", 5, "1.0"),
     ("wizard", None, "1.0"), ("agente", None, "1.0"), ("log", None, "1.0"),
+    ("consumo-reposo", None, "1.0"), ("consumo-servida", None, "1.0"),
 )
 """Lo que hace una pasada. «Parejas» y «Ajustes» con 5 y 50 parejas y al 150 %; la
 ventana principal (marcar, sincronizar, volver de la pasada) con 5 y 50 al 100 %;
-«Dispositivos» y el editor de flags (`flota`) con 5 parejas al 100 %."""
+«Dispositivos» y el editor de flags (`flota`) con 5 parejas al 100 %; y, sin ventanas, lo
+que gasta el agente residente en reposo y con una unidad atendida (`consumo.py`)."""
+PLAN_CON_RCLONE = (("consumo-pasada", 5, "1.0"),)
+"""Lo que se añade a `PLAN` con `--rclone`: una pasada de verdad, sin cambios."""
+SOLO_CODIGO = ("wizard", "agente", "log", "consumo-reposo", "consumo-servida")
+"""Los flujos que no usan el dispositivo de muestra, sino el árbol compilado."""
 PLAN_CAPTURAS = (("parejas", 5, "1.0"), ("ajustes", 5, "1.0"), ("flota", 5, "1.0"),
                  ("wizard", None, "1.0"), ("agente", None, "1.0"), ("log", None, "1.0"),
                  ("parejas", 5, "2.0"), ("ajustes", 5, "2.0"))
@@ -81,6 +88,9 @@ ESPERADOS = {
     "wizard": ("start-wizard", "apply-wizard", "paso-dispositivo"),
     "agente": ("start-agente", "apply-agente"),
     "log": ("log-10k",),
+    "consumo-reposo": ("consumo-reposo",),
+    "consumo-servida": ("consumo-servida",),
+    "consumo-pasada": ("consumo-pasada",),
 }
 """Los momentos que tiene que dejar cada flujo; si falta uno, es un error y no un hueco."""
 RECUERDOS = (".prdrive/state/ventana.json",)
@@ -155,8 +165,11 @@ class Medidor:
     """
 
     def __init__(self, python: str, arboles: dict[str, Path], trabajo: Path,
-                 *, env_extra: dict | None = None, salida_perf: Path | None = None):
+                 *, env_extra: dict | None = None, salida_perf: Path | None = None,
+                 rclone: str = ""):
         self.py = python
+        self.rclone = rclone                            # con él se mide también una pasada de verdad
+        self.plan = PLAN + (PLAN_CON_RCLONE if rclone else ())
         self.arboles = arboles
         self.env_extra = dict(env_extra or {})          # `--env`: se suma al entorno de cada hijo
         self.salida_perf = salida_perf                  # dónde van los diarios de tiempos, si los hay
@@ -307,6 +320,11 @@ class Medidor:
         for f in ("VERSION", "agente.py", "penwatch.py", "pregunta.py"):
             if (src / f).exists():
                 shutil.copy2(src / f, inst / f)
+        # El equipo de mentira de los tests del agente, el de ESE árbol (`consumo.py`).
+        (inst / "tests").mkdir()
+        for f in ("_harness.py", "_agente_falso.py"):
+            if (src / "tests" / f).exists():
+                shutil.copy2(src / "tests" / f, inst / "tests" / f)
         self.compilar(inst)
         if not ok:
             self.malos.add(arbol)
@@ -316,7 +334,8 @@ class Medidor:
     def flujo(self, arbol: str, flujo: str, pares: int | None, escala: str,
               captura: Path | None = None, nombre: str = "", perfil: bool = False) -> list[dict]:
         """Un proceso en frío de un flujo; devuelve sus líneas listas para `crudo.jsonl`."""
-        solo_codigo = flujo in ("wizard", "agente", "log")     # no usan el dispositivo, sino el árbol compilado
+        solo_codigo = flujo in SOLO_CODIGO              # no usan el dispositivo, sino el árbol compilado
+        modulo = "consumo" if flujo.startswith("consumo-") else "driver"
         if solo_codigo:
             dev = self.trabajo / f"dev-{arbol}-5"
             cwd = self.trabajo / f"inst-{arbol}"
@@ -328,6 +347,9 @@ class Medidor:
         extra.update({"BENCH_DEVICE": str(dev), "BENCH_FLOW": flujo, "BENCH_SCALE": "" if escala == "1.0" else escala})
         if solo_codigo:
             extra["BENCH_APP"] = str(cwd)
+        elif modulo == "consumo":                       # la pasada de verdad: el dispositivo y su rclone
+            extra["BENCH_APP"] = str(self.trabajo / f"inst-{arbol}")
+            extra["BENCH_RCLONE"] = self.rclone
         if captura:
             extra["BENCH_CAPTURA"] = str(captura)
             extra["BENCH_NOMBRE"] = nombre
@@ -336,7 +358,7 @@ class Medidor:
         if self.con_perf():                            # un diario de otra pasada no se cuela en esta
             (app / PERF_LOG).unlink(missing_ok=True)
         try:
-            r = self.hijo([self.py, str(self.staging / "entrada.py"), "driver"], env, cwd)
+            r = self.hijo([self.py, str(self.staging / "entrada.py"), modulo], env, cwd)
             if captura is None:
                 self.guardar_perf(app, base, arbol, flujo, pares, escala)
         finally:
@@ -418,7 +440,7 @@ class Medidor:
     def pasada(self, arbol: str, perfil: bool = False) -> list[dict]:
         """Una pasada de `PLAN` en un árbol; `perfil` la hace con `BENCH_PERFIL` (el calentamiento)."""
         lineas = []
-        for flujo, pares, escala in PLAN:
+        for flujo, pares, escala in self.plan:
             try:
                 lineas += self.flujo(arbol, flujo, pares, escala, perfil=perfil)
             except Exception as e:                       # noqa: BLE001
@@ -448,6 +470,8 @@ def main() -> int:
     ap.add_argument("--rondas", type=int, default=7)
     ap.add_argument("--salida")
     ap.add_argument("--capturas", action="store_true")
+    ap.add_argument("--rclone", default=os.environ.get("PRDRIVE_RCLONE_CI", ""),
+                    help="el rclone de verdad: con él se mide también una pasada sin cambios")
     ap.add_argument("--plataforma", default=os.environ.get("RENDIMIENTO_PLATAFORMA", ""))
     ap.add_argument("--env", action="append", default=[], metavar="CLAVE=VALOR",
                     help="variable para el entorno de cada proceso (repetible), p. ej. PRDRIVE_PERF=1")
@@ -474,7 +498,11 @@ def main() -> int:
             for d in lineas:
                 f.write(json.dumps(dict(d, ronda=ronda), ensure_ascii=False) + "\n")
 
-    m = Medidor(a.python, arboles, Path(a.trabajo), env_extra=extra_env, salida_perf=salida)
+    if a.rclone and not Path(a.rclone).is_file():
+        print(f"--rclone: no existe {a.rclone}", file=sys.stderr)
+        return 2
+    m = Medidor(a.python, arboles, Path(a.trabajo), env_extra=extra_env, salida_perf=salida,
+                rclone=str(Path(a.rclone).resolve()) if a.rclone else "")
     m.preparar_driver()
     for arbol in ("base", "pr"):
         log(f"preparando {arbol} ({arboles[arbol]})")

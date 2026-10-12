@@ -251,12 +251,21 @@ class Ajustes:
         pedir_al_iniciar: Si se pide la contraseña de la raíz cifrada al
             iniciar sesión. Se pide una vez: si se cancela no se vuelve a pedir
             hasta «Desbloquear».
+        estirar_intervalo: Si el intervalo de una pareja se estira mientras sus
+            pasadas no mueven nada (`planificador.estirado()`). Es también
+            `politica.estirar`, que es lo que lee el planificador.
+        avisos_veracrypt: En Windows, si las parejas con `watch` de un volumen
+            de VeraCrypt se oyen con los avisos del sistema en vez de
+            recorrerse (`avisos_carpeta.ReadDirectoryChanges.volumen()`).
+            Encendido de fábrica; se lee al arrancar el agente.
     """
     unidades: Mapping[str, Unidad] = field(default_factory=dict)
     espera_unidad_nueva: float = ESPERA_UNIDAD_NUEVA
     politica: Politica = Politica()
     extra_roots: tuple[str, ...] = ()
     pedir_al_iniciar: bool = True
+    estirar_intervalo: bool = True
+    avisos_veracrypt: bool = True
 
     def con_unidad(self, unidad: Unidad) -> "Ajustes":
         """Devuelve unos ajustes iguales con esa unidad añadida o sustituida."""
@@ -313,8 +322,11 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
                                            volumen)
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
+    estirar = datos["estirar_intervalo"] \
+        if isinstance(datos.get("estirar_intervalo"), bool) else fabrica.estirar
     politica = replace(
         fabrica,
+        estirar=estirar,
         con_bateria=m["con_bateria"] if isinstance(m.get("con_bateria"), bool)
         else fabrica.con_bateria,
         bateria_minima=int(_numero(m.get("bateria_minima"), fabrica.bateria_minima, 0, 100)),
@@ -332,7 +344,10 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         extra_roots=tuple(r for r in extra if isinstance(r, str) and r)
         if isinstance(extra, list) else (),
         pedir_al_iniciar=datos["pedir_al_iniciar"]
-        if isinstance(datos.get("pedir_al_iniciar"), bool) else True)
+        if isinstance(datos.get("pedir_al_iniciar"), bool) else True,
+        estirar_intervalo=estirar,
+        avisos_veracrypt=datos["avisos_veracrypt"]
+        if isinstance(datos.get("avisos_veracrypt"), bool) else True)
 
 
 def a_dict(aj: Ajustes) -> dict:
@@ -352,6 +367,8 @@ def a_dict(aj: Ajustes) -> dict:
                        "pausar_ahorro_energia": aj.politica.pausar_ahorro_energia},
         "extra_roots": list(aj.extra_roots),
         "pedir_al_iniciar": aj.pedir_al_iniciar,
+        "estirar_intervalo": aj.estirar_intervalo,
+        **({} if aj.avisos_veracrypt else {"avisos_veracrypt": False}),
     }
 
 
@@ -517,7 +534,8 @@ PIDE_ACTUALIZAR_UNIDAD = "actualizar_unidad"  # id: ponerle el código de la ver
 PIDE_BUSCAR_VERSION = "buscar_version"  # preguntarle a GitHub ya, sin esperar a la caché
 PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa propia, y volver ya
 PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
-AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar")
+AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo",
+                    "avisos_veracrypt")
 
 BUZON_SERVICIO = "servicio.pide"
 """Nombre del buzón de UNA raíz, dentro de su `state/`.

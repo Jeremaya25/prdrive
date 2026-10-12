@@ -1365,6 +1365,55 @@ def pide_watch(raw: Mapping[str, Any]) -> bool:
     return mode is not None and mode.origen_local
 
 
+FLAGS_QUE_INCLUYEN = frozenset({"include", "include-from", "filter", "filter-from",
+                                "files-from", "files-from-raw"})
+"""Flags de rclone que pueden volver a meter lo que un `exclude` deja fuera.
+
+Con cualquiera de ellos, qué queda excluido ya no se sabe mirando los
+`exclude` (`excluidos_por_nombre()`).
+"""
+
+
+def excluidos_por_nombre(pareja: Mapping[str, Any],
+                         defaults: Mapping[str, Any]) -> tuple[str, ...]:
+    """Devuelve los `exclude` de una `[[pair]]` en bruto que dejan fuera ficheros por su nombre.
+
+    Son los que no llevan carpeta (`*.tmp`, `~$*`): rclone los compara con el
+    nombre del fichero, esté en la carpeta que esté, distinguiendo mayúsculas
+    y sin dejar fuera carpetas (visto con rclone 1.75.1). Sirven a quien vigila
+    los cambios locales de la pareja para no contar lo que la pasada no va a
+    subir. Ante cualquier duda, ninguno: contar de más cuesta una pasada que no
+    mueve nada; contar de menos retrasa un cambio de verdad.
+
+    Args:
+        pareja: La `[[pair]]` tal como sale del TOML.
+        defaults: La tabla `[defaults]`.
+
+    Returns:
+        Los patrones, en su orden; vacío si la pareja o `[defaults]` traen
+        algún `include`, `extra_flags` o un flag de `FLAGS_QUE_INCLUYEN` (una
+        regla de antes podría volver a incluirlos), o si no se pueden leer.
+        Tampoco los que llevan `/`, `**`, clases (`[…]`), alternativas (`{…}`),
+        escapes o espacios en los extremos.
+    """
+    capas = (defaults, pareja)
+    try:
+        if any(_as_tuple(capa.get("include")) or _as_tuple(capa.get("extra_flags"))
+               for capa in capas):
+            return ()
+        excluidos = tuple(p for capa in capas for p in _as_tuple(capa.get("exclude")))
+    except TypeError:
+        return ()
+    for capa in capas:
+        flags = capa.get("flags")
+        if isinstance(flags, Mapping) and any(
+                str(k).replace("_", "-").lstrip("-") in FLAGS_QUE_INCLUYEN for k in flags):
+            return ()
+    return tuple(p for p in excluidos
+                 if p and p == p.strip() and "**" not in p
+                 and not any(c in p for c in "/\\[]{}"))
+
+
 def es_ruido_del_sistema(nombre: str) -> bool:
     """Indica si ese nombre es de lo que el sistema deja en la raíz de un volumen.
 

@@ -78,13 +78,41 @@
 "widgets.pareja" = 54
 "tema.abrir.pareja" = 0
 "estilos.pareja" = 0
+# Lo que gasta el agente residente y una pasada (`consumo.py`; hoja de ruta de `watch` y el
+# consumo, 11/10/2026). No son de la interfaz: son vueltas del bucle del agente, llamadas al
+# sistema de ficheros y procesos, contados con un reloj de mentira, así que no dependen de la
+# máquina. Medidos en el árbol de la 0.7.2:
+#   consumo.reposo.*    el agente sin unidades, una hora: las vueltas que da y las llamadas
+#                       al sistema de ficheros que hace en su carpeta del equipo
+#   consumo.servida.*   con una unidad atendida y quieta (dos parejas cada 5 min), dos horas:
+#                       las vueltas, las llamadas DENTRO de la unidad (lo que no deja
+#                       descansar a un USB), las de su carpeta y los `sync.py` que lanza
+#   consumo.pasada.*    una pasada bisync de verdad sin cambios (100 ficheros, solo con
+#                       `--rclone`): órdenes de rclone, y ficheros y KB escritos en la unidad
+# Los toques a la unidad van por sistema (`[techo.windows]`, `[techo.linux]`): el agente no
+# mira lo mismo en cada uno.
+# 1800 y 1800 en la 0.7.2 (una vuelta cada 2 s); oyendo el buzón (entrega 3), una cada 30 s.
+"consumo.reposo.vueltas" = 120
+"consumo.reposo.toques_equipo" = 120
+"consumo.servida.vueltas" = 3600
+"consumo.servida.toques_equipo" = 3776
+# 48 en la 0.7.2; con el intervalo que se estira (entrega 1), 16; con sus dos parejas en un
+# mismo `sync.py` (entrega 4), 8.
+"consumo.servida.pasadas" = 8
+"consumo.pasada.ordenes" = 1
+"consumo.pasada.ficheros" = 6
+"consumo.pasada.kb" = 29
 
+# 30 000 en la 0.7.2 (nueve operaciones por vuelta); con una sola lectura de `state/` por
+# vuelta (entrega 3), unas 5 000.
 [techo.linux]
+"consumo.servida.toques_unidad" = 5183
 "modulos.main" = 171
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
+"consumo.servida.toques_unidad" = 5003
 "modulos.main" = 171
 "modulos.agente" = 158
 "modulos.wizard" = 235

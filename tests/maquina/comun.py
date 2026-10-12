@@ -31,7 +31,12 @@ if str(REPO) not in sys.path:
 
 IS_WIN = os.name == "nt"
 SISTEMA = "W" if IS_WIN else "L"
-TMP = Path(tempfile.gettempdir()) / "prdrive-maquina"
+TMP = Path(tempfile.gettempdir()).resolve() / "prdrive-maquina"
+"""La carpeta de trabajo, con su nombre largo.
+
+Con el corto de Windows (`C:\\Users\\NOMBRE~1\\…`) diskpart conecta un disco
+virtual pero al soltarlo dice que «ya está oculto» y lo deja conectado.
+"""
 
 
 class Saltada(Exception):
@@ -253,6 +258,29 @@ def soltar_vhd(fichero: Path) -> None:
 _letras_usadas: set[str] = set()
 
 
+def es_administrador() -> bool:
+    """Indica si este proceso corre elevado (lo que piden diskpart y el VeraCrypt Portable)."""
+    import ctypes
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+def _de_red(letra: str) -> bool:
+    """Indica si la persona tiene esa letra para una unidad de red (`HKCU\\Network`).
+
+    Una sesión elevada no la ve montada, pero la letra no está libre: VeraCrypt
+    la rechaza.
+    """
+    import winreg
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Network\\{letra}"))
+    except OSError:
+        return False
+    return True
+
+
 def letra_libre() -> str:
     """Una letra de unidad libre que esta ejecución no ha usado todavía.
 
@@ -260,7 +288,8 @@ def letra_libre() -> str:
     nunca se repite una.
     """
     for letra in "RSTUVWXYZQPON":
-        if letra not in _letras_usadas and not Path(f"{letra}:\\").exists():
+        if letra not in _letras_usadas and not Path(f"{letra}:\\").exists() \
+                and not _de_red(letra):
             _letras_usadas.add(letra)
             return letra
     raise Saltada("no quedan letras de unidad libres")
@@ -359,6 +388,15 @@ def bandeja_windows():
         yield b, avisos
     finally:
         b.cerrar()
+        # La clase de su ventana queda registrada con el procedimiento de ESTA
+        # bandeja, y la siguiente del mismo proceso recibiría sus mensajes en la
+        # vieja: no le llegaría ningún aviso de dispositivo.
+        import ctypes
+        from ctypes import wintypes
+        k32, u32 = ctypes.WinDLL("kernel32"), ctypes.WinDLL("user32")
+        k32.GetModuleHandleW.restype = wintypes.HMODULE
+        u32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        u32.UnregisterClassW(b.api.CLASE, k32.GetModuleHandleW(None))
 
 
 # ---------------------------------------------------------------------------
@@ -398,3 +436,244 @@ def quieto(motor, segundos: float = 1.5) -> dict:
     """Espera sin tocar nada y devuelve lo que haya avisado (debería ser nada)."""
     time.sleep(segundos)
     return {k: a.tipo for k, a in motor.recoger().items()}
+
+
+# ---------------------------------------------------------------------------
+# VeraCrypt en Windows
+# ---------------------------------------------------------------------------
+VERACRYPT_INSTALADO = Path(r"C:\Program Files\VeraCrypt")
+CLAVE_VERACRYPT = "prueba-prdrive-2026"
+DBT_DEVICEARRIVAL = 0x8000
+
+
+def veracrypt() -> tuple[Path, Path]:
+    """Devuelve el `VeraCrypt.exe` y el `VeraCrypt Format.exe` que hay en esta máquina.
+
+    El instalado, si lo hay (en la nube, con choco); si no, el Portable que el
+    instalador de prdrive ya bajó a este equipo, copiado a la carpeta de
+    pruebas para no escribirle nada al lado.
+
+    Raises:
+        Saltada: Si no hay ninguno.
+    """
+    if os.environ.get("GITHUB_ACTIONS") and not (VERACRYPT_INSTALADO / "VeraCrypt.exe").exists():
+        ejecutar(["choco", "install", "veracrypt", "-y", "--no-progress"], timeout=900)
+    if (VERACRYPT_INSTALADO / "VeraCrypt.exe").exists():
+        return VERACRYPT_INSTALADO / "VeraCrypt.exe", VERACRYPT_INSTALADO / "VeraCrypt Format.exe"
+    bajados = Path(os.environ.get("LOCALAPPDATA", "")) / "prdrive-install" / "veracrypt"
+    versiones = sorted((d for d in bajados.glob("*") if (d / "VeraCrypt-x64.exe").exists()),
+                       key=lambda d: [int(x) for x in d.name.split(".") if x.isdigit()])
+    if not versiones:
+        raise Saltada("no hay VeraCrypt en esta máquina (ni instalado ni el Portable de prdrive)")
+    if not es_administrador():
+        # Sin elevar, el Portable pide permiso (UAC) para cargar su controlador
+        # y la orden se queda esperando a que alguien conteste.
+        raise Saltada("el VeraCrypt Portable necesita una sesión elevada")
+    copia = TMP / f"veracrypt-{versiones[-1].name}"
+    if not (copia / "VeraCrypt-x64.exe").exists():
+        shutil.copytree(versiones[-1], copia, dirs_exist_ok=True)
+    return copia / "VeraCrypt-x64.exe", copia / "VeraCrypt Format-x64.exe"
+
+
+class Contenedor:
+    """Un contenedor de VeraCrypt de prueba (60 MB, NTFS) y la letra donde se monta.
+
+    Nunca desmonta forzando fuera de una máquina de usar y tirar: con el
+    Portable deja el controlador sin descargar hasta reiniciar.
+
+    Attributes:
+        vc: El `VeraCrypt.exe`.
+        portable: Si es el Portable de prdrive y no uno instalado.
+        letra: La letra, sin dos puntos.
+        raiz: La raíz del volumen montado.
+
+    Raises:
+        Saltada: Si no hay VeraCrypt o no crea el contenedor.
+    """
+
+    def __init__(self) -> None:
+        """Crea el contenedor; no lo monta."""
+        self.vc, formato = veracrypt()
+        self.portable = self.vc.parent != VERACRYPT_INSTALADO
+        self.letra = letra_libre()
+        self.raiz = Path(f"{self.letra}:\\")
+        self.hc = carpeta("vc") / "prueba.hc"
+        ejecutar([str(formato), "/create", str(self.hc), "/size", "60M", "/password",
+                  CLAVE_VERACRYPT, "/encryption", "AES", "/hash", "sha512", "/filesystem",
+                  "NTFS", "/pim", "0", "/silent", "/force"], timeout=600)
+        if not self.hc.exists():
+            raise Saltada("VeraCrypt no ha creado el contenedor")
+
+    def montar(self) -> bool:
+        """Monta el contenedor como lo monta prdrive (extraíble) y espera a verlo."""
+        ejecutar([str(self.vc), "/volume", str(self.hc), "/letter", self.letra, "/password",
+                  CLAVE_VERACRYPT, "/pim", "0", "/mountoption", "rm", "/quit", "/silent"],
+                 timeout=120)
+        return esperar(self.raiz.exists, 60)
+
+    def desmontar(self, forzar: bool = False, callado: bool = True) -> tuple[bool, float]:
+        """Desmonta la letra y devuelve si se ha ido y lo que tardó la orden.
+
+        Args:
+            forzar: Con `/force`.
+            callado: Con `/silent`; sin él, VeraCrypt enseña sus ventanas si
+                algo falla (así lo llama `Expulsar PRDRIVE.bat`).
+        """
+        t = time.monotonic()
+        r = ejecutar([str(self.vc), "/dismount", self.letra, "/quit"]
+                     + (["/silent"] if callado else []) + (["/force"] if forzar else []),
+                     timeout=120)
+        tardo = time.monotonic() - t
+        if r.returncode != 0:
+            return False, tardo
+        return esperar(lambda: not self.raiz.exists(), 5), tardo
+
+    def soltar(self) -> None:
+        """Lo desmonta si sigue montado; forzando solo en una máquina de usar y tirar."""
+        if self.raiz.exists() and not self.desmontar()[0] and os.environ.get("GITHUB_ACTIONS"):
+            self.desmontar(forzar=True)
+
+
+def ocupar(fichero: Path) -> subprocess.Popen:
+    """Lanza otro programa que deja ese fichero abierto hasta que se le cierra la entrada."""
+    otro = subprocess.Popen(
+        [sys.executable, "-c", "import sys; f = open(sys.argv[1], 'w'); print('ya', flush=True); "
+         "sys.stdin.read()", str(fichero)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    otro.stdout.readline()
+    return otro
+
+
+def desocupar(otro: subprocess.Popen) -> None:
+    """Acaba el programa de `ocupar()`, que suelta su fichero."""
+    otro.stdin.close()
+    otro.wait(10)
+
+
+def ventanas_de(pid: int) -> list[tuple[int, str, list[tuple[int, str]]]]:
+    """Devuelve las ventanas visibles de un proceso: su handle, su título y sus controles con texto.
+
+    El texto de un control de otro proceso se pide con `WM_GETTEXT`
+    (`GetWindowTextW` solo lo da de las ventanas de arriba).
+    """
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.WinDLL("user32", use_last_error=True)
+    tipo = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    u.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                      ctypes.c_void_p, wintypes.UINT, wintypes.UINT,
+                                      ctypes.c_void_p]
+
+    def texto(h: int) -> str:
+        """El texto de una ventana o de un control, sin el `&` de su atajo."""
+        b = ctypes.create_unicode_buffer(512)
+        u.SendMessageTimeoutW(h, 0x000D, 512, b, 0x0002, 1000, None)   # WM_GETTEXT
+        return b.value.replace("&", "")
+
+    salida: list[tuple[int, str, list[tuple[int, str]]]] = []
+
+    def una(h: int, _l: int) -> bool:
+        """Apunta una ventana de arriba si es de ese proceso y se ve."""
+        de = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(de))
+        if de.value == pid and u.IsWindowVisible(h):
+            hijos: list[tuple[int, str]] = []
+            u.EnumChildWindows(h, tipo(lambda hh, _: hijos.append((hh, texto(hh))) or True), 0)
+            salida.append((h, texto(h), [x for x in hijos if x[1]]))
+        return True
+
+    u.EnumWindows(tipo(una), 0)
+    return salida
+
+
+def mandar(hwnd: int, mensaje: int) -> None:
+    """Deja un mensaje en la cola de una ventana (`BM_CLICK` 0xF5 pulsa un botón, `WM_CLOSE` 0x10 la cierra)."""
+    import ctypes
+    ctypes.WinDLL("user32").PostMessageW(ctypes.c_void_p(hwnd), mensaje, 0, 0)
+
+
+BM_CLICK, WM_CLOSE = 0x00F5, 0x0010
+BOTONES_DESMONTAR = ("unmount all", "dismount all")
+"""El botón de desmontar todo de VeraCrypt: «Unmount All» desde la 1.26.2x, antes «Dismount All»."""
+
+
+def configuracion_veracrypt(minutos: int, forzar: bool) -> str:
+    """Devuelve un `Configuration.xml` de VeraCrypt que desmonta a esos minutos de inactividad.
+
+    Args:
+        minutos: `MaxVolumeIdleTime`.
+        forzar: `ForceAutoDismount`: si desmonta aunque haya algo abierto dentro
+            (lo de fábrica de VeraCrypt).
+    """
+    return ('<?xml version="1.0" encoding="utf-8"?>\n<VeraCrypt>\n\t<configuration>\n'
+            f'\t\t<config key="MaxVolumeIdleTime">{minutos}</config>\n'
+            f'\t\t<config key="ForceAutoDismount">{int(forzar)}</config>\n'
+            '\t</configuration>\n</VeraCrypt>\n')
+
+
+class VentanaVeraCrypt:
+    """La ventana de VeraCrypt Portable abierta, con una configuración propia.
+
+    Args:
+        c: El contenedor de la prueba; tiene que ser del Portable.
+        configuracion: El `Configuration.xml` con el que arranca
+            (`configuracion_veracrypt()`).
+
+    Raises:
+        Saltada: Si VeraCrypt es uno instalado (no se toca su configuración) o
+            la ventana no se abre, o no en inglés.
+    """
+
+    def __init__(self, c: Contenedor, configuracion: str) -> None:
+        """Escribe la configuración, abre la ventana y busca su botón de desmontar todo."""
+        if not c.portable:
+            raise Saltada("solo con el Portable: no se toca la configuración de un VeraCrypt "
+                          "instalado")
+        (c.vc.parent / "Configuration.xml").write_text(configuracion, encoding="utf-8")
+        self.proceso = subprocess.Popen([str(c.vc)])
+        self.principal = self.boton = 0
+        if not esperar(self._buscar, 30, 0.5):
+            self.proceso.kill()
+            raise Saltada("la ventana de VeraCrypt no se ha abierto, o no en inglés")
+
+    def _buscar(self) -> bool:
+        """Busca la ventana principal por su botón de desmontar todo."""
+        for h, _titulo, hijos in ventanas_de(self.proceso.pid):
+            for hh, texto in hijos:
+                if texto.lower() in BOTONES_DESMONTAR:
+                    self.principal, self.boton = h, hh
+                    return True
+        return False
+
+    def desmontar_todo(self) -> None:
+        """Pulsa su botón de desmontar todo."""
+        mandar(self.boton, BM_CLICK)
+
+    def preguntas(self) -> list[str]:
+        """Los títulos de sus ventanas que no son la principal: una pregunta, un error."""
+        return [t or "(sin título)" for h, t, _hijos in ventanas_de(self.proceso.pid)
+                if h != self.principal]
+
+    def cerrar(self) -> bool:
+        """La cierra por las buenas; devuelve `False` si ha habido que matarla."""
+        mandar(self.principal, WM_CLOSE)
+        try:
+            self.proceso.wait(20)
+        except subprocess.TimeoutExpired:
+            self.proceso.kill()
+            return False
+        return True
+
+
+def al_final(motor, segundos: float = 4.0) -> dict:
+    """Devuelve lo último que el motor ha dicho de cada pareja en esos segundos.
+
+    No lo más grave, como `avisos()`: un `CAMBIO` que después se retira
+    (`RETIRADO`) queda como retirado.
+    """
+    visto: dict = {}
+    fin = time.monotonic() + segundos
+    while time.monotonic() < fin:
+        visto.update({k: a.tipo for k, a in motor.recoger().items()})
+        time.sleep(0.1)
+    return visto

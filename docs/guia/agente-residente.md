@@ -107,6 +107,24 @@ agente»**. El diseño completo está en
   horas), y a cero con la primera pasada buena.
   «Sincronizar ahora» (`python agente.py pasada <id>`) se salta todo eso. Nunca
   hace un `--resync` por su cuenta.
+- **Una pareja en la que no pasa nada se sincroniza menos.** Tras tres pasadas
+  seguidas sin nada que mover, su intervalo se dobla, y otra vez tras otras
+  tres: de cada 5 minutos a cada 10 y a cada 20 (cuatro veces como mucho, y
+  nunca más de media hora). En cuanto una pasada mueve algo, o la pides con
+  «Sincronizar ahora», vuelve a su intervalo. Ahorra procesador, batería y
+  escrituras en la unidad cuando nadie la usa. El precio: lo que cambie en el
+  remoto, o en una carpeta sin `watch = true`, puede tardar esos minutos en
+  sincronizarse; por eso «Expulsar» sincroniza antes lo pendiente.
+  `agente.py status` dice qué parejas van más despacio y cuánto se ha gastado
+  hoy en cada unidad. Se apaga con `python agente.py ajuste estirar_intervalo no`.
+  Una pareja que pide un `--resync` deja de intentarse en cada intervalo: se
+  prueba cada hora, y en cuanto cierras su ventana.
+- **Apenas gasta cuando no hay nada que hacer.** Sin ninguna unidad a la vista
+  el agente mira dos veces por minuto en vez de cada dos segundos (lo que le
+  pidas desde la bandeja, la ventana o la línea de órdenes le llega al momento,
+  y enchufar una unidad también). Con una unidad atendida y quieta, lo que mira
+  de ella en cada vuelta es una sola lectura de carpeta, para que un pendrive
+  pueda descansar.
 - **Avisa con los avisos del sistema**, sin ventanas propias, y solo cuando una
   pareja **empieza** a fallar, **empieza** a pedir un `--resync` (no se
   sincroniza sola hasta que lo apruebes en «Reparación»; también sale arriba en
@@ -150,13 +168,30 @@ agente»**. El diseño completo está en
   avisos del sistema sobre la carpeta de la pareja (inotify en Linux; en
   Windows, con la bandeja abierta) y, 20 s después de que dejen de cambiar,
   adelanta su pasada al intervalo; nunca dos pasadas de la misma pareja con
-  menos de 2 minutos entre ellas. Donde el sistema no avisa (una carpeta de
-  red, un volumen de VeraCrypt en Windows) recorre la carpeta sin abrir
+  menos de 2 minutos entre ellas. Lo que dejan los programas mientras trabajas
+  (el `~$informe.docx` de Word, el `.~lock…#` de LibreOffice, los temporales
+  de guardado, `Thumbs.db`) no adelanta nada: se sincroniza con la pasada
+  siguiente, y guardar el documento sí se oye. Tampoco adelanta nada lo que la
+  propia pareja excluye por su nombre (un `exclude` como `*.log`). Donde el sistema no avisa (una carpeta de
+  red) recorre la carpeta sin abrir
   ficheros: cada 10 s mientras cambia y cada 2 minutos cuando está quieta, así
   que un cambio tras un rato quieta se ve hasta 2 minutos después;
-  `agente.py status` dice qué parejas se recorren y por qué. En Windows el
+  `agente.py status` dice qué parejas se recorren y por qué. En un volumen de
+  VeraCrypt también escucha los avisos, y suelta la carpeta en cuanto
+  VeraCrypt anuncia que va a desmontarlo (desde su ventana, por inactividad o
+  con «Expulsar PRDRIVE»). Si alguna vez, al desmontar, VeraCrypt preguntara
+  si forzar por culpa del agente, `python agente.py ajuste avisos_veracrypt no`
+  y reiniciar el agente lo deja como antes: recorriendo la carpeta. En Windows el
   agente tiene abierta la carpeta que escucha: «Quitar hardware de forma
-  segura» y «Expulsar» la sueltan antes de quitar la unidad. Es una pasada
+  segura» y «Expulsar» la sueltan antes de quitar la unidad, y también cuando
+  otro programa pide la unidad entera (comprobar el disco, formatearla,
+  bloquearla), así que nadie la encuentra «en uso» por el agente. Mientras la
+  escucha, eso sí, Windows no deja **renombrar ni mover las carpetas de
+  arriba** de la pareja (la propia carpeta de la pareja sí, y entonces el
+  agente deja de oírla y la recorre hasta que vuelve a estar). Un fichero que
+  un programa crea y borra enseguida (un temporal, un `index.lock`) no cuenta
+  como cambio; si aun así los avisos no traen cambios, esas pasadas se van
+  separando solas, hasta 15 minutos. Es una pasada
   corriente: en pausa, con batería, en ahorro de energía o en una red de uso
   medido espera como las demás. No ve los cambios del remoto, ni lo que se
   cambie mientras la pasada corre, y una carpeta que se recorre con más de

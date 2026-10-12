@@ -118,7 +118,17 @@ def abierto(raiz) -> bool:
 
 agente.keepassxc_abierto = abierto
 FIRMA = [1]
-agente.huella_local = lambda ruta, tope, ignorar: pl.Huella(1, FIRMA[0])
+IGNORADO: dict = {}
+"""Lo que no se mira de cada carpeta recorrida, por su nombre."""
+
+
+def foto_fija(ruta, tope, ignorar):
+    """La foto que diga `FIRMA`; apunta lo que se le pide no mirar."""
+    IGNORADO[Path(ruta).name] = tuple(ignorar)
+    return pl.Huella(1, FIRMA[0])
+
+
+agente.huella_local = foto_fija
 
 
 def poner(uid: str, modo: str = equipo.DAEMON, con_llavero: bool = True) -> Path:
@@ -173,6 +183,8 @@ F.vueltas(ag, int(60 / TICK))
 c("se mira si KeePassXC está abierto cada pocos segundos, no en cada vuelta",
   len(MIRADAS), int(60 / CAMBIOS.sondeo))
 c("  en su raíz", set(MIRADAS), {RAIZ})
+c("del llavero se mira todo: el ruido de editor no se le quita",
+  [p for p in IGNORADO[model.LLAVERO_LOCAL] if p.startswith(agente.huellas.HONDO)], [])
 c("con KeePassXC cerrado, manda el intervalo de la raíz", hasta(ag, RAIZ, 400), None)
 
 ABIERTO[0] = True
@@ -196,6 +208,28 @@ c("al cerrarse, una pasada enseguida: sube lo que se guardó justo antes",
 c("  y el diario lo dice", any("KeePassXC cerrado" in m for m in F.DIARIO), True)
 terminar(ag, RAIZ)
 c("  después, otra vez el intervalo de la raíz", hasta(ag, RAIZ, 400), None)
+
+# Sin nada que se llame como KeePassXC en el equipo, no se recorren sus procesos.
+HAY = [0, False]
+
+
+def hay() -> bool:
+    """La pregunta barata: cuenta las veces y contesta lo que diga `HAY`."""
+    HAY[0] += 1
+    return HAY[1]
+
+
+agente.hay_keepassxc = hay
+MIRADAS.clear()
+F.vueltas(ag, int(60 / TICK))
+c("sin ningún KeePassXC en el equipo no se recorren los procesos", MIRADAS, [])
+c("  y la pregunta barata se hace una vez por mirada", HAY[0], int(60 / CAMBIOS.sondeo))
+c("  y cuenta como cerrado", UID in ag.keepassxc, False)
+HAY[1] = True
+MIRADAS.clear()
+F.vueltas(ag, int(CAMBIOS.sondeo / TICK) + 1)
+c("en cuanto hay alguno, se vuelve a mirar de quién es", set(MIRADAS), {RAIZ})
+agente.hay_keepassxc = lambda: True
 
 # Con una pasada del llavero en marcha, el cambio espera a que acabe.
 ag.marcas[(UID, model.LLAVERO)] = pl.Marca(None)

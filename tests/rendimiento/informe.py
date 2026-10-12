@@ -62,6 +62,9 @@ ETIQUETAS = {
     "apply-wizard": "  theme.apply() del asistente",
     "paso-dispositivo": "Asistente: pasar al paso «Dispositivo»",
     "log-10k": "10 000 líneas en la ventana de la pasada",
+    "consumo-reposo": "Agente sin unidades: una hora de vueltas",
+    "consumo-servida": "Agente con una unidad quieta: dos horas de vueltas",
+    "consumo-pasada": "Una pasada bisync sin cambios (100 ficheros)",
 }
 """Los momentos que se comparan, en el orden de la tabla del resumen."""
 
@@ -183,6 +186,10 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
             apuntar(f"widgets.main_leida{_pares(d)}", c.get("widgets"), d)
         elif esc == "marcar":
             apuntar("escrituras.marcar", c.get("escrituras"), d)
+        elif esc.startswith("consumo-"):
+            # Lo que gasta el agente y una pasada (`consumo.py`): cada cuenta con su nombre.
+            for nombre, valor in c.items():
+                apuntar(f"consumo.{esc[len('consumo-'):]}.{nombre}", valor, d)
     for v in vistos.values():
         v["valor"] = max(v["valores"])
         v["valores"] = sorted(v["valores"])

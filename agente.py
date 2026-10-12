@@ -18,7 +18,8 @@ Se usa como `python agente.py ORDEN`:
 - `abrir [ID]`: la ventana de la raíz de este equipo (o de esa).
 - `desbloquear [ID]` y `bloquear [ID]`: abrir y cerrar el contenedor de la raíz
   cifrada.
-- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no` o `espera_unidad_nueva SEG`.
+- `ajuste CLAVE VALOR`: `pedir_al_iniciar sí|no`, `estirar_intervalo sí|no`,
+  `avisos_veracrypt sí|no` (al arrancar) o `espera_unidad_nueva SEG`.
 - `actualizar`: baja la versión nueva y la pone (lo que hace la bandeja).
 - `actualizar ID`: pone en esa raíz el código de la versión del agente.
 - `expulsar ID`: suelta esa unidad extraíble para poder quitarla (el «Expulsar» de
@@ -153,9 +154,9 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, avisos_carpeta, bitlocker, catalog,  # noqa: E402
-                    cifrada, components, equipo, expulsar, keepassxc, llavero, model,
-                    moderacion, prioridad, store, update, vestibulo)
+from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
+                    cifrada, components, consumo, equipo, expulsar, keepassxc, llavero,
+                    model, moderacion, parte, prioridad, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
@@ -179,8 +180,23 @@ RECORRIDO_WINDOWS = penwatch.POLL_SECONDS
 Sin bandeja no llega `WM_DEVICECHANGE`. Con ella, también mientras haya a la
 vista una unidad bloqueada con BitLocker (`Agente.cada_recorrido()`).
 """
-RECORRIDO_RESPALDO = 30.0
-"""Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada."""
+RECORRIDO_RESPALDO = 120.0
+"""Segundos entre recorridos aunque mountinfo o `WM_DEVICECHANGE` no digan nada.
+
+Es el respaldo: los montajes los dice el sistema, y en Windows además una letra
+que aparece o se va se ve en cada vuelta (`letras_de_unidad()`). Eran 30 s; en
+un equipo sin unidades el recorrido era la mitad de lo que gastaba el agente.
+"""
+LOTE = 8
+"""Cuántas parejas de una raíz se pasan, como mucho, en un mismo `sync.py`."""
+MARGEN_LOTE = 60.0
+"""Segundos que se le puede adelantar la pasada a una pareja para que vaya en el `sync.py` de otra."""
+REPOSO = 30.0
+"""Segundos, como mucho, entre dos vueltas cuando no hay nada que mirar de cerca (`cuanto_esperar()`)."""
+MIRAR_CONFIG = 20.0
+"""Segundos entre dos miradas a la fecha del `sync_config.toml` de una raíz atendida."""
+RELEER_REGISTROS = 20.0
+"""Segundos tras los que un registro del `state/` de una raíz se relee aunque su fecha no haya cambiado."""
 RAFAGA = 60.0
 """Segundos tras un cambio de montajes en que se recorre en cada vuelta."""
 ESTABLE = penwatch.STABLE_CHECKS
@@ -189,6 +205,15 @@ GRACIA = 15.0
 """Segundos tras ver la ventana o un stop, antes de volver."""
 MIRAR_ENTORNO = 60.0
 """Segundos entre las lecturas de batería y red."""
+MIRAR_RED_MEDIDA = 1800.0
+"""Segundos entre las preguntas por la red de uso medido cuando el sistema avisa de sus cambios.
+
+En Windows el aviso de conectividad que oye `common/red.py`
+(`NotifyNetworkConnectivityHintChange`) llega también cuando cambia el coste de
+la conexión, así que entre avisos basta con esta pregunta de respaldo: la
+llamada COM que lo dice despierta a otros procesos. En Linux un cambio de «uso
+medido» no trae aviso de red, y se sigue preguntando cada `MIRAR_ENTORNO`.
+"""
 DESPERTAR_DOBLE = 10.0
 """Segundos en que un segundo aviso de despertar se toma por el mismo.
 
@@ -216,6 +241,12 @@ GRACIA_ABRIR = 20.0
 
 Si no se ve, se da por cancelada.
 """
+ESPERA_SUBIR = 120.0
+"""Segundos que «Expulsar» espera, como mucho, a que suba lo pendiente de la unidad."""
+ESPERA_TURNO = 20.0
+"""Segundos que «Expulsar» espera a que la cola, ocupada por la pasada de otra raíz, llegue a lo suyo."""
+RECIEN_PASADA = 30.0
+"""Una pareja pasada hace menos que esto no se vuelve a pasar antes de expulsar."""
 ESPERA_EXPULSION = 60.0
 """Segundos que se espera a que acabe una expulsión ya lanzada."""
 GRACIA_EXPULSION = 30.0
@@ -226,6 +257,8 @@ vuelve a atender.
 """
 COLA_SALIDA = 64 * 1024
 """Bytes que se leen de la salida de una pasada."""
+SALIDA_DE_LOTE = 16 * 1024 * 1024
+"""Bytes que se leen de la salida de un `sync.py` que pasó varias parejas: hacen falta todos sus partes."""
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
 MIRAR_EMBLEMA = 60.0
@@ -291,6 +324,12 @@ SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las
               "unidades. Reinstala el agente o actualízalo.")
 """Lo que se dice cuando el agente no tiene rclone propio."""
 SIN_MOTOR_DE_AVISOS = "este sistema no avisa de los cambios de las carpetas"
+REARMAR_INTENTOS = 5
+"""Cuántas veces, en una conexión, se intenta volver a oír los avisos de una pareja que los perdió."""
+REARMAR_CADA = 120.0
+"""Segundos, como poco, entre perder los avisos de una pareja y volver a intentarlo."""
+VUELVEN = (avisos_carpeta.MOTIVO_SE_FUE, avisos_carpeta.MOTIVO_SIN_RESPUESTA)
+"""Los motivos de quedarse sin avisos que tienen arreglo: la carpeta puede volver a estar."""
 """Por qué se recorre una carpeta vigilada cuando el agente no tiene motor de avisos."""
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
@@ -418,6 +457,22 @@ def hilo(funcion) -> None:
     threading.Thread(target=funcion, daemon=True).start()
 
 
+def hay_keepassxc() -> bool:
+    """Indica si en el equipo corre algo que pueda ser el KeePassXC de una unidad.
+
+    En Windows se pregunta por el nombre a la instantánea de Toolhelp
+    (`store.foto_de_procesos()`), que no abre ningún proceso: sin ningún
+    `KeePassXC.exe` en el equipo no hace falta recorrerlos todos para saber
+    desde dónde corre cada uno (`keepassxc_abierto()`). Si no se puede saber, o
+    en Linux (allí cuenta la línea de órdenes), sí. Punto de indirección: los
+    tests dicen lo que hay.
+    """
+    foto = store.foto_de_procesos()
+    if foto is None:
+        return True
+    return any(exe.lower() == components.KEEPASSXC_EXE.lower() for exe in foto.values())
+
+
 def keepassxc_abierto(raiz: Path) -> bool:
     """Indica si el KeePassXC de esa raíz está abierto en este equipo.
 
@@ -474,6 +529,19 @@ def keepassxc_huerfano_abierto(raiz: Path) -> bool:
     puede dejar como estaba. Es de módulo para que los tests no miren procesos.
     """
     return False if IS_WIN else bool(llavero.pids_keepassxc(raiz / APP_SUBDIR))
+
+
+def ruido_de_editor(pareja: str) -> tuple[str, ...]:
+    """Devuelve los ficheros de la carpeta de una pareja vigilada cuyo cambio no cuenta.
+
+    Lo que dejan los programas con los que se trabaja (`huellas.RUIDO_DE_EDITOR`),
+    a cualquier profundidad: ni lo avisan los motores ni entra en la foto. Del
+    llavero se mira todo: son cuatro ficheros, y lo que más importa tener al día.
+
+    Args:
+        pareja: El nombre de la pareja.
+    """
+    return () if pareja == model.LLAVERO else huellas.RUIDO_DE_EDITOR
 
 
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
@@ -761,10 +829,14 @@ class Servicio:
         locales: La carpeta local, normalizada como la entiende el motor
             (`model.normalizar_local()`), de cada pareja que pide vigilar sus
             cambios (`watch = true`), por nombre.
+        excluidos: De cada una de esas parejas, los ficheros que excluye por
+            su nombre (`model.excluidos_por_nombre()`): sus cambios no
+            cuentan, la pasada no los subiría.
     """
     parejas: tuple[pl.Pareja, ...]
     minutos: float
     locales: Mapping[str, str] = field(default_factory=dict)
+    excluidos: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 class ConfigRechazada(ValueError):
@@ -833,6 +905,7 @@ def leer_servicio(raiz: Path) -> Servicio:
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     locales: dict[str, str] = {}
+    excluidos: dict[str, tuple[str, ...]] = {}
     for p in crudo.get("pair") if isinstance(crudo.get("pair"), list) else []:
         # El nombre va a la línea de órdenes de su `sync.py` y a sus carpetas
         # de `state/` y `filters/`: uno que su parser no admitiría (`--resync`,
@@ -850,8 +923,10 @@ def leer_servicio(raiz: Path) -> Servicio:
             local = p.get("local")
             if model.pide_watch(p) and isinstance(local, str) and local.strip():
                 locales[p["name"]] = model.normalizar_local(local)
+                excluidos[p["name"]] = model.excluidos_por_nombre(p, defaults)
             else:
                 locales.pop(p["name"], None)
+                excluidos.pop(p["name"], None)
     if not remotos:
         raise ValueError("sync_config.toml no tiene ninguna pareja")
     daemon = crudo.get("daemon") if isinstance(crudo.get("daemon"), dict) else {}
@@ -866,7 +941,8 @@ def leer_servicio(raiz: Path) -> Servicio:
         remoto, _ = model.carpeta_del_catalogo(defaults)
         parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True, llavero=True))
         vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
-    return Servicio(tuple(parejas), minutos, vigiladas)
+    return Servicio(tuple(parejas), minutos, vigiladas,
+                    {n: excluidos[n] for n in vigiladas if excluidos.get(n)})
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
@@ -934,6 +1010,63 @@ def presente(raiz: Path) -> bool:
         return (raiz / penwatch.CONTROL_FILE).is_file()
     except OSError:
         return False
+
+
+NOMBRE_LOCK = Path(penwatch.DAEMON_LOCK_REL).name
+NOMBRE_VENTANA = Path(penwatch.UI_LOCK_REL).name
+NOMBRE_STOP = "daemon.stop"
+NOMBRE_PREFS = "ui_prefs.json"
+ESTADO_QUE_SE_MIRA = frozenset({NOMBRE_LOCK, NOMBRE_VENTANA, NOMBRE_STOP, NOMBRE_PREFS,
+                                equipo.BUZON_SERVICIO})
+"""Los ficheros del `state/` de una raíz con los que se cumple su contrato de servicio."""
+
+
+def mirar_estado(raiz: Path) -> dict[str, tuple[int, int]] | None:
+    """Devuelve lo que hay del contrato en el `state/` de una raíz, con UNA lectura de la carpeta.
+
+    Es lo que el agente mira de cada raíz conectada en cada vuelta. Antes eran
+    nueve operaciones sueltas (existe el stop, lee el lock dos veces, lee el de
+    la ventana, intenta renombrar el buzón, dos fechas, el fichero de
+    control): en un pendrive, 273 por minuto, y el USB no descansaba nunca.
+    Listar la carpeta dice de una vez qué hay y con qué fecha, y solo se abre
+    lo que ha cambiado (`Agente._registro()`).
+
+    Returns:
+        `{nombre: (mtime en ns, tamaño)}` de los ficheros de
+        `ESTADO_QUE_SE_MIRA` que están; `None` si la raíz ya no está a la vista.
+    """
+    visto: dict[str, tuple[int, int]] = {}
+    try:
+        with os.scandir(estado_de(raiz)) as entradas:
+            for e in entradas:
+                if e.name not in ESTADO_QUE_SE_MIRA:
+                    continue
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue                # se fue entre listarlo y mirarlo
+                visto[e.name] = (st.st_mtime_ns, st.st_size)
+    except (FileNotFoundError, NotADirectoryError):
+        # Sin `state/` todavía (una raíz recién puesta), o ya sin unidad.
+        return {} if presente(raiz) else None
+    except OSError:
+        return None
+    return visto
+
+
+def letras_de_unidad() -> int | None:
+    """Devuelve las letras de unidad que hay ahora en Windows, como máscara, o `None` fuera de él.
+
+    `GetLogicalDrives`: un par de microsegundos, sin tocar ningún disco. Que
+    cambie es que ha aparecido o se ha ido un volumen, lo diga o no la bandeja.
+    """
+    if not IS_WIN:
+        return None
+    try:
+        import ctypes
+        return int(ctypes.windll.kernel32.GetLogicalDrives())
+    except (OSError, AttributeError):
+        return None
 
 
 def _registro_vivo(raiz: Path, rel: Path) -> dict | None:
@@ -1153,6 +1286,11 @@ class Conexion:
     copias_avisadas: frozenset[str] = frozenset()
     compatible: bool | None = None
     compatible_leido: float = -math.inf
+    vista: dict | None = None
+    con_partes: bool = False
+    leidos: dict = field(default_factory=dict)
+    config_visto: int | None = None
+    config_mirado: float = -math.inf
 
 
 @dataclass
@@ -1166,11 +1304,17 @@ class Expulsion:
         resultado: Cómo acabó, o `None` si sigue en marcha. Lo escribe el hilo
             y lo lee el agente.
         avisada: Si ya se ha dicho cómo acabó.
+        subir: Las parejas que se pasan antes de soltar la unidad y todavía no
+            han acabado (`Agente._por_subir()`).
+        sin_subir: Las que no ha dado tiempo a pasar, o han fallado: se dicen
+            con el resultado.
     """
     desde: float
     lanzada: float | None = None
     resultado: expulsar.Resultado | None = None
     avisada: bool = False
+    subir: list[str] = field(default_factory=list)
+    sin_subir: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1283,12 +1427,25 @@ class Pasada:
         desde: Cuándo empezó.
         salida: Fichero temporal donde va su salida.
         nombre: Nombre de la unidad a la que pertenece.
+        otras: Las demás parejas de la misma raíz que pasa ese mismo proceso,
+            detrás de la de `tarea` (`Agente._acompanan()`).
     """
     proc: Any
     tarea: pl.Tarea
     desde: float
     salida: Path
     nombre: str
+    otras: tuple[pl.Tarea, ...] = ()
+
+    @property
+    def tareas(self) -> tuple[pl.Tarea, ...]:
+        """Devuelve todo lo que pasa este proceso, en orden."""
+        return (self.tarea, *self.otras)
+
+    @property
+    def claves(self) -> set[tuple[str, str]]:
+        """Devuelve las parejas que pasa este proceso, como `(raíz, pareja)`; ninguna si es una sonda."""
+        return {(t.raiz, t.pareja) for t in self.tareas if t.tipo == pl.PASADA}
 
 
 class Sospecha(NamedTuple):
@@ -1318,12 +1475,15 @@ class Mirar(NamedTuple):
         carpeta: La carpeta local de la pareja, sin resolver.
         armar: Si en vez de tomar su foto hay que ponerle (o rehacerle) la
             vigilancia de los avisos del sistema.
+        excluidos: Los ficheros que la pareja excluye por su nombre
+            (`Servicio.excluidos`): no se miran, estén donde estén.
     """
     clave: tuple[str, str]
     con: Conexion
     raiz: Path
     carpeta: Path
     armar: bool = False
+    excluidos: tuple[str, ...] = ()
 
 
 class Muestreo:
@@ -1380,18 +1540,18 @@ class Muestreo:
                 if en_la_raiz(mirar.raiz, mirar.carpeta) is None:
                     self.fuera.add(mirar.clave)
                     continue
+                ignorar = (self.ignorar + ruido_en(mirar.raiz, mirar.carpeta)
+                           + ruido_de_editor(mirar.clave[1])
+                           + tuple(huellas.EXACTO + p for p in mirar.excluidos))
                 if mirar.armar:
                     try:
                         self.armadas[mirar.clave] = self.avisos.vigilar(
-                            mirar.clave, mirar.carpeta,
-                            self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
+                            mirar.clave, mirar.carpeta, ignorar)
                     except Exception as e:          # noqa: BLE001
                         self.armadas[mirar.clave] = f"no se ha podido vigilar: {e}"
                     continue
                 try:
-                    self.fotos[mirar.clave] = huella_local(
-                        mirar.carpeta, self.tope,
-                        self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
+                    self.fotos[mirar.clave] = huella_local(mirar.carpeta, self.tope, ignorar)
                 except Exception:                   # noqa: BLE001
                     self.fotos[mirar.clave] = None
         finally:
@@ -1419,7 +1579,9 @@ class Agente:
             `--resync`, por `(raíz, pareja)`: se avisa al entrar, una vez.
         entorno: Batería, red de uso medido, remotos sin conexión y pausa, para
             el planificador.
-        entorno_leido: Cuándo se leyó el entorno por última vez.
+        entorno_leido: Cuándo se leyó el entorno por última vez; con menos
+            infinito se lee entero en la vuelta siguiente.
+        red_leida: Cuándo se preguntó por última vez si la red es de uso medido.
         pasada: La pasada en marcha, si la hay.
         heredada: La de un agente anterior que sigue viva al arrancar
             (`pasada.json`).
@@ -1486,6 +1648,9 @@ class Agente:
             dejar de servirlas.
         rearmar: Las parejas cuya vigilancia hay que rehacer (se movió una
             carpeta o se perdieron avisos).
+        rearmes: De cada pareja que perdió los avisos del sistema, cuántas
+            veces se ha intentado volver a oírlos en esta conexión y cuándo se
+            perdieron (o se intentó) por última vez.
         keepassxc: Las raíces atendidas con su KeePassXC abierto en este
             equipo, por id (`_mirar_keepassxc()`).
         keepassxc_mirado: Cuándo se miró.
@@ -1502,6 +1667,7 @@ class Agente:
     saltadas: set[tuple[str, str]] = field(default_factory=set)
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
+    red_leida: float = -math.inf
     pasada: Pasada | None = None
     heredada: dict | None = field(default_factory=equipo.pasada_viva)
     cortada: dict | None = field(default_factory=equipo.pasada_cortada)
@@ -1544,8 +1710,11 @@ class Agente:
     avisos_carpeta: Any = None
     sin_avisos: dict[tuple[str, str], str] = field(default_factory=dict)
     rearmar: set[tuple[str, str]] = field(default_factory=set)
+    rearmes: dict[tuple[str, str], tuple[int, float]] = field(default_factory=dict)
     keepassxc: set[str] = field(default_factory=set)
     keepassxc_mirado: float = -math.inf
+    oye_buzon: bool = False
+    letras: int | None = None
     navegador_mirado: bool = False
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
 
@@ -1575,7 +1744,10 @@ class Agente:
             self._al_iniciar(ahora)
         self._seguir_desbloqueos(ahora)
         for con in list(self.conexiones.values()):
-            if not presente(con.raiz):
+            # La única mirada de esta vuelta al `state/` de cada raíz: dice si
+            # sigue ahí y qué ha cambiado de su contrato.
+            con.vista = mirar_estado(con.raiz)
+            if con.vista is None:
                 self._desconectar(con.id, ahora, {})
         self._tras_cierre()
         self._preguntas(ahora)
@@ -1596,6 +1768,8 @@ class Agente:
         if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
         self._escribir_estado()
+        for con in self.conexiones.values():
+            con.vista = None                # la mirada vale para esta vuelta, no para la siguiente
         return decision
 
     def _recorrer(self, ahora: float) -> None:
@@ -1771,7 +1945,32 @@ class Agente:
         (`cada_recorrido()` con lo que acababa de ver), y en cada vuelta
         mientras dure una racha (`rafaga_hasta`).
         """
+        letras = letras_de_unidad()
+        if letras != self.letras:
+            if self.letras is not None:
+                # Ha aparecido o se ha ido una letra: como un aviso de montajes.
+                self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
+            self.letras = letras
         return ahora >= self.proximo_recorrido or ahora < self.rafaga_hasta
+
+    def en_reposo(self) -> bool:
+        """Indica si no hay nada que el agente tenga que mirar de cerca.
+
+        Ni unidades a la vista (atendidas o no: su contrato, su pregunta, su
+        vestíbulo), ni una pasada u otro hijo en marcha, ni nada a medias, ni
+        una racha de montajes. Entonces lo único que puede pasar llega avisado:
+        un montaje, la bandeja, la red, una petición en el buzón.
+        """
+        return not (self.terminar or self.pasada is not None
+                    or self.conexiones or self.vistas or self.cerradas or self.vestibulos
+                    or self.desbloqueos or self.bloqueos or self.expulsiones
+                    or self.bitlocker or self.desbloqueos_bitlocker
+                    or self.actualizando is not None or self.buscando
+                    or self.muestreo is not None or self.heredada is not None
+                    or self.cortada is not None or self.urgentes
+                    or self.cambio_de_red is not None or self.navegador_tras_cierre
+                    or not self.navegador_mirado or not self.peticiones.empty()
+                    or self.reloj() < self.rafaga_hasta)
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
         """Quita de `abiertas` las raíces cifradas que son un volumen fantasma.
@@ -2231,13 +2430,23 @@ class Agente:
 
         La ventana los edita mientras el agente sigue vivo.
         """
-        firma = []
-        for ruta in (app(con.raiz) / "sync_config.toml",
-                     estado_de(con.raiz) / "ui_prefs.json"):
+        ahora = self.reloj()
+        if con.vista is None or not con.firma or ahora - con.config_mirado >= MIRAR_CONFIG:
+            # La fecha del TOML, de tarde en tarde: `_lanzar()` lo relee antes
+            # de cada pasada, y aquí solo sirve para enseñar pronto lo editado.
             try:
-                firma.append(ruta.stat().st_mtime_ns)
+                con.config_visto = (app(con.raiz) / "sync_config.toml").stat().st_mtime_ns
             except OSError:
-                firma.append(None)
+                con.config_visto = None
+            con.config_mirado = ahora
+        if con.vista is None:
+            try:
+                prefs = (estado_de(con.raiz) / NOMBRE_PREFS).stat().st_mtime_ns
+            except OSError:
+                prefs = None
+        else:
+            prefs = con.vista.get(NOMBRE_PREFS, (None,))[0]
+        firma = [con.config_visto, prefs]
         if tuple(firma) == con.firma and (con.servicio or con.error):
             return
         con.firma = tuple(firma)
@@ -2269,10 +2478,39 @@ class Agente:
         """Devuelve el registro de otro servicio vivo de este equipo en esa raíz.
 
         Es `None` si no hay otro, o si el registro es de antes de reiniciar.
+        Dentro de una vuelta vale lo leído mientras el fichero no haya cambiado
+        (`_registro()`, con la mirada de esa vuelta); fuera, se lee de verdad.
         """
-        info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
+        info = self._registro(con, NOMBRE_LOCK)
         if not store.vivo_en_este_arranque(info, HOST) or info.get("pid") == os.getpid():
             return None
+        return info
+
+    def _registro(self, con: Conexion, nombre: str) -> dict:
+        """Devuelve un registro JSON del `state/` de una raíz, releyéndolo solo si ha cambiado.
+
+        Manda lo que vio la mirada de esta vuelta (`Conexion.vista`): si el
+        fichero no está, `{}` sin tocar la unidad; si su fecha y su tamaño son
+        los de la última lectura y esta tiene menos de `RELEER_REGISTROS`, lo
+        leído entonces. Con dos segundos de resolución de fecha (FAT, exFAT)
+        un registro reescrito con el mismo tamaño puede no notarse hasta esa
+        relectura: por eso lo que decide de verdad no pasa por aquí
+        (`_lanzar()` y `_soltar()` leen el lock, y `_tomar()` lo crea con
+        `O_EXCL`).
+        """
+        ruta = estado_de(con.raiz) / nombre
+        if con.vista is None:
+            return store.read_json(ruta)
+        firma = con.vista.get(nombre)
+        if firma is None:
+            con.leidos.pop(nombre, None)
+            return {}
+        ahora = self.reloj()
+        antes = con.leidos.get(nombre)
+        if antes is not None and antes[0] == firma and 0 <= ahora - antes[1] < RELEER_REGISTROS:
+            return antes[2]
+        info = store.read_json(ruta)
+        con.leidos[nombre] = (firma, ahora, info)
         return info
 
     def _contrato(self, con: Conexion, ahora: float) -> None:
@@ -2289,9 +2527,11 @@ class Agente:
                 self._soltar(con)
             con.motivo = "bloqueándose"
             return
-        if con.id in self.expulsiones:
+        if con.id in self.expulsiones and not self.expulsiones[con.id].subir:
             # Se está expulsando: igual que al bloquearla, y tampoco se
             # vuelve a tomar el lock mientras la unidad siga a la vista.
+            # Mientras sube lo pendiente (`Expulsion.subir`) se la sigue
+            # sirviendo como siempre.
             if not ocupada:
                 self._soltar(con)
             con.motivo = "expulsándose"
@@ -2316,11 +2556,14 @@ class Agente:
                 self.sin_rclone_avisado = True
                 avisar(f"{APP_NAME}: el agente no tiene su rclone", SIN_RCLONE, True)
             return
-        stop = estado_de(con.raiz) / "daemon.stop"
-        try:
-            parar = stop.exists()
-        except OSError:
-            parar = False
+        stop = estado_de(con.raiz) / NOMBRE_STOP
+        if con.vista is not None:
+            parar = NOMBRE_STOP in con.vista
+        else:
+            try:
+                parar = stop.exists()
+            except OSError:
+                parar = False
         otro = self._otro_servicio(con)
         if parar and not ocupada and otro is None:
             # Lo que hace runsync al abrir su ventana (o con `--auto`, o con
@@ -2333,7 +2576,7 @@ class Agente:
             con.pausa = ahora
             diario(f"{con.nombre}: runsync ha pedido parar el servicio; en pausa")
             dlog(con.raiz, "servicio (agente del equipo) en pausa: lo ha pedido runsync")
-        ventana = _registro_vivo(con.raiz, penwatch.UI_LOCK_REL) is not None
+        ventana = store.vivo_en_este_arranque(self._registro(con, NOMBRE_VENTANA), HOST)
         if ventana:
             con.pausa = ahora
         if otro is not None and con.lock is not None:
@@ -2359,7 +2602,7 @@ class Agente:
             con.motivo = ""
             if con.lock is None:
                 self._tomar(con)
-            elif not self._lock_es_nuestro(con):
+            elif not self._lock_es_nuestro(con, de_memoria=True):
                 con.lock = None             # lo borró runsync al cansarse de esperar
             return
         if not ocupada:
@@ -2385,9 +2628,16 @@ class Agente:
             return "en pausa desde su ventana: no se sincroniza hasta «Reanudar»"
         return f"modo {unidad.modo}: {equipo.TEXTO_MODO[unidad.modo]}"
 
-    def _lock_es_nuestro(self, con: Conexion) -> bool:
-        """Indica si el `daemon.lock.json` de la raíz es de este agente."""
-        info = store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
+    def _lock_es_nuestro(self, con: Conexion, de_memoria: bool = False) -> bool:
+        """Indica si el `daemon.lock.json` de la raíz es de este agente.
+
+        Args:
+            de_memoria: Si vale lo leído mientras el fichero no haya cambiado
+                (`_registro()`): es la mirada de cada vuelta. Sin ello se lee
+                de verdad, que es lo que hace quien va a lanzar o a soltar.
+        """
+        info = self._registro(con, NOMBRE_LOCK) if de_memoria \
+            else store.read_json(con.raiz / penwatch.DAEMON_LOCK_REL)
         return info.get("pid") == os.getpid() and info.get("host") == HOST
 
     def _tomar(self, con: Conexion) -> None:
@@ -2415,9 +2665,14 @@ class Agente:
                 and otro.get("host") == HOST:
             # El nuestro, que no se pudo borrar al soltarlo (`soltando`).
             tomado = store.write_json(destino, datos)
+        con.leidos.pop(NOMBRE_LOCK, None)   # lo que hubiera leído ya no vale
         if tomado:
             con.lock = datos
             con.soltando = False        # el fichero vuelve a ser uno vivo
+            # Lo que pasó mientras no la servía no lo ha visto (su ventana
+            # pudo aprobar un --resync, o mover media carpeta): sus parejas
+            # vuelven al intervalo de fábrica.
+            self._despertar(con.id)
             dlog(con.raiz, f"servicio (agente del equipo, pid {os.getpid()}) atendiendo: "
                            f"{', '.join(datos['pairs'])}"
                            + ("" if unidad.modo == equipo.SYNC
@@ -2444,6 +2699,62 @@ class Agente:
                 return
         con.soltando = False
 
+    def _despertar(self, uid: str, remoto: str | None = None) -> None:
+        """Devuelve al intervalo de fábrica las parejas de una raíz (`pl.despierta()`).
+
+        Args:
+            uid: La raíz.
+            remoto: Si se da, solo las que van a ese remote.
+        """
+        con = self.conexiones.get(uid)
+        de_ese = None if remoto is None or con is None or con.servicio is None \
+            else {p.nombre for p in con.servicio.parejas if p.remoto == remoto}
+        for clave, marca in list(self.marcas.items()):
+            if clave[0] == uid and (de_ese is None or clave[1] in de_ese):
+                self.marcas[clave] = pl.despierta(marca)
+
+    def _ritmo(self, con: Conexion, pareja: str, marca: pl.Marca) -> tuple[float, float] | None:
+        """Devuelve `(intervalo de fábrica, intervalo de ahora)` de una pareja, en segundos.
+
+        `None` si no es del servicio del agente o la raíz va en modo `sync`,
+        que no tiene intervalo.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if con.servicio is None or unidad is None or unidad.modo != equipo.DAEMON:
+            return None
+        p = next((x for x in con.servicio.parejas if x.nombre == pareja), None)
+        if p is None:
+            return None
+        raiz = pl.Raiz(con.id, con.servicio.parejas, con.servicio.minutos * 60)
+        return pl.intervalo_de(raiz, p), pl.cada(raiz, p, marca, self.ajustes.politica)
+
+    def _decir_ritmo(self, con: Conexion, pareja: str, antes: pl.Marca,
+                     despues: pl.Marca) -> None:
+        """Dice en los diarios cuándo una pareja pasa a sincronizarse menos, y cuándo vuelve."""
+        a, d = self._ritmo(con, pareja, antes), self._ritmo(con, pareja, despues)
+        if a is None or d is None or a[1] == d[1] or despues.saltada or antes.saltada:
+            return
+        if d[1] > d[0]:
+            texto = (f"lleva {despues.vacias} pasadas sin nada que hacer; ahora cada "
+                     f"{d[1] / 60:g} min (hasta que algo cambie)")
+        else:
+            texto = f"vuelve a sincronizarse cada {d[0] / 60:g} min"
+        diario(f"[{con.nombre}] {pareja}: {texto}")
+        dlog(con.raiz, f"[{pareja}] {texto}")
+
+    def _estiradas(self, con: Conexion) -> dict[str, float]:
+        """Devuelve las parejas de una raíz que ahora se pasan menos, con sus minutos."""
+        if con.lock is None:
+            return {}
+        salida = {}
+        for (uid, pareja), marca in self.marcas.items():
+            if uid != con.id or not (marca.vacias or marca.saltada):
+                continue
+            ritmo = self._ritmo(con, pareja, marca)
+            if ritmo is not None and ritmo[1] > ritmo[0]:
+                salida[pareja] = round(ritmo[1] / 60, 1)
+        return salida
+
     def _raices(self) -> list[pl.Raiz]:
         """Devuelve las raíces que el planificador puede atender.
 
@@ -2457,13 +2768,20 @@ class Agente:
         cortada = self._cortada()
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None or con.id in self.bloqueos \
-                    or con.id in self.expulsiones or con.actualizacion is not None:
+                    or con.actualizacion is not None:
                 continue
             modo = self.ajustes.unidades[con.id].modo
             intervalo = math.inf if modo == equipo.SYNC else con.servicio.minutos * 60
             parejas = con.servicio.parejas
+            expulsion = self.expulsiones.get(con.id)
+            if expulsion is not None:
+                # Expulsándose: solo lo que se sube antes de soltarla, y nada más.
+                parejas = tuple(p for p in parejas if p.nombre in expulsion.subir)
+                if not parejas:
+                    continue
             if cortada is not None and cortada.get("raiz") == con.id:
-                parejas = tuple(p for p in parejas if p.nombre != cortada.get("pareja"))
+                cortadas = {cortada.get("pareja"), *(cortada.get("parejas") or ())}
+                parejas = tuple(p for p in parejas if p.nombre not in cortadas)
             if con.id in self.keepassxc:
                 parejas = tuple(replace(p, intervalo=min(intervalo, llavero.REMOTO_ABIERTO))
                                 if p.nombre == model.LLAVERO else p for p in parejas)
@@ -2474,8 +2792,10 @@ class Agente:
         """Mira en qué raíces atendidas está abierto su KeePassXC (`keepassxc_abierto()`).
 
         Se mira cada `PoliticaCambios.sondeo`, no en cada vuelta: en Windows es
-        recorrer todos los procesos del equipo. Solo en las raíces que sirve el
-        agente y llevan llavero; las demás las atiende su vigilante.
+        recorrer todos los procesos del equipo, y solo se hace si alguno se
+        llama como KeePassXC (`hay_keepassxc()`, una pregunta para todas las
+        raíces). Solo en las raíces que sirve el agente y llevan llavero; las
+        demás las atiende su vigilante.
 
         Al abrirse y al cerrarse, toca una pasada del llavero enseguida (su
         marca vuelve a «nunca intentada»): al abrirse trae lo último antes de
@@ -2490,11 +2810,16 @@ class Agente:
         self.keepassxc_mirado = ahora
         servidas: set[str] = set()
         abiertos: set[str] = set()
+        alguno: bool | None = None
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None \
                     or not any(p.nombre == model.LLAVERO for p in con.servicio.parejas):
                 continue
             servidas.add(con.id)
+            if alguno is None:
+                alguno = hay_keepassxc()
+            if not alguno:
+                continue
             try:
                 if keepassxc_abierto(con.raiz):
                     abiertos.add(con.id)
@@ -2576,14 +2901,65 @@ class Agente:
                    else "se vuelve a sincronizar")
             self.retenido = decision.retenido
         if decision.tarea is not None:
-            self._lanzar(decision.tarea, ahora)
+            self._lanzar(decision.tarea, ahora, self._acompanan(decision.tarea, entorno, ahora))
         return decision
+
+    def _acompanan(self, tarea: pl.Tarea, entorno: pl.Entorno,
+                   ahora: float) -> tuple[pl.Tarea, ...]:
+        """Devuelve las demás parejas de la raíz a las que también les toca ya: van en el mismo `sync.py`.
+
+        Cada `sync.py` es un Python que arranca (0,26 s de procesador de los
+        0,65 de una pasada sin cambios): cuatro parejas con el mismo intervalo
+        son cuatro arranques seguidos para hacer lo que hace uno. Se le
+        pregunta al planificador qué tocaría después, quitando lo ya elegido,
+        así que valen las mismas reglas (moderación, remoto sin conexión,
+        espera tras un fallo). Solo si el `sync.py` de esa raíz ya ha dicho
+        cómo le fue a una pareja con su parte (`Conexion.con_partes`): el de
+        una unidad sin actualizar no lo escribe, y con varias parejas en un
+        proceso no se sabría cuál falló. El llavero va siempre solo.
+        """
+        con = self.conexiones.get(tarea.raiz)
+        if tarea.tipo != pl.PASADA or con is None or not con.con_partes \
+                or tarea.pareja == model.LLAVERO:
+            return ()
+        raiz = next((r for r in self._raices() if r.clave == tarea.raiz), None)
+        if raiz is None:
+            return ()
+        elegidas, otras = {tarea.pareja}, []
+        while len(otras) < LOTE - 1:
+            resto = replace(raiz, parejas=tuple(p for p in raiz.parejas
+                                                if p.nombre not in elegidas and not p.llavero))
+            if not resto.parejas:
+                break
+            # «Ya» es con un margen: cada pareja se apunta al acabar la suya,
+            # así que las de un mismo intervalo van unos segundos una detrás
+            # de otra y sin él nunca coincidirían. Una vez juntas, acaban a la
+            # vez y siguen juntas.
+            d = pl.decidir([resto], self.marcas, entorno, ahora + MARGEN_LOTE,
+                           self.ajustes.politica, urgentes=self.urgentes,
+                           vigiladas=self.vigiladas, cambios=self.cambios)
+            if d.tarea is None or d.tarea.tipo != pl.PASADA:
+                break
+            elegidas.add(d.tarea.pareja)
+            if d.tarea.por_cambios:
+                # La adelantan sus cambios: esa espera a su calma, no se le
+                # quita el margen (subiría a media ráfaga).
+                sola = replace(raiz, parejas=tuple(p for p in raiz.parejas
+                                                   if p.nombre == d.tarea.pareja))
+                ya = pl.decidir([sola], self.marcas, entorno, ahora, self.ajustes.politica,
+                                urgentes=self.urgentes, vigiladas=self.vigiladas,
+                                cambios=self.cambios)
+                if ya.tarea is None or ya.tarea.tipo != pl.PASADA:
+                    continue
+            otras.append(d.tarea)
+        return tuple(otras)
 
     def _olvidar_vigiladas(self, uid: str) -> None:
         """Olvida lo recordado de las parejas vigiladas de una raíz, y deja sus avisos."""
         self.vigiladas = {k: v for k, v in self.vigiladas.items() if k[0] != uid}
         self.sin_avisos = {k: v for k, v in self.sin_avisos.items() if k[0] != uid}
         self.rearmar = {k for k in self.rearmar if k[0] != uid}
+        self.rearmes = {k: v for k, v in self.rearmes.items() if k[0] != uid}
         if self.avisos_carpeta is not None:
             self.avisos_carpeta.dejar_raiz(uid)
 
@@ -2591,6 +2967,7 @@ class Agente:
         """Deja la vigilancia de una pareja que ya no se sirve, y olvida por qué se recorría."""
         self.sin_avisos.pop(clave, None)
         self.rearmar.discard(clave)
+        self.rearmes.pop(clave, None)
         if self.avisos_carpeta is not None:
             self.avisos_carpeta.dejar(clave)
 
@@ -2652,12 +3029,25 @@ class Agente:
                         armar.append(clave)
                     elif v.avisos and clave in self.rearmar:
                         armar.append(clave)
+                    elif self._toca_volver_a_oir(clave, v, ahora):
+                        # Su carpeta vuelve a dejarse mirar (hay foto): se
+                        # intenta oírla otra vez, que es lo barato.
+                        veces = self.rearmes.get(clave, (0, 0.0))[0]
+                        self.rearmes[clave] = (veces + 1, ahora)
+                        del self.sin_avisos[clave]
+                        # El cambio que ya vio el recorrido va como firme: el
+                        # motor no sabe de él y no puede retirarlo.
+                        self.vigiladas[clave] = pl.Vigilada(avisos=True, cambio=v.cambio,
+                                                            movida=v.movida,
+                                                            firme=v.cambio is not None)
+                        armar.append(clave)
+                        diario(f"[{self.conexiones[raiz.clave].nombre}] {pareja.nombre}: su "
+                               f"carpeta vuelve a estar; se intenta oír sus avisos otra vez")
             self.rearmar -= set(armar)
         motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
                                self.ajustes.politica)
         pasada = self.pasada
-        ocupadas = [(pasada.tarea.raiz, pasada.tarea.pareja)] \
-            if pasada is not None and pasada.tarea.tipo == pl.PASADA else []
+        ocupadas = sorted(pasada.claves) if pasada is not None else []
         claves = pl.a_recorrer(raices, self.vigiladas, ahora, self.cambios,
                                ocupadas=ocupadas, motivo=motivo,
                                con_bateria=self.entorno.con_bateria)
@@ -2667,7 +3057,8 @@ class Agente:
         for (raiz, pareja), poner in [(k, True) for k in armar] + [(k, False) for k in claves]:
             con = self.conexiones[raiz]
             trabajo.append(Mirar((raiz, pareja), con, con.raiz,
-                                 con.raiz / con.servicio.locales[pareja], armar=poner))
+                                 con.raiz / con.servicio.locales[pareja], armar=poner,
+                                 excluidos=con.servicio.excluidos.get(pareja, ())))
         self.muestreo = Muestreo(trabajo, self.cambios.tope_entradas, IGNORAR_CAMBIOS,
                                  self.avisos_carpeta)
         hilo(self.muestreo.correr)
@@ -2697,9 +3088,28 @@ class Agente:
             if aviso.tipo == avisos_carpeta.PERDIDA:
                 self._sin_avisos(con, clave, aviso.motivo)
                 continue
+            if aviso.tipo == avisos_carpeta.RETIRADO:
+                # Lo que se avisó se ha deshecho solo (un temporal que nació
+                # y murió): ya no hay nada que adelantar.
+                self.vigiladas[clave] = pl.retirado(v)
+                continue
             if aviso.tipo == avisos_carpeta.DESBORDADO:
                 self.rearmar.add(clave)
             self.vigiladas[clave] = pl.avisado(v, ahora)
+
+    def _toca_volver_a_oir(self, clave: tuple[str, str], v: pl.Vigilada, ahora: float) -> bool:
+        """Indica si a una pareja que se recorre le toca intentar oír otra vez los avisos del sistema.
+
+        Solo si los perdió por algo con arreglo (`VUELVEN`: movieron o
+        borraron su carpeta), su carpeta se deja mirar otra vez (ya hay una
+        foto), ha pasado `REARMAR_CADA` y no se ha intentado ya
+        `REARMAR_INTENTOS` veces en esta conexión. Sin esto una pareja cuya
+        carpeta se renombró y se volvió a crear se recorría para siempre.
+        """
+        veces, cuando = self.rearmes.get(clave, (0, -math.inf))
+        return (self.sin_avisos.get(clave) in VUELVEN and not v.avisos and not v.abandonada
+                and v.huella is not None and veces < REARMAR_INTENTOS
+                and ahora - cuando >= REARMAR_CADA)
 
     def _sin_avisos(self, con: Conexion, clave: tuple[str, str], motivo: str) -> None:
         """Deja una pareja vigilada recorriéndose, sin avisos del sistema, y dice por qué.
@@ -2712,6 +3122,7 @@ class Agente:
             self.avisos_carpeta.dejar(clave)
         self.vigiladas[clave] = pl.Vigilada()
         self.sin_avisos[clave] = motivo
+        self.rearmes[clave] = (self.rearmes.get(clave, (0, 0.0))[0], self.reloj())
         self.rearmar.discard(clave)
         diario(f"[{con.nombre}] {clave[1]}: sin avisos del sistema, se recorre su carpeta: "
                f"{motivo}")
@@ -2748,8 +3159,7 @@ class Agente:
             return
         self.muestreo = None
         pasada = self.pasada
-        en_curso = (pasada.tarea.raiz, pasada.tarea.pareja) \
-            if pasada is not None and pasada.tarea.tipo == pl.PASADA else None
+        en_curso = pasada.claves if pasada is not None else set()
         for mirar in m.trabajo:
             clave = mirar.clave
             con = self.conexiones.get(clave[0])
@@ -2757,7 +3167,7 @@ class Agente:
                 self._recoger_armado(m, mirar, con, ahora, validas)
                 continue
             if con is not mirar.con or clave not in validas or clave in m.descartar \
-                    or clave == en_curso:
+                    or clave in en_curso:
                 continue
             antes = self.vigiladas.get(clave, pl.Vigilada())
             if clave in m.fuera:
@@ -2838,8 +3248,12 @@ class Agente:
             self.vigiladas[clave] = replace(pl.tras_pasada(antes, None, ahora),
                                             revisada=None)
 
-    def _lanzar(self, tarea: pl.Tarea, ahora: float) -> None:
+    def _lanzar(self, tarea: pl.Tarea, ahora: float,
+                otras: tuple[pl.Tarea, ...] = ()) -> None:
         """Lanza una tarea: una pasada (el `sync.py` de la raíz) o una sonda del remoto.
+
+        Con `otras`, ese mismo `sync.py` pasa también esas parejas de la raíz,
+        detrás (`_acompanan()`).
 
         Antes de una pasada se comprueba otra vez que el lock sigue siendo
         nuestro y se lee de nuevo el config de la raíz (`leer_config()`): el
@@ -2862,8 +3276,10 @@ class Agente:
                 con.firma = ()              # la vuelta que viene lo lee entero otra vez
                 diario(f"[{con.nombre}] no lanzo {tarea.pareja}: {e}")
                 return
-        if tarea.urgente:
-            self.urgentes = [u for u in self.urgentes if u != (tarea.raiz, tarea.pareja)]
+        todas = (tarea, *otras)
+        pedidas = {(t.raiz, t.pareja) for t in todas if t.urgente}
+        if pedidas:
+            self.urgentes = [u for u in self.urgentes if u not in pedidas]
         if tarea.tipo == pl.SONDA:
             args = orden_sonda(con.raiz, tarea.remoto)
             if args is None:
@@ -2877,9 +3293,9 @@ class Agente:
             que = f"¿contesta {tarea.remoto}?"
         else:
             # `--`: lo que sigue es un nombre, nunca una opción de sync.py.
-            args = [python(), str(app(con.raiz) / "sync.py"), "--", tarea.pareja]
+            args = [python(), str(app(con.raiz) / "sync.py"), "--", *(t.pareja for t in todas)]
             cwd = equipo.DIR
-            que = tarea.pareja
+            que = ", ".join(t.pareja for t in todas)
         salida = equipo.DIR / "pasada.out"
         try:
             equipo.DIR.mkdir(parents=True, exist_ok=True)
@@ -2895,14 +3311,22 @@ class Agente:
         except OSError as e:
             diario(f"[{con.nombre}] no he podido lanzar {que}: {e}")
             if tarea.tipo == pl.PASADA:
-                self.marcas[(tarea.raiz, tarea.pareja)] = pl.registrar(
-                    self.marcas.get((tarea.raiz, tarea.pareja), pl.Marca()), FALLO, ahora)
+                expulsion = self.expulsiones.get(tarea.raiz)
+                for t in todas:
+                    self.marcas[(t.raiz, t.pareja)] = pl.registrar(
+                        self.marcas.get((t.raiz, t.pareja), pl.Marca()), FALLO, ahora)
+                    # Si era lo que «Expulsar» subía antes de soltarla, se dice
+                    # con el resultado: ya no está en la cola y no va a subir.
+                    if expulsion is not None and t.pareja in expulsion.subir \
+                            and t.pareja not in expulsion.sin_subir:
+                        expulsion.sin_subir.append(t.pareja)
             return
-        self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre)
+        self.pasada = Pasada(proc, tarea, ahora, salida, con.nombre, tuple(otras))
         if tarea.tipo == pl.PASADA:
             equipo.apuntar_pasada({"pid": getattr(proc, "pid", None), "agente": os.getpid(),
                                    "raiz": tarea.raiz,
                                    "unidad": con.nombre, "pareja": tarea.pareja,
+                                   **({"parejas": [t.pareja for t in todas]} if otras else {}),
                                    "desde": store.stamp()})
         diario(f"[{con.nombre}] {que}" + (" (a petición)" if tarea.urgente
                                           else " (han cambiado sus ficheros)"
@@ -2928,7 +3352,10 @@ class Agente:
         try:
             with pasada.salida.open("rb") as f:
                 f.seek(0, os.SEEK_END)
-                f.seek(max(0, f.tell() - COLA_SALIDA))
+                # Con varias parejas en el proceso se lee (casi) entera: el
+                # parte de la primera va muy arriba si otra tardó en mover lo
+                # suyo, y sin él contaría como que falló.
+                f.seek(max(0, f.tell() - (SALIDA_DE_LOTE if pasada.otras else COLA_SALIDA)))
                 texto = f.read().decode("utf-8", errors="replace")
         except OSError:
             pass
@@ -2946,11 +3373,67 @@ class Agente:
             self._fin_de_sonda(con, tarea.remoto, rc, texto, ahora)
             return
 
+        # Lo que cuenta el propio `sync.py` de cada pareja; uno de antes no dice nada.
+        partes = parte.leer(texto)
+        if tarea.pareja in partes:
+            con.con_partes = True           # desde ahora sus parejas pueden ir juntas
+        if not pasada.otras:
+            self._fin_de_pareja(con, tarea, rc, resultado(rc, texto), texto, segundos,
+                                partes.get(tarea.pareja), ahora)
+            return
+        # Varias parejas en un proceso: cada una con su parte y con su trozo de
+        # la salida. La que no llegó a escribirlo (el proceso murió antes)
+        # cuenta como fallo, con el código del proceso.
+        trozos = parte.trozos(texto)
+        resto = parte.resto(texto)          # lo que salió tras el último parte
+        for i, t in enumerate(pasada.tareas):
+            dicho = partes.get(t.pareja)
+            if dicho is None and rc == 0:
+                # Sin su parte pero con el proceso acabado en 0: `sync.py` sale
+                # con 1 si alguna falla, así que esta no falló (su parte quedó
+                # fuera de lo leído). No se le apunta un fallo que no tuvo.
+                suyo, codigo, como = "", 0, OK
+            elif dicho is None:
+                # El proceso murió antes de escribirlo: lo que quedó al final
+                # de la salida es de la que estaba en marcha, y es lo que dice
+                # si fue la red.
+                suyo, codigo = resto, rc
+                como = resultado(codigo, suyo)
+            elif dicho.rc == parte.SALTADA:
+                suyo, codigo, como = trozos.get(t.pareja, ""), 0, SALTADA
+            else:
+                suyo, codigo = trozos.get(t.pareja, ""), dicho.rc
+                como = resultado(codigo, suyo)
+            self._fin_de_pareja(con, t, codigo, como, suyo, segundos, dicho, ahora,
+                                primera=i == 0)
+
+    def _fin_de_pareja(self, con: Conexion, tarea: pl.Tarea, rc: int, como: str, texto: str,
+                       segundos: float, dicho: "parte.Parte | None", ahora: float,
+                       primera: bool = True) -> None:
+        """Apunta cómo le fue a una pareja en la pasada que acaba de terminar.
+
+        Args:
+            con: La conexión de su raíz.
+            tarea: La pareja.
+            rc: Su código: el del proceso si iba sola, el de su parte si no.
+            como: `OK`, `FALLO`, `RED` o `SALTADA`.
+            texto: Su salida: la del proceso, o su trozo.
+            segundos: Lo que duró el proceso entero.
+            dicho: Su parte, si `sync.py` lo escribió.
+            primera: Si es la primera del proceso: es la que carga con el
+                proceso y con su duración en la cuenta de lo gastado.
+        """
         clave = (tarea.raiz, tarea.pareja)
-        como = resultado(rc, texto)
+        consumo.apuntar(con.id, consumo.Cuenta(
+            1, int(dicho is not None and dicho.vacia),
+            int(primera) + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
+            segundos if primera else 0.0, dicho.escrito if dicho is not None else 0))
         antes = self.marcas.get(clave, pl.Marca())
-        despues = pl.registrar(antes, como, ahora)
+        despues = pl.registrar(antes, como, ahora,
+                               vacia=dicho is not None and dicho.vacia,
+                               por_cambios=tarea.por_cambios, urgente=tarea.urgente)
         self.marcas[clave] = despues
+        self._decir_ritmo(con, tarea.pareja, antes, despues)
         self._rehacer_foto(clave, ahora)
         if como == FALLO or como == RED:
             dlog(con.raiz, f"[{tarea.pareja}] FALLÓ (rc={rc}, {segundos:.0f}s); salida:")
@@ -2969,6 +3452,9 @@ class Agente:
         if tarea.pareja == model.LLAVERO:
             self._copias_del_llavero(con, ahora, ya=True)
 
+        expulsion = self.expulsiones.get(tarea.raiz)
+        if expulsion is not None and como != OK and tarea.pareja not in expulsion.sin_subir:
+            expulsion.sin_subir.append(tarea.pareja)
         if como == RED:
             # ¿De verdad es la red? La sonda va ya: si el remoto contesta,
             # aquel fallo era de la pareja y se apunta como tal
@@ -3026,6 +3512,7 @@ class Agente:
             if not apuntadas and clave in self.sin_red_avisado:
                 self.sin_red_avisado.discard(clave)
                 diario(f"[{con.nombre}] vuelve la conexión con {remoto}")
+            self._despertar(con.id, remoto)
             return
         self.entorno = pl.sin_conexion(
             self.entorno, con.id, remoto,
@@ -3050,6 +3537,8 @@ class Agente:
         if not pl.red_asentada(self.cambio_de_red, ahora, self.pasada is not None):
             return
         self.cambio_de_red = None
+        # La red por la que se sale ya es la que va a ser: si es de uso medido.
+        self.entorno_leido = -math.inf
         if self.entorno.sin_conexion:
             self.entorno = pl.sondear_ya(self.entorno, ahora)
             diario("la red ha cambiado: se prueban ya los remotos sin conexión")
@@ -3355,9 +3844,50 @@ class Agente:
             diario(f"{con.nombre}: no se puede expulsar desde aquí (no es un volumen "
                    f"extraíble de la lista, o está ocupada)")
         else:
-            self.expulsiones[uid] = Expulsion(ahora)
+            subir = self._por_subir(con, ahora)
+            self.expulsiones[uid] = Expulsion(ahora, subir=subir)
             self.urgentes = [u for u in self.urgentes if u[0] != uid]
-            diario(f"{con.nombre}: se pide expulsarla")
+            self.urgentes += [(uid, n) for n in subir]
+            diario(f"{con.nombre}: se pide expulsarla"
+                   + (f"; antes se sincroniza {', '.join(subir)}" if subir else ""))
+
+    def _por_subir(self, con: Conexion, ahora: float) -> list[str]:
+        """Devuelve las parejas de una unidad que se pasan antes de expulsarla.
+
+        Son las que pueden tener algo sin subir: todas las del servicio en modo
+        `daemon`, menos las que se sabe que no (oyen los avisos del sistema y
+        no hay ningún cambio pendiente; se acaban de pasar), las que no iban a
+        subir nada (saltándose, su remoto sin conexión) y, si el
+        agente se está moderando (pausa, batería, red de uso medido), ninguna:
+        expulsar no se salta lo que la persona pidió. Sin esto una unidad se
+        iría con lo cambiado desde la última pasada, que con el intervalo
+        estirado pueden ser muchos minutos.
+        """
+        unidad = self.ajustes.unidades.get(con.id)
+        if con.lock is None or con.servicio is None or unidad is None \
+                or unidad.modo != equipo.DAEMON or self.heredada is not None \
+                or pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                                 self.ajustes.politica) is not None:
+            return []
+        nombres = []
+        for p in con.servicio.parejas:
+            marca = self.marcas.get((con.id, p.nombre), pl.Marca())
+            v = self.vigiladas.get((con.id, p.nombre))
+            if (con.id, p.remoto) in self.entorno.sin_conexion or marca.saltada:
+                continue
+            if v is not None and v.avisos and v.cambio is None \
+                    and marca.ultimo_intento is not None:
+                continue                    # si hubiera cambiado algo, se sabría
+            if marca.ultimo_intento is not None \
+                    and ahora - marca.ultimo_intento < RECIEN_PASADA \
+                    and (v is None or v.cambio is None):
+                continue
+            pasada = self.pasada
+            if pasada is not None and (con.id, p.nombre) in pasada.claves \
+                    and ahora - pasada.desde < RECIEN_PASADA:
+                continue                    # la que está en marcha acaba de empezar
+            nombres.append(p.nombre)
+        return nombres
 
     def _expulsiones(self, ahora: float) -> None:
         """Lleva los «Expulsar» pedidos hasta ver la unidad suelta o el motivo de que no.
@@ -3380,7 +3910,9 @@ class Agente:
                     e.avisada = True
                     if e.resultado.ok:
                         diario(f"{nombre}: expulsada")
-                        avisar(f"{nombre}: ya puedes quitarla", e.resultado.texto)
+                        avisar(f"{nombre}: ya puedes quitarla", e.resultado.texto
+                               + (f" Se ha quedado sin sincronizar: {', '.join(e.sin_subir)}."
+                                  if e.sin_subir else ""))
                     else:
                         diario(f"{nombre}: no se ha podido expulsar: {e.resultado.texto}")
                         avisar(f"{nombre}: no la expulso", e.resultado.texto, True)
@@ -3400,6 +3932,25 @@ class Agente:
                            "El sistema no ha contestado a tiempo. Comprueba que se puede "
                            "quitar antes de tirar del cable.", True)
                 continue
+            if e.subir:
+                # Lo pendiente sube antes de soltarla: son urgentes de esta
+                # raíz, y cada una sale de la cola al lanzarse.
+                en_curso = {p for r, p in self.pasada.claves if r == uid} \
+                    if self.pasada is not None else set()
+                e.subir = [n for n in e.subir if (uid, n) in self.urgentes or n in en_curso]
+                servida = con is not None and con.lock is not None and con.servicio is not None
+                # La cola es una para todo el equipo: a la pasada de otra raíz
+                # se la espera poco, que quien pide expulsar está delante.
+                ajena = self.pasada is not None and not en_curso
+                plazo = ESPERA_TURNO if ajena else ESPERA_SUBIR
+                if e.subir and (not servida or ahora - e.desde >= plazo):
+                    # No ha dado tiempo, o ya no la sirve el agente (su ventana,
+                    # otro servicio): no hay quien las pase.
+                    e.sin_subir += [n for n in e.subir if n not in en_curso]
+                    self.urgentes = [u for u in self.urgentes if u[0] != uid]
+                    e.subir = []
+                if e.subir:
+                    continue
             if self.pasada is not None and self.pasada.tarea.raiz == uid:
                 continue                    # acaba la pareja en curso
             if self._mirando(uid) and ahora - e.desde < ESPERA_VENTANA:
@@ -3426,15 +3977,34 @@ class Agente:
             e.resultado = expulsar.Resultado(False, f"No he podido expulsarla: {ex}")
 
     def _leer_entorno(self, ahora: float) -> None:
-        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
+        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos.
+
+        La red de uso medido, cada `MIRAR_RED_MEDIDA` si el sistema avisa de
+        sus cambios (`_avisa_el_coste()`): el aviso, y la ráfaga al asentarse,
+        hacen leerlo todo ya.
+        """
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
+        if not self.conexiones:
+            # Sin ninguna unidad a la vista no hay pasada que moderar: ni se
+            # pregunta por la batería ni por la red (en Windows, una llamada
+            # COM que despierta a otros procesos). Al llegar una, se lee ya.
+            return
+        cada = MIRAR_RED_MEDIDA if self._avisa_el_coste() else MIRAR_ENTORNO
+        medida = self.entorno.red_medida
+        if self.entorno_leido == -math.inf or ahora - self.red_leida >= cada:
+            self.red_leida = ahora
+            medida = moderacion.red_medida()
         self.entorno_leido = ahora
         energia = moderacion.energia()
         self.entorno = replace(self.entorno, con_bateria=energia.con_bateria,
                                bateria=energia.porcentaje,
                                ahorro_energia=energia.ahorro,
-                               red_medida=moderacion.red_medida())
+                               red_medida=medida)
+
+    def _avisa_el_coste(self) -> bool:
+        """Indica si un cambio de «red de uso medido» llega como aviso de red (Windows)."""
+        return IS_WIN and self.avisa_la_red()
 
     def _mirar_version(self, ahora: float) -> None:
         """Mira, de tarde en tarde, si hay una versión más nueva que la de este agente.
@@ -3733,6 +4303,8 @@ class Agente:
             if con.id not in self.ajustes.unidades or con.cambiada \
                     or self._por_actualizar(con):
                 continue
+            if con.vista is not None and equipo.BUZON_SERVICIO not in con.vista:
+                continue                    # la mirada de esta vuelta dice que no hay buzón
             for p in equipo.recoger(estado_de(con.raiz) / equipo.BUZON_SERVICIO):
                 if p.get("pide") not in equipo.PIDE_SERVICIO:
                     diario(f"{con.nombre}: su buzón pide {p.get('pide')!r}, que no es "
@@ -3889,8 +4461,10 @@ class Agente:
         elif que == equipo.PIDE_CAMBIO_DE_RED:
             # El sistema dice que vuelve a haber red (`common/red.py`). No se
             # sondea ya: se agrupa la ráfaga y va una sonda por remoto cuando
-            # se calma (`_cambios_de_red`).
+            # se calma (`_cambios_de_red`). Si la red es de uso medido, sí:
+            # en Windows es este aviso el que lo trae (`MIRAR_RED_MEDIDA`).
             self.cambio_de_red = pl.cambia_la_red(self.cambio_de_red, ahora)
+            self.entorno_leido = -math.inf
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:
@@ -4148,6 +4722,7 @@ class Agente:
                                                 if r == con.id and m.fallos > 0),
                              "saltadas": sorted(p for r, p in self.saltadas
                                                 if r == con.id),
+                             "estiradas": self._estiradas(con),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,
                              "vigila_recorre": recorre,
@@ -4162,7 +4737,9 @@ class Agente:
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
                 "pasada": None if self.pasada is None else {
-                    "unidad": self.pasada.nombre, "pareja": self.pasada.tarea.pareja,
+                    "unidad": self.pasada.nombre,
+                    "pareja": ", ".join(t.pareja for t in self.pasada.tareas)
+                    if self.pasada.tarea.pareja else None,
                     "tipo": self.pasada.tarea.tipo},
                 "sin_conexion": sorted(f"{self.conexiones[r].nombre}: {m}"
                                        for r, m in self.entorno.sin_conexion
@@ -4262,6 +4839,7 @@ class Vigia:
         self._montajes = False
         self._pipe: tuple[int, int] | None = None
         self._oido: tuple[int, Any] | None = None
+        self._buzon: tuple[int, Any] | None = None
         if IS_WIN:
             return
         try:
@@ -4320,6 +4898,25 @@ class Vigia:
             return
         self._oido = (fd, leer)
 
+    def oir_buzon(self, fd: int, leer) -> bool:
+        """Espera también en el descriptor del oyente del buzón (`avisos_buzon`, Linux).
+
+        Cuando tiene algo se llama a `leer()`, que lo vacía y dice si era el
+        buzón: entonces la espera acaba, como con `despertar()`.
+
+        Returns:
+            `True` si queda oído; `False` sin `poll` o si no se deja registrar.
+        """
+        if self._poll is None:
+            return False
+        import select
+        try:
+            self._poll.register(fd, select.POLLIN)
+        except (OSError, ValueError):
+            return False
+        self._buzon = (fd, leer)
+        return True
+
     def _leer_avisos(self) -> None:
         """Vacía el descriptor oído; si falla, deja de oírlo y lo dice."""
         fd, leer = self._oido
@@ -4376,6 +4973,18 @@ class Vigia:
                     if self._pipe is not None and fd == self._pipe[0]:
                         os.read(fd, 4096)
                         despierto = True
+                    elif self._buzon is not None and fd == self._buzon[0]:
+                        try:
+                            if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+                                raise OSError("descriptor cerrado")
+                            if self._buzon[1]():
+                                despierto = True
+                        except Exception:               # noqa: BLE001
+                            try:
+                                self._poll.unregister(fd)
+                            except (OSError, KeyError, ValueError):
+                                pass
+                            self._buzon = None
                     elif self._oido is not None and fd == self._oido[0]:
                         if que & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
                             self._dejar_de_oir()
@@ -4502,7 +5111,7 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
             diario(f"sin bandeja no se dejan carpetas abiertas en las unidades: {recorre}")
             return None
     try:
-        motor = avisos_carpeta.abrir(hwnd=hwnd)
+        motor = avisos_carpeta.abrir(hwnd=hwnd, veracrypt=agente.ajustes.avisos_veracrypt)
     except OSError as e:
         diario(f"no oigo los cambios de las carpetas ({e}): {recorre}")
         return None
@@ -4513,10 +5122,56 @@ def poner_avisos_carpeta(agente: Agente, vigia: Vigia) -> Any:
         vigia.oir(motor.fd, motor.leer)
     if IS_WIN:
         agente.bandeja.dispositivo = motor.dispositivo
+        agente.bandeja.volumen = motor.volumen
     diario("oigo los cambios de las carpetas de las parejas con watch ("
            + ("ReadDirectoryChangesW" if IS_WIN else "inotify")
-           + "); se recorre solo la que no avisa")
+           + "); se recorre solo la que no avisa"
+           + ("; también oigo los volúmenes de VeraCrypt (avisos_veracrypt)"
+              if IS_WIN and agente.ajustes.avisos_veracrypt else ""))
     return motor
+
+
+def poner_buzon(agente: Agente, vigia: Vigia) -> Any:
+    """Devuelve el oyente del buzón del agente, o `None` si aquí no se puede oír.
+
+    Punto de indirección: los tests no ponen ninguno. Es `common/avisos_buzon.py`:
+    el sistema dice cuándo alguien escribe `agente.pide`, y entonces el vigía
+    despierta. Con él (`Agente.oye_buzon`) el agente deja de mirar el buzón
+    cada 2 s cuando no tiene nada a la vista (`cuanto_esperar()`).
+    """
+    try:
+        equipo.DIR.mkdir(parents=True, exist_ok=True)
+        oyente = avisos_buzon.abrir(equipo.DIR, equipo.buzon().name, vigia.despertar)
+    except OSError:
+        oyente = None
+    if oyente is not None and oyente.fd is not None \
+            and not vigia.oir_buzon(oyente.fd, oyente.leer):
+        oyente.cerrar()
+        oyente = None
+    agente.oye_buzon = oyente is not None
+    diario("oigo el buzón del agente: sin nada a la vista, miro cada "
+           f"{REPOSO:g} s" if oyente is not None
+           else f"no oigo el buzón del agente: lo miro cada {TICK:g} s")
+    return oyente
+
+
+def cuanto_esperar(agente: Agente, decision: pl.Decision | None = None) -> float:
+    """Devuelve cuántos segundos puede esperar el bucle del agente hasta su vuelta siguiente.
+
+    El tic de siempre (`TICK`) mientras haya algo que mirar de cerca
+    (`Agente.en_reposo()`): una pasada u otro hijo, una unidad a la vista, una
+    racha de montajes, algo a medias. Sin nada de eso, y solo si el buzón avisa
+    (`Agente.oye_buzon`), hasta `REPOSO`, o hasta que toque el recorrido de
+    respaldo si es antes: todo lo demás que puede pasar (un montaje, la
+    bandeja, la red, una petición) despierta al vigía.
+
+    Args:
+        decision: Lo que decidió la vuelta; no se usa todavía (con una unidad
+            a la vista manda su contrato, que se mira cada `TICK`).
+    """
+    if not agente.oye_buzon or not agente.en_reposo():
+        return TICK
+    return max(TICK, min(REPOSO, agente.proximo_recorrido - agente.reloj()))
 
 
 def _enganchar_penwatch() -> None:
@@ -4574,18 +5229,20 @@ def cmd_run(_args: argparse.Namespace) -> int:
     agente.bandeja = poner_bandeja(agente, vigia)
     agente.avisos_de_red = poner_red(agente, vigia)
     agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
+    oyente_del_buzon = poner_buzon(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
     try:
         while not (agente.terminar and agente.pasada is None):
             recorrer = agente.toca_recorrer(time.time())
+            decision = None
             try:
-                agente.vuelta(recorrer)
+                decision = agente.vuelta(recorrer)
             except Exception as e:                      # noqa: BLE001
                 # Un fallo de una vuelta no puede tumbar al agente de todas las
                 # unidades: se apunta y se sigue en la siguiente.
                 diario(f"error en una vuelta: {type(e).__name__}: {e}")
-            if vigia.esperar(TICK):
+            if vigia.esperar(cuanto_esperar(agente, decision)):
                 agente.rafaga_hasta = time.time() + RAFAGA
     except KeyboardInterrupt:
         diario("interrumpido por teclado")
@@ -4595,6 +5252,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
             agente.avisos_de_red.cerrar()
         if agente.avisos_carpeta is not None:
             agente.avisos_carpeta.cerrar()
+        if oyente_del_buzon is not None:
+            oyente_del_buzon.cerrar()
         if agente.bandeja is not None:
             agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
@@ -4639,6 +5298,12 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print(f"{'Raíz' if u.get('del_equipo') else 'Conectada'}: {u.get('nombre')} "
               f"en {u.get('raiz')}"
               + (f" — {u['motivo']}" if u.get("motivo") else " — atendida"))
+        gastado = consumo.del_dia(str(u.get("id") or ""))
+        if gastado.pasadas:
+            print(f"  Hoy: {consumo.texto(gastado)}")
+        if u.get("estiradas"):
+            print("  Sin nada que hacer desde hace rato, se pasan menos: "
+                  + ", ".join(f"{n} cada {m:g} min" for n, m in sorted(u["estiradas"].items())))
         if u.get("actualizable"):
             print(f"  Lleva la {u.get('version') or 'versión desconocida'}; para ponerla a "
                   f"la {estado.get('version')}: agente.py actualizar {u.get('id')}")
@@ -4839,7 +5504,7 @@ def valor_ajuste(clave: str, texto: str) -> Any:
     Raises:
         ValueError: Si no es un sí o un no, o un número.
     """
-    if clave == "pedir_al_iniciar":
+    if clave in ("pedir_al_iniciar", "estirar_intervalo", "avisos_veracrypt"):
         valor = VERDAD.get(texto.strip().lower())
         if valor is None:
             raise ValueError(f"{clave} es sí o no, no {texto!r}")

@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import os
 import stat
+import struct
 import threading
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
@@ -102,9 +103,15 @@ DBT_DEVICEQUERYREMOVE = 0x8001
 DBT_DEVICEQUERYREMOVEFAILED = 0x8002
 DBT_DEVICEREMOVEPENDING = 0x8003
 DBT_DEVICEREMOVECOMPLETE = 0x8004
+DBT_CUSTOMEVENT = 0x8006
+DBT_DEVTYP_VOLUME = 2
 DBT_DEVTYP_HANDLE = 6
 AVISOS_DE_HANDLE = (DBT_DEVICEQUERYREMOVE, DBT_DEVICEQUERYREMOVEFAILED,
-                    DBT_DEVICEREMOVEPENDING, DBT_DEVICEREMOVECOMPLETE)
+                    DBT_DEVICEREMOVEPENDING, DBT_DEVICEREMOVECOMPLETE, DBT_CUSTOMEVENT)
+"""Los avisos de `WM_DEVICECHANGE` que traen un handle nuestro: los de extracción y, en
+`DBT_CUSTOMEVENT`, los del volumen (alguien lo pide en exclusiva, lo desmonta, lo vuelve a montar)."""
+AVISOS_DE_VOLUMEN = (DBT_DEVICEREMOVEPENDING, DBT_DEVICEREMOVECOMPLETE)
+"""Los que, llegando por letra y no por handle, se pasan a quien oye los volúmenes de VeraCrypt."""
 """Los avisos de extracción que llegan por cada handle registrado (dbt.h)."""
 
 # Shell_NotifyIconW (shellapi.h).
@@ -455,10 +462,13 @@ class Bandeja:
             de mentira.
 
     Attributes:
-        dispositivo: Quien atiende los avisos de extracción de un handle
+        dispositivo: Quien atiende los avisos de un handle
             (`avisos_carpeta.ReadDirectoryChanges.dispositivo`), si hay alguien:
-            se le llama con el aviso y el handle, desde el hilo de la bandeja y
-            antes de contestar a Windows.
+            se le llama con el aviso, el handle y, en un `DBT_CUSTOMEVENT`, su
+            GUID, desde el hilo de la bandeja y antes de contestar a Windows.
+        volumen: Quien atiende los avisos de desmontaje que llegan por letra
+            (`ReadDirectoryChanges.volumen`: los de VeraCrypt), si hay alguien:
+            se le llama con el aviso y las letras (`P:`).
     """
 
     def __init__(self, carpeta_iconos: Path, pedir: Callable[[dict], None],
@@ -468,7 +478,8 @@ class Bandeja:
         self.pedir = pedir
         self.montajes = montajes
         self.api = api
-        self.dispositivo: Callable[[int, int], None] | None = None
+        self.dispositivo: Callable[[int, int, str], None] | None = None
+        self.volumen: Callable[[int, tuple[str, ...]], None] | None = None
         self.hwnd = None
         self.vista = bandeja.Vista(icons.BIEN, bandeja.tip("arrancando"), ())
         self._pendiente: bandeja.Vista | None = None
@@ -574,14 +585,16 @@ class Bandeja:
             self._colgar_globos()
             return 0
         if msg == WM_DEVICECHANGE:
-            atender = self.dispositivo
-            if wparam in AVISOS_DE_HANDLE and lparam and atender is not None:
-                h = self.api.handle_de(lparam)
-                if h is not None:
-                    try:
-                        atender(wparam, h)
-                    except Exception:                   # noqa: BLE001
-                        pass                # un fallo del motor no impide la extracción
+            atender, letras = self.dispositivo, self.volumen
+            if wparam in AVISOS_DE_HANDLE and lparam and (atender or letras) is not None:
+                h, guid, de = self.api.aviso_de(lparam)
+                try:
+                    if h is not None and atender is not None:
+                        atender(wparam, h, guid)
+                    elif de and letras is not None and wparam in AVISOS_DE_VOLUMEN:
+                        letras(wparam, de)
+                except Exception:                       # noqa: BLE001
+                    pass                    # un fallo del motor no impide la extracción
             if wparam in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED):
                 self.montajes()
             return None                     # y que Windows conteste lo suyo (TRUE)
@@ -649,6 +662,12 @@ class Bandeja:
         if entrada is not None and entrada.activa:
             for peticion in entrada.pide:
                 self.pedir(dict(peticion))
+
+
+def guid_de(crudo: bytes) -> str:
+    """Devuelve un GUID de Windows (sus 16 bytes, como van en memoria) como texto en minúsculas."""
+    d1, d2, d3 = struct.unpack_from("<IHH", crudo)
+    return f"{d1:08x}-{d2:04x}-{d3:04x}-{crudo[8:10].hex()}-{crudo[10:16].hex()}"
 
 
 class Api:
@@ -768,12 +787,19 @@ class Api:
                                     wt.HDC, ct.c_int, ct.c_int, ct.c_int, ct.c_int,
                                     self.DIBUJO["BLENDFUNCTION"]]
 
-    def handle_de(self, lparam: int) -> int | None:
-        """Devuelve el handle de un aviso de `WM_DEVICECHANGE` que es de un handle, o `None`.
+    def aviso_de(self, lparam: int) -> tuple[int | None, str, tuple[str, ...]]:
+        """Lee de qué es un aviso de `WM_DEVICECHANGE`: de un handle o de unas letras.
 
-        `lParam` apunta a un `DEV_BROADCAST_HDR` (dbt.h); si su tipo es
-        `DBT_DEVTYP_HANDLE`, es un `DEV_BROADCAST_HANDLE` y se lee su
-        `dbch_handle`.
+        `lParam` apunta a un `DEV_BROADCAST_HDR` (dbt.h). Si su tipo es
+        `DBT_DEVTYP_HANDLE`, es un `DEV_BROADCAST_HANDLE`: se leen su
+        `dbch_handle` y su `dbch_eventguid` (el de un `DBT_CUSTOMEVENT`,
+        ioevent.h). Si es `DBT_DEVTYP_VOLUME`, un `DEV_BROADCAST_VOLUME`: las
+        letras de `dbcv_unitmask`.
+
+        Returns:
+            `(handle, guid, letras)`: el handle o `None`; el GUID como texto en
+            minúsculas (`50708874-c9af-11d1-8fef-00a0c9a06d32`) o `""`; las
+            letras como `("P:",)`, o `()`.
         """
         ct, wt = self.ct, self.wt
 
@@ -783,14 +809,30 @@ class Api:
                         ("dbch_reserved", wt.DWORD)]
 
         class DEV_BROADCAST_HANDLE(ct.Structure):
-            """El principio de `DEV_BROADCAST_HANDLE` de dbt.h, hasta su handle."""
+            """El principio de `DEV_BROADCAST_HANDLE` de dbt.h, hasta su GUID."""
             _fields_ = [("dbch_size", wt.DWORD), ("dbch_devicetype", wt.DWORD),
-                        ("dbch_reserved", wt.DWORD), ("dbch_handle", wt.HANDLE)]
+                        ("dbch_reserved", wt.DWORD), ("dbch_handle", wt.HANDLE),
+                        ("dbch_hdevnotify", wt.HANDLE), ("dbch_eventguid", ct.c_ubyte * 16)]
+
+        class DEV_BROADCAST_VOLUME(ct.Structure):
+            """`DEV_BROADCAST_VOLUME` de dbt.h."""
+            _fields_ = [("dbcv_size", wt.DWORD), ("dbcv_devicetype", wt.DWORD),
+                        ("dbcv_reserved", wt.DWORD), ("dbcv_unitmask", wt.DWORD),
+                        ("dbcv_flags", wt.WORD)]
 
         cabecera = ct.cast(lparam, ct.POINTER(DEV_BROADCAST_HDR)).contents
-        if cabecera.dbch_devicetype != DBT_DEVTYP_HANDLE:
-            return None
-        return ct.cast(lparam, ct.POINTER(DEV_BROADCAST_HANDLE)).contents.dbch_handle
+        if cabecera.dbch_devicetype == DBT_DEVTYP_HANDLE:
+            aviso = ct.cast(lparam, ct.POINTER(DEV_BROADCAST_HANDLE)).contents
+            return aviso.dbch_handle, guid_de(bytes(aviso.dbch_eventguid)), ()
+        if cabecera.dbch_devicetype == DBT_DEVTYP_VOLUME:
+            mascara = ct.cast(lparam, ct.POINTER(DEV_BROADCAST_VOLUME)).contents.dbcv_unitmask
+            return None, "", tuple(chr(ord("A") + i) + ":" for i in range(26)
+                                   if mascara & (1 << i))
+        return None, "", ()
+
+    def handle_de(self, lparam: int) -> int | None:
+        """Devuelve el handle de un aviso de `WM_DEVICECHANGE` que es de un handle, o `None`."""
+        return self.aviso_de(lparam)[0]
 
     def mensaje_registrado(self, nombre: str) -> int:
         """Devuelve el número de un mensaje registrado con `RegisterWindowMessageW`."""

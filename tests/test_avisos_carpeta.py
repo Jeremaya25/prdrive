@@ -48,7 +48,7 @@ from types import SimpleNamespace
 from _harness import Checks, tmpdir
 
 from common import avisos_carpeta as ac
-from common import model
+from common import huella, model
 
 c = Checks("avisos del sistema de una carpeta (inotify)")
 
@@ -116,6 +116,10 @@ class Win32Falsa:
         dispositivos: El dispositivo de cada letra (`QueryDosDeviceW`).
         fallar_registro: Si `RegisterDeviceNotificationW` falla.
         hwnds: Las ventanas a las que se registraron avisos.
+        carpetas: Las rutas (en minúsculas) que son carpetas (`GetFileAttributesW`).
+        movidos: Los handles cuya carpeta se ha movido, con su ruta de ahora
+            (`GetFinalPathNameByHandleW`).
+        esperas: Los plazos (ms) con que el motor ha esperado.
     """
 
     def __init__(self) -> None:
@@ -129,6 +133,9 @@ class Win32Falsa:
         self.dispositivos: dict[str, str] = {}
         self.fallar_registro = False
         self.hwnds: list = []
+        self.carpetas: set[str] = set()
+        self.movidos: dict[int, str] = {}
+        self.esperas: list[int] = []
         self._n = 100
         self._cerrojo = threading.Lock()
 
@@ -145,6 +152,14 @@ class Win32Falsa:
     def dispositivo_de(self, unidad: str) -> str:
         """`QueryDosDeviceW`: un disco salvo que se diga otra cosa."""
         return self.dispositivos.get(unidad.upper(), "\\Device\\HarddiskVolume3")
+
+    def es_carpeta(self, ruta: str) -> bool:
+        """`GetFileAttributesW`: solo son carpetas las que se digan."""
+        return ruta.lower() in self.carpetas
+
+    def ruta_final(self, h: int) -> str:
+        """`GetFinalPathNameByHandleW`: donde se abrió, salvo que se haya movido."""
+        return self.movidos.get(h, self.abiertos.get(h, ""))
 
     def abrir_carpeta(self, ruta: str) -> int:
         """`CreateFileW` de una carpeta: un handle nuevo."""
@@ -222,11 +237,15 @@ class Win32Falsa:
             pendiente[0].evento.set()
 
     def esperar(self, eventos: list, ms: int) -> int:
-        """`WaitForMultipleObjects` de cualquiera."""
+        """`WaitForMultipleObjects` de cualquiera, con su plazo."""
+        self.esperas.append(ms)
+        fin = None if ms == ac.INFINITO else time.monotonic() + ms / 1000
         while True:
             for i, ev in enumerate(eventos):
                 if ev.is_set():
                     return i
+            if fin is not None and time.monotonic() >= fin:
+                return 258                              # WAIT_TIMEOUT
             time.sleep(0.002)
 
     def senalado(self, ev) -> bool:
@@ -266,7 +285,7 @@ KW = (UW, "docs")
 IGNW = (".prversions", ".prdrive", ".keychain")
 HWND = 0x1234
 w = Win32Falsa()
-mw = ac.ReadDirectoryChanges(w, HWND)
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
 c("Windows: se vigila una carpeta local", mw.vigilar(KW, "E:\\datos\\docs", IGNW), None)
 hw = next(iter(w.abiertos))
 c("  con su handle abierto, su aviso de extracción en la ventana de la bandeja y una lectura",
@@ -277,7 +296,7 @@ c("  volver a pedirla no abre otra", (mw.vigilar(KW, "E:\\datos\\docs", IGNW), l
   (None, 1))
 w.completar(hw, [(ac.FILE_ACTION_ADDED, "nuevo.txt")])
 c("un aviso es un cambio", hasta(lambda: KW in mw._pendientes) and tipos_w(mw), {KW: ac.CAMBIO})
-c("  y la lectura se vuelve a lanzar al momento", hasta(lambda: w.lanzadas.get(hw) == 2), True)
+c("  y la lectura se vuelve a lanzar", hasta(lambda: w.lanzadas.get(hw) == 2), True)
 w.completar(hw, [(ac.FILE_ACTION_ADDED, ".prversions\\v~1.txt"),
                  (ac.FILE_ACTION_MODIFIED, ".prdrive"),
                  (ac.FILE_ACTION_MODIFIED, ".PRDRIVE\\state\\daemon.log")])
@@ -381,6 +400,233 @@ c("cerrar el motor cierra todo y acaba su hilo",
 c("abrir() sin la ventana de la bandeja no da motor en Windows",
   ac.abrir(hwnd=None) is None or not sys.platform.startswith("win"), True)
 
+# --- las lecturas se agrupan: la siguiente no se lanza hasta pasado el plazo
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.25, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+hasta(lambda: len(w.esperas) >= 2)
+c("agrupar: con la lectura lanzada y nada pendiente, el hilo espera sin plazo",
+  w.esperas[-1], ac.INFINITO)
+t0 = time.monotonic()
+w.completar(hw, [(ac.FILE_ACTION_MODIFIED, "a.txt")])
+c("  el primer aviso de una ráfaga llega en el acto",
+  hasta(lambda: KW in mw._pendientes, 0.2) and tipos_w(mw), {KW: ac.CAMBIO})
+c("  y la lectura siguiente no se lanza todavía", (w.lanzadas[hw], hw in w.lecturas), (1, False))
+c("  el hilo espera con plazo, no en bucle", 0 < w.esperas[-1] <= 251, True)
+c("  pasado el plazo se lanza", hasta(lambda: w.lanzadas[hw] == 2, 2.0)
+  and time.monotonic() - t0 >= 0.2, True)
+mw.dejar(KW)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+w.completar(hw, [(ac.FILE_ACTION_MODIFIED, "a.txt")])
+hasta(lambda: KW in mw._pendientes)
+mw.dejar(KW)
+c("  dejarla mientras espera su plazo cierra todo, sin lectura que cancelar",
+  (w.abiertos, w.registrados, hasta(lambda: len(w.eventos_vivos) == 1)), ({}, {}, True))
+mw.cerrar()
+
+# --- el efecto neto: lo que nace y muere sin que ninguna pasada lo vea no es un cambio
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+
+
+def llega(*entradas) -> dict:
+    """Completa la lectura pendiente con esos avisos y devuelve lo que el motor apunta."""
+    hasta(lambda: hw in w.lecturas)
+    n = w.lanzadas[hw]
+    w.completar(hw, list(entradas))
+    hasta(lambda: w.lanzadas.get(hw, 0) > n or hw not in w.abiertos)
+    return tipos_w(mw)
+
+
+A, R, M = ac.FILE_ACTION_ADDED, ac.FILE_ACTION_REMOVED, ac.FILE_ACTION_MODIFIED
+c("neto: un temporal que nace y muere en la misma lectura no es un cambio",
+  llega((A, "~tmp1"), (M, "~tmp1"), (R, "~tmp1")), {KW: ac.RETIRADO})
+c("  uno que nace es un cambio…", llega((A, "index.lock")), {KW: ac.CAMBIO})
+c("  …y cuando muere, ya recogido el cambio, se retira", llega((R, "INDEX.LOCK")),
+  {KW: ac.RETIRADO})
+hasta(lambda: hw in w.lecturas)
+w.completar(hw, [(A, "x.tmp")])
+hasta(lambda: KW in mw._pendientes)
+c("  si muere antes de recogerse, el cambio pendiente se cambia por la retirada",
+  llega((R, "x.tmp")), {KW: ac.RETIRADO})
+c("  dos que nacen y solo uno muere: sigue habiendo cambio",
+  llega((A, "a.tmp"), (A, "b.tmp"), (R, "a.tmp")), {KW: ac.CAMBIO})
+c("  y al morir el otro, se retira", llega((R, "b.tmp")), {KW: ac.RETIRADO})
+c("  una carpeta que nace con algo dentro y se va entera (a la papelera): nada",
+  llega((A, "sub"), (A, "sub\\a.txt"), (R, "sub")), {KW: ac.RETIRADO})
+c("  borrar algo que ya estaba es un cambio firme", llega((R, "viejo.txt")), {KW: ac.CAMBIO})
+c("  y ya no lo retira nada", llega((A, "t"), (R, "t")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  tras la pasada (descartar) la cuenta empieza de cero", llega((A, "t"), (R, "t")),
+  {KW: ac.RETIRADO})
+c("  tocar algo que ya estaba es un cambio", llega((M, "doc.txt")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  un renombrado, también (no se sigue la cuenta)",
+  llega((A, "n"), (ac.FILE_ACTION_RENAMED_OLD_NAME, "n"),
+        (ac.FILE_ACTION_RENAMED_NEW_NAME, "m"), (R, "m")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+w.carpetas.add("e:\\datos\\docs\\fotos")
+c("  la fecha de una carpeta sola (NTFS la avisa tarde) no es un cambio",
+  llega((M, "Fotos")), {})
+c("  con un fichero dentro, sí", llega((M, "Fotos"), (M, "Fotos\\a.jpg")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  un desbordado es firme: lo que venga después no lo retira",
+  (llega(), llega((A, "t"), (R, "t"))), ({KW: ac.DESBORDADO}, {KW: ac.CAMBIO}))
+mw.descartar(KW)
+c("  más nombres vivos de los que se llevan en cuenta: cambio firme",
+  (llega(*[(A, f"f{i}") for i in range(ac.Neto.TOPE + 1)]),
+   llega(*[(R, f"f{i}") for i in range(ac.Neto.TOPE + 1)])), ({KW: ac.CAMBIO}, {KW: ac.CAMBIO}))
+mw.cerrar()
+
+# --- el ruido de editor (lo que lleva `**/` delante) no cuenta, a cualquier profundidad
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW + huella.RUIDO_DE_EDITOR)
+hw = next(iter(w.abiertos))
+VIEJO, NUEVO = ac.FILE_ACTION_RENAMED_OLD_NAME, ac.FILE_ACTION_RENAMED_NEW_NAME
+c("ruido: el fichero de bloqueo de Word no es un cambio: ni al nacer, ni al tocarlo, ni al morir",
+  (llega((A, "~$informe.docx")), llega((M, "~$informe.docx")), llega((R, "~$Informe.docx"))),
+  ({}, {}, {}))
+c("  ni el de LibreOffice en una subcarpeta",
+  llega((A, "sub\\.~lock.hoja.ods#"), (R, "sub\\.~lock.hoja.ods#")), {})
+c("  ni lo que Windows deja en las carpetas",
+  llega((A, "fotos\\Thumbs.db"), (M, "Desktop.ini")), {})
+c("  guardar con Word (su temporal y sus renombrados) sí: el documento cambia",
+  llega((A, "~WRD0001.tmp"), (M, "~WRD0001.tmp"), (VIEJO, "informe.docx"),
+        (NUEVO, "~WRL0002.tmp"), (VIEJO, "~WRD0001.tmp"), (NUEVO, "informe.docx"),
+        (R, "~WRL0002.tmp")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  y un fichero cualquiera que acabe en .tmp sigue contando",
+  llega((M, "notas.tmp")), {KW: ac.CAMBIO})
+c("los patrones hondos se apartan de los de la raíz, que van en minúsculas",
+  huella.partir(("A", "**/B*", ".prdrive", "**=/*.Tmp")),
+  (("a", ".prdrive"), (("b*",), ("*.Tmp",))))
+c("  los hondos se comparan en minúsculas con el nombre, sin su carpeta",
+  (huella.es_ruido("~$A.docx", (("~$*",), ())), huella.es_ruido("a.docx", (("~$*",), ())),
+   huella.es_ruido("x", huella.SIN_HONDOS)), (True, False, False))
+c("  y los exactos, distinguiendo mayúsculas, como rclone",
+  (huella.es_ruido("a.tmp", ((), ("*.tmp",))), huella.es_ruido("A.TMP", ((), ("*.tmp",)))),
+  (True, False))
+mw.cerrar()
+
+# --- lo que excluye la propia pareja por su nombre (`EXACTO`): como lo entiende rclone
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW + (huella.EXACTO + "*.log", huella.EXACTO + "foto?.jpg"))
+hw = next(iter(w.abiertos))
+c("excluido: un fichero que la pareja excluye no es un cambio, esté donde esté",
+  (llega((A, "salida.log")), llega((M, "sub\\hondo\\salida.log"))), ({}, {}))
+c("  con otras mayúsculas rclone sí lo sincroniza: cuenta", llega((M, "SALIDA.LOG")),
+  {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  `?` es un solo carácter", (llega((M, "foto1.jpg")), llega((M, "foto22.jpg"))),
+  ({}, {KW: ac.CAMBIO}))
+mw.cerrar()
+
+# --- tras la pasada se tira también lo que llegue enseguida
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.3)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+mw.descartar(KW)
+c("callar: lo que llega justo tras descartar lo dejó la pasada: se tira",
+  llega((M, "bajado.txt")), {})
+time.sleep(0.35)
+c("  pasado ese momento vuelve a contar", llega((M, "mio.txt")), {KW: ac.CAMBIO})
+
+# --- la carpeta movida o renombrada: el handle se va con ella
+w.movidos[hw] = "E:\\datos\\docs-viejos"
+c("movida: al primer aviso se ve que la carpeta ya no está donde se abrió, y se pierde",
+  (llega((M, "a.txt")), w.abiertos, w.registrados), ({KW: ac.PERDIDA}, {}, {}))
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+w.movidos[hw] = "E:\\datos\\otra"
+c("  sin ningún aviso, se ve al acabar su pasada (descartar)",
+  (mw.descartar(KW), tipos_w(mw), w.abiertos), (None, {KW: ac.PERDIDA}, {}))
+mw.cerrar()
+
+# --- alguien pide el volumen en exclusiva: DBT_CUSTOMEVENT con los GUID de ioevent.h
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW)
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, "7373654a-812a-11d0-bec7-08002be2092f")
+c("volumen: un aviso que no es de bloqueo no toca nada", len(w.abiertos), 1)
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_LOCK)
+c("  al pedir el bloqueo, la carpeta se cierra dentro del aviso", w.abiertos, {})
+c("  conservando el registro y sin avisar de nada", (len(w.registrados), tipos_w(mw)), (1, {}))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_LOCK_FAILED)
+c("  si el bloqueo falla, se vuelve a abrir", hasta(lambda: len(w.abiertos) == 1), True)
+c("  y cuenta como un cambio: entre cerrar y abrir no se ha oído nada",
+  hasta(lambda: KW in mw._pendientes) and tipos_w(mw), {KW: ac.CAMBIO})
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_LOCK)
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_UNLOCK)
+c("  bloqueo y desbloqueo sin desmontar (un chkdsk): se vuelve a abrir",
+  hasta(lambda: len(w.abiertos) == 1), True)
+hasta(lambda: KW in mw._pendientes)
+mw.recoger()
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_LOCK)
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_DISMOUNT)
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_UNLOCK)
+time.sleep(0.1)
+c("  bloqueo, desmontaje y desbloqueo (expulsarla): no se vuelve a abrir, que la montaría",
+  (w.abiertos, tipos_w(mw)), ({}, {}))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_MOUNT)
+c("  si alguien la vuelve a montar, sí", hasta(lambda: len(w.abiertos) == 1), True)
+hasta(lambda: KW in mw._pendientes)
+mw.recoger()
+hw = next(iter(w.abiertos))
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_LOCK)
+mw.dispositivo(ac.DBT_CUSTOMEVENT, hw, ac.GUID_IO_VOLUME_DISMOUNT)
+mw.dispositivo(ac.DBT_DEVICEREMOVECOMPLETE, hw)
+c("  y si tras desmontarla se quita, se pierde y no queda nada",
+  (tipos_w(mw), w.abiertos, w.registrados), ({KW: ac.PERDIDA}, {}, {}))
+mw.cerrar()
+
+# --- un volumen de VeraCrypt, con el motor que los oye: sus avisos llegan por letra
+w = Win32Falsa()
+w.dispositivos["P:"] = "\\Device\\VeraCryptVolumeP"
+mv = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0, veracrypt=True)
+c("VeraCrypt (con el ajuste): se vigila con avisos", mv.vigilar(KW, "P:\\notas", IGNW), None)
+c("  sin registro por handle: sus volúmenes no lo admiten", (len(w.abiertos), w.registrados),
+  (1, {}))
+hw = next(iter(w.abiertos))
+w.completar(hw, [(ac.FILE_ACTION_MODIFIED, "a.md")])
+c("  y sus cambios avisan como los de cualquier otra", hasta(lambda: KW in mv._pendientes)
+  and tipos_w(mv), {KW: ac.CAMBIO})
+mv.volumen(ac.DBT_DEVICEREMOVEPENDING, ["E:"])
+c("  el desmontaje de OTRA letra no la toca", len(w.abiertos), 1)
+ac.REABRIR_VERACRYPT, plazo_real = 0.2, ac.REABRIR_VERACRYPT
+mv.volumen(ac.DBT_DEVICEREMOVEPENDING, ["p:"])
+c("  al anunciarse su desmontaje, la carpeta se cierra en el acto", w.abiertos, {})
+c("  si no llega a desmontarse (falló, o se canceló), se vuelve a abrir pasado el plazo",
+  hasta(lambda: len(w.abiertos) == 1, 2.0), True)
+c("  y cuenta como un cambio", hasta(lambda: KW in mv._pendientes) and tipos_w(mv),
+  {KW: ac.CAMBIO})
+mv.volumen(ac.DBT_DEVICEREMOVEPENDING, ["P:"])
+w.dispositivos.pop("P:")
+c("  si pasado el plazo la letra ya no es de VeraCrypt, se pierde",
+  hasta(lambda: KW in mv._pendientes, 2.0) and (tipos_w(mv), w.abiertos), ({KW: ac.PERDIDA}, {}))
+w.dispositivos["P:"] = "\\Device\\VeraCryptVolumeP"
+mv.vigilar(KW, "P:\\notas", IGNW)
+mv.volumen(ac.DBT_DEVICEREMOVECOMPLETE, ["P:"])
+c("  desmontado sin anunciarse (forzado): se pierde y no queda nada abierto",
+  (tipos_w(mv), w.abiertos), ({KW: ac.PERDIDA}, {}))
+ac.REABRIR_VERACRYPT = plazo_real
+mv.cerrar()
+w = Win32Falsa()
+w.dispositivos["P:"] = "\\Device\\VeraCryptVolumeP"
+mw = ac.ReadDirectoryChanges(w, HWND)
+c("  sin el ajuste, un volumen de VeraCrypt se sigue recorriendo",
+  "VeraCrypt" in (mw.vigilar(KW, "P:\\notas", IGNW) or ""), True)
+mw.cerrar()
+
 # ---------------------------------------------------------------------------
 # Windows de verdad
 # ---------------------------------------------------------------------------
@@ -406,6 +652,51 @@ if sys.platform.startswith("win"):
     shutil.rmtree(WR)
     c("  tras dejarla, la carpeta se puede borrar entera", WR.exists(), False)
     mr.cerrar()
+
+    # Agrupar, de verdad: una ráfaga despierta al hilo unas pocas veces, no una por fichero.
+    lecturas = [0]
+    leer_de_verdad = api.leer_cambios
+
+    def leer_contando(*a):
+        lecturas[0] += 1
+        return leer_de_verdad(*a)
+
+    api.leer_cambios = leer_contando
+    mg = ac.ReadDirectoryChanges(api, 1, agrupar=0.3, callar=0.0)
+    WG = tmpdir("prdrive-avisos-w-")
+    mg.vigilar(KW, WG, IGNW)
+    for i in range(300):
+        (WG / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
+    c("  una ráfaga de 300 ficheros avisa", hasta(lambda: KW in mg._pendientes) and tipos_w(mg),
+      {KW: ac.CAMBIO})
+    time.sleep(0.8)
+    c("  con unas pocas lecturas, no una por fichero", lecturas[0] <= 8, True)
+    mg.descartar(KW)
+    (WG / "tmp.lock").write_text("x", encoding="utf-8")
+    (WG / "tmp.lock").unlink()
+    time.sleep(0.8)
+    c("  un fichero que nace y muere no deja un cambio", tipos_w(mg).get(KW, ac.RETIRADO),
+      ac.RETIRADO)
+    (WG / "sub").mkdir()
+    time.sleep(0.6)
+    mg.descartar(KW)
+    (WG / "sub" / "dentro.txt").write_text("x", encoding="utf-8")
+    c("  un fichero nuevo en una subcarpeta avisa", hasta(lambda: KW in mg._pendientes)
+      and tipos_w(mg), {KW: ac.CAMBIO})
+    time.sleep(0.6)
+    mg.descartar(KW)
+    WG2 = WG.with_name(WG.name + "-movida")
+    try:
+        os.rename(WG, WG2)
+        movida = True
+    except OSError:
+        movida = False                      # un antivirus con la carpeta abierta: no se prueba
+    if movida:
+        c("  renombrar la carpeta vigilada no avisa, pero se ve al acabar su pasada",
+          (mg.descartar(KW), tipos_w(mg)), (None, {KW: ac.PERDIDA}))
+        os.rename(WG2, WG)
+    mg.cerrar()
+    api.leer_cambios = leer_de_verdad
     mp = ac.ReadDirectoryChanges(api, 1, tam_bufer=16)
     WP = tmpdir("prdrive-avisos-w-")
     mp.vigilar(KW, WP, IGNW)
@@ -478,6 +769,41 @@ c("una carpeta nueva avisa", tras(m, lambda: (T / "nueva").mkdir()), CAMBIO)
 c("  y lo que se escribe dentro después, también",
   tras(m, lambda: (T / "nueva" / "f.txt").write_text("f")), CAMBIO)
 
+# El efecto neto: lo que nace y muere sin que ninguna pasada lo vea no es un cambio.
+RETIRADO = {K: ac.RETIRADO}
+m.descartar(K)                          # como al acabar la pasada: la cuenta empieza de cero
+
+
+def nace_y_muere() -> None:
+    (T / "index.lock").write_text("x")
+    (T / "index.lock").unlink()
+
+
+def carpeta_efimera() -> None:
+    (T / "efimera").mkdir()
+    (T / "efimera" / "x.tmp").write_text("x")
+    shutil.rmtree(T / "efimera")
+
+
+c("neto: un fichero que nace y muere antes de recogerse no deja un cambio",
+  tras(m, nace_y_muere), RETIRADO)
+c("  uno que nace es un cambio…", tras(m, lambda: (T / "tmp1").write_text("x")), CAMBIO)
+c("  …y cuando muere, ya recogido el cambio, se retira",
+  tras(m, lambda: (T / "tmp1").unlink()), RETIRADO)
+c("  una carpeta que nace con algo dentro y se borra entera, tampoco",
+  tras(m, carpeta_efimera), RETIRADO)
+c("  en una subcarpeta, igual",
+  tras(m, lambda: ((T / "sub" / "t").write_text("x"), (T / "sub" / "t").unlink())), RETIRADO)
+c("  guardar algo que ya estaba es un cambio firme",
+  tras(m, lambda: (T / "sub" / "b.txt").write_text("bbb")), CAMBIO)
+c("  y ya no lo retira nada", tras(m, nace_y_muere), CAMBIO)
+m.descartar(K)
+c("  hasta la pasada siguiente (descartar)", tras(m, nace_y_muere), RETIRADO)
+c("  un renombrado no se sigue: es un cambio",
+  tras(m, lambda: ((T / "r1").write_text("x"), os.rename(T / "r1", T / "r2"),
+                   (T / "r2").unlink())), CAMBIO)
+m.descartar(K)
+
 
 def llena() -> None:
     """Una carpeta nueva que ya trae otra dentro, con un fichero."""
@@ -543,6 +869,23 @@ c("  ni lo que cae en ella", tras(m3, lambda: (RU / ".Trash-1000" / "f").write_t
 c("  lo demás, sí", tras(m3, lambda: (RU / "doc.txt").write_text("d")), CAMBIO)
 c("  y una carpeta con ese nombre más abajo es de alguien: avisa",
   tras(m3, lambda: (RU / "sub" / "$RECYCLE.BIN").mkdir()), CAMBIO)
+
+# El ruido de editor: ficheros que no cuentan, estén donde estén.
+m3b = motor()
+RE = arbol()
+c("con el ruido de editor fuera, se vigila", m3b.vigilar(K, RE, IGN + huella.RUIDO_DE_EDITOR),
+  None)
+c("  el fichero de bloqueo de LibreOffice no avisa al nacer",
+  tras(m3b, lambda: (RE / "sub" / ".~lock.b.ods#").write_text("x")), {})
+c("  ni al morir", tras(m3b, lambda: (RE / "sub" / ".~lock.b.ods#").unlink()), {})
+c("  ni el intercambio de vim, ni el temporal de guardado de GLib",
+  tras(m3b, lambda: ((RE / ".a.txt.swp").write_text("x"),
+                     (RE / ".goutputstream-AB12").write_text("x"))), {})
+c("  una carpeta que se llame así es de alguien: avisa",
+  tras(m3b, lambda: (RE / "~$carpeta").mkdir()), CAMBIO)
+m3b.descartar(K)
+c("  y un guardado que acaba renombrando sobre el documento, también",
+  tras(m3b, lambda: os.replace(RE / ".goutputstream-AB12", RE / "a.txt")), CAMBIO)
 
 # ---------------------------------------------------------------------------
 # 4. Parejas que se solapan

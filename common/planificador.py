@@ -25,6 +25,16 @@ Las reglas, en el orden en que se aplican:
   no hay avisos, cada 30 donde los hay y el temporizador solo es el respaldo.
 - Espera creciente por pareja: `intervalo · 2^k` tras k fallos seguidos, con
   tope de 4 h, y a cero tras una pasada buena.
+- El intervalo se estira: una pareja cuyas pasadas llevan un rato sin mover nada
+  (`Marca.vacias`, lo dice el parte de `sync.py`) se pasa cada vez menos, hasta
+  `Politica.estirar_factor` veces su intervalo y nunca más de
+  `Politica.estirar_maximo` (`estirado()`). Vuelve al de fábrica en cuanto una
+  pasada mueve algo, falla, o la pide alguien; el agente lo devuelve además al
+  cambiar sus ficheros locales, al volver la red y al retomar la raíz
+  (`despierta()`). El llavero no se estira nunca.
+- Una pareja saltada (pedía `--resync`) no se relanza en cada intervalo para que
+  se salte igual: espera `Politica.espera_saltada`, o a que el agente la
+  despierte.
 - Una raíz bloqueada, ausente, en pausa o apartada simplemente no está: no es
   un fallo, no hace esperar más y no avisa de nada.
 - Cambios locales (`watch = true`): una pareja que lo pide se sincroniza poco
@@ -34,7 +44,9 @@ Las reglas, en el orden en que se aplican:
   barata de su carpeta (`Huella`) que se toma cada `sondeo` mientras la carpeta
   se mueve y cada `sondeo_quieto` cuando lleva quieta. Una ráfaga de cambios es
   una sola pasada (`PoliticaCambios.calma`) y no hay dos pasadas de la misma
-  pareja más cerca que `separacion`. Al terminar una pasada se vuelve a tomar
+  pareja más cerca que `separacion`, que se dobla (hasta `separacion_tope`)
+  mientras las pasadas adelantadas salgan sin nada que mover
+  (`separacion_de()`): acota cualquier ruido. Al terminar una pasada se vuelve a tomar
   la foto, para que lo que la propia pasada escribió no la dispare otra vez.
   Los cambios del remoto no se ven: esperan al intervalo.
 
@@ -98,6 +110,15 @@ class Politica:
             puede haber cambiado.
         mirar_ocupado: Con una pasada en marcha, cada cuánto se mira si ha
             terminado.
+        estirar: Si el intervalo de una pareja se estira cuando sus pasadas no
+            mueven nada (`estirado()`).
+        estirar_vacias: Cuántas pasadas seguidas sin mover nada doblan el
+            intervalo una vez.
+        estirar_factor: Cuántas veces su intervalo, como mucho.
+        estirar_maximo: Segundos entre pasadas como mucho por haberse
+            estirado; un intervalo que ya es mayor no se toca.
+        espera_saltada: Segundos, como poco, entre dos intentos de una pareja
+            que se salta porque pide `--resync`.
     """
     con_bateria: bool = True
     bateria_minima: int = 20
@@ -108,6 +129,11 @@ class Politica:
     sondeo_de_respaldo: float = 30 * 60.0
     mirar_maximo: float = 60.0
     mirar_ocupado: float = 2.0
+    estirar: bool = True
+    estirar_vacias: int = 3
+    estirar_factor: int = 4
+    estirar_maximo: float = 30 * 60.0
+    espera_saltada: float = HORA
 
 
 @dataclass(frozen=True)
@@ -161,9 +187,17 @@ class Marca:
         ultimo_intento: Cuándo se intentó por última vez, o `None` si nunca o
             si tocó volver a intentarlo.
         fallos: Fallos seguidos.
+        vacias: Pasadas seguidas que fueron bien y no movieron nada: las que
+            estiran su intervalo.
+        vacias_por_cambios: De esas, las seguidas que se adelantaron por los
+            cambios locales: las que alargan la separación.
+        saltada: Si la última se saltó porque pedía `--resync`.
     """
     ultimo_intento: float | None = None
     fallos: int = 0
+    vacias: int = 0
+    vacias_por_cambios: int = 0
+    saltada: bool = False
 
 
 @dataclass(frozen=True)
@@ -242,18 +276,70 @@ def espera(intervalo: float, fallos: int, tope: float = 4 * HORA) -> float:
     return min(intervalo * (2 ** min(fallos, 32)), max(tope, intervalo))
 
 
-def registrar(marca: Marca, resultado: str, ahora: float) -> Marca:
+def estirado(intervalo: float, vacias: int, politica: Politica = Politica()) -> float:
+    """Devuelve el intervalo de una pareja que lleva `vacias` pasadas sin mover nada.
+
+    Se dobla cada `estirar_vacias` pasadas, hasta `estirar_factor` veces, y sin
+    pasar de `estirar_maximo`. Nunca lo acorta: un intervalo que ya es mayor que
+    ese máximo (o el modo `sync`, infinito) se queda como está.
+    """
+    if not politica.estirar or vacias < politica.estirar_vacias or math.isinf(intervalo):
+        return intervalo
+    factor = min(2 ** min(vacias // politica.estirar_vacias, 16), politica.estirar_factor)
+    return max(intervalo, min(intervalo * factor, politica.estirar_maximo))
+
+
+def registrar(marca: Marca, resultado: str, ahora: float, vacia: bool = False,
+              por_cambios: bool = False, urgente: bool = False) -> Marca:
     """Devuelve la marca de una pareja después de una pasada.
 
     Una pasada de `RED` no cuenta como intento: la pareja espera al remoto, no
     a su intervalo, y en cuanto la sonda diga que contesta vuelve a tocarle.
     Tampoco suma un fallo: el problema es la red, no la pareja.
+
+    Args:
+        vacia: Si la pasada fue bien y se sabe que no movió nada
+            (`parte.Parte.vacia`). Sin saberlo cuenta como que movió.
+        por_cambios: Si se adelantó por los cambios locales.
+        urgente: Si la pidió alguien a mano: quien está delante quiere el
+            intervalo de fábrica, haya movido algo o no.
     """
-    if resultado == OK or resultado == SALTADA:
-        return Marca(ahora, 0)
+    if resultado == SALTADA:
+        return Marca(ahora, 0, saltada=True)
+    if resultado == OK:
+        if not vacia or urgente:
+            return Marca(ahora, 0)
+        return Marca(ahora, 0, marca.vacias + 1,
+                     marca.vacias_por_cambios + 1 if por_cambios else marca.vacias_por_cambios)
     if resultado == RED:
-        return Marca(None, marca.fallos)
+        return replace(marca, ultimo_intento=None)
     return Marca(ahora, marca.fallos + 1)
+
+
+def despierta(marca: Marca) -> Marca:
+    """Devuelve la marca de una pareja que vuelve a su intervalo de fábrica.
+
+    Es para lo que el planificador no ve: han cambiado sus ficheros locales, ha
+    vuelto la red, el agente retoma la raíz tras su ventana. Ni estirada ni
+    saltada; lo demás (cuándo se intentó, los fallos) se conserva.
+    """
+    if not (marca.vacias or marca.vacias_por_cambios or marca.saltada):
+        return marca
+    return replace(marca, vacias=0, vacias_por_cambios=0, saltada=False)
+
+
+def cada(raiz: Raiz, pareja: Pareja, marca: Marca, politica: Politica = Politica()) -> float:
+    """Devuelve los segundos entre pasadas de una pareja ahora mismo, sin contar los fallos.
+
+    Su intervalo, estirado si lleva un rato sin mover nada (el llavero, nunca),
+    y no menos de `espera_saltada` si se está saltando.
+    """
+    intervalo = intervalo_de(raiz, pareja)
+    if not pareja.llavero:
+        intervalo = estirado(intervalo, marca.vacias, politica)
+    if marca.saltada:
+        intervalo = max(intervalo, politica.espera_saltada)
+    return intervalo
 
 
 def empieza_a_fallar(antes: Marca, despues: Marca) -> bool:
@@ -368,8 +454,8 @@ def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
             if marca.ultimo_intento is None:
                 toca = -math.inf        # nunca se ha intentado: ya
             else:
-                toca = marca.ultimo_intento + espera(intervalo, marca.fallos,
-                                                     politica.tope_espera)
+                toca = marca.ultimo_intento + espera(cada(raiz, pareja, marca, politica),
+                                                     marca.fallos, politica.tope_espera)
                 if pareja.vigila and not math.isinf(intervalo):
                     antes = toca_por_cambios(
                         vigiladas.get((raiz.clave, pareja.nombre)), marca, cambios)
@@ -586,6 +672,8 @@ class PoliticaCambios:
             pareja y una pasada adelantada por cambios: un editor que guarda
             cada medio minuto no convierte el intervalo en una pasada por
             guardado.
+        separacion_tope: Hasta dónde crece esa separación mientras las pasadas
+            adelantadas salgan sin nada que mover (`separacion_de()`).
         tope_entradas: Más entradas que esto y la pareja deja de vigilarse:
             recorrer una carpeta enorme cada pocos segundos cuesta más de lo
             que da, sobre todo en un pendrive.
@@ -598,6 +686,7 @@ class PoliticaCambios:
     sondeo_bateria: float = 60.0
     calma: float = 20.0
     separacion: float = 120.0
+    separacion_tope: float = 15 * 60.0
     tope_entradas: int = 20_000
     fotos_fallidas: int = 3
 
@@ -623,6 +712,9 @@ class Vigilada:
         movida: Cuándo se vio su último cambio, por una foto o por un aviso, o
             `None` si no se ha visto ninguno. Una pasada no lo toca: lo que
             escribe rclone no dice que la persona esté trabajando ahí.
+        firme: Si el cambio pendiente no lo puede retirar un aviso
+            (`retirado()`): lo vio una foto, antes de volver a oír los avisos
+            del sistema, y el motor no sabe nada de él. Lo borra la pasada.
     """
     huella: Huella | None = None
     cambio: float | None = None
@@ -631,6 +723,7 @@ class Vigilada:
     fallidas: int = 0
     avisos: bool = False
     movida: float | None = None
+    firme: bool = False
 
 
 def observar(vigilada: Vigilada, huella: Huella | None, ahora: float,
@@ -671,6 +764,18 @@ def avisado(vigilada: Vigilada, ahora: float) -> Vigilada:
     return replace(vigilada, cambio=ahora, movida=ahora)
 
 
+def retirado(vigilada: Vigilada) -> Vigilada:
+    """Devuelve lo recordado de una pareja cuando el sistema dice que su cambio se ha deshecho.
+
+    Lo que se avisó (`avisado()`) nació y murió sin que ninguna pasada lo viera
+    (`avisos_carpeta.Neto`): no queda nada que adelantar. `movida` se conserva:
+    alguien anda por ahí.
+    """
+    if vigilada.abandonada or vigilada.firme:
+        return vigilada
+    return replace(vigilada, cambio=None)
+
+
 def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigilada:
     """Devuelve lo recordado de una pareja cuando termina una pasada suya.
 
@@ -690,7 +795,7 @@ def tras_pasada(vigilada: Vigilada, huella: Huella | None, ahora: float) -> Vigi
     """
     if vigilada.abandonada:
         return vigilada
-    return replace(vigilada, huella=huella, cambio=None, revisada=ahora,
+    return replace(vigilada, huella=huella, cambio=None, revisada=ahora, firme=False,
                    fallidas=vigilada.fallidas if huella is None else 0)
 
 
@@ -719,21 +824,36 @@ def vuelve_a_haber_foto(antes: Vigilada, despues: Vigilada,
     return antes.fallidas >= politica.fotos_fallidas and despues.fallidas == 0
 
 
+def separacion_de(marca: Marca, politica: PoliticaCambios = PoliticaCambios()) -> float:
+    """Devuelve la separación entre pasadas adelantadas que le toca ahora a una pareja.
+
+    La de fábrica, doblada por cada pasada adelantada que salió sin nada que
+    mover después de la primera, hasta `separacion_tope`: unos avisos que no
+    traen cambios (un temporal que nace y muere, un programa que reescribe lo
+    mismo) no pueden costar una pasada cada dos minutos para siempre. Una sola
+    pasada que mueva algo la devuelve a la de fábrica (`registrar()`).
+    """
+    dobles = min(max(0, marca.vacias_por_cambios - 1), 16)
+    return max(politica.separacion, min(politica.separacion * 2 ** dobles,
+                                        politica.separacion_tope))
+
+
 def toca_por_cambios(vigilada: Vigilada | None, marca: Marca,
                      politica: PoliticaCambios = PoliticaCambios()) -> float:
     """Devuelve cuándo tocaría la pasada de una pareja por sus cambios locales.
 
     Returns:
         La hora, o infinito si no hay cambio pendiente, la pareja está
-        abandonada, nunca se ha intentado (esa ya toca por su intervalo) o está
-        fallando: la espera creciente es para que un fallo no se reintente a
-        cada cambio, y un cambio no la anula.
+        abandonada, nunca se ha intentado (esa ya toca por su intervalo), está
+        fallando (la espera creciente es para que un fallo no se reintente a
+        cada cambio, y un cambio no la anula) o se está saltando: adelantar una
+        pasada que va a saltarse no sube nada.
     """
     if (vigilada is None or vigilada.abandonada or vigilada.cambio is None
-            or marca.ultimo_intento is None or marca.fallos > 0):
+            or marca.ultimo_intento is None or marca.fallos > 0 or marca.saltada):
         return math.inf
     return max(vigilada.cambio + politica.calma,
-               marca.ultimo_intento + politica.separacion)
+               marca.ultimo_intento + separacion_de(marca, politica))
 
 
 def cada_cuanto(pareja: Pareja, vigilada: Vigilada, ahora: float,

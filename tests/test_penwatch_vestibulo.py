@@ -212,6 +212,7 @@ try:
     Path.is_file = is_file_falso
     penwatch.subprocess.Popen = lambda cmd, **kw: lanzado.append(cmd)
     os.environ["DISPLAY"] = ":99"
+    os.environ.pop("WAYLAND_DISPLAY", None)
     for programas, con_tcrypt, via in (
             ({"veracrypt", "udisksctl", "cryptsetup"}, True, "veracrypt"),
             ({"udisksctl", "cryptsetup"}, True, "udisks2"),

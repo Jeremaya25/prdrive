@@ -48,7 +48,7 @@ Wait without polling (Linux ~1 min, Windows 3-15 min): Bash `sleep 300` with `ru
 
 Copy a `tests/maquina/fNN_*.py` (≈40 lines): `CODIGO`, `SISTEMA` (`"W"`/`"L"`), `QUE` (one line), `probar(p)`. Checks `p.ver(label, got, want)`; findings `p.nota(text)`; VM cannot do it: `raise comun.Saltada(why)`; several cases (filesystems): `comun.por_cada(p, cases, fn)`, which gives `parcial`. Helpers in `comun.py`: `volumen_linux(tipo)`, `volumen_windows(tipo, letra)`, `bandeja_windows()`, `apt()`, `diskpart()`, `ejecutar()`, `avisos(motor)`, `quieto(motor)`.
 
-VM limits seen so far: the Windows VM has no interactive desktop, so windows get no `WM_DEVICECHANGE` (check for it and `Saltada`, as F15 does); let `volumen_windows()` pick the letter (a just-freed one fails); the Linux kernel loads exFAT from `linux-modules-extra` (`volumen_linux` does it).
+VM limits seen so far: the Windows VM does deliver `WM_DEVICECHANGE` to a tray window (F16, F18 and F24 got theirs on 2026-10-12; the old «no notices» was the second `Bandeja` of one process, fixed in `comun.bandeja_windows()`), but Explorer's «Eject» verb does nothing there and a virtual disk is no pendrive (F15 says so and skips); still check for `DBT_DEVICEARRIVAL` and `Saltada` without it; let `volumen_windows()` pick the letter (a just-freed one fails); the Linux kernel loads exFAT from `linux-modules-extra` (`volumen_linux` does it).
 
 Test the boundary only: never deploy a device, fetch rclone or run the whole agent. Before pushing: `python -m py_compile tests/maquina/*.py`; a Linux row without FAT/exFAT runs here as root: `python tests/maquina/correr.py F12 --de-verdad`.
 

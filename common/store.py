@@ -692,14 +692,31 @@ def procesos_llamados(nombre: str) -> set[int]:
 
     Solo en Windows (en POSIX, vacío). Es como se ve la copia elevada que
     VeraCrypt sin su driver instalado lanza de sí mismo (`/q UAC`): la lanzada
-    sale y la otra sigue. Va por la instantánea de Toolhelp, que da el nombre
-    sin abrir ningún proceso ni pedir permisos sobre uno elevado, y no por WMI:
-    en las pruebas en G:, la consulta a WMI no enseñaba la copia elevada de
-    VeraCrypt y `Get-Process` sí. Si no se puede sacar la instantánea devuelve
-    un conjunto vacío: no poder mirar no puede dejar a nadie esperando.
+    sale y la otra sigue. Va por la instantánea de Toolhelp
+    (`foto_de_procesos()`), y no por WMI: en las pruebas en G:, la consulta a
+    WMI no enseñaba la copia elevada de VeraCrypt y `Get-Process` sí. Si no se
+    puede sacar la instantánea devuelve un conjunto vacío: no poder mirar no
+    puede dejar a nadie esperando.
+    """
+    foto = foto_de_procesos()
+    if foto is None:
+        return set()
+    return {pid for pid, exe in foto.items() if exe.lower() == nombre.lower()}
+
+
+def foto_de_procesos() -> dict[int, str] | None:
+    """Devuelve `{pid: nombre del ejecutable}` de los procesos vivos, sin abrir ninguno.
+
+    Es la instantánea de Toolhelp de Windows, que da el nombre (no la ruta) sin
+    abrir ningún proceso ni pedir permisos sobre uno elevado: mucho más barata
+    que `procesos()`, que abre cada uno para saber desde dónde corre.
+
+    Returns:
+        Los procesos, o `None` si no se puede sacar la instantánea (siempre,
+        fuera de Windows).
     """
     if os.name != "nt":
-        return set()
+        return None
     import ctypes
     from ctypes import wintypes
 
@@ -726,15 +743,14 @@ def procesos_llamados(nombre: str) -> set[int]:
 
     foto = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if not foto or foto == wintypes.HANDLE(-1).value:
-        return set()
-    vivos = set()
+        return None
+    vivos: dict[int, str] = {}
     try:
         entrada = PROCESSENTRY32W()
         entrada.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         seguir = k32.Process32FirstW(foto, ctypes.byref(entrada))
         while seguir:
-            if entrada.szExeFile.lower() == nombre.lower():
-                vivos.add(entrada.th32ProcessID)
+            vivos[entrada.th32ProcessID] = entrada.szExeFile
             seguir = k32.Process32NextW(foto, ctypes.byref(entrada))
     finally:
         k32.CloseHandle(foto)

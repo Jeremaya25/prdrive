@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Mapping
 
 from common import (bisync, cifrada, conflicts, fleet, historial, llavero, model, moderacion,
-                    progress, results, revision, store)
+                    parte, progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
@@ -523,9 +523,14 @@ def crear_carpeta_remota(ctx: RunContext, pair: Pair) -> int:
     return rc
 
 
+ORDENES = [0]
+"""Cuántas veces ha lanzado rclone este proceso (`execute()`); va en el parte de cada pareja."""
+
+
 def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int:
     """Ejecuta rclone y devuelve su código de salida."""
     print(f"  ejecutando{ctx.tag}: " + " ".join(cmd))
+    ORDENES[0] += 1
     # cwd fijo: `rclone.conf` usa rutas relativas (`key_file`,
     # `known_hosts_file`) que se resuelven contra él.
     kwargs: dict = {"cwd": str(model.APP_DIR)}
@@ -613,10 +618,29 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
                                        final.hecho if final is not None else None))
 
 
+def sin_conflictos_nuevos(pair: Pair, dicho: parte.Parte | None) -> bool:
+    """Indica si se puede dar por sabido que la pasada no ha dejado conflictos.
+
+    Solo cuando se sabe que no movió nada (`Parte.vacia`) y el último recorrido
+    de la pareja no apuntó ninguna copia: rclone renombra al perdedor al
+    detectar el conflicto, y eso cambia los listados. Con alguna copia apuntada
+    se sigue recorriendo, para que la lista se vacíe cuando la persona las
+    resuelva. Ahorra recorrer con `os.walk` toda la carpeta local tras cada
+    pasada sin cambios.
+    """
+    if dicho is None or not dicho.vacia or not pair.is_bisync:
+        return False
+    try:
+        return conflicts.sin_apuntar(pair.name)
+    except OSError:
+        return False
+
+
 def report_conflicts(ctx: RunContext, pair: Pair) -> None:
     """Apunta y avisa de los ficheros en conflicto que haya dejado bisync.
 
-    Va tras CADA pasada, buena o mala: rclone renombra al perdedor al
+    Va tras cada pasada, buena o mala, que haya podido dejarlos
+    (`sin_conflictos_nuevos()`): rclone renombra al perdedor al
     detectarlo y un fallo posterior no quita el conflicto. Si el recorrido
     falla (dispositivo desaparecido a medias) se calla: es un aviso y no puede
     tumbar la sincronización.
@@ -641,8 +665,19 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     """Ejecuta una pareja y devuelve su código de salida.
 
     Antes de nada aborta con 2 si su carpeta local, ya resuelta, es la del
-    programa o cae dentro (`model.problema_contencion()`).
+    programa o cae dentro (`model.problema_contencion()`). Al acabar escribe su
+    parte (`common/parte.py`): la línea que lee el agente residente, con si la
+    pasada movió algo. Un simulacro no lo escribe.
     """
+    medida = parte.Medida(pair, ORDENES[0], medir=not ctx.dry_run)
+    rc = _pasar_pareja(ctx, pair, medida)
+    if not ctx.dry_run:
+        print(parte.linea(medida.parte or medida.acabar(rc, ORDENES[0])))
+    return rc
+
+
+def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
+    """Hace la pasada de una pareja (`run_pair()`) y deja en `medida` lo que solo se sabe aquí."""
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
     reloj = historial.Reloj()
 
@@ -686,12 +721,15 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
+    medida.resync = bool(need_resync)
     rc = execute(ctx, cmd, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
     # Antes de `dispose_log()`: si la pasada fue bien, el log se tira y con él
     # lo que dice cuánto movió.
     final = progress.final_del_log(logfile)
+    if not pair.is_bisync:
+        medida.quieta = parte.sin_actividad(logfile)
 
     saved = dispose_log(pair.name, logfile, rc, ctx.keep_logs)
     if rc == 0:
@@ -701,7 +739,11 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
         print_log_tail(saved)
         explain_failure(saved)
     record_result(ctx, pair, rc, saved, reloj, final)
-    report_conflicts(ctx, pair)
+    if not pair.llavero and not ctx.dry_run:
+        # El llavero puede dar otra pasada aquí debajo: su parte se cierra al final.
+        medida.cerrar(rc, ORDENES[0])
+    if not sin_conflictos_nuevos(pair, medida.parte):
+        report_conflicts(ctx, pair)
     if rc == 0 and pair.llavero and not ctx.dry_run:
         reapuntar_llavero(ctx, pair, ffile)
     return rc

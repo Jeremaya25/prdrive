@@ -100,9 +100,14 @@ c("  y el desplegable, «Expulsando…» apagado, sin Expulsar ni abrir su venta
     if x.texto in ("Expulsar", "Expulsando…", "Configurar", "Abrir en explorador")]),
   [("Configurar", False), ("Abrir en explorador", False), ("Expulsando…", False)])
 F.acabar(pasada[0], rc=0)
+F.vueltas(ag, 1)
+c("acabada la pareja no expulsa todavía: antes sube lo que haya cambiado desde que empezó",
+  (F.EXPULSADAS, len(F.pasadas(RA)), F.pasadas(RA)[-1].args[-2:]), ([], 2, ["--", "docs"]))
+c("  y mientras tanto conserva su lock", (RA / penwatch.DAEMON_LOCK_REL).exists(), True)
+F.acabar(F.pasadas(RA)[-1], rc=0)
 antes = len(F.pasadas(RA))
 F.vueltas(ag, 1)
-c("acabada la pareja, expulsa UNA vez esa raíz", F.EXPULSADAS, [RA])
+c("acabada esa, expulsa UNA vez esa raíz", F.EXPULSADAS, [RA])
 c("  soltando antes su lock", (RA / penwatch.DAEMON_LOCK_REL).exists(), False)
 F.vueltas(ag, 1)
 c("  y a la vuelta siguiente, con el resultado, avisa de que ya se puede quitar",
@@ -139,9 +144,20 @@ F.EXPULSADAS.clear()
 F.AVISOS.clear()
 F.RESULTADO_EXPULSAR[0] = expulsar.Resultado(False, "Algo la está usando.")
 F.pasar(60)
-F.vueltas(ag, 2)
-for p in F.pasadas(RA):                 # que no haya pasadas en curso
-    p.rc = 0
+
+
+def asentar() -> None:
+    """Acaba bien las pasadas en marcha, de cualquier unidad, hasta que no quede ninguna."""
+    for _ in range(12):
+        F.vueltas(ag, 1)
+        vivas = [p for p in F.pasadas() if p.rc is None]
+        if not vivas and ag.pasada is None:
+            return
+        for p in vivas:
+            F.acabar(p, rc=0)
+
+
+asentar()                               # sin pasadas en curso, y la suya recién hecha
 equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
 F.vueltas(ag, 2)
 c("si el sistema no la suelta, se dice con su motivo",
@@ -165,6 +181,106 @@ F.vueltas(ag, 1)
 c("  y pasado un rato lo dice y lo deja",
   ([t for t, _ in F.AVISOS], A in ag.expulsiones), (["PEN-A: no la expulso"], False))
 (RA / penwatch.UI_LOCK_REL).unlink()
+
+# --- antes de soltarla sube lo pendiente (y solo eso)
+F.EXPULSADAS.clear()
+F.AVISOS.clear()
+
+
+def servida_otra_vez() -> None:
+    """Espera a que el agente vuelva a servir PEN-A (cerrada su ventana, pasada la gracia) y a que no haya pasadas."""
+    for _ in range(20):
+        if A in ag.conexiones and ag.conexiones[A].lock is not None:
+            break
+        F.vueltas(ag, 1)
+    asentar()
+
+
+servida_otra_vez()
+c("(cerrada su ventana, el agente la sirve otra vez)", ag.conexiones[A].lock is not None, True)
+F.pasar(agente.RECIEN_PASADA + 1)
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+n = len(F.pasadas(RA))
+F.vueltas(ag, 1)
+c("pasada hace un rato: «Expulsar» la pasa antes de soltar la unidad",
+  (len(F.pasadas(RA)) - n, F.EXPULSADAS, ag.expulsiones[A].subir), (1, [], ["docs"]))
+F.acabar(F.pasadas(RA)[-1], rc=1, salida="un error cualquiera\n")
+F.vueltas(ag, 2)
+c("  si esa pasada falla se expulsa igual, diciendo qué se ha quedado sin sincronizar",
+  (F.EXPULSADAS, [x for t, x in F.AVISOS if "ya puedes quitarla" in t]),
+  ([RA], ["Ya puedes quitarla. Se ha quedado sin sincronizar: docs."]))
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+
+F.EXPULSADAS.clear()
+F.pasar(agente.RECIEN_PASADA + 1)
+equipo.pedir({"pide": equipo.PIDE_PAUSA})
+F.vueltas(ag, 1)
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+n = len(F.pasadas(RA))
+F.vueltas(ag, 2)
+c("en pausa no se pasa nada antes: expulsar no se salta lo que pidió la persona",
+  (len(F.pasadas(RA)) - n, F.EXPULSADAS), (0, [RA]))
+equipo.pedir({"pide": equipo.PIDE_SIGUE})
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+
+F.EXPULSADAS.clear()
+F.AVISOS.clear()
+F.pasar(agente.RECIEN_PASADA + 1)
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+F.vueltas(ag, 2)                        # su pasada de antes de expulsar se queda en marcha
+c("(la pasada de antes de expulsar está en marcha)", F.EXPULSADAS, [])
+F.pasar(agente.ESPERA_SUBIR)
+F.vueltas(ag, 1)
+c("pasado el plazo sigue esperando a la pareja en curso, que no se corta", F.EXPULSADAS, [])
+F.acabar(F.pasadas(RA)[-1], rc=0)
+F.vueltas(ag, 2)
+c("  y al acabar, expulsa", F.EXPULSADAS, [RA])
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+
+# La cola es una para todo el equipo: si la tiene la pasada de OTRA unidad, lo de esta
+# no espera más que un momento.
+F.EXPULSADAS.clear()
+F.AVISOS.clear()
+ag.marcas.pop((B, "docs"), None)        # a PEN-B le toca ya
+F.vueltas(ag, 1)
+c("(la pasada en marcha es de otra unidad)", ag.pasada.tarea.raiz, B)
+F.pasar(agente.RECIEN_PASADA + 1)
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+F.vueltas(ag, 2)
+c("con la cola ocupada por otra unidad, espera su turno un momento", F.EXPULSADAS, [])
+F.pasar(agente.ESPERA_TURNO)
+F.vueltas(ag, 2)
+c("  y si no le llega, expulsa diciendo lo que se queda sin sincronizar",
+  (F.EXPULSADAS, [x for t, x in F.AVISOS if "ya puedes quitarla" in t]),
+  ([RA], ["Ya puedes quitarla. Se ha quedado sin sincronizar: docs."]))
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+
+# Si la pasada de antes de expulsar no llega ni a lanzarse, también se dice.
+F.EXPULSADAS.clear()
+F.AVISOS.clear()
+F.pasar(agente.RECIEN_PASADA + 1)
+lanzar_de_mentira = agente.lanzar
+
+
+def lanzar_roto(args, **kw):
+    raise OSError("no se puede lanzar")
+
+
+agente.lanzar = lanzar_roto
+equipo.pedir({"pide": equipo.PIDE_EXPULSAR, "id": A})
+F.vueltas(ag, 3)
+agente.lanzar = lanzar_de_mentira
+c("si su pasada no se puede ni lanzar, expulsa diciendo lo que se queda sin sincronizar",
+  (F.EXPULSADAS, [x for t, x in F.AVISOS if "ya puedes quitarla" in t]),
+  ([RA], ["Ya puedes quitarla. Se ha quedado sin sincronizar: docs."]))
+F.pasar(agente.GRACIA_EXPULSION)
+servida_otra_vez()
+ag.marcas.pop((A, "docs"), None)
+asentar()
 
 # --- lo que no es expulsable, o no está
 F.EXPULSADAS.clear()

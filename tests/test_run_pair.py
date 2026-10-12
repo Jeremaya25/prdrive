@@ -16,7 +16,7 @@ from pathlib import Path
 from _harness import Checks, sandbox
 
 import sync
-from common import bisync, model
+from common import bisync, conflicts, model, parte
 
 c = Checks("run_pair(): control de flujo e invariantes")
 
@@ -421,5 +421,96 @@ c.contains("el known_hosts que no se puede leer, sí", explicar(SIN_KNOWN_HOSTS)
            "known_hosts")
 c.contains("con las rutas relativas contra .prdrive/", explicar(SIN_KNOWN_HOSTS),
            ".prdrive/")
+
+# --- el parte para el agente (`common/parte.py`): la última línea de cada pareja
+NADA_QUE_MOVER = "2026/10/11 10:00:00 INFO  : There was nothing to transfer\n"
+with sandbox():
+    rc, salida, _ = correr(BI)
+    c("una pareja saltada deja su parte, con -1", parte.leer(salida)["bi"].rc, sync.SKIPPED)
+    c("  detrás de lo que lee una persona", salida.rstrip().splitlines()[-1].startswith(parte.MARCA),
+      True)
+with sandbox():
+    rc, salida, _ = correr(UP, texto_log=NADA_QUE_MOVER)
+    c("una pareja `up` cuyo log dice que no había nada: no movió",
+      parte.leer(salida)["up"], parte.Parte("up", 0, False))
+with sandbox():
+    rc, salida, _ = correr(UP, texto_log="2026/10/11 10:00:00 INFO  : a.txt: Copied (new)\n")
+    c("  y con un fichero copiado, movió", parte.leer(salida)["up"].movio, True)
+with sandbox():
+    rc, salida, _ = correr(UP, rc_seq=(1,), texto_log=NADA_QUE_MOVER)
+    c("una pasada que falla: su código, y sin decir si movió",
+      (parte.leer(salida)["up"].rc, parte.leer(salida)["up"].movio), (1, None))
+with sandbox():
+    rc, salida, _ = correr(UP, dry_run=True, texto_log=NADA_QUE_MOVER)
+    c("un simulacro no deja parte", parte.leer(salida), {})
+
+# --- tras una pasada que no movió nada no se vuelven a buscar conflictos
+RECORRIDOS = []
+recorrer_de_verdad = conflicts.recorrer
+
+
+def recorrer_contado(raiz, ignorar=()):
+    RECORRIDOS.append(raiz)
+    return recorrer_de_verdad(raiz, ignorar)
+
+
+conflicts.recorrer = recorrer_contado
+try:
+    with sandbox():
+        par = model.parse_config({"defaults": DEF, "pair": [BI]}).pairs[0]
+        par.local_abs.mkdir(parents=True)
+        par.workdir.mkdir(parents=True)
+        pre = bisync.expected_prefix(par)
+        for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+            (par.workdir / f"{pre}{sufijo}").write_text("# cabecera\n- a.txt\n", encoding="utf-8")
+        ffile = bisync.filters_file_for(par)
+        if ffile:
+            Path(str(ffile) + ".md5").write_text(
+                hashlib.md5(ffile.read_bytes()).hexdigest(), encoding="utf-8")
+
+        def pasar_bi():
+            """Una pasada simulada de `bi` que no toca los listados; devuelve lo recorrido."""
+            RECORRIDOS.clear()
+            rc, salida, _ = correr(BI)
+            return rc, parte.leer(salida)["bi"].movio, len(RECORRIDOS)
+
+        c("la primera pasada sin cambios recorre: la pareja nunca se había mirado",
+          pasar_bi(), (0, False, 1))
+        c("  y deja apuntado que no hay ninguna copia", conflicts.sin_apuntar("bi"), True)
+        c("la siguiente sin cambios ya no recorre la carpeta", pasar_bi(), (0, False, 0))
+        (par.local_abs / "plan.md.conflict1").write_text("x", encoding="utf-8")
+        (par.local_abs / "plan.md").write_text("y", encoding="utf-8")
+        c("  ni aunque aparezca una copia a mano: sin nada movido, bisync no la ha dejado",
+          pasar_bi()[2], 0)
+
+        def execute_que_mueve(ctx, cmd, logfile=None):
+            for i, arg in enumerate(cmd):
+                if arg == "--log-file":
+                    Path(cmd[i + 1]).write_text("simulado\n", encoding="utf-8")
+            (par.workdir / f"{pre}{bisync.PATH1_SUFFIX}").write_text(
+                "# cabecera\n- a.txt\n- b.txt\n", encoding="utf-8")
+            return 0
+
+        original, sync.execute = sync.execute, execute_que_mueve
+        try:
+            RECORRIDOS.clear()
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                sync.run_pair(sync.RunContext(binary="RCLONE", env={}), par)
+        finally:
+            sync.execute = original
+        c("una pasada que mueve algo sí recorre", len(RECORRIDOS), 1)
+        c("  y encuentra la copia", conflicts.sin_apuntar("bi"), False)
+        c("con una copia apuntada se recorre aunque no se mueva nada (para verla resolverse)",
+          pasar_bi()[2], 1)
+        (par.local_abs / "plan.md.conflict1").unlink()
+        c("  resuelta, se recorre una vez más y la lista se vacía",
+          (pasar_bi()[2], conflicts.sin_apuntar("bi")), (1, True))
+        c("  y ya no hace falta recorrer", pasar_bi()[2], 0)
+        RECORRIDOS.clear()
+        correr(BI, rc_seq=(1,))
+        c("una pasada que falla recorre siempre", len(RECORRIDOS), 1)
+finally:
+    conflicts.recorrer = recorrer_de_verdad
 
 sys.exit(c.report())
