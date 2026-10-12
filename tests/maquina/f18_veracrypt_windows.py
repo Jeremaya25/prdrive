@@ -66,10 +66,11 @@ def probar(p: comun.Prueba) -> None:
     def desmontar(forzar: bool = False) -> tuple[bool, float]:
         """Desmonta la letra (sin forzar) y devuelve si se ha ido y lo que tardó la orden."""
         t = time.monotonic()
-        comun.ejecutar([str(vc), "/dismount", letra, "/quit", "/silent"]
+        r = comun.ejecutar([str(vc), "/dismount", letra, "/quit", "/silent"]
                        + (["/force"] if forzar else []), timeout=120)
         tardo = time.monotonic() - t
-        return comun.esperar(lambda: not raiz.exists(), 5), tardo
+        rc_ok = r.returncode == 0
+        return (comun.esperar(lambda: not raiz.exists(), 5) if rc_ok else False), tardo
 
     comun.ejecutar([str(formato), "/create", str(hc), "/size", "60M", "/password", CLAVE,
                     "/encryption", "AES", "/hash", "sha512", "/filesystem", "NTFS",
@@ -98,6 +99,7 @@ def probar(p: comun.Prueba) -> None:
             p.ver("con el ajuste se vigila", motor.vigilar(K, datos, ()), None)
             (datos / "nuevo.txt").write_text("n", encoding="utf-8")
             p.ver("  avisa de un fichero nuevo", comun.avisos(motor), {K: ac.CAMBIO})
+            comun.asentar(motor, 10)
             p.ver("  y quieta no avisa de nada", comun.quieto(motor, 3.0), {})
             if not any(a[0] == DBT_DEVICEARRIVAL for a in llegados):
                 p.saltados.append("los desmontajes: esta máquina no entrega avisos de dispositivo "
