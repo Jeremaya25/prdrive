@@ -92,6 +92,7 @@ def preparar() -> Path:
     # Ni los procesos de verdad: el KeePassXC de una raíz que se va (Linux).
     agente.cerrar_keepassxc_huerfano = lambda raiz: 0
     agente.keepassxc_huerfano_abierto = lambda raiz: False
+    agente.hay_keepassxc = lambda: True
     expulsar.compatible = lambda raiz: Path(raiz) in COMPATIBLES
     expulsar.expulsar = lambda raiz: EXPULSADAS.append(Path(raiz)) or RESULTADO_EXPULSAR[0]
     # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).

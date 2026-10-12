@@ -205,6 +205,15 @@ GRACIA = 15.0
 """Segundos tras ver la ventana o un stop, antes de volver."""
 MIRAR_ENTORNO = 60.0
 """Segundos entre las lecturas de batería y red."""
+MIRAR_RED_MEDIDA = 1800.0
+"""Segundos entre las preguntas por la red de uso medido cuando el sistema avisa de sus cambios.
+
+En Windows el aviso de conectividad que oye `common/red.py`
+(`NotifyNetworkConnectivityHintChange`) llega también cuando cambia el coste de
+la conexión, así que entre avisos basta con esta pregunta de respaldo: la
+llamada COM que lo dice despierta a otros procesos. En Linux un cambio de «uso
+medido» no trae aviso de red, y se sigue preguntando cada `MIRAR_ENTORNO`.
+"""
 DESPERTAR_DOBLE = 10.0
 """Segundos en que un segundo aviso de despertar se toma por el mismo.
 
@@ -446,6 +455,22 @@ def hilo(funcion) -> None:
     Punto de indirección: los tests la corren en el sitio.
     """
     threading.Thread(target=funcion, daemon=True).start()
+
+
+def hay_keepassxc() -> bool:
+    """Indica si en el equipo corre algo que pueda ser el KeePassXC de una unidad.
+
+    En Windows se pregunta por el nombre a la instantánea de Toolhelp
+    (`store.foto_de_procesos()`), que no abre ningún proceso: sin ningún
+    `KeePassXC.exe` en el equipo no hace falta recorrerlos todos para saber
+    desde dónde corre cada uno (`keepassxc_abierto()`). Si no se puede saber, o
+    en Linux (allí cuenta la línea de órdenes), sí. Punto de indirección: los
+    tests dicen lo que hay.
+    """
+    foto = store.foto_de_procesos()
+    if foto is None:
+        return True
+    return any(exe.lower() == components.KEEPASSXC_EXE.lower() for exe in foto.values())
 
 
 def keepassxc_abierto(raiz: Path) -> bool:
@@ -1530,7 +1555,9 @@ class Agente:
             `--resync`, por `(raíz, pareja)`: se avisa al entrar, una vez.
         entorno: Batería, red de uso medido, remotos sin conexión y pausa, para
             el planificador.
-        entorno_leido: Cuándo se leyó el entorno por última vez.
+        entorno_leido: Cuándo se leyó el entorno por última vez; con menos
+            infinito se lee entero en la vuelta siguiente.
+        red_leida: Cuándo se preguntó por última vez si la red es de uso medido.
         pasada: La pasada en marcha, si la hay.
         heredada: La de un agente anterior que sigue viva al arrancar
             (`pasada.json`).
@@ -1616,6 +1643,7 @@ class Agente:
     saltadas: set[tuple[str, str]] = field(default_factory=set)
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
+    red_leida: float = -math.inf
     pasada: Pasada | None = None
     heredada: dict | None = field(default_factory=equipo.pasada_viva)
     cortada: dict | None = field(default_factory=equipo.pasada_cortada)
@@ -2740,8 +2768,10 @@ class Agente:
         """Mira en qué raíces atendidas está abierto su KeePassXC (`keepassxc_abierto()`).
 
         Se mira cada `PoliticaCambios.sondeo`, no en cada vuelta: en Windows es
-        recorrer todos los procesos del equipo. Solo en las raíces que sirve el
-        agente y llevan llavero; las demás las atiende su vigilante.
+        recorrer todos los procesos del equipo, y solo se hace si alguno se
+        llama como KeePassXC (`hay_keepassxc()`, una pregunta para todas las
+        raíces). Solo en las raíces que sirve el agente y llevan llavero; las
+        demás las atiende su vigilante.
 
         Al abrirse y al cerrarse, toca una pasada del llavero enseguida (su
         marca vuelve a «nunca intentada»): al abrirse trae lo último antes de
@@ -2756,11 +2786,16 @@ class Agente:
         self.keepassxc_mirado = ahora
         servidas: set[str] = set()
         abiertos: set[str] = set()
+        alguno: bool | None = None
         for con in self.conexiones.values():
             if con.lock is None or con.servicio is None \
                     or not any(p.nombre == model.LLAVERO for p in con.servicio.parejas):
                 continue
             servidas.add(con.id)
+            if alguno is None:
+                alguno = hay_keepassxc()
+            if not alguno:
+                continue
             try:
                 if keepassxc_abierto(con.raiz):
                     abiertos.add(con.id)
@@ -3477,6 +3512,8 @@ class Agente:
         if not pl.red_asentada(self.cambio_de_red, ahora, self.pasada is not None):
             return
         self.cambio_de_red = None
+        # La red por la que se sale ya es la que va a ser: si es de uso medido.
+        self.entorno_leido = -math.inf
         if self.entorno.sin_conexion:
             self.entorno = pl.sondear_ya(self.entorno, ahora)
             diario("la red ha cambiado: se prueban ya los remotos sin conexión")
@@ -3915,7 +3952,12 @@ class Agente:
             e.resultado = expulsar.Resultado(False, f"No he podido expulsarla: {ex}")
 
     def _leer_entorno(self, ahora: float) -> None:
-        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos."""
+        """Lee la batería, el modo de ahorro y la red, como mucho cada `MIRAR_ENTORNO` segundos.
+
+        La red de uso medido, cada `MIRAR_RED_MEDIDA` si el sistema avisa de
+        sus cambios (`_avisa_el_coste()`): el aviso, y la ráfaga al asentarse,
+        hacen leerlo todo ya.
+        """
         if ahora - self.entorno_leido < MIRAR_ENTORNO:
             return
         if not self.conexiones:
@@ -3923,12 +3965,21 @@ class Agente:
             # pregunta por la batería ni por la red (en Windows, una llamada
             # COM que despierta a otros procesos). Al llegar una, se lee ya.
             return
+        cada = MIRAR_RED_MEDIDA if self._avisa_el_coste() else MIRAR_ENTORNO
+        medida = self.entorno.red_medida
+        if self.entorno_leido == -math.inf or ahora - self.red_leida >= cada:
+            self.red_leida = ahora
+            medida = moderacion.red_medida()
         self.entorno_leido = ahora
         energia = moderacion.energia()
         self.entorno = replace(self.entorno, con_bateria=energia.con_bateria,
                                bateria=energia.porcentaje,
                                ahorro_energia=energia.ahorro,
-                               red_medida=moderacion.red_medida())
+                               red_medida=medida)
+
+    def _avisa_el_coste(self) -> bool:
+        """Indica si un cambio de «red de uso medido» llega como aviso de red (Windows)."""
+        return IS_WIN and self.avisa_la_red()
 
     def _mirar_version(self, ahora: float) -> None:
         """Mira, de tarde en tarde, si hay una versión más nueva que la de este agente.
@@ -4385,8 +4436,10 @@ class Agente:
         elif que == equipo.PIDE_CAMBIO_DE_RED:
             # El sistema dice que vuelve a haber red (`common/red.py`). No se
             # sondea ya: se agrupa la ráfaga y va una sonda por remoto cuando
-            # se calma (`_cambios_de_red`).
+            # se calma (`_cambios_de_red`). Si la red es de uso medido, sí:
+            # en Windows es este aviso el que lo trae (`MIRAR_RED_MEDIDA`).
             self.cambio_de_red = pl.cambia_la_red(self.cambio_de_red, ahora)
+            self.entorno_leido = -math.inf
         elif que == equipo.PIDE_AJUSTE:
             clave, valor = p.get("clave"), p.get("valor")
             if clave not in equipo.AJUSTES_PEDIBLES:

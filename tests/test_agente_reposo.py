@@ -244,4 +244,80 @@ else:
     c("  una petición en el buzón la acaba enseguida", time.monotonic() - t0 < 2.0, True)
     oyente.cerrar()
 
+# --- la red de uso medido se pregunta cuando Windows avisa de un cambio, no cada minuto
+MEDIDA = [0, False]
+
+
+def red_medida():
+    MEDIDA[0] += 1
+    return MEDIDA[1]
+
+
+moderacion.red_medida = red_medida
+
+
+class RedQueAvisa:
+    """Lo que oye los cambios de red, con una fuente activa."""
+
+    activa = True
+    fuente = "de mentira"
+
+
+def minutos(ag_, n: float) -> None:
+    """Deja pasar `n` minutos dando una vuelta cada `MIRAR_ENTORNO`."""
+    for _ in range(int(n * 60 / agente.MIRAR_ENTORNO)):
+        F.pasar(agente.MIRAR_ENTORNO)
+        ag_.vuelta(False)
+        if ag_.pasada is not None:          # la pasada que toque acaba enseguida
+            F.acabar(ag_.pasada.proc, 0, "[docs] OK.\n")
+            ag_.vuelta(False)
+
+
+es_windows = agente.IS_WIN
+try:
+    agente.IS_WIN = True
+    OTRA = "reposo-0002"
+    otra = F.unidad(OTRA, parejas=("docs",),
+                    daemon='[daemon]\npairs = ["docs"]\ninterval_minutes = 5\n')
+    equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
+        equipo.Unidad(OTRA, equipo.DAEMON, "O", codigo=agente.huella(otra) or "")))
+    F.RAICES[:] = [otra]
+    ag = F.nuevo()
+    F.vueltas(ag, 3)
+    F.acabar(ag.pasada.proc, 0, "[docs] OK.\n")
+    F.vueltas(ag, 2)
+    ag.avisos_de_red = RedQueAvisa()
+    ag.entorno_leido = float("-inf")
+    ag.vuelta(False)
+    antes, ENTORNO[0] = MEDIDA[0], 0
+    minutos(ag, 10)
+    c("en Windows, con los avisos de red, diez minutos no preguntan por la red de uso medido",
+      MEDIDA[0] - antes, 0)
+    c("  y la batería se sigue leyendo cada minuto", ENTORNO[0] >= 9, True)
+    MEDIDA[1] = True
+    ag.pedir({"pide": equipo.PIDE_CAMBIO_DE_RED})
+    ag.vuelta(False)
+    ag.vuelta(False)
+    c("un aviso de cambio de red la pregunta en el acto",
+      (MEDIDA[0] - antes, ag.entorno.red_medida), (1, True))
+    F.pasar(pl.TOPE_RAFAGA_RED + agente.TICK)
+    ag.vuelta(False)
+    ag.vuelta(False)
+    c("  y otra vez cuando la ráfaga se asienta", MEDIDA[0] - antes, 2)
+    antes = MEDIDA[0]
+    minutos(ag, agente.MIRAR_RED_MEDIDA / 60 + 1)
+    c("sin avisos, se pregunta de respaldo cada media hora", MEDIDA[0] - antes, 1)
+    ag.avisos_de_red = None
+    antes = MEDIDA[0]
+    minutos(ag, 5)
+    c("sin quien avise de la red, cada minuto como siempre", MEDIDA[0] - antes >= 4, True)
+    agente.IS_WIN = False
+    ag.avisos_de_red = RedQueAvisa()
+    antes = MEDIDA[0]
+    minutos(ag, 5)
+    c("y en Linux también: un cambio de «uso medido» no trae aviso de red",
+      MEDIDA[0] - antes >= 4, True)
+finally:
+    agente.IS_WIN = es_windows
+
 raise SystemExit(c.report())

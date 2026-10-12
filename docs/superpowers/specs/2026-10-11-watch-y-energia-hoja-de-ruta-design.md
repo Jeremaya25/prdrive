@@ -185,8 +185,11 @@ con el motor de verdad:
   (`cuanto_esperar()`, 30 s sin nada a la vista), el oyente del buzón, una lectura de `state/` por
   vuelta, el recorrido de respaldo a 2 min con `GetLogicalDrives`, y batería y red solo con algo a
   la vista. Con una unidad a la vista el tic sigue siendo de 2 s (cada uno, mucho más barato).
-  Sin hacer: que un hijo que acaba despierte, el llavero (una foto de procesos por mirada) y la
-  red de uso medido por su aviso.
+  Después (12/10/2026): la red de uso medido se pregunta cuando Windows avisa de un cambio de
+  red, con una de respaldo cada media hora (`MIRAR_RED_MEDIDA`; en Linux, cada minuto como antes),
+  y la mirada del llavero pregunta antes, sin abrir ningún proceso, si hay algún `KeePassXC.exe`
+  en el equipo (`agente.hay_keepassxc()`). Sin hacer: que un hijo que acaba despierte; solo no
+  ahorra nada mientras el tic con una unidad a la vista siga en 2 s.
 - **4, menos procesos**: hecho «un `sync.py` por ciclo y raíz» (las parejas a las que les toca a
   la vez, con un minuto de margen; solo cuando el `sync.py` de la unidad ya escribe partes, y el
   llavero siempre aparte). Comprobado con `sync.py` y rclone de verdad sobre cuatro parejas. **Sin hacer, a propósito: el

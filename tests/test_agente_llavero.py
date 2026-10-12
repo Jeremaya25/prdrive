@@ -197,6 +197,28 @@ c("  y el diario lo dice", any("KeePassXC cerrado" in m for m in F.DIARIO), True
 terminar(ag, RAIZ)
 c("  después, otra vez el intervalo de la raíz", hasta(ag, RAIZ, 400), None)
 
+# Sin nada que se llame como KeePassXC en el equipo, no se recorren sus procesos.
+HAY = [0, False]
+
+
+def hay() -> bool:
+    """La pregunta barata: cuenta las veces y contesta lo que diga `HAY`."""
+    HAY[0] += 1
+    return HAY[1]
+
+
+agente.hay_keepassxc = hay
+MIRADAS.clear()
+F.vueltas(ag, int(60 / TICK))
+c("sin ningún KeePassXC en el equipo no se recorren los procesos", MIRADAS, [])
+c("  y la pregunta barata se hace una vez por mirada", HAY[0], int(60 / CAMBIOS.sondeo))
+c("  y cuenta como cerrado", UID in ag.keepassxc, False)
+HAY[1] = True
+MIRADAS.clear()
+F.vueltas(ag, int(CAMBIOS.sondeo / TICK) + 1)
+c("en cuanto hay alguno, se vuelve a mirar de quién es", set(MIRADAS), {RAIZ})
+agente.hay_keepassxc = lambda: True
+
 # Con una pasada del llavero en marcha, el cambio espera a que acabe.
 ag.marcas[(UID, model.LLAVERO)] = pl.Marca(None)
 hasta(ag, RAIZ, 10)
