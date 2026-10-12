@@ -193,8 +193,13 @@ con el motor de verdad:
   workdir de bisync fuera de la unidad.** Toca las invariantes del baseline y esta hoja ya pedía
   su propia especificación; no se construye sin ella ni sin una unidad de verdad delante.
 - **5, VeraCrypt**: construido detrás de `agente.py ajuste avisos_veracrypt sí`, apagado de
-  fábrica. Probado solo con un Windows de mentira: el controlador de VeraCrypt de la máquina de
-  pruebas quedó a medio descargar por la mañana y no arranca hasta reiniciar.
+  fábrica. Visto el 12/10/2026 con VeraCrypt Portable 1.26.29 de verdad en un sobremesa
+  (`tests/maquina/f18_veracrypt_windows.py` 17/17 y `f23_veracrypt_ventana_windows.py` 15/15, en
+  `maquina-real-resultados.md`): `/dismount` con y sin `/silent`, «Unmount All» de su ventana y
+  su desmontaje automático por inactividad **sin forzar** desmontan con la carpeta vigilada sin
+  preguntar nada; si otro programa lo impide, la vigilancia vuelve sola a los 5 s. Sin ver: el
+  desmontaje automático forzando (el de fábrica de VeraCrypt), `Expulsar PRDRIVE.bat` entero y
+  un pendrive. El ajuste sigue apagado hasta que lo decida el dueño.
 
 Lo que solo puede decir un equipo real está en
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` («Menos consumo y el motor de
