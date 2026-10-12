@@ -76,6 +76,19 @@ def _abrible(carpeta: str) -> str:
     return ruta_larga(carpeta) if os.name == "nt" and len(carpeta) >= LARGA else carpeta
 
 
+def _es_union(entrada: os.DirEntry) -> bool:
+    """Indica si una entrada es una unión de Windows (`mklink /J`, un punto de montaje).
+
+    Para `scandir` es una carpeta y no un enlace, pero rclone la trata como un
+    enlace: sin `--copy-links` no entra («Can't follow symlink without
+    -L/--copy-links», visto con rclone 1.75.1). Entrar en ella sería ver
+    cambios que la pasada no va a subir. `DirEntry.is_junction()` es de
+    Python 3.12; sin él, ninguna lo es.
+    """
+    es = getattr(entrada, "is_junction", None)
+    return bool(es and es())
+
+
 def _hash(relativa: str, tamano: int, mtime_ns: int) -> int:
     """Devuelve el hash de 64 bits de una entrada."""
     datos = f"{relativa}\0{tamano}\0{mtime_ns}".encode("utf-8", "surrogatepass")
@@ -88,7 +101,9 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
 
     No sigue enlaces simbólicos: un enlace cuenta como una entrada más (su
     propio tamaño y mtime) y, aunque apunte a una carpeta, no se entra en él.
-    Así el recorrido no sale de la carpeta por mucho que haya enlaces dentro.
+    Tampoco en una unión de Windows (`_es_union()`), que cuenta por su nombre
+    como una carpeta. Así el recorrido no sale de la carpeta por mucho que
+    haya enlaces dentro, ni da vueltas con uno que apunte hacia arriba.
 
     Un fichero o una carpeta que desaparece entre listarla y mirarla (lo normal
     mientras alguien trabaja) se salta: ya saldrá en la foto siguiente. Una
@@ -126,7 +141,8 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
                         try:
                             if e.is_dir(follow_symlinks=False):
                                 firma += _hash(relativa + "/", -1, 0)
-                                pendientes.append((e.path, relativa + "/"))
+                                if not _es_union(e):
+                                    pendientes.append((e.path, relativa + "/"))
                             else:
                                 st = e.stat(follow_symlinks=False)
                                 firma += _hash(relativa, st.st_size, st.st_mtime_ns)

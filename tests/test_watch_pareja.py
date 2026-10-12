@@ -205,6 +205,29 @@ if enlace:
 else:
     print("  (saltado) enlaces simbólicos: este sistema no deja crearlos")
 
+# ni entra en una unión de Windows (`mklink /J`): rclone, sin `--copy-links`, tampoco
+if os.name == "nt":
+    import subprocess
+    union = base / "union"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(union), str(fuera)], check=True,
+                   capture_output=True)
+    h_union = huella.de_carpeta(base)
+    c("una unión cuenta como una entrada y no se entra en ella",
+      h_union.entradas, h0.entradas + 1)
+    escribe(fuera / "detras.txt", "detrás de la unión", MTIME)
+    c("  y lo que cambia al otro lado no cambia la foto", huella.de_carpeta(base), h_union)
+    (base / "bucle").mkdir()
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(base / "bucle" / "arriba"), str(base)],
+                   check=True, capture_output=True)
+    c("  ni una que apunta a su propia carpeta la hace dar vueltas",
+      huella.de_carpeta(base, tope=1000).entradas, h0.entradas + 3)
+    os.rmdir(base / "bucle" / "arriba")
+    os.rmdir(base / "bucle")
+    os.rmdir(union)
+    c("quitar la unión deja la foto de antes", huella.de_carpeta(base), h0)
+else:
+    print("  (saltado) uniones (`mklink /J`): son de Windows")
+
 # el tope
 base_grande = tmpdir("prdrive-grande-")
 for i in range(12):
