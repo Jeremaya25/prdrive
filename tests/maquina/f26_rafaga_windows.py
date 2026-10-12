@@ -70,7 +70,9 @@ def probar(p: comun.Prueba) -> None:
             p.ver("reescribir un fichero sin parar cuesta una lectura por segundo como mucho",
                   lecturas <= dur / ac.AGRUPAR + 3, True)
             p.ver("  y menos de un 2 % de un procesador", cpu / dur < 0.02, True)
-            p.ver("  y avisa", comun.avisos(motor), {K: ac.CAMBIO})
+            # En un disco rápido el búfer de un segundo se llena: desbordado, que también cuenta.
+            p.ver("  y avisa (cambio o desbordado)",
+                  comun.avisos(motor).get(K) in (ac.CAMBIO, ac.DESBORDADO), True)
         finally:
             motor.cerrar()
             bandeja.dispositivo = None
