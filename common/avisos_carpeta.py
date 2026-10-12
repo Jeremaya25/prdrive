@@ -96,7 +96,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, NamedTuple
 
-from .huella import se_ignora
+from .huella import es_ruido, partir, se_ignora
 
 ES_LINUX = sys.platform.startswith("linux")
 ES_WINDOWS = os.name == "nt"
@@ -699,7 +699,10 @@ class Inotify:
             carpeta = bool(mask & IN_ISDIR)
             nuevas: set[tuple[str, str]] = set()
             for k in claves:
-                if k in raices and se_ignora(nombre, self._parejas.get(k, ("", ()))[1]):
+                patrones = self._parejas.get(k, ("", ()))[1]
+                if k in raices and se_ignora(nombre, patrones):
+                    continue
+                if not carpeta and es_ruido(nombre, partir(patrones)[1]):
                     continue
                 if carpeta and mask & IN_ATTRIB:
                     continue
@@ -1506,6 +1509,11 @@ class ReadDirectoryChanges:
                 nacidos: set) -> None:
         """Decide qué cuenta de una lectura recogida; lo que mira el disco va sin el cerrojo."""
         movida = self._se_ha_movido(v, handle)
+        hondos = partir(v.patrones)[1]
+        if hondos and registros is not None:
+            # El ruido de editor no cuenta, esté donde esté (`huella.RUIDO_DE_EDITOR`).
+            registros = [(accion, nombre) for accion, nombre in registros
+                         if not es_ruido(nombre.rsplit("\\", 1)[-1], hondos)]
         carpetas: set[str] = set()
         if registros is not None and not movida:
             vistos, mirados = set(nacidos), 0

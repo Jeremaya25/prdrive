@@ -48,6 +48,7 @@ c = Checks("agente: cambios locales de una pareja (watch)")
 F.preparar()
 
 TICK = agente.TICK
+RUIDO = agente.huellas.RUIDO_DE_EDITOR
 FABRICA = pl.PoliticaCambios()
 CAMBIOS = replace(FABRICA, sondeo_quieto=FABRICA.sondeo)
 """Las reglas de fábrica sin espaciar el recorrido: aquí se mira el cableado."""
@@ -145,8 +146,9 @@ c("las primeras pasadas son las de siempre: las tres, por su orden",
 c("  y ninguna es por cambios", [m for m in F.DIARIO if "han cambiado sus ficheros" in m], [])
 F.vueltas(ag, 3)
 c("solo se ha mirado la carpeta de docs", {m[0] for m in MIRADAS}, {"docs"})
-c("  con el tope de las reglas y sin mirar .prversions/ ni .prdrive/",
-  {(m[1], m[2]) for m in MIRADAS}, {(CAMBIOS.tope_entradas, (".prversions", ".prdrive", ".keychain"))})
+c("  con el tope de las reglas y sin mirar .prversions/ ni .prdrive/, ni el ruido de editor",
+  {(m[1], m[2]) for m in MIRADAS},
+  {(CAMBIOS.tope_entradas, (".prversions", ".prdrive", ".keychain") + RUIDO)})
 c("  y tiene la foto de partida", ag.vigiladas[(UID, "docs")].huella, pl.Huella(10, 1))
 c("  de ninguna otra pareja", sorted(nom for (_, nom) in ag.vigiladas), ["docs"])
 
@@ -614,9 +616,9 @@ ignoradas = {m[0]: m[2] for m in MIRADAS}
 c("se mira la carpeta que sincroniza el motor, no una con la barra invertida",
   sorted(ignoradas), sorted(str(RAIZ8 / x) for x in ("sync-data/docs", ".", "sync-data/otra")))
 c("  en una carpeta cualquiera no se deja fuera nada más que lo de siempre",
-  ignoradas[str(RAIZ8 / "sync-data" / "docs")], agente.IGNORAR_CAMBIOS)
+  ignoradas[str(RAIZ8 / "sync-data" / "docs")], agente.IGNORAR_CAMBIOS + RUIDO)
 c("  en la raíz de la unidad (`local = \".\"`), también el ruido del sistema",
-  ignoradas[str(RAIZ8)], agente.IGNORAR_CAMBIOS + model.RUIDO_DEL_SISTEMA)
+  ignoradas[str(RAIZ8)], agente.IGNORAR_CAMBIOS + model.RUIDO_DEL_SISTEMA + RUIDO)
 c("  y con él lo que hay que dejar fuera: System Volume Information y $RECYCLE.BIN",
   {"system volume information", "$recycle.bin"} <= set(ignoradas[str(RAIZ8)]), True)
 
@@ -737,6 +739,7 @@ class AvisosFalsos:
     def vigilar(self, clave, carpeta, ignorar):
         """Apunta la petición y contesta lo que diga `motivos`."""
         ORDEN.append(("vigilar", clave))
+        IGNORADO[clave] = tuple(ignorar)
         return self.motivos.get(clave)
 
     def dejar(self, clave):
@@ -764,6 +767,10 @@ class AvisosFalsos:
         """Nada que cerrar."""
 
 
+IGNORADO: dict = {}
+"""Lo que no se mira de la carpeta de cada pareja, según se le pidió vigilarla al motor."""
+
+
 def pedidas(que: str, clave=None) -> int:
     """Cuántas veces se ha pedido eso al motor (de esa pareja o raíz)."""
     return sum(1 for o in ORDEN if o[0] == que and (clave is None or o[1] == clave))
@@ -785,6 +792,9 @@ F.vueltas(aga, 2)
 terminar(aga, RAIZA)
 quieto(aga, 300)
 c("con avisos, la pareja se vigila con ellos al conectarse", pedidas("vigilar", DOCSA), 1)
+c("  dejando fuera su `.prdrive/` y el ruido de editor",
+  (agente.APP_SUBDIR in IGNORADO[DOCSA],
+   set(agente.huellas.RUIDO_DE_EDITOR) <= set(IGNORADO[DOCSA])), (True, True))
 c("  y su carpeta no se recorre nunca", mirada(), 0)
 c("  lo recordado dice que oye avisos", aga.vigiladas[DOCSA].avisos, True)
 c("  y el estado no dice que recorra", next(u for u in aga.resumen()["unidades"]

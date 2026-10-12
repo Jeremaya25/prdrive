@@ -48,7 +48,7 @@ from types import SimpleNamespace
 from _harness import Checks, tmpdir
 
 from common import avisos_carpeta as ac
-from common import model
+from common import huella, model
 
 c = Checks("avisos del sistema de una carpeta (inotify)")
 
@@ -482,6 +482,33 @@ c("  más nombres vivos de los que se llevan en cuenta: cambio firme",
    llega(*[(R, f"f{i}") for i in range(ac.Neto.TOPE + 1)])), ({KW: ac.CAMBIO}, {KW: ac.CAMBIO}))
 mw.cerrar()
 
+# --- el ruido de editor (lo que lleva `**/` delante) no cuenta, a cualquier profundidad
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW + huella.RUIDO_DE_EDITOR)
+hw = next(iter(w.abiertos))
+VIEJO, NUEVO = ac.FILE_ACTION_RENAMED_OLD_NAME, ac.FILE_ACTION_RENAMED_NEW_NAME
+c("ruido: el fichero de bloqueo de Word no es un cambio: ni al nacer, ni al tocarlo, ni al morir",
+  (llega((A, "~$informe.docx")), llega((M, "~$informe.docx")), llega((R, "~$Informe.docx"))),
+  ({}, {}, {}))
+c("  ni el de LibreOffice en una subcarpeta",
+  llega((A, "sub\\.~lock.hoja.ods#"), (R, "sub\\.~lock.hoja.ods#")), {})
+c("  ni lo que Windows deja en las carpetas",
+  llega((A, "fotos\\Thumbs.db"), (M, "Desktop.ini")), {})
+c("  guardar con Word (su temporal y sus renombrados) sí: el documento cambia",
+  llega((A, "~WRD0001.tmp"), (M, "~WRD0001.tmp"), (VIEJO, "informe.docx"),
+        (NUEVO, "~WRL0002.tmp"), (VIEJO, "~WRD0001.tmp"), (NUEVO, "informe.docx"),
+        (R, "~WRL0002.tmp")), {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  y un fichero cualquiera que acabe en .tmp sigue contando",
+  llega((M, "notas.tmp")), {KW: ac.CAMBIO})
+c("los patrones hondos se apartan de los de la raíz",
+  huella.partir(("a", "**/b*", ".prdrive")), (("a", ".prdrive"), ("b*",)))
+c("  y se comparan en minúsculas con el nombre, sin su carpeta",
+  (huella.es_ruido("~$A.docx", ("~$*",)), huella.es_ruido("a.docx", ("~$*",)),
+   huella.es_ruido("x", ())), (True, False, False))
+mw.cerrar()
+
 # --- tras la pasada se tira también lo que llegue enseguida
 w = Win32Falsa()
 mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.3)
@@ -824,6 +851,23 @@ c("  ni lo que cae en ella", tras(m3, lambda: (RU / ".Trash-1000" / "f").write_t
 c("  lo demás, sí", tras(m3, lambda: (RU / "doc.txt").write_text("d")), CAMBIO)
 c("  y una carpeta con ese nombre más abajo es de alguien: avisa",
   tras(m3, lambda: (RU / "sub" / "$RECYCLE.BIN").mkdir()), CAMBIO)
+
+# El ruido de editor: ficheros que no cuentan, estén donde estén.
+m3b = motor()
+RE = arbol()
+c("con el ruido de editor fuera, se vigila", m3b.vigilar(K, RE, IGN + huella.RUIDO_DE_EDITOR),
+  None)
+c("  el fichero de bloqueo de LibreOffice no avisa al nacer",
+  tras(m3b, lambda: (RE / "sub" / ".~lock.b.ods#").write_text("x")), {})
+c("  ni al morir", tras(m3b, lambda: (RE / "sub" / ".~lock.b.ods#").unlink()), {})
+c("  ni el intercambio de vim, ni el temporal de guardado de GLib",
+  tras(m3b, lambda: ((RE / ".a.txt.swp").write_text("x"),
+                     (RE / ".goutputstream-AB12").write_text("x"))), {})
+c("  una carpeta que se llame así es de alguien: avisa",
+  tras(m3b, lambda: (RE / "~$carpeta").mkdir()), CAMBIO)
+m3b.descartar(K)
+c("  y un guardado que acaba renombrando sobre el documento, también",
+  tras(m3b, lambda: os.replace(RE / ".goutputstream-AB12", RE / "a.txt")), CAMBIO)
 
 # ---------------------------------------------------------------------------
 # 4. Parejas que se solapan

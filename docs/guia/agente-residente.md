@@ -168,7 +168,10 @@ agente»**. El diseño completo está en
   avisos del sistema sobre la carpeta de la pareja (inotify en Linux; en
   Windows, con la bandeja abierta) y, 20 s después de que dejen de cambiar,
   adelanta su pasada al intervalo; nunca dos pasadas de la misma pareja con
-  menos de 2 minutos entre ellas. Donde el sistema no avisa (una carpeta de
+  menos de 2 minutos entre ellas. Lo que dejan los programas mientras trabajas
+  (el `~$informe.docx` de Word, el `.~lock…#` de LibreOffice, los temporales
+  de guardado, `Thumbs.db`) no adelanta nada: se sincroniza con la pasada
+  siguiente, y guardar el documento sí se oye. Donde el sistema no avisa (una carpeta de
   red, un volumen de VeraCrypt en Windows) recorre la carpeta sin abrir
   ficheros: cada 10 s mientras cambia y cada 2 minutos cuando está quieta, así
   que un cambio tras un rato quieta se ve hasta 2 minutos después;

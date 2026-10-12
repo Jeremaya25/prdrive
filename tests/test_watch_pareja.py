@@ -228,6 +228,25 @@ if os.name == "nt":
 else:
     print("  (saltado) uniones (`mklink /J`): son de Windows")
 
+# el ruido de editor no entra en la foto, esté donde esté
+CON_RUIDO = huella.IGNORAR + huella.RUIDO_DE_EDITOR
+h_limpia = huella.de_carpeta(base, ignorar=CON_RUIDO)
+c("sin ruido que quitar, la foto es la misma con sus patrones", h_limpia, h0)
+escribe(base / "sub" / "~$informe.docx", "bloqueo", MTIME)
+escribe(base / ".~lock.hoja.ods#", "bloqueo", MTIME)
+escribe(base / "sub" / "Thumbs.db", "miniaturas", MTIME)
+c("el ruido de editor no cambia la foto de quien lo deja fuera",
+  huella.de_carpeta(base, ignorar=CON_RUIDO), h_limpia)
+c("  y sí la de quien no", huella.de_carpeta(base) != h0, True)
+(base / "~$carpeta").mkdir()
+escribe(base / "~$carpeta" / "dentro.txt", "contenido", MTIME)
+c("  una carpeta que se llame así es de alguien: cuenta, con lo que tiene",
+  huella.de_carpeta(base, ignorar=CON_RUIDO).entradas, h_limpia.entradas + 2)
+for sobra in (base / "sub" / "~$informe.docx", base / ".~lock.hoja.ods#",
+              base / "sub" / "Thumbs.db", base / "~$carpeta" / "dentro.txt"):
+    sobra.unlink()
+(base / "~$carpeta").rmdir()
+
 # el tope
 base_grande = tmpdir("prdrive-grande-")
 for i in range(12):

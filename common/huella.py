@@ -40,10 +40,51 @@ de la carpeta o del fichero (`model.RUIDO_DEL_SISTEMA` es una lista así).
 """
 
 
+HONDO = "**/"
+"""Lo que lleva delante un patrón que vale a cualquier profundidad, y solo para ficheros.
+
+Los demás patrones de `ignorar` son de la raíz de la pareja. Uno hondo no casa
+nunca como patrón de la raíz (un nombre no lleva `/`), así que quien no los
+aparte (`partir()`) simplemente no los aplica.
+"""
+RUIDO_DE_EDITOR = tuple(HONDO + p for p in (
+    "~$*",                  # el fichero de bloqueo de Office, mientras el documento está abierto
+    "~*.tmp",               # sus temporales de guardado (`~WRD0001.tmp`, `~WRL0002.tmp`)
+    ".~lock.*#",            # el de LibreOffice
+    ".*.sw?",               # el intercambio de vim
+    ".goutputstream-*",     # el temporal de guardado de GLib (gedit, Nautilus)
+    "thumbs.db", "desktop.ini", ".ds_store",    # lo que el sistema deja en las carpetas
+))
+"""Ficheros cuyo cambio no adelanta la pasada de una pareja con `watch`, estén donde estén.
+
+No son de nadie: los deja el programa con el que se trabaja y se van solos. Sin
+esto, abrir y cerrar un documento de Word costaba dos pasadas (el `~$` que
+nace vive más que la calma, y luego muere). No se dejan de sincronizar: van con
+la pasada siguiente, la del intervalo o la que adelante un cambio de verdad,
+que sí se oye (guardar acaba renombrando sobre el documento, y ese nombre
+cuenta). El precio: un fichero propio que se llame así espera al intervalo.
+"""
+
+
 def se_ignora(nombre: str, patrones: tuple[str, ...]) -> bool:
     """Indica si una entrada de la raíz casa con alguno de los patrones (en minúsculas)."""
     minusculas = nombre.lower()
     return any(fnmatch.fnmatchcase(minusculas, p) for p in patrones)
+
+
+def partir(patrones: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Aparta los patrones hondos (`HONDO`) de los de la raíz.
+
+    Returns:
+        `(los de la raíz, los hondos sin su prefijo)`.
+    """
+    return (tuple(p for p in patrones if not p.startswith(HONDO)),
+            tuple(p[len(HONDO):] for p in patrones if p.startswith(HONDO)))
+
+
+def es_ruido(nombre: str, hondos: tuple[str, ...]) -> bool:
+    """Indica si el nombre de un fichero (sin su carpeta) casa con algún patrón hondo."""
+    return bool(hondos) and se_ignora(nombre, hondos)
 
 
 def ruta_larga(ruta: str) -> str:
@@ -119,13 +160,15 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
             en el acto y se devuelve la cuenta hasta ahí, sin firma y con
             `cortada`: quien llama solo necesita saber que no cabe.
         ignorar: Patrones (`fnmatch`, en minúsculas) de las entradas de la raíz
-            que no se miran, sean carpetas o ficheros.
+            que no se miran, sean carpetas o ficheros. Los que llevan `HONDO`
+            delante son de ficheros a cualquier profundidad
+            (`RUIDO_DE_EDITOR`).
 
     Returns:
         La foto, o `None` si no se pudo tomar: ni un cambio ni una foto vacía.
     """
     raiz = os.fspath(ruta)
-    patrones = tuple(p.lower() for p in ignorar)
+    patrones, hondos = partir(tuple(p.lower() for p in ignorar))
     pendientes: list[tuple[str, str]] = [(raiz, "")]
     entradas = 0
     firma = 0
@@ -143,6 +186,8 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
                                 firma += _hash(relativa + "/", -1, 0)
                                 if not _es_union(e):
                                     pendientes.append((e.path, relativa + "/"))
+                            elif es_ruido(e.name, hondos):
+                                continue
                             else:
                                 st = e.stat(follow_symlinks=False)
                                 firma += _hash(relativa, st.st_size, st.st_mtime_ns)

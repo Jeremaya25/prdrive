@@ -1,16 +1,19 @@
 """F27: los temporales que nacen y mueren en la carpeta vigilada no dejan nada que sincronizar (fila C6)."""
 
+import os
 import shutil
 import time
 
 import comun
 from common import avisos_carpeta as ac
+from common import huella
 
 CODIGO = "F27"
 SISTEMA = "W"
 QUE = ("temporales de editor, el .~lock de LibreOffice y un `git status` en la carpeta vigilada: "
-       "al final no queda cambio; un guardado de verdad, sí (C6)")
+       "al final no queda cambio; un guardado de verdad, sí; y sin el ruido de editor, ni se oyen (C6)")
 K = ("u" * 32, "docs")
+K2 = ("u" * 32, "sin-ruido")
 NADA = (None, ac.RETIRADO)
 
 
@@ -27,6 +30,7 @@ def probar(p: comun.Prueba) -> None:
             """Lo que deja una pasada de la pareja: nada pendiente."""
             comun.asentar(motor, 10)
             motor.descartar(K)
+            motor.descartar(K2)
             time.sleep(ac.CALLAR_TRAS_DESCARTE + 0.5)
             motor.recoger()
 
@@ -64,6 +68,24 @@ def probar(p: comun.Prueba) -> None:
             (datos / "doc.odt").write_text("documento guardado", encoding="utf-8")
             p.ver("guardar el documento de verdad sí es un cambio",
                   comun.al_final(motor), {K: ac.CAMBIO})
+            # Como la vigila el agente: sin el ruido de editor.
+            p.ver("con el ruido de editor fuera, se vigila",
+                  motor.vigilar(K2, datos, huella.RUIDO_DE_EDITOR), None)
+            pasada()
+            candado.write_text("usuario", encoding="utf-8")
+            (datos / "~$doc.docx").write_text("usuario", encoding="utf-8")
+            p.ver("  un documento abierto (su .~lock, su ~$) ya no dice nada",
+                  comun.al_final(motor, 3).get(K2), None)
+            candado.unlink()
+            (datos / "~$doc.docx").unlink()
+            p.ver("  ni al cerrarlo", comun.al_final(motor, 3).get(K2), None)
+            # Guardar como Word: un temporal, y dos renombrados sobre el documento.
+            (datos / "~WRD0001.tmp").write_text("documento nuevo", encoding="utf-8")
+            os.replace(datos / "doc.odt", datos / "~WRL0002.tmp")
+            os.replace(datos / "~WRD0001.tmp", datos / "doc.odt")
+            (datos / "~WRL0002.tmp").unlink()
+            p.ver("  y guardar como guarda Word sí es un cambio",
+                  comun.al_final(motor).get(K2), ac.CAMBIO)
         finally:
             motor.cerrar()
             bandeja.dispositivo = None

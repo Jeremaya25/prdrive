@@ -531,6 +531,19 @@ def keepassxc_huerfano_abierto(raiz: Path) -> bool:
     return False if IS_WIN else bool(llavero.pids_keepassxc(raiz / APP_SUBDIR))
 
 
+def ruido_de_editor(pareja: str) -> tuple[str, ...]:
+    """Devuelve los ficheros de la carpeta de una pareja vigilada cuyo cambio no cuenta.
+
+    Lo que dejan los programas con los que se trabaja (`huellas.RUIDO_DE_EDITOR`),
+    a cualquier profundidad: ni lo avisan los motores ni entra en la foto. Del
+    llavero se mira todo: son cuatro ficheros, y lo que más importa tener al día.
+
+    Args:
+        pareja: El nombre de la pareja.
+    """
+    return () if pareja == model.LLAVERO else huellas.RUIDO_DE_EDITOR
+
+
 def huella_local(ruta: Path, tope: int, ignorar: tuple[str, ...]) -> pl.Huella | None:
     """Toma la foto de la carpeta local de una pareja vigilada (`watch = true`).
 
@@ -1516,18 +1529,17 @@ class Muestreo:
                 if en_la_raiz(mirar.raiz, mirar.carpeta) is None:
                     self.fuera.add(mirar.clave)
                     continue
+                ignorar = (self.ignorar + ruido_en(mirar.raiz, mirar.carpeta)
+                           + ruido_de_editor(mirar.clave[1]))
                 if mirar.armar:
                     try:
                         self.armadas[mirar.clave] = self.avisos.vigilar(
-                            mirar.clave, mirar.carpeta,
-                            self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
+                            mirar.clave, mirar.carpeta, ignorar)
                     except Exception as e:          # noqa: BLE001
                         self.armadas[mirar.clave] = f"no se ha podido vigilar: {e}"
                     continue
                 try:
-                    self.fotos[mirar.clave] = huella_local(
-                        mirar.carpeta, self.tope,
-                        self.ignorar + ruido_en(mirar.raiz, mirar.carpeta))
+                    self.fotos[mirar.clave] = huella_local(mirar.carpeta, self.tope, ignorar)
                 except Exception:                   # noqa: BLE001
                     self.fotos[mirar.clave] = None
         finally:

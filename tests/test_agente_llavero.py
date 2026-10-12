@@ -118,7 +118,17 @@ def abierto(raiz) -> bool:
 
 agente.keepassxc_abierto = abierto
 FIRMA = [1]
-agente.huella_local = lambda ruta, tope, ignorar: pl.Huella(1, FIRMA[0])
+IGNORADO: dict = {}
+"""Lo que no se mira de cada carpeta recorrida, por su nombre."""
+
+
+def foto_fija(ruta, tope, ignorar):
+    """La foto que diga `FIRMA`; apunta lo que se le pide no mirar."""
+    IGNORADO[Path(ruta).name] = tuple(ignorar)
+    return pl.Huella(1, FIRMA[0])
+
+
+agente.huella_local = foto_fija
 
 
 def poner(uid: str, modo: str = equipo.DAEMON, con_llavero: bool = True) -> Path:
@@ -173,6 +183,8 @@ F.vueltas(ag, int(60 / TICK))
 c("se mira si KeePassXC está abierto cada pocos segundos, no en cada vuelta",
   len(MIRADAS), int(60 / CAMBIOS.sondeo))
 c("  en su raíz", set(MIRADAS), {RAIZ})
+c("del llavero se mira todo: el ruido de editor no se le quita",
+  [p for p in IGNORADO[model.LLAVERO_LOCAL] if p.startswith(agente.huellas.HONDO)], [])
 c("con KeePassXC cerrado, manda el intervalo de la raíz", hasta(ag, RAIZ, 400), None)
 
 ABIERTO[0] = True

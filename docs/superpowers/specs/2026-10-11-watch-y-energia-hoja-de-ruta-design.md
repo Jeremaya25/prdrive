@@ -179,8 +179,12 @@ con el motor de verdad:
   opcional (intervalo por pareja, por N con batería, sesión ausente, tope por duración), nada.
 - **2, el motor de Windows**: hecho. Agrupar, el efecto neto (también en Linux), la carpeta movida
   y volver a oír, soltar al pedir el volumen, la ruta larga, la prueba del agente con el motor de
-  verdad. Las uniones (`mklink /J`), el 12/10/2026: rclone no entra en ellas sin `--copy-links` y el recorrido ya tampoco. Sin hacer: los dos extras «con más riesgo» (las exclusiones
-  de la pareja en los avisos, la lista de ruido de editor).
+  verdad. Las uniones (`mklink /J`), el 12/10/2026: rclone no entra en ellas sin `--copy-links` y el recorrido ya tampoco. El ruido
+  de editor, también el 12/10/2026 y de otra manera que la propuesta: no se excluye de lo que se
+  sincroniza en las parejas nuevas (cambiaría sus filtros y las haría distintas del catálogo),
+  sino que ni los avisos ni el recorrido lo cuentan en ninguna pareja (`huella.RUIDO_DE_EDITOR`):
+  se sincroniza con la pasada siguiente. Sin hacer: las exclusiones propias de la pareja en los
+  avisos (traducir filtros de rclone; el mecanismo ya está).
 - **3, el agente sin reloj**: hecho en lo que más pesa. La espera de `cmd_run`
   (`cuanto_esperar()`, 30 s sin nada a la vista), el oyente del buzón, una lectura de `state/` por
   vuelta, el recorrido de respaldo a 2 min con `GetLogicalDrives`, y batería y red solo con algo a
