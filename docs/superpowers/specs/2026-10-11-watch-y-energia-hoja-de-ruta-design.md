@@ -200,7 +200,9 @@ con el motor de verdad:
   la vez, con un minuto de margen; solo cuando el `sync.py` de la unidad ya escribe partes, y el
   llavero siempre aparte). Comprobado con `sync.py` y rclone de verdad sobre cuatro parejas. **Sin hacer, a propósito: el
   workdir de bisync fuera de la unidad.** Toca las invariantes del baseline y esta hoja ya pedía
-  su propia especificación; no se construye sin ella ni sin una unidad de verdad delante.
+  su propia especificación; no se construye sin ella ni sin una unidad de verdad delante. El borrador
+  de esa especificación, con sus decisiones abiertas, es
+  `2026-10-12-workdir-bisync-fuera-de-la-unidad-design.md`.
 - **5, VeraCrypt**: hecho, y **encendido de fábrica** desde el 12/10/2026 (decisión del dueño;
   `agente.py ajuste avisos_veracrypt no` lo apaga). Visto ese día con VeraCrypt Portable 1.26.29
   de verdad en un sobremesa (`tests/maquina/f18_veracrypt_windows.py` 17/17,
