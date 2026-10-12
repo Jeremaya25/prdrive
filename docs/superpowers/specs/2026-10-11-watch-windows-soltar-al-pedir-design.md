@@ -8,8 +8,9 @@ ningún aviso al desmontar» no vale para un equipo de verdad. Lo que hay hoy
 está en `docs/agents/reference/agent-scheduling.md` («Windows,
 `ReadDirectoryChangesW`»). Estado: **construido el 11/10/2026** (rama de la hoja de ruta): la
 primera mitad (soltar al pedir el volumen) siempre puesta y comprobada con el motor de verdad en
-un disco virtual; la segunda (VeraCrypt), detrás del ajuste `avisos_veracrypt`, apagado de
-fábrica y probado solo con un Windows de mentira. Lo que cambió respecto de este texto: el plazo
+un disco virtual; la segunda (VeraCrypt), detrás del ajuste `avisos_veracrypt`, encendido de
+fábrica desde el 12/10/2026, tras verla con VeraCrypt de verdad (F18, F23 y F28 de
+`tests/maquina/`). Lo que cambió respecto de este texto: el plazo
 se llama `REABRIR_VERACRYPT`, y `dispositivo()` recibe el GUID como tercer argumento.
 
 **Revisión de la tarde del 11/10/2026** (`2026-10-11-watch-y-energia-hoja-de-ruta-design.md`): se

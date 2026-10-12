@@ -1105,14 +1105,17 @@ c("  y la bandeja le pasa los avisos de extracción",
 c("  y los de desmontaje que llegan por letra (VeraCrypt)",
   agw.bandeja.volumen == motor_w.volumen, True)
 c("  y se dice", any("(ReadDirectoryChangesW)" in m for m in F.DIARIO), True)
-c("  de fábrica, sin oír los volúmenes de VeraCrypt", ABIERTO_CON, [False])
-agw.ajustes = replace(agw.ajustes, avisos_veracrypt=True)
+c("  de fábrica, oyendo también los volúmenes de VeraCrypt, y se dice",
+  (ABIERTO_CON, any("avisos_veracrypt" in m for m in F.DIARIO)), ([True], True))
+agw.ajustes = replace(agw.ajustes, avisos_veracrypt=False)
+dicho = len(F.DIARIO)
 agente.poner_avisos_carpeta(agw, agente.Vigia())
-c("  con el ajuste `avisos_veracrypt`, el motor se abre oyéndolos, y se dice",
-  (ABIERTO_CON[-1], any("avisos_veracrypt" in m for m in F.DIARIO)), (True, True))
-c("  el ajuste va y vuelve de agente.json, y de fábrica no se escribe",
+c("  con el ajuste `avisos_veracrypt` apagado, el motor se abre sin oírlos",
+  (ABIERTO_CON[-1], any("avisos_veracrypt" in m for m in F.DIARIO[dicho:])), (False, False))
+c("  apagado va y vuelve de agente.json, y de fábrica no se escribe",
   (equipo.desde_dict(equipo.a_dict(agw.ajustes)).avisos_veracrypt,
-   "avisos_veracrypt" in equipo.a_dict(equipo.Ajustes())), (True, False))
+   "avisos_veracrypt" in equipo.a_dict(equipo.Ajustes()),
+   equipo.desde_dict({"avisos_veracrypt": "sí"}).avisos_veracrypt), (False, False, True))
 agente.IS_WIN = real_is_win
 ac.abrir = real_abrir
 
@@ -1193,5 +1196,38 @@ F.vueltas(ag7b, 3)
 c("«Bloquear» deja las vigilancias de la raíz antes de lanzar VeraCrypt",
   [o for o in ORDEN if o == ("dejar_raiz", UID7) or o == ("lanzar", VC)][:2],
   [("dejar_raiz", UID7), ("lanzar", VC)])
+agente.lanzar = lanzar_falso
+
+# ---------------------------------------------------------------------------
+# Lo que la pareja excluye por su nombre no se mira: ni con avisos ni recorriendo
+# ---------------------------------------------------------------------------
+F.preparar()
+MIRADAS.clear()
+IGNORADO.clear()
+agente.huella_local = foto
+UIDX = "9" * 32
+RAIZX = poner(UIDX, parejas=("docs", "fotos"), nombre="EXCLUYE",
+              extra={"docs": VIGILA + 'exclude = ["*.log", "cache/**"]\n',
+                     "fotos": VIGILA + 'exclude = ["*.xmp"]\ninclude = ["*.jpg"]\n'})
+c("del config salen los excluidos por su nombre de cada pareja vigilada",
+  dict(agente.leer_servicio(RAIZX).excluidos), {"docs": ("*.log",)})
+F.RAICES[:] = [RAIZX]
+FIRMAS.update({"docs": 1, "fotos": 1})
+agx = nuevo()
+agx.avisos_carpeta = AvisosFalsos()
+F.vueltas(agx, 2)
+terminar(agx, RAIZX)
+quieto(agx, 30)
+EXACTOS = {k: tuple(p for p in v if p.startswith(agente.huellas.EXACTO))
+           for k, v in IGNORADO.items() if k[0] == UIDX}
+c("al motor de avisos se le pide no contarlos, distinguiendo mayúsculas",
+  EXACTOS, {(UIDX, "docs"): (agente.huellas.EXACTO + "*.log",), (UIDX, "fotos"): ()})
+agy = nuevo()
+F.vueltas(agy, 2)
+terminar(agy, RAIZX)
+quieto(agy, 30)
+c("  y al recorrido, lo mismo",
+  {m[0]: tuple(p for p in m[2] if p.startswith(agente.huellas.EXACTO)) for m in MIRADAS},
+  {"docs": (agente.huellas.EXACTO + "*.log",), "fotos": ()})
 
 raise SystemExit(c.report())

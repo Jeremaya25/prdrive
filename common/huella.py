@@ -45,7 +45,14 @@ HONDO = "**/"
 
 Los demás patrones de `ignorar` son de la raíz de la pareja. Uno hondo no casa
 nunca como patrón de la raíz (un nombre no lleva `/`), así que quien no los
-aparte (`partir()`) simplemente no los aplica.
+aparte (`partir()`) simplemente no los aplica. Se compara sin distinguir
+mayúsculas, como los de la raíz.
+"""
+EXACTO = "**=/"
+"""Como `HONDO`, pero distinguiendo mayúsculas: lo que la propia pareja excluye por su nombre.
+
+rclone las distingue en sus filtros (`*.tmp` no deja fuera `X.TMP`; visto con
+rclone 1.75.1), y lo que él sí sincroniza tiene que seguir contando.
 """
 RUIDO_DE_EDITOR = tuple(HONDO + p for p in (
     "~$*",                  # el fichero de bloqueo de Office, mientras el documento está abierto
@@ -72,19 +79,30 @@ def se_ignora(nombre: str, patrones: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(minusculas, p) for p in patrones)
 
 
-def partir(patrones: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Aparta los patrones hondos (`HONDO`) de los de la raíz.
+Hondos = tuple[tuple[str, ...], tuple[str, ...]]
+"""Los patrones hondos de una pareja, ya apartados: `(los de `HONDO`, los de `EXACTO`)`."""
+SIN_HONDOS: Hondos = ((), ())
+
+
+def partir(patrones: tuple[str, ...]) -> tuple[tuple[str, ...], Hondos]:
+    """Aparta los patrones hondos (`HONDO`, `EXACTO`) de los de la raíz.
+
+    Args:
+        patrones: Los de `ignorar`, tal como los escribe quien llama.
 
     Returns:
-        `(los de la raíz, los hondos sin su prefijo)`.
+        `(los de la raíz en minúsculas, los hondos sin su prefijo)`.
     """
-    return (tuple(p for p in patrones if not p.startswith(HONDO)),
-            tuple(p[len(HONDO):] for p in patrones if p.startswith(HONDO)))
+    return (tuple(p.lower() for p in patrones if not p.startswith((HONDO, EXACTO))),
+            (tuple(p[len(HONDO):].lower() for p in patrones if p.startswith(HONDO)),
+             tuple(p[len(EXACTO):] for p in patrones if p.startswith(EXACTO))))
 
 
-def es_ruido(nombre: str, hondos: tuple[str, ...]) -> bool:
+def es_ruido(nombre: str, hondos: Hondos) -> bool:
     """Indica si el nombre de un fichero (sin su carpeta) casa con algún patrón hondo."""
-    return bool(hondos) and se_ignora(nombre, hondos)
+    sin_caso, exactos = hondos
+    return (bool(sin_caso) and se_ignora(nombre, sin_caso)) \
+        or any(fnmatch.fnmatchcase(nombre, p) for p in exactos)
 
 
 def ruta_larga(ruta: str) -> str:
@@ -161,14 +179,14 @@ def de_carpeta(ruta: Path | str, tope: int | None = None,
             `cortada`: quien llama solo necesita saber que no cabe.
         ignorar: Patrones (`fnmatch`, en minúsculas) de las entradas de la raíz
             que no se miran, sean carpetas o ficheros. Los que llevan `HONDO`
-            delante son de ficheros a cualquier profundidad
-            (`RUIDO_DE_EDITOR`).
+            o `EXACTO` delante son de ficheros a cualquier profundidad
+            (`RUIDO_DE_EDITOR`, y lo que excluye la pareja).
 
     Returns:
         La foto, o `None` si no se pudo tomar: ni un cambio ni una foto vacía.
     """
     raiz = os.fspath(ruta)
-    patrones, hondos = partir(tuple(p.lower() for p in ignorar))
+    patrones, hondos = partir(tuple(ignorar))
     pendientes: list[tuple[str, str]] = [(raiz, "")]
     entradas = 0
     firma = 0

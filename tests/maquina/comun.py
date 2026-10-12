@@ -388,6 +388,15 @@ def bandeja_windows():
         yield b, avisos
     finally:
         b.cerrar()
+        # La clase de su ventana queda registrada con el procedimiento de ESTA
+        # bandeja, y la siguiente del mismo proceso recibiría sus mensajes en la
+        # vieja: no le llegaría ningún aviso de dispositivo.
+        import ctypes
+        from ctypes import wintypes
+        k32, u32 = ctypes.WinDLL("kernel32"), ctypes.WinDLL("user32")
+        k32.GetModuleHandleW.restype = wintypes.HMODULE
+        u32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        u32.UnregisterClassW(b.api.CLASE, k32.GetModuleHandleW(None))
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +590,79 @@ def mandar(hwnd: int, mensaje: int) -> None:
     """Deja un mensaje en la cola de una ventana (`BM_CLICK` 0xF5 pulsa un botón, `WM_CLOSE` 0x10 la cierra)."""
     import ctypes
     ctypes.WinDLL("user32").PostMessageW(ctypes.c_void_p(hwnd), mensaje, 0, 0)
+
+
+BM_CLICK, WM_CLOSE = 0x00F5, 0x0010
+BOTONES_DESMONTAR = ("unmount all", "dismount all")
+"""El botón de desmontar todo de VeraCrypt: «Unmount All» desde la 1.26.2x, antes «Dismount All»."""
+
+
+def configuracion_veracrypt(minutos: int, forzar: bool) -> str:
+    """Devuelve un `Configuration.xml` de VeraCrypt que desmonta a esos minutos de inactividad.
+
+    Args:
+        minutos: `MaxVolumeIdleTime`.
+        forzar: `ForceAutoDismount`: si desmonta aunque haya algo abierto dentro
+            (lo de fábrica de VeraCrypt).
+    """
+    return ('<?xml version="1.0" encoding="utf-8"?>\n<VeraCrypt>\n\t<configuration>\n'
+            f'\t\t<config key="MaxVolumeIdleTime">{minutos}</config>\n'
+            f'\t\t<config key="ForceAutoDismount">{int(forzar)}</config>\n'
+            '\t</configuration>\n</VeraCrypt>\n')
+
+
+class VentanaVeraCrypt:
+    """La ventana de VeraCrypt Portable abierta, con una configuración propia.
+
+    Args:
+        c: El contenedor de la prueba; tiene que ser del Portable.
+        configuracion: El `Configuration.xml` con el que arranca
+            (`configuracion_veracrypt()`).
+
+    Raises:
+        Saltada: Si VeraCrypt es uno instalado (no se toca su configuración) o
+            la ventana no se abre, o no en inglés.
+    """
+
+    def __init__(self, c: Contenedor, configuracion: str) -> None:
+        """Escribe la configuración, abre la ventana y busca su botón de desmontar todo."""
+        if not c.portable:
+            raise Saltada("solo con el Portable: no se toca la configuración de un VeraCrypt "
+                          "instalado")
+        (c.vc.parent / "Configuration.xml").write_text(configuracion, encoding="utf-8")
+        self.proceso = subprocess.Popen([str(c.vc)])
+        self.principal = self.boton = 0
+        if not esperar(self._buscar, 30, 0.5):
+            self.proceso.kill()
+            raise Saltada("la ventana de VeraCrypt no se ha abierto, o no en inglés")
+
+    def _buscar(self) -> bool:
+        """Busca la ventana principal por su botón de desmontar todo."""
+        for h, _titulo, hijos in ventanas_de(self.proceso.pid):
+            for hh, texto in hijos:
+                if texto.lower() in BOTONES_DESMONTAR:
+                    self.principal, self.boton = h, hh
+                    return True
+        return False
+
+    def desmontar_todo(self) -> None:
+        """Pulsa su botón de desmontar todo."""
+        mandar(self.boton, BM_CLICK)
+
+    def preguntas(self) -> list[str]:
+        """Los títulos de sus ventanas que no son la principal: una pregunta, un error."""
+        return [t or "(sin título)" for h, t, _hijos in ventanas_de(self.proceso.pid)
+                if h != self.principal]
+
+    def cerrar(self) -> bool:
+        """La cierra por las buenas; devuelve `False` si ha habido que matarla."""
+        mandar(self.principal, WM_CLOSE)
+        try:
+            self.proceso.wait(20)
+        except subprocess.TimeoutExpired:
+            self.proceso.kill()
+            return False
+        return True
 
 
 def al_final(motor, segundos: float = 4.0) -> dict:

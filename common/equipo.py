@@ -257,8 +257,7 @@ class Ajustes:
         avisos_veracrypt: En Windows, si las parejas con `watch` de un volumen
             de VeraCrypt se oyen con los avisos del sistema en vez de
             recorrerse (`avisos_carpeta.ReadDirectoryChanges.volumen()`).
-            Apagado de fábrica hasta verlo en equipos reales; se lee al
-            arrancar el agente.
+            Encendido de fábrica; se lee al arrancar el agente.
     """
     unidades: Mapping[str, Unidad] = field(default_factory=dict)
     espera_unidad_nueva: float = ESPERA_UNIDAD_NUEVA
@@ -266,7 +265,7 @@ class Ajustes:
     extra_roots: tuple[str, ...] = ()
     pedir_al_iniciar: bool = True
     estirar_intervalo: bool = True
-    avisos_veracrypt: bool = False
+    avisos_veracrypt: bool = True
 
     def con_unidad(self, unidad: Unidad) -> "Ajustes":
         """Devuelve unos ajustes iguales con esa unidad añadida o sustituida."""
@@ -347,7 +346,8 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         pedir_al_iniciar=datos["pedir_al_iniciar"]
         if isinstance(datos.get("pedir_al_iniciar"), bool) else True,
         estirar_intervalo=estirar,
-        avisos_veracrypt=datos.get("avisos_veracrypt") is True)
+        avisos_veracrypt=datos["avisos_veracrypt"]
+        if isinstance(datos.get("avisos_veracrypt"), bool) else True)
 
 
 def a_dict(aj: Ajustes) -> dict:
@@ -368,7 +368,7 @@ def a_dict(aj: Ajustes) -> dict:
         "extra_roots": list(aj.extra_roots),
         "pedir_al_iniciar": aj.pedir_al_iniciar,
         "estirar_intervalo": aj.estirar_intervalo,
-        **({"avisos_veracrypt": True} if aj.avisos_veracrypt else {}),
+        **({} if aj.avisos_veracrypt else {"avisos_veracrypt": False}),
     }
 
 

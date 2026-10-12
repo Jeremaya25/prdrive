@@ -183,8 +183,10 @@ con el motor de verdad:
   de editor, también el 12/10/2026 y de otra manera que la propuesta: no se excluye de lo que se
   sincroniza en las parejas nuevas (cambiaría sus filtros y las haría distintas del catálogo),
   sino que ni los avisos ni el recorrido lo cuentan en ninguna pareja (`huella.RUIDO_DE_EDITOR`):
-  se sincroniza con la pasada siguiente. Sin hacer: las exclusiones propias de la pareja en los
-  avisos (traducir filtros de rclone; el mecanismo ya está).
+  se sincroniza con la pasada siguiente. Las exclusiones propias de la
+  pareja, también: solo las de nombre (`*.log`, sin carpeta), que es lo que se pudo medir que
+  rclone entiende igual (cualquier profundidad, distinguiendo mayúsculas, nunca carpetas), y
+  ninguna si la pareja lleva algún `include` (`model.excluidos_por_nombre()`).
 - **3, el agente sin reloj**: hecho en lo que más pesa. La espera de `cmd_run`
   (`cuanto_esperar()`, 30 s sin nada a la vista), el oyente del buzón, una lectura de `state/` por
   vuelta, el recorrido de respaldo a 2 min con `GetLogicalDrives`, y batería y red solo con algo a
@@ -199,14 +201,14 @@ con el motor de verdad:
   llavero siempre aparte). Comprobado con `sync.py` y rclone de verdad sobre cuatro parejas. **Sin hacer, a propósito: el
   workdir de bisync fuera de la unidad.** Toca las invariantes del baseline y esta hoja ya pedía
   su propia especificación; no se construye sin ella ni sin una unidad de verdad delante.
-- **5, VeraCrypt**: construido detrás de `agente.py ajuste avisos_veracrypt sí`, apagado de
-  fábrica. Visto el 12/10/2026 con VeraCrypt Portable 1.26.29 de verdad en un sobremesa
-  (`tests/maquina/f18_veracrypt_windows.py` 17/17 y `f23_veracrypt_ventana_windows.py` 15/15, en
+- **5, VeraCrypt**: hecho, y **encendido de fábrica** desde el 12/10/2026 (decisión del dueño;
+  `agente.py ajuste avisos_veracrypt no` lo apaga). Visto ese día con VeraCrypt Portable 1.26.29
+  de verdad en un sobremesa (`tests/maquina/f18_veracrypt_windows.py` 17/17,
+  `f23_veracrypt_ventana_windows.py` 15/15 y `f28_veracrypt_forzado_windows.py` 13/13, en
   `maquina-real-resultados.md`): `/dismount` con y sin `/silent`, «Unmount All» de su ventana y
-  su desmontaje automático por inactividad **sin forzar** desmontan con la carpeta vigilada sin
-  preguntar nada; si otro programa lo impide, la vigilancia vuelve sola a los 5 s. Sin ver: el
-  desmontaje automático forzando (el de fábrica de VeraCrypt), `Expulsar PRDRIVE.bat` entero y
-  un pendrive. El ajuste sigue apagado hasta que lo decida el dueño.
+  su desmontaje automático por inactividad, forzando o sin forzar, desmontan con la carpeta
+  vigilada sin preguntar nada; si otro programa lo impide y no fuerza, la vigilancia vuelve sola
+  a los 5 s. Sin ver: `Expulsar PRDRIVE.bat` entero y un pendrive.
 
 Lo que solo puede decir un equipo real está en
 `docs/superpowers/pruebas/2026-09-25-equipo-pendiente-en-real.md` («Menos consumo y el motor de

@@ -67,13 +67,17 @@ Windows, con `ReadDirectoryChangesW` (`ReadDirectoryChanges`):
   vuelve a abrir; `DBT_DEVICEREMOVEPENDING`/`REMOVECOMPLETE` es `PERDIDA`. Sin
   ese registro no se deja ningún handle abierto (la pareja se recorre), y sin
   bandeja no hay motor (`abrir()` es `None`).
-- Ni una carpeta de red (`GetDriveTypeW`, `DRIVE_REMOTE`) ni un volumen de
-  VeraCrypt (`QueryDosDeviceW` de su letra, `\\Device\\VeraCryptVolume…`) se
-  vigilan con avisos. Del segundo, visto con VeraCrypt 1.26.29
-  (`tests/maquina/f18_veracrypt_windows.py`): Windows no deja registrar el
-  aviso de extracción de un handle de su volumen (error 1066), no llega
-  ningún aviso al desmontarlo, y con un handle abierto dentro no se desmonta
-  sin forzar. Se dice antes de intentarlo, con su motivo.
+- Una carpeta de red (`GetDriveTypeW`, `DRIVE_REMOTE`) no se vigila con
+  avisos. Se dice antes de intentarlo, con su motivo.
+- Un volumen de VeraCrypt (`QueryDosDeviceW` de su letra,
+  `\\Device\\VeraCryptVolume…`) no admite ese registro (error 1066), y con un
+  handle abierto dentro no se desmonta sin forzar. Lo único que anuncia
+  VeraCrypt es un aviso de volumen por letra a todas las ventanas, antes de
+  cada intento: la bandeja lo pasa a `volumen()`, que cierra la carpeta en el
+  acto y la vuelve a abrir si al final no se fue. Visto con VeraCrypt 1.26.29
+  de verdad (`tests/maquina/f18_veracrypt_windows.py`, `f23_…`, `f28_…`): su
+  orden, el botón de su ventana y su desmontaje automático, forzando o no.
+  Sin `veracrypt` (el ajuste `avisos_veracrypt` apagado) no se vigilan.
 - Todas las llamadas a Windows están en `Win32`; los tests ponen una de
   mentira. Lo que solo se ve en un Windows de verdad está en la lista de
   pruebas en equipos reales.
@@ -96,7 +100,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, NamedTuple
 
-from .huella import es_ruido, partir, se_ignora
+from .huella import SIN_HONDOS, es_ruido, partir, se_ignora
 
 ES_LINUX = sys.platform.startswith("linux")
 ES_WINDOWS = os.name == "nt"
@@ -398,6 +402,7 @@ class Inotify:
         self._wds: dict[tuple[str, str], set[int]] = {}
         self._raiz: dict[tuple[str, str], int] = {}
         self._parejas: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+        self._hondos: dict[tuple[str, str], tuple] = {}
         self._pendientes: dict[tuple[str, str], Aviso] = {}
         self._netos: dict[tuple[str, str], Neto] = {}
 
@@ -451,9 +456,10 @@ class Inotify:
         if tipo in DE_RED:
             return (f"es una carpeta de red o compartida ({tipo}): no avisa de lo que se "
                     f"cambia desde el otro lado")
-        patrones = tuple(p.lower() for p in ignorar)
+        patrones, hondos = partir(tuple(ignorar))
         with self._cerrojo:
             self._parejas[clave] = (ruta, patrones)
+            self._hondos[clave] = hondos
             self._wds.setdefault(clave, set())
         vistas: set[int] = set()
         try:
@@ -644,6 +650,7 @@ class Inotify:
         self._wds.pop(clave, None)
         self._raiz.pop(clave, None)
         self._parejas.pop(clave, None)
+        self._hondos.pop(clave, None)
         self._pendientes.pop(clave, None)
         self._netos.pop(clave, None)
 
@@ -702,7 +709,7 @@ class Inotify:
                 patrones = self._parejas.get(k, ("", ()))[1]
                 if k in raices and se_ignora(nombre, patrones):
                     continue
-                if not carpeta and es_ruido(nombre, partir(patrones)[1]):
+                if not carpeta and es_ruido(nombre, self._hondos.get(k, SIN_HONDOS)):
                     continue
                 if carpeta and mask & IN_ATTRIB:
                     continue
@@ -1043,7 +1050,8 @@ class _Vigilancia:
     Args:
         clave: `(raíz, pareja)`.
         ruta: La carpeta.
-        patrones: Lo que no se mira de su raíz.
+        patrones: Lo que no se mira: de su raíz y, con `huella.HONDO` o
+            `huella.EXACTO` delante, ficheros a cualquier profundidad.
 
     Attributes:
         relanzar: Cuándo toca lanzar su siguiente lectura (`AGRUPAR` después de
@@ -1063,7 +1071,8 @@ class _Vigilancia:
 
     def __init__(self, clave: tuple[str, str], ruta: str, patrones: tuple[str, ...]) -> None:
         """Una vigilancia todavía sin abrir."""
-        self.clave, self.ruta, self.patrones = clave, ruta, patrones
+        self.clave, self.ruta = clave, ruta
+        self.patrones, self.hondos = partir(patrones)
         self.handle: int | None = None
         self.aviso = 0
         self.evento: Any = None
@@ -1160,7 +1169,7 @@ class ReadDirectoryChanges:
             return MOTIVO_RED_WINDOWS
         if not self._veracrypt and self._es_de_veracrypt(unidad):
             return MOTIVO_VERACRYPT
-        patrones = tuple(p.lower() for p in ignorar)
+        patrones = tuple(ignorar)
         with self._cerrojo:
             if clave in self._activas:
                 return None
@@ -1509,8 +1518,8 @@ class ReadDirectoryChanges:
                 nacidos: set) -> None:
         """Decide qué cuenta de una lectura recogida; lo que mira el disco va sin el cerrojo."""
         movida = self._se_ha_movido(v, handle)
-        hondos = partir(v.patrones)[1]
-        if hondos and registros is not None:
+        hondos = v.hondos
+        if any(hondos) and registros is not None:
             # El ruido de editor no cuenta, esté donde esté (`huella.RUIDO_DE_EDITOR`).
             registros = [(accion, nombre) for accion, nombre in registros
                          if not es_ruido(nombre.rsplit("\\", 1)[-1], hondos)]

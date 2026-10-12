@@ -829,10 +829,14 @@ class Servicio:
         locales: La carpeta local, normalizada como la entiende el motor
             (`model.normalizar_local()`), de cada pareja que pide vigilar sus
             cambios (`watch = true`), por nombre.
+        excluidos: De cada una de esas parejas, los ficheros que excluye por
+            su nombre (`model.excluidos_por_nombre()`): sus cambios no
+            cuentan, la pasada no los subiría.
     """
     parejas: tuple[pl.Pareja, ...]
     minutos: float
     locales: Mapping[str, str] = field(default_factory=dict)
+    excluidos: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 class ConfigRechazada(ValueError):
@@ -901,6 +905,7 @@ def leer_servicio(raiz: Path) -> Servicio:
     defaults = crudo.get("defaults") if isinstance(crudo.get("defaults"), dict) else {}
     remotos: dict[str, str] = {}
     locales: dict[str, str] = {}
+    excluidos: dict[str, tuple[str, ...]] = {}
     for p in crudo.get("pair") if isinstance(crudo.get("pair"), list) else []:
         # El nombre va a la línea de órdenes de su `sync.py` y a sus carpetas
         # de `state/` y `filters/`: uno que su parser no admitiría (`--resync`,
@@ -918,8 +923,10 @@ def leer_servicio(raiz: Path) -> Servicio:
             local = p.get("local")
             if model.pide_watch(p) and isinstance(local, str) and local.strip():
                 locales[p["name"]] = model.normalizar_local(local)
+                excluidos[p["name"]] = model.excluidos_por_nombre(p, defaults)
             else:
                 locales.pop(p["name"], None)
+                excluidos.pop(p["name"], None)
     if not remotos:
         raise ValueError("sync_config.toml no tiene ninguna pareja")
     daemon = crudo.get("daemon") if isinstance(crudo.get("daemon"), dict) else {}
@@ -934,7 +941,8 @@ def leer_servicio(raiz: Path) -> Servicio:
         remoto, _ = model.carpeta_del_catalogo(defaults)
         parejas.append(pl.Pareja(model.LLAVERO, remoto, vigila=True, llavero=True))
         vigiladas[model.LLAVERO] = model.LLAVERO_LOCAL
-    return Servicio(tuple(parejas), minutos, vigiladas)
+    return Servicio(tuple(parejas), minutos, vigiladas,
+                    {n: excluidos[n] for n in vigiladas if excluidos.get(n)})
 
 
 def orden_sonda(raiz: Path, remoto: str) -> list[str] | None:
@@ -1467,12 +1475,15 @@ class Mirar(NamedTuple):
         carpeta: La carpeta local de la pareja, sin resolver.
         armar: Si en vez de tomar su foto hay que ponerle (o rehacerle) la
             vigilancia de los avisos del sistema.
+        excluidos: Los ficheros que la pareja excluye por su nombre
+            (`Servicio.excluidos`): no se miran, estén donde estén.
     """
     clave: tuple[str, str]
     con: Conexion
     raiz: Path
     carpeta: Path
     armar: bool = False
+    excluidos: tuple[str, ...] = ()
 
 
 class Muestreo:
@@ -1530,7 +1541,8 @@ class Muestreo:
                     self.fuera.add(mirar.clave)
                     continue
                 ignorar = (self.ignorar + ruido_en(mirar.raiz, mirar.carpeta)
-                           + ruido_de_editor(mirar.clave[1]))
+                           + ruido_de_editor(mirar.clave[1])
+                           + tuple(huellas.EXACTO + p for p in mirar.excluidos))
                 if mirar.armar:
                     try:
                         self.armadas[mirar.clave] = self.avisos.vigilar(
@@ -3045,7 +3057,8 @@ class Agente:
         for (raiz, pareja), poner in [(k, True) for k in armar] + [(k, False) for k in claves]:
             con = self.conexiones[raiz]
             trabajo.append(Mirar((raiz, pareja), con, con.raiz,
-                                 con.raiz / con.servicio.locales[pareja], armar=poner))
+                                 con.raiz / con.servicio.locales[pareja], armar=poner,
+                                 excluidos=con.servicio.excluidos.get(pareja, ())))
         self.muestreo = Muestreo(trabajo, self.cambios.tope_entradas, IGNORAR_CAMBIOS,
                                  self.avisos_carpeta)
         hilo(self.muestreo.correr)

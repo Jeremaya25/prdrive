@@ -502,11 +502,29 @@ c("  guardar con Word (su temporal y sus renombrados) sí: el documento cambia",
 mw.descartar(KW)
 c("  y un fichero cualquiera que acabe en .tmp sigue contando",
   llega((M, "notas.tmp")), {KW: ac.CAMBIO})
-c("los patrones hondos se apartan de los de la raíz",
-  huella.partir(("a", "**/b*", ".prdrive")), (("a", ".prdrive"), ("b*",)))
-c("  y se comparan en minúsculas con el nombre, sin su carpeta",
-  (huella.es_ruido("~$A.docx", ("~$*",)), huella.es_ruido("a.docx", ("~$*",)),
-   huella.es_ruido("x", ())), (True, False, False))
+c("los patrones hondos se apartan de los de la raíz, que van en minúsculas",
+  huella.partir(("A", "**/B*", ".prdrive", "**=/*.Tmp")),
+  (("a", ".prdrive"), (("b*",), ("*.Tmp",))))
+c("  los hondos se comparan en minúsculas con el nombre, sin su carpeta",
+  (huella.es_ruido("~$A.docx", (("~$*",), ())), huella.es_ruido("a.docx", (("~$*",), ())),
+   huella.es_ruido("x", huella.SIN_HONDOS)), (True, False, False))
+c("  y los exactos, distinguiendo mayúsculas, como rclone",
+  (huella.es_ruido("a.tmp", ((), ("*.tmp",))), huella.es_ruido("A.TMP", ((), ("*.tmp",)))),
+  (True, False))
+mw.cerrar()
+
+# --- lo que excluye la propia pareja por su nombre (`EXACTO`): como lo entiende rclone
+w = Win32Falsa()
+mw = ac.ReadDirectoryChanges(w, HWND, agrupar=0.01, callar=0.0)
+mw.vigilar(KW, "E:\\datos\\docs", IGNW + (huella.EXACTO + "*.log", huella.EXACTO + "foto?.jpg"))
+hw = next(iter(w.abiertos))
+c("excluido: un fichero que la pareja excluye no es un cambio, esté donde esté",
+  (llega((A, "salida.log")), llega((M, "sub\\hondo\\salida.log"))), ({}, {}))
+c("  con otras mayúsculas rclone sí lo sincroniza: cuenta", llega((M, "SALIDA.LOG")),
+  {KW: ac.CAMBIO})
+mw.descartar(KW)
+c("  `?` es un solo carácter", (llega((M, "foto1.jpg")), llega((M, "foto22.jpg"))),
+  ({}, {KW: ac.CAMBIO}))
 mw.cerrar()
 
 # --- tras la pasada se tira también lo que llegue enseguida

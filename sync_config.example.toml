@@ -186,8 +186,8 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #   * Donde el sistema avisa de los cambios, los escucha y no recorre nada: en
 #     Linux con inotify, en Windows con ReadDirectoryChangesW (solo con la
 #     bandeja abierta). Mientras la carpeta está quieta no cuesta nada.
-#   * Donde no avisa (una carpeta de red, un volumen de VeraCrypt en Windows, o
-#     en Linux sin hueco para más avisos) recorre la carpeta con `os.scandir`,
+#   * Donde no avisa (una carpeta de red, o en Linux sin hueco para más
+#     avisos) recorre la carpeta con `os.scandir`,
 #     sin abrir ficheros, y compara rutas, tamaños y mtimes con la vuelta
 #     anterior: cada 10 s mientras cambia y cada 2 min cuando lleva 2 min
 #     quieta (con batería, no menos de 1 min). Un cambio tras un rato quieta se
@@ -203,6 +203,8 @@ resilient = true              # un error menor no obliga a --resync la próxima 
 #     `~$informe.docx` de Word y sus `~*.tmp`, el `.~lock.*#` de LibreOffice,
 #     el `.*.sw?` de vim, `Thumbs.db`, `desktop.ini`. Se sincronizan con la
 #     pasada siguiente (para que no se sincronicen nunca, van en `exclude`).
+#     Lo que la pareja excluye por su nombre (`exclude = ["*.log"]`, sin
+#     carpeta en el patrón y sin ningún `include`) tampoco la adelanta.
 #     Las uniones de Windows (`mklink /J`) no se miran: rclone no entra en
 #     ellas sin `copy-links`.
 #   * Es una pasada corriente adelantada, no «Sincronizar ahora»: con el agente en

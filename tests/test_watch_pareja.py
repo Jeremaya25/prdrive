@@ -113,6 +113,32 @@ for etiqueta, extra, esperado in (
         ("sin la clave", {}, False)):
     c(f"pide_watch: {etiqueta}", model.pide_watch({**RAW, **extra}), esperado)
 
+# Lo que la pareja excluye por su nombre: lo que los avisos pueden dejar de contar.
+for etiqueta, pareja, defaults, esperado in (
+        ("los de nombre, de [defaults] y de la pareja",
+         {"exclude": ["*.log", "~$*"]}, {"exclude": "*.bak"}, ("*.bak", "*.log", "~$*")),
+        ("los que llevan carpeta, no",
+         {"exclude": ["cache/**", "/raiz.txt", "a/b.txt", "*.log"]}, {}, ("*.log",)),
+        ("ni los de `**`, clases, alternativas o escapes",
+         {"exclude": ["**.tmp", "[ab].txt", "{a,b}.txt", "x\\*", " x", ""]}, {}, ()),
+        ("con un include, ninguno: lo demás ya queda fuera, y el orden cuenta",
+         {"exclude": ["*.log"], "include": ["*.md"]}, {}, ()),
+        ("con un include en [defaults], ninguno",
+         {"exclude": ["*.log"]}, {"include": "*.md"}, ()),
+        ("con extra_flags, ninguno: pueden traer otros filtros",
+         {"exclude": ["*.log"], "extra_flags": ["--include-from", "x"]}, {}, ()),
+        ("con un flag que incluye, ninguno",
+         {"exclude": ["*.log"], "flags": {"files_from": "x"}}, {}, ()),
+        ("y en [defaults.flags], tampoco",
+         {"exclude": ["*.log"]}, {"flags": {"include-from": "x"}}, ()),
+        ("con otros flags, sí",
+         {"exclude": ["*.log"], "flags": {"max-delete": 10, "ignore-case": True}}, {},
+         ("*.log",)),
+        ("un exclude que no es lista ni texto", {"exclude": 3}, {}, ()),
+        ("sin exclude", {}, {}, ())):
+    c(f"excluidos_por_nombre: {etiqueta}", model.excluidos_por_nombre(pareja, defaults),
+      esperado)
+
 # la clave sobrevive al TOML y a la ventana de parejas
 raw = {"defaults": {"remote": "nas"}, "pair": [{**RAW, "mode": "up", "watch": True}]}
 c("watch se escribe y se relee igual (dumps_checked)",
