@@ -16,7 +16,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 |---|---|
 | `engine.md` | `sync.py`, `model.py`, `bisync.py`, `config_file.py`: config → command, bisync prefix/baseline/filters, logs, progress, TOML writer |
 | `conflicts-versions.md` | conflicts, `results.py`, `historial.py`, `versions = true` / `.prversions/` |
-| `catalogue.md` | `catalog.py`, `catalog_editor`, `pair_editor`, `flags_editor`, `remote_picker` |
+| `catalogue.md` | `catalog.py`, `catalog_editor`, `pair_editor`, `flags_editor`, `flags_guia`, `remote_picker` |
 | `fleet.md` | `fleet.py`, `tk_fleet.py` |
 | `service.md` | `runsync.py`, `ui/prefs.py`, `state/` locks, failure pop-up |
 | `penwatch.md` | `penwatch.py` |
@@ -51,6 +51,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── pregunta.py     the agent's «¿Atender esta unidad?» window as a tiny entry (agente.py is recompiled on every use)
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── generar_flags_rclone.py  regenerates `common/flags_rclone.json` (the pinned rclone's flags) when `RCLONE_VERSION` moves
+├── generar_guia_flags.py  regenerates `docs/guia/flags-de-rclone.md` from the flags guide's catalogue
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
 │   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
@@ -60,7 +61,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
 │   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only; `tk_principal` the main window, `tk_tabla` the one-canvas table)
-│   decision halves, no Tk: principal (main window) · instantanea (the shared device read) · pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · flags_ayuda (autocomplete, value types, warnings) · watch · versions_editor · volumen · llavero_editor · lecturas_asistente (the wizard's reads: the examinations, the probe, the python and verification checks)
+│   decision halves, no Tk: principal (main window) · instantanea (the shared device read) · pair_editor · repair · catalog_editor · remote_picker · conflict_editor · flags_editor · flags_ayuda (autocomplete, value types, warnings) · flags_guia + flags_catalogo (the searchable flags guide) · watch · versions_editor · volumen · llavero_editor · lecturas_asistente (the wizard's reads: the examinations, the probe, the python and verification checks)
 │   tray: bandeja (PURE) · bandeja_windows · bandeja_linux · tk_agente («¿Atender esta unidad?», a child of the agent)
 ├── install/        what the installer knows; no Tk, no device needed
 │   profile · rclone_bin · runtime_bin · veracrypt_bin · descarga (retries, SHA256SUMS) · platforms · components · remote (ephemeral rclone.conf, catalogue)
