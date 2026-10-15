@@ -23,6 +23,14 @@ pasada lleva el resultado al remoto. El aviso no es un suceso que se lee y se
 olvida: se deriva del disco, y se va solo cuando ya no quedan copias, las haya
 borrado quien las haya borrado.
 
+**Cuándo gana el «más reciente».** rclone compara las dos horas tal cual, sin
+la ventana de 2 s de la que habla [la configuración](configuracion.md). En un
+pendrive exFAT o FAT32 con Windows, la hora del dispositivo está redondeada hacia
+arriba hasta 2 s, así que si el otro lado cambió el mismo fichero hasta 2 s
+después de tu edición, puede ganar la copia del dispositivo. No se pierde nada:
+la otra versión queda al lado como copia de conflicto, y desde **Reparación** se
+elige con cuál quedarse.
+
 **Por qué el sufijo lleva el lado.** Con el sufijo de fábrica de rclone
 (`.conflict`) y `--conflict-loser num`, la copia se llama `.conflictN` con el
 primer número libre (`cmd/bisync/resolve.go`), y ese número es un orden, no un

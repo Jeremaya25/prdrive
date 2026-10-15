@@ -12,6 +12,10 @@ name: Máquina real
 # Al subir un cambio de tests/maquina/ a una rama que no es main, y en un PR que
 # toca lo que prueban: todas.
 #
+# F3 (la hora de lo que baja del remoto, #114) lanza el rclone fijado de verdad: el
+# paso «El rclone fijado» lo baja (una vez, con caché) y deja su ruta en
+# `PRDRIVE_RCLONE_CI`; sin él, F3 sale «saltada».
+#
 # F21 (`.pyc` entre sistemas) corre en dos trabajos propios, fuera de la matriz
 # (sus pasos no se pueden pasar un árbol entre ellos): `pyc-linux` precompila el
 # programa con el Python fijado y sube el árbol como artefacto `f21-arbol`;
@@ -55,7 +59,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            plat: linux-x64
+          - os: windows-latest
+            plat: windows-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -67,6 +75,18 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+
+      - name: Clave de la caché
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: rclone-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
+
+      - name: El rclone fijado
+        run: python tests/_runtime_ci.py rclone ${{ matrix.plat }} "${{ runner.temp }}/prdrive-cache"
 
       - name: Pruebas (Linux, como root)
         if: runner.os == 'Linux'

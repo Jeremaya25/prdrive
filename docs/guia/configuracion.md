@@ -104,6 +104,17 @@ la pareja y lo cuenta en una línea (`progreso: 2,1 MB de 3,4 MB · 61 % ·
 informativo: si no sale nada del log —porque una pareja cambia esos flags, por
 ejemplo con `stats = "0"`—, no hay progreso y la pasada va igual.
 
+También lleva `--modify-window 2s`, la **ventana de hora**: rclone da por iguales
+dos horas de modificación que difieren menos de 2 segundos. exFAT y FAT32 —los
+sistemas de ficheros de casi todos los pendrives— guardan la hora en saltos de
+2 s y Windows la redondea hacia arriba, también la que pone un programa. Sin la
+ventana, todo lo que bajaba del remoto se daba por cambiado en la pasada
+siguiente, sin que nadie lo hubiera tocado: una pasada de más y, con un remoto
+sin sumas de comprobación, el fichero entero volvía a subir. El precio es que en
+NTFS o ext4 una edición del mismo tamaño hecha a menos de 2 s de la anterior
+puede no verse. No exige ningún `--resync`, y se cambia como cualquier flag
+(`modify-window = "0"` en `[pair.flags]`).
+
 El editor de flags de la ventana enseña **las cuatro capas resueltas**: cada
 flag con su valor y la etiqueta de dónde viene (`siempre`, `modo bisync`,
 `[defaults]` o `esta pareja`), y avisa cuando un cambio sube el `--max-delete`

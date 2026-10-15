@@ -933,11 +933,18 @@ def comprobar_seguridad(crudo: Mapping[str, Any], equipo: bool = False, *,
                 raise ConfigError(f"{donde} {motivo}")
 
 
+VENTANA_HORA = 2  # segundos
+"""La ventana con la que se comparan las horas de modificación (`modify-window`).
+
+La usan `BASE_FLAGS` y `llavero.pendiente()`, que tolera lo mismo que rclone.
+"""
+
 BASE_FLAGS: Mapping[str, Any] = {
     "verbose": True,
     "create-empty-src-dirs": True,
     "stats": "2s",
     "stats-one-line": True,
+    "modify-window": f"{VENTANA_HORA}s",
 }
 """Flags que lleva toda ejecución, sea cual sea el modo.
 
@@ -946,6 +953,26 @@ pocos segundos (la de fábrica es un bloque por minuto); de ahí saca `sync.py`
 el progreso en vivo (`common/progress.py`). Van en esta capa y no en el código
 para que una pareja pueda cambiarlos como cualquier otro flag; sin ellos no hay
 progreso, pero la pasada va igual.
+
+`modify-window` es la tolerancia con la que rclone da por iguales dos horas.
+exFAT y FAT32 guardan la hora en saltos de 2 s y Windows la redondea hacia
+ARRIBA, también la que pone un programa: un fichero que baja del remoto con una
+hora con fracción queda hasta 2 s por delante de la pedida (medido: +0,88 s y
++1,88 s; NTFS la guarda tal cual). rclone no lo ve porque mide la precisión del
+lado local con un fichero de prueba en la carpeta temporal del equipo
+(`readPrecision()`, `backend/local/local.go`: `os.CreateTemp("", …)`), que está
+en NTFS, no en la unidad. `fs.GetModifyWindow()` (`fs/fs.go`) toma la mayor de
+esa precisión y de este flag, y `timeDiffers()` (`cmd/bisync/compare.go`) da por
+iguales dos horas que difieren MENOS que la ventana, en los dos sentidos: sin
+ella, la pasada siguiente a una bajada lee «File changed: time (newer)» sin que
+nadie haya tocado nada. `copy` y `sync` comparan igual (`operations.Equal`).
+Ensancha la tolerancia, nunca la estrecha, y no entra en el prefijo del baseline
+ni en el fichero de filtros, así que ningún dispositivo necesita un `--resync`
+por ella. A cambio, en NTFS y ext4 una edición del mismo tamaño hecha a menos de
+2 s de la anterior puede no verse. `conflict-resolve = newer` NO la usa para
+elegir ganador (`resolveNewerOlder()`, `cmd/bisync/resolve.go`, compara las horas
+al nanosegundo): una copia redondeada hacia arriba gana a un cambio del remoto
+hecho hasta 2 s después. Una pareja la cambia como cualquier otro flag.
 """
 
 
