@@ -55,7 +55,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
 │   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
-│   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
+│   revision (the ONE diagnosis) · frenos (the delete brakes in a log: `sync.py` and `revision` both read it) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · explorador (a VeraCrypt letter's name and icon, HKCU) · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
 │   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive) · nombres (a drive's default name)
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
@@ -107,14 +107,14 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 ## Engine rules (detail: `engine.md`)
 
 - **Parse once, at the boundary**: `model.parse_config()` → frozen `Mode`/`Pair`/`Config`; nothing downstream re-reads TOML keys. Validation raises `model.ConfigError`, never `sys.exit` (the UI shares the model); `install.InstallError` likewise.
-- **A new rclone flag = edit the TOML, never code.** Flags merge `BASE_FLAGS` < `Mode.flags` < `[defaults.flags]` < `[pair.flags]`; the script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`.
+- **A new rclone flag = edit the TOML, never code.** Flags merge `BASE_FLAGS` < `Mode.flags` < `[defaults.flags]` < `[pair.flags]`; the script owns `--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`, `--force`.
 - rclone always runs with `cwd = model.APP_DIR`: `rclone.conf` uses paths relative to it (`key_file`, `known_hosts_file`).
 - `sync_config.toml` is per-device: generated from the catalogue at provisioning, then maintained by the pairs screen; still hand-editable (a pair that differs from the catalogue is *reported* «modificada aquí», not corrected). Nothing on the device travels to the remote: no pair mirrors `.prdrive/` (enforced for bisync and for copy/sync without a matching `include`: `REGLA_SIN_PROGRAMA`).
 
 ## Safety invariants: do not weaken
 
 - If a bisync baseline exists but the local path does **not**, `_bisync_preflight()` aborts with rc 2 instead of creating the folder (an empty local side reads as "everything was deleted"). Only pairs **without** a baseline get their local dir created.
-- `max-delete` defaults: 25 bisync / 50 mirror, and they are **not the same unit**. bisync's is a **global** rclone flag it intercepts and reinterprets: `Options.applyContext()` (`cmd/bisync/cmd.go`) reads `--max-delete`, clamps it to 0..100 and sets `ci.MaxDelete = -1` so `fs/operations` never treats it as a count; `excessDeletes()` (`cmd/bisync/deltas.go`) then aborts when `deleted / oldCount` exceeds that **percentage** of the previous listing. `*-mirror`'s 50 is the ordinary `sync` flag: a plain **count** of files. Don't "fix" either number by comparing it to the other.
+- `max-delete` defaults: 25 bisync / 50 mirror, and they are **not the same unit**. bisync's is a **global** rclone flag it intercepts and reinterprets: `Options.applyContext()` (`cmd/bisync/cmd.go`) reads `--max-delete`, clamps it to 0..100 and sets `ci.MaxDelete = -1` so `fs/operations` never treats it as a count; `excessDeletes()` (`cmd/bisync/deltas.go`) then aborts when `deleted / oldCount` exceeds that **percentage** of the previous listing. `*-mirror`'s 50 is the ordinary `sync` flag: a plain **count** of files. Don't "fix" either number by comparing it to the other. Skipping either brake is `--force` (`sync.py NAME… --force`, ONE pass): a person's confirmed click in «Reparación» or a command line, never a TOML flag and never an unattended path (`engine.md`, `repair.md`).
 - Any `*-mirror` pair deletes on the far side: never exercise one without `--dry-run` first. No pair mirrors the whole device.
 - Anything entering `bisync.expected_prefix()` (`local`, `remote`, `remote_path`, `mode`, `device_remote`, `RAIZ_UPSTREAM`, and the target of an `alias` remote in `rclone.conf`) names the baseline: a change **shelves** it (`state/<pair>.old-<date>/`, then an explicit `--resync`), never renames it, and there is no listing rename (`engine.md`, `catalogue.md`).
 - Anything that deletes or rewrites user data returns an `EditPlan` (`consequences`/`warnings`/`execute()`) shown through `tk_pairs.confirmar_plan()` before it runs; nothing repairs itself.

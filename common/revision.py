@@ -17,11 +17,12 @@ confirmación antes de mover un baseline.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import bisync, conflicts, historial, model, results, store, vestibulo
+from . import bisync, conflicts, frenos, historial, model, results, store, vestibulo
 from .model import Config, Pair
 
 GRAVE = "grave"
@@ -47,7 +48,7 @@ class Hallazgo:
 
     Args:
         clave: Tipo de avería: `local`, `prefijo`, `resync`, `lock`, `espacio`,
-            `conflicto`, `fallo`, `listados`, `catalogo`.
+            `conflicto`, `fallo`, `freno`, `listados`, `catalogo`.
         titulo: Frase corta.
         detalle: Explicación completa.
         pareja: La pareja afectada, o `None` si es del dispositivo.
@@ -249,13 +250,104 @@ def _frase_racha(racha: historial.Racha) -> str:
     return f"{desde}{_dia(racha.desde)} · {cuenta}."
 
 
+def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
+    """Devuelve el freno de borrados que paró esa pasada, o `None` si falló por otra cosa.
+
+    Lo dice el log de la pasada (`frenos.detectar()`, el mismo reconocimiento que
+    usa la consola de `sync.py`). Sin log, o sin poder leerlo, no hay nada que
+    reconocer y la avería sigue siendo un fallo cualquiera.
+    """
+    if fallo.log is None or pair is None:
+        return None
+    try:
+        return frenos.detectar_en(fallo.log, pair)
+    except OSError:
+        return None
+
+
+def _frase_freno(pair: Pair, freno: frenos.Freno) -> tuple[str, str]:
+    """Devuelve el título y lo que pasó, en la unidad de ese freno.
+
+    El de bisync es un porcentaje del listado anterior y el de un espejo una
+    cuenta de ficheros (AGENTS.md, «Safety invariants»): cada texto habla solo
+    de la suya.
+    """
+    nombres = [frenos.nombre_lado(lado) for lado in freno.lados]
+    if freno.tipo == frenos.CAMBIADOS:
+        donde = " y ".join(nombres) or "un lado"
+        a_donde = (f" {frenos.hacia(frenos.otro_lado(freno.lados[0]))}"
+                   if len(freno.lados) == 1 else "")
+        return ("el freno de seguridad ha parado la sincronización",
+                f"Desde la última sincronización han cambiado todos los ficheros en {donde} "
+                "(pasa, por ejemplo, con un cambio de hora o al tocar toda la carpeta). "
+                f"bisync se paró para no copiarlo todo de nuevo{a_donde}.")
+    if freno.tipo == frenos.ESPEJO:
+        destino = frenos.nombre_lado(freno.lados[0])
+        origen = frenos.nombre_lado(frenos.otro_lado(freno.lados[0]))
+        hecho = (f"Ya ha borrado {freno.borrados} ficheros en {destino}, que es lo máximo que "
+                 "permite su freno (una cuenta de ficheros), y se paró"
+                 if freno.borrados else
+                 f"Se paró en el freno de borrados de {destino} (una cuenta de ficheros)")
+        faltan = (f": faltan {freno.pendientes} por borrar" if freno.pendientes else "")
+        return ("el freno de borrados ha parado el espejo",
+                f"Esta pareja es un espejo: deja {destino} igual que {origen}, borrando lo que "
+                f"sobra. {hecho}{faltan}. Lo ya borrado no vuelve solo.")
+    lado = nombres[0] if nombres else None
+    if freno.borrados is None or lado is None:
+        return ("el freno de borrados ha parado la sincronización",
+                "Se habían borrado demasiados ficheros respecto a la última sincronización y "
+                "bisync se paró para no copiar ese borrado al otro lado.")
+    return ("el freno de borrados ha parado la sincronización",
+            f"Se han borrado {freno.borrados} de {freno.total} ficheros ({freno.porcentaje} %) "
+            f"en {lado} desde la última sincronización, y el freno de bisync salta por encima "
+            f"del {freno.tope} %. La pasada se paró para no copiar ese borrado "
+            f"{frenos.hacia(frenos.otro_lado(freno.lados[0]))}.")
+
+
+def _como_argumento(nombre: str) -> str:
+    """Devuelve el nombre de una pareja tal como se escribe en una línea de órdenes.
+
+    Con comillas dobles si lleva algo más que letras, cifras, `_`, `.` o `-`
+    («Mis fotos»): valen en `cmd`, en PowerShell y en un intérprete POSIX.
+    """
+    return nombre if re.fullmatch(r"[\w.-]+", nombre) else f'"{nombre}"'
+
+
+def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
+                    racha: historial.Racha | None) -> Hallazgo:
+    """Devuelve el hallazgo del freno que paró la última pasada de esa pareja.
+
+    Sustituye al `fallo` de la pareja, nunca va además. El `dato` lleva el log y el
+    freno con sus cifras, que es lo que necesita `ui/repair.py` para el plan.
+    """
+    titulo, que = _frase_freno(pair, freno)
+    if freno.tipo == frenos.ESPEJO:
+        riesgo = ("Si el origen está vacío o desmontado, lo borrado es un error: "
+                  "compruébalo antes de seguir.")
+    elif freno.tipo == frenos.CAMBIADOS:
+        riesgo = ("Si no lo esperabas, mira qué ha tocado esos ficheros antes de seguir: "
+                  "copiarlo todo de nuevo pisa lo que haya al otro lado.")
+    else:
+        riesgo = ("Puede ser lo que querías o un error (el dispositivo sin montar donde "
+                  "toca, la carpeta equivocada): mira ese lado antes de seguir.")
+    detalle = f"{que} {riesgo}"
+    if racha is not None:
+        detalle += f" {_frase_racha(racha)}"
+    detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, se "
+                f"puede forzar UNA pasada: `python sync.py {_como_argumento(pair.name)} --force`.")
+    return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
+                    pair.name, AVISO, (log, freno))
+
+
 def _fallos(config: Config) -> list[Hallazgo]:
     """Devuelve las averías de las parejas cuya última pasada falló.
 
-    No tienen reparación: son un informe, y lo que se ofrece es el log que lo
-    explica. Del diario de pasadas sale desde cuándo falla, que distingue un
-    tropiezo de una avería; sin diario (un dispositivo recién actualizado o que
-    no se deja leer) la avería se cuenta igual, sin esa frase.
+    Las que paró un freno de borrados (`frenos.detectar()`) son un hallazgo
+    propio, con cifras y sin ser además un fallo. El resto no tiene reparación:
+    son un informe, y lo que se ofrece es el log que lo explica. Del diario de
+    pasadas sale desde cuándo falla, que distingue un tropiezo de una avería; sin
+    diario (un dispositivo recién actualizado o que no se deja leer) la avería se
+    cuenta igual, sin esa frase.
     """
     try:
         fallos = results.fallos(config)
@@ -265,9 +357,14 @@ def _fallos(config: Config) -> list[Hallazgo]:
         rachas = historial.rachas(f.pareja for f in fallos)
     except Exception:                                   # noqa: BLE001
         rachas = {}
+    parejas = {p.name: p for p in config.pairs}
     hallazgos = []
     for f in fallos:
         racha = rachas.get(f.pareja)
+        freno = _freno(f, parejas.get(f.pareja))
+        if freno is not None:
+            hallazgos.append(_hallazgo_freno(parejas[f.pareja], freno, f.log, racha))
+            continue
         hallazgos.append(Hallazgo(
             "fallo", f"{nombre_visible(f.pareja)}: la última pasada falló",
             f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "") +

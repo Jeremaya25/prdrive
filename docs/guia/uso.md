@@ -25,6 +25,8 @@ python sync.py --doctor        # diagnóstico completo
 python sync.py --dry-run       # simula; OBLIGATORIO antes de cualquier *-mirror
 python sync.py --resync        # rehace la referencia de bisync
 python sync.py -y              # aprueba el resync sin preguntar (cron)
+python sync.py docs --force   # salta el freno de borrados SOLO en esta pasada de «docs»
+                               # (con la pareja nombrada; prueba antes con --dry-run --force)
 python sync.py --keep-logs     # guarda también los logs de las pasadas buenas
                                # (se quedan 20 por pareja: los buenos desplazan a los de fallo)
 

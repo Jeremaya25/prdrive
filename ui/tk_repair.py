@@ -15,7 +15,8 @@ Hay tres cosas que no puede hacer, a propósito:
 - **No repara sola.** Ni al abrirse ni al pulsar: todo plan enseña sus
   consecuencias y espera un sí. Apartar un baseline es la operación que puede
   acabar en un borrado masivo, y por eso se quitó el renombrado automático de
-  listados.
+  listados. «Forzar sincronización…» lo es más todavía: salta el freno de
+  borrados de UNA pasada, y solo después de que se lean sus consecuencias.
 - **No repara mientras se sincroniza.** Mover ficheros o apartar un baseline
   bajo los pies de rclone es exactamente lo que no puede pasar, así que la
   ventana principal no deja abrir esto durante una pasada y `repair` vuelve a
@@ -57,11 +58,16 @@ BOTONES = {
     "resync": "Resincronizar…",
     "fallo": "Ver el log",
 }
-"""Qué botón lleva cada avería.
+"""Qué botón lleva cada avería, junto a su título.
 
 Lo que no está aquí no tiene botón, y eso también es una respuesta: la carpeta
-local que falta no se arregla creándola.
+local que falta no se arregla creándola. El freno de borrados (`freno`) tiene
+varios y van aparte, debajo de su texto (`FORZAR`, `repair.ETIQUETA_SIMULAR`, `VER_LOG`).
 """
+FORZAR = "Forzar sincronización…"
+"""El botón que salta el freno de borrados de UNA pasada, tras confirmarlo."""
+VER_LOG = "Ver el log"
+"""El botón que abre el log de la pasada que paró el freno."""
 
 
 def open_dialog(parent, config: Config, lanzar, marcadas=None, compartida=None) -> bool:
@@ -185,6 +191,40 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         panel.cerrar(lambda: lanzar(f"Resincronizar «{hallazgo.pareja}»",
                                     repair.args_resync(hallazgo)))
 
+    def forzar(hallazgo) -> None:
+        """Pide confirmación y lanza UNA pasada forzada en la ventana de salida.
+
+        No es un plan de disco sino una pasada de rclone, con su log y su
+        registro, así que se lanza como cualquier otra. El plan se hace con el
+        hallazgo recién leído (`fresco()`): si el freno ya no está, o la carpeta
+        local ya no existe, no se pregunta nada. Cancelar no hace nada.
+        """
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None:
+            return
+        try:
+            plan = repair.aviso_forzar(config, hallazgo)
+        except repair.ReparacionImposible as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            repintar()
+            return
+        if not tk_pairs.confirmar_plan(dlg, plan, plan.titulo, ""):
+            return
+        panel.devolver(True)
+        panel.cerrar(lambda: lanzar(f"Forzar «{hallazgo.pareja}»",
+                                    repair.args_forzar(hallazgo)))
+
+    def simular_forzado(hallazgo) -> None:
+        """Lanza la pasada forzada en simulacro: nombra lo que borraría y no toca nada.
+
+        No se confirma, como «Simular una pasada…»: no escribe nada.
+        """
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None or not repair.puede_simular_forzado(hallazgo):
+            return
+        panel.cerrar(lambda: lanzar(f"Simulación forzada de «{hallazgo.pareja}»",
+                                    repair.args_forzar(hallazgo, simular=True)))
+
     def ver_log(hallazgo) -> None:
         """Abre el log de la pasada que falló, si quedó."""
         ruta = hallazgo.dato[0] if hallazgo.dato else None
@@ -201,6 +241,20 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
 
     ACCIONES = {"prefijo": aplicar, "lock": aplicar,
                 "resync": resincronizar, "fallo": ver_log}
+
+    def botones_debajo(hallazgo) -> list[tuple[str, object]]:
+        """Devuelve los botones que van bajo el texto de la avería, en su orden.
+
+        Solo el freno de borrados los lleva: son tres y juntos no caben en la
+        fila del título sin ensanchar la pantalla. Qué se ofrece lo decide
+        `repair` (el llavero, por ejemplo, no se fuerza).
+        """
+        if hallazgo.clave != "freno":
+            return []
+        return [(texto, accion) for texto, accion, vale in (
+            (FORZAR, forzar, repair.puede_forzar(hallazgo)),
+            (repair.ETIQUETA_SIMULAR, simular_forzado, repair.puede_simular_forzado(hallazgo)),
+            (VER_LOG, ver_log, True)) if vale]
 
     # La lista de averías.
 
@@ -230,7 +284,18 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         ttk.Label(padre, text=hallazgo.detalle, style="Card.Pista.TLabel",
                   justify="left", wraplength=theme.medida(560)).grid(
             row=linea, column=0, sticky="w", pady=(theme.E1, theme.E2))
-        return linea + 1
+        linea += 1
+
+        debajo = botones_debajo(hallazgo)
+        if debajo:
+            barra = ttk.Frame(padre, style="Plano.Card.TFrame")
+            barra.grid(row=linea, column=0, sticky="w", pady=(0, theme.E2))
+            for columna, (texto, accion) in enumerate(debajo):
+                ttk.Button(barra, text=texto, style="CardQuiet.TButton",
+                           command=lambda h=hallazgo, a=accion: a(h)).grid(
+                    row=0, column=columna, padx=(0 if not columna else theme.E2, 0))
+            linea += 1
+        return linea
 
     def repintar() -> None:
         """Vuelve a mirar el dispositivo y redibuja la lista.

@@ -419,6 +419,32 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Lo que pone prdrive:** No lo pone: el config lo rechaza.
 - **En su lugar:** No se escribe.
 
+### `--force`
+
+**Saltarse el freno de los borrados**
+
+> **Lo pone prdrive, no se puede cambiar** (es --force de sync.py: salta el freno de borrados en UNA pasada y no puede quedar fijo en el config. Para saltarlo ahora, «Forzar sincronización…» en «Reparación» o `sync.py PAREJA --force`)
+
+- **Para qué sirve:** Para que bisync haga una pasada aunque vaya a borrar más de lo que permite --max-delete.
+- **Qué hace en la práctica:** Quita justo la protección que evita que una unidad vacía arrase el otro lado.
+- **Riesgo:** Borra o reescribe
+- **Modos donde sirve:** bisync
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
+- **En su lugar:** Para forzar una sola pasada, «Reparación» → «Forzar sincronización…»: pide confirmación y la pasada siguiente vuelve a frenar.
+
+### `--modify-window`
+
+**Cuánta diferencia de fecha se considera igual**
+
+> **prdrive le da un valor, que puedes cambiar**
+
+- **Para qué sirve:** Para que dos fechas casi iguales se traten como la misma, en remotos o sistemas de ficheros que redondean.
+- **Qué hace en la práctica:** Algunos sistemas de ficheros (como FAT, que redondea a 2 segundos) y algunos remotos guardan las fechas redondeadas: con un margen ("2s") dejan de copiarse ficheros que solo difieren en eso. Lleva unidad obligatoria.
+- **Riesgo:** Solo lectura
+- **Modos donde sirve:** todos
+- **Lo que pone prdrive:** 2s en todos los modos
+- **Ejemplo:** `modify-window = "2s"`
+
 ## Borrados y sobrescrituras
 
 Qué se borra del otro lado, cuándo, y lo que lo frena. Pruébalo todo antes con «Simular», sobre todo en una pareja *-mirror, que borra.
@@ -487,17 +513,6 @@ Qué se borra del otro lado, cuándo, y lo que lo frena. Pruébalo todo antes co
 - **Ojo:** No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, también las que nadie vigila, y una con errores de lectura borraría del destino lo que no ha podido ver.
 - **Riesgo:** Borra o reescribe
 - **Modos donde sirve:** up-mirror, down-mirror
-- **Lo que pone prdrive:** Ninguno: prdrive no lo toca.
-
-### `--force`
-
-**Saltarse el freno de los borrados**
-
-- **Para qué sirve:** Para que bisync haga una pasada aunque vaya a borrar más de lo que permite --max-delete.
-- **Qué hace en la práctica:** Quita justo la protección que evita que una unidad vacía arrase el otro lado.
-- **Ojo:** No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, también las que nadie vigila (las del servicio y las del agente), y quitaría el freno de los borrados en cada una de ellas.
-- **Riesgo:** Borra o reescribe
-- **Modos donde sirve:** bisync
 - **Lo que pone prdrive:** Ninguno: prdrive no lo toca.
 
 ### `--remove-empty-dirs`
@@ -701,17 +716,6 @@ Cómo decide rclone que un fichero ya está al día o que hay que copiarlo.
 - **Modos donde sirve:** up, down, up-mirror, down-mirror
 - **Lo que pone prdrive:** Ninguno: prdrive no lo toca.
 - **Ejemplo:** `ignore-checksum = true`
-
-### `--modify-window`
-
-**Cuánta diferencia de fecha se considera igual**
-
-- **Para qué sirve:** Para que dos fechas casi iguales se traten como la misma, en remotos o sistemas de ficheros que redondean.
-- **Qué hace en la práctica:** Algunos sistemas de ficheros (como FAT, que redondea a 2 segundos) y algunos remotos guardan las fechas redondeadas: con un margen ("2s") dejan de copiarse ficheros que solo difieren en eso. Lleva unidad obligatoria.
-- **Riesgo:** Solo lectura
-- **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Ninguno: prdrive no lo toca (rclone usa 1ns).
-- **Ejemplo:** `modify-window = "2s"`
 
 ## Qué ficheros entran
 
