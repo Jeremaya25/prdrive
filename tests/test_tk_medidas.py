@@ -53,6 +53,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
+from ui import tk_flags_guia
 from ui import (catalog_editor, pair_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
                 tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
                 tk_volumen, tk_watch, versions_editor, volumen, watch)
@@ -808,6 +809,17 @@ try:
                     ancho, alto, escala, modulo=tk_fleet)
                 c(f"{nombre}: la flota cabe", entra, True)
                 c(f"{nombre}: la flota no queda recortado", corta, False)
+
+                # La guía de flags (#126): una tabla de un lienzo, tres filtros y un texto con
+                # barra. Su caso más alto es el de más filas (sin buscar nada), con la pareja
+                # de un espejo, y el de una búsqueda que deja pocas.
+                for que, consulta in (("la guía de flags", ""),
+                                      ("la guía de flags buscando", "borrados")):
+                    entra, corta = medir_dialogo(
+                        lambda: tk_flags_guia.abrir(raiz, "up-mirror", consulta),
+                        ancho, alto, escala, modulo=tk_flags_guia)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortada", corta, False)
 
                 # Lo que esas dos pantallas leen en segundo plano (#66), en sus
                 # casos más altos: Parejas leyendo, con la copia local de las doce

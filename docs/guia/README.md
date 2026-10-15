@@ -9,6 +9,7 @@ El [README](../../README.md) tiene lo esencial. Aquí está el detalle, por tema
 | [Cifrar con VeraCrypt](cifrado.md) | Cifrar la unidad, abrirla y cerrarla en cualquier equipo, y Linux sin VeraCrypt |
 | [Uso diario](uso.md) | La ventana, las parejas, actualizar el programa y sus componentes |
 | [Configuración](configuracion.md) | `sync_config.toml`, flags de rclone, modos y filtros |
+| [Flags de rclone](flags-de-rclone.md) | Qué hace cada flag que puedes poner en una pareja: para qué sirve, si borra, en qué modos vale y un ejemplo |
 | [Conflictos y versiones](conflictos-y-versiones.md) | Qué pasa si un fichero cambia en los dos lados, y versiones anteriores |
 | [El llavero](llavero.md) | Contraseñas y passkeys en una base de KeePassXC que viaja en la unidad y se sincroniza sola |
 | [El servicio y el vigilante](servicio-y-vigilante.md) | Sincronizar cada N minutos; abrir o sincronizar al enchufar la unidad |
