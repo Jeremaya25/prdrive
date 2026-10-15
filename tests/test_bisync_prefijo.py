@@ -330,15 +330,36 @@ with sandbox():
     finally:
         bisync.IS_WIN = real_win
 
-    # En Windows, con la unidad de por medio: el nombre que escribió rclone en la
-    # prueba del 24/09/2026 (alias `pruebas` sobre C:\prdrive-pruebas\remoto), el
-    # que «Reparación» daba por ajeno. Sin `nombre:` delante ni `\\?\`.
+    # En Windows, con la unidad de por medio. El primero es el que escribió rclone
+    # en la prueba del 24/09/2026 (alias `pruebas` sobre C:\prdrive-pruebas\remoto),
+    # el que «Reparación» daba por ajeno. Los demás los escribió rclone v1.75.1 en
+    # el CI (`prefijo-alias-real.yml`, Windows Server, runneradmin): un alias a una
+    # ruta suelta va sin `nombre:` ni `\\?\`; a un remote `local`, con su nombre y
+    # el `\\?\` de su Root(). No se ha observado todavía un destino de red
+    # (`\\srv\…`, que saldría como `UNC_srv_…`) ni `nounc`.
+    WIN_RAIZ = r"C:\Users\runneradmin\AppData\Local\Temp\prdrive-alias-hl0r6_13\remoto"
+    WIN_LISTADO = "C__Users_runneradmin_AppData_Local_Temp_prdrive-alias-hl0r6_13_remoto_datos_prueba"
     model.RCLONE_CONF.write_text(
-        "[pruebas]\ntype = alias\nremote = C:\\prdrive-pruebas\\remoto\n", encoding="utf-8")
+        "[nas]\ntype = local\n\n"
+        "[pruebas]\ntype = alias\nremote = C:\\prdrive-pruebas\\remoto\n\n"
+        f"[a_carpeta]\ntype = alias\nremote = {WIN_RAIZ}\n\n"
+        f"[a_nas]\ntype = alias\nremote = nas:{WIN_RAIZ}\n\n"
+        f"[base]\ntype = alias\nremote = {WIN_RAIZ}\n\n"
+        "[de_alias]\ntype = alias\nremote = base:datos\n\n"
+        f"[con_subruta]\ntype = alias\nremote = {WIN_RAIZ}\\datos\n", encoding="utf-8")
     try:
         bisync.IS_WIN = True
-        c("en Windows, un alias a una unidad (el nombre que escribió rclone)",
+        c("en Windows, un alias a una unidad (el nombre de la prueba del 24/09)",
           canonico("pruebas:datos/prueba"), "C__prdrive-pruebas_remoto_datos_prueba")
+        for destino, de_rclone in (
+                ("a_carpeta:datos/prueba", WIN_LISTADO),
+                ("a_carpeta:/datos/prueba", WIN_LISTADO),
+                ("a_carpeta:/datos//./prueba/", WIN_LISTADO),
+                ("a_nas:datos/prueba", "nas_____" + WIN_LISTADO),
+                ("de_alias:prueba", WIN_LISTADO),
+                ("con_subruta:prueba", WIN_LISTADO)):
+            c(f"en Windows, un alias se resuelve a su destino: {destino}",
+              canonico(destino), de_rclone)
     finally:
         bisync.IS_WIN = real_win
     model.RCLONE_CONF.write_text(ALIAS_CONF, encoding="utf-8")
