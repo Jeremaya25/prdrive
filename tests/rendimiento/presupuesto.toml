@@ -111,13 +111,13 @@
 # vuelta (entrega 3), unas 5 000.
 [techo.linux]
 "consumo.servida.toques_unidad" = 5183
-"modulos.main" = 171
+"modulos.main" = 169
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
 "consumo.servida.toques_unidad" = 5003
-"modulos.main" = 171
+"modulos.main" = 169
 "modulos.agente" = 158
 "modulos.wizard" = 235
 

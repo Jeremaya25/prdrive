@@ -274,6 +274,12 @@ api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEQUERYREMOVE, 4242)
 api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEARRIVAL, 0)
 c("  y si el motor falla, la bandeja sigue", esperar(lambda: MONTAJES == [1, 1, 1]), True)
 b.dispositivo = None
+time.sleep(0.05)                              # que se asiente lo ya enviado
+antes = len(MONTAJES)
+api.enviar(bw.WM_DEVICECHANGE, bw.DBT_DEVICEARRIVAL, ("E:",))
+c("un volumen que llega con las letras de una unidad que sigue (el medio que vuelve, "
+  "`DBTF_MEDIA`) es un cambio de montajes igual: no se mira la marca",
+  esperar(lambda: len(MONTAJES) == antes + 1), True)
 api.enviar(bw.WM_POWERBROADCAST, bw.PBT_APMRESUMEAUTOMATIC, 0)
 c("la vuelta de la suspensión pide «despertar»",
   esperar(lambda: PEDIDAS[-1] == {"pide": equipo.PIDE_DESPERTAR}), True)

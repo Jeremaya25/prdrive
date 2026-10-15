@@ -1,4 +1,4 @@
-"""F30: un atajo global con XGrabKey llega con otra aplicación delante (fila K3), y uno ocupado se rechaza (K4)."""
+"""F31: un atajo global con XGrabKey llega con otra aplicación delante (fila K3), y uno ocupado se rechaza (K4)."""
 
 import ctypes
 import os
@@ -8,7 +8,7 @@ import time
 
 import comun
 
-CODIGO = "F30"
+CODIGO = "F31"
 SISTEMA = "L"
 QUE = ("atajo global con XGrabKey (X11): llega con otra aplicación con el foco, que no ve la "
        "tecla; uno que tiene otro cliente se rechaza al ponerlo")

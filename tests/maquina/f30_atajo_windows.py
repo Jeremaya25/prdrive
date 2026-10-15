@@ -1,4 +1,4 @@
-"""F29: un atajo global con RegisterHotKey en la bandeja llega con otro programa delante (fila K1), y uno ocupado se rechaza (K2)."""
+"""F30: un atajo global con RegisterHotKey en la bandeja llega con otro programa delante (fila K1), y uno ocupado se rechaza (K2)."""
 
 import ctypes
 import subprocess
@@ -7,7 +7,7 @@ from ctypes import wintypes
 
 import comun
 
-CODIGO = "F29"
+CODIGO = "F30"
 SISTEMA = "W"
 QUE = ("atajo global con RegisterHotKey en el hilo de la bandeja: llega como su petición con "
        "el Bloc de notas delante; uno que tiene otro programa se rechaza al ponerlo")

@@ -725,8 +725,41 @@ try:
                              "bisync", {"transfers": 4},
                              orden=lambda f, e: pair_editor.orden_previa(
                                  BASE, {**BASE["pair"][0], "versions": True, "flags": f,
+                                        "extra_flags": e}))),
+                        # Y con el aviso ámbar de lo que ayuda a escribir (#125): un flag
+                        # que borra y choca a la vez, que son dos frases.
+                        ("el editor de flags con la orden de rclone y avisos",
+                         lambda: tk_pairs.flags_form(
+                             raiz, "Flags", "pareja0",
+                             {"max-delete": 10, "remove-empty-dirs": True}, ["--bwlimit", "8M"],
+                             "bisync", {"transfers": 4},
+                             orden=lambda f, e: pair_editor.orden_previa(
+                                 BASE, {**BASE["pair"][0], "versions": True, "flags": f,
                                         "extra_flags": e})))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
+                # Los cuadros con el tema de la ventana principal (`uitk.preguntar()`
+                # y `uitk.avisar()`), con el peor texto de cada uno: el del resync
+                # con las doce parejas y el aviso de la carpeta del programa, y un
+                # error largo del sistema.
+                for que, fabricar in (
+                        ("la pregunta de «Expulsar»",
+                         lambda: uitk.preguntar(
+                             raiz, "Expulsar", "Se cierra el llavero (KeePassXC, si está abierto) "
+                             f"y esta ventana. Después, quita la unidad {uitk.QUITAR_UNIDAD}.",
+                             "Expulsar")),
+                        ("la pregunta del resync con todas las parejas",
+                         lambda: uitk.preguntar_resync(
+                             raiz, [f"pareja{i}" for i in range(12)],
+                             {"pareja0": "/datos/compartidos/de/toda/la/casa/.prdrive"})),
+                        ("un error largo del sistema",
+                         lambda: uitk.avisar(
+                             raiz, "Expulsar", "No he podido lanzar Expulsar PRDRIVE.bat: "
+                             "[WinError 2] El sistema no puede encontrar el archivo "
+                             "especificado " + "C:\\Usuarios\\alguien\\" * 4, "Rojo."))):
+                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala, modulo=uitk)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 

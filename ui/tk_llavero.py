@@ -35,9 +35,9 @@ NOTA = "Solo se escribe lo que dice la lista"
 
 
 def avisar(parent, texto: str) -> None:
-    """Enseña un aviso con «Aceptar». Es de módulo para que los tests lo sustituyan."""
-    from tkinter import messagebox
-    messagebox.showwarning(llavero_editor.TITULO, texto, parent=parent)
+    """Enseña un aviso con «Aceptar», con el tema. Es de módulo para que los tests lo sustituyan."""
+    from . import tk
+    tk.avisar(parent, llavero_editor.TITULO, texto, "Ambar.")
 
 
 def elegir_llave(parent, nombre: str) -> Path | None:
@@ -122,9 +122,9 @@ def cerrar(parent, config: Config) -> bool:
 
 
 def preguntar(parent, texto: str) -> bool:
-    """Pregunta sí o no. Es de módulo para que los tests lo sustituyan."""
-    from tkinter import messagebox
-    return bool(messagebox.askyesno(llavero_editor.TITULO, texto, parent=parent))
+    """Pregunta sí o no, con el tema. Es de módulo para que los tests lo sustituyan."""
+    from . import tk
+    return tk.preguntar(parent, llavero_editor.TITULO, texto, "Sí", "No")
 
 
 def elegir_base(parent) -> Path | None:

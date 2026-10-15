@@ -24,9 +24,9 @@ import sys
 import urllib.error
 import zipfile
 
-from _harness import Checks, tmpdir
+from _harness import REAL_COMPROBAR, Checks, tmpdir
 
-from common import components, pins
+from common import components, keepassxc, pins
 from install import InstallError, components as icomponents, descarga, keepassxc_bin, traveler
 
 c = Checks("KeePassXC del llavero (install/keepassxc_bin.py)")
@@ -51,6 +51,10 @@ BUENO = {".portable": b"", "KeePassXC.exe": b"MZ el programa", "keepassxc-cli.ex
 ZIP = hacer_zip(BUENO)
 NOMBRE = pins.KEEPASSXC["windows-x64"][0]
 pins.KEEPASSXC["windows-x64"] = (NOMBRE, hashlib.sha256(ZIP).hexdigest())
+EJECUTABLES = (components.KEEPASSXC_EXE, "keepassxc-cli.exe", "keepassxc-proxy.exe")
+"""Los ficheros del ZIP de mentira que la tabla de `pins` fija (el resto, las DLL, no)."""
+pins.KEEPASSXC_EJECUTABLES = {pins.KEEPASSXC_VERSION: {"windows-x64": {
+    n: hashlib.sha256(BUENO[n]).hexdigest() for n in EJECUTABLES}}}
 
 pedidas: list[str] = []
 
@@ -159,6 +163,65 @@ c("ya está al día", keepassxc_bin.al_dia(app), True)
 pedidas.clear()
 c("ponerlo otra vez no toca nada", (keepassxc_bin.instalar(app), pedidas), ([], []))
 
+# con el sello al día, un ejecutable que ya no es el fijado NO está al día: el sello dice de
+# dónde salió el paquete, no que sus ficheros sigan siendo esos
+dll = carpeta / "plugins" / "platforms" / "qwindows.dll"
+dll.write_bytes(b"MZ una DLL cambiada")
+c("una DLL cambiada no cuenta: la tabla no la fija, y es lo que se aceptó",
+  keepassxc_bin.al_dia(app), True)
+dll.write_bytes(BUENO["plugins/platforms/qwindows.dll"])
+for que, estropear in (
+        ("un ejecutable con otros bytes", lambda f: f.write_bytes(b"MZ " + f.read_bytes())),
+        ("un ejecutable vacío", lambda f: f.write_bytes(b"")),
+        ("un ejecutable que falta", lambda f: f.unlink())):
+    for nombre in EJECUTABLES:
+        fichero = carpeta / nombre
+        estropear(fichero)
+        c(f"con el sello al día, {que} ({nombre}) no está al día",
+          (components.keepassxc_sello(app, "windows-x64").get(components.KEEPASSXC)
+           == pins.KEEPASSXC_VERSION, keepassxc_bin.al_dia(app)), (True, False))
+        hecho = keepassxc_bin.instalar(app)
+        c("  y ponerlo lo repone", (len(hecho), fichero.read_bytes(), keepassxc_bin.al_dia(app)),
+          (1, BUENO[nombre], True))
+fichero = carpeta / "keepassxc-cli.exe"
+fichero.write_bytes(b"MZ otra cli")
+visto: list[str] = []
+keepassxc_bin.instalar(app, progreso=visto.append)
+c.contains("  y dice qué fichero no cuadraba", " ".join(visto), "keepassxc-cli.exe")
+c("la lista de los que no cuadran sale vacía cuando todo cuadra",
+  keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"), [])
+fichero.write_bytes(b"MZ otra cli")
+(carpeta / "KeePassXC.exe").unlink()
+c("  y nombra solo los que no cuadran, en orden",
+  keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"),
+  ["KeePassXC.exe", "keepassxc-cli.exe"])
+keepassxc_bin.instalar(app)
+real_tabla = pins.KEEPASSXC_EJECUTABLES
+pins.KEEPASSXC_EJECUTABLES = {}
+c("sin fila en la tabla no se puede dar por bueno lo que hay: no está al día",
+  keepassxc_bin.al_dia(app), False)
+pins.KEEPASSXC_EJECUTABLES = real_tabla
+c("  y con ella vuelve a estarlo", keepassxc_bin.al_dia(app), True)
+
+# lo apuntado por `comprobar()` se olvida cuando se repone, o cuando se ve que está bien
+components.keepassxc_anotar_alterado(app, "windows-x64", pins.KEEPASSXC_VERSION,
+                                     "keepassxc-cli.exe")
+fichero.write_bytes(b"MZ otra cli")
+real_libre = traveler.espacio_libre
+traveler.espacio_libre = lambda raiz: 1024
+rechaza("sin sitio no se toca nada", lambda: keepassxc_bin.instalar(app), "No cabe")
+traveler.espacio_libre = real_libre
+c("  y lo apuntado sigue apuntado, porque el fichero sigue sin cuadrar",
+  components.keepassxc_alterado(app, "windows-x64") != {}, True)
+keepassxc_bin.instalar(app)
+c("ponerlo olvida lo apuntado", components.keepassxc_alterado(app, "windows-x64"), {})
+components.keepassxc_anotar_alterado(app, "windows-x64", pins.KEEPASSXC_VERSION,
+                                     "keepassxc-cli.exe")
+pedidas.clear()
+c("si en realidad estaba bien (se arregló a mano), «Actualizar…» no copia nada",
+  (keepassxc_bin.instalar(app), pedidas), ([], []))
+c("  y también olvida lo apuntado", components.keepassxc_alterado(app, "windows-x64"), {})
+
 # sustituir uno anterior
 (carpeta / components.KEEPASSXC_STAMP).write_text(
     components.keepassxc_stamp_text("2.7.10", "viejo.zip", "00", {}), encoding="utf-8")
@@ -191,6 +254,8 @@ keepassxc_bin.instalar(app)
 APPIMAGE = b"\x7fELF AppImage de mentira"
 NOMBRE_LINUX = pins.KEEPASSXC["linux-x64"][0]
 pins.KEEPASSXC["linux-x64"] = (NOMBRE_LINUX, hashlib.sha256(APPIMAGE).hexdigest())
+pins.KEEPASSXC_EJECUTABLES[pins.KEEPASSXC_VERSION]["linux-x64"] = {
+    components.KEEPASSXC_APPIMAGE: pins.KEEPASSXC["linux-x64"][1]}
 c("el de Linux es un AppImage", (keepassxc_bin.es_appimage("linux-x64"),
                                  keepassxc_bin.es_appimage("windows-x64")), (True, False))
 c.contains("  y sin red se dice cómo ponerlo a mano", keepassxc_bin.a_mano("linux-x64"),
@@ -219,6 +284,16 @@ c("  y el del paquete", components.keepassxc_sello(app, "linux-x64").get("paquet
 c("ya está al día, y el de Windows sigue", (keepassxc_bin.al_dia(app, "linux-x64"),
                                            keepassxc_bin.al_dia(app), len(hecho)),
   (True, True, 1))
+(linux / components.KEEPASSXC_APPIMAGE).write_bytes(b"\x7fELF otro AppImage")
+c("con el sello al día, un AppImage que no es el fijado no está al día",
+  (components.keepassxc_sello(app, "linux-x64").get(components.KEEPASSXC)
+   == pins.KEEPASSXC_VERSION, keepassxc_bin.al_dia(app, "linux-x64")), (True, False))
+components.keepassxc_anotar_alterado(app, "linux-x64", pins.KEEPASSXC_VERSION,
+                                     components.KEEPASSXC_APPIMAGE)
+c("  ponerlo lo repone y olvida lo apuntado",
+  (len(keepassxc_bin.instalar(app, "linux-x64")),
+   (linux / components.KEEPASSXC_APPIMAGE).read_bytes(),
+   components.keepassxc_alterado(app, "linux-x64")), (1, APPIMAGE, {}))
 (linux / components.KEEPASSXC_STAMP).write_text(
     components.keepassxc_stamp_text("2.7.10", "viejo.AppImage", "00", {}), encoding="utf-8")
 keepassxc_bin._resumen = (lambda r: "mentira" if r.name == components.KEEPASSXC_APPIMAGE
@@ -275,5 +350,32 @@ icomponents.procesos_desde = real_procesos
 c("sin nada corriendo se pone", (len(res.hechos), res.fallidos), (1, []))
 c("  y deja de estar pendiente", [p.que for p in components.pendientes(otro, fisica=None)
                                   if p.que == components.KEEPASSXC], [])
+
+# el caso de #117: sello al día, fichero cambiado. `comprobar()` lo apunta, la ventana ofrece
+# «Actualizar…», el aplicador lo repone y el aviso se apaga solo
+kpx_otro = components.keepassxc_dir(otro, "windows-x64")
+(kpx_otro / "keepassxc-proxy.exe").write_bytes(b"MZ un proxy que no es el oficial")
+c("con el sello al día y un proxy cambiado, la ventana aún no lo sabe",
+  [p.que for p in components.pendientes(otro, fisica=None)
+   if p.que == components.KEEPASSXC], [])
+keepassxc.comprobar = REAL_COMPROBAR
+keepassxc.paquete_del_equipo = lambda: "windows-x64"
+try:
+    keepassxc.comprobar(kpx_otro / "keepassxc-proxy.exe", "windows-x64", otro)
+    c("comprobar rechaza el proxy cambiado", "no lanzó", "NoOficial")
+except keepassxc.NoOficial as e:
+    c.contains("comprobar rechaza el proxy cambiado y dice que «Actualizar…» lo repone", str(e),
+               "«Actualizar…»")
+    c("  sin pedir que se borre nada", "Borra" in str(e), False)
+pend = [p for p in components.pendientes(otro, fisica=None) if p.que == components.KEEPASSXC]
+c("  y desde entonces la ventana lo ofrece", [(p.ruta, p.deberia) for p in pend],
+  [(kpx_otro, pins.KEEPASSXC_VERSION)])
+res = icomponents.aplicar(raiz, pends=pend)
+c("el aplicador lo repone", (len(res.hechos), res.fallidos, (kpx_otro / "keepassxc-proxy.exe")
+                              .read_bytes()), (1, [], BUENO["keepassxc-proxy.exe"]))
+c("  y el aviso se apaga solo", [p.que for p in components.pendientes(otro, fisica=None)
+                                 if p.que == components.KEEPASSXC], [])
+c("  y vuelve a pasar la comprobación",
+  keepassxc.comprobar(kpx_otro / "keepassxc-proxy.exe", "windows-x64", otro), None)
 
 sys.exit(c.report())

@@ -160,7 +160,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from typing import Any, Iterable, Mapping, NamedTuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -169,7 +169,8 @@ if str(SCRIPT_DIR) not in sys.path:
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
                     cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
-                    llavero, model, moderacion, parte, prioridad, store, update, vestibulo)
+                    llavero, model, moderacion, nombres, parte, prioridad, store, update,
+                    vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import atajos, bandeja, prefs, volumen  # noqa: E402
@@ -766,8 +767,15 @@ def app(raiz: Path) -> Path:
     return raiz / APP_SUBDIR
 
 
-HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin"})
-"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se ejecuta."""
+HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin",
+                                 "keepassxc"})
+"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se lee entero.
+
+`keepassxc/` es el programa del llavero y su configuración, que KeePassXC
+reescribe al usarlo. El programa SÍ se ejecuta, pero no por la huella: cada
+ejecutable se comprueba contra su SHA-256 en `common/pins.py` justo antes de
+lanzarlo (`keepassxc.comprobar()`), y esos dos ficheros sí entran en la huella.
+"""
 HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
 """Ficheros que la huella deja fuera: la configuración y el fichero de control."""
 HUELLA_SIN_EXTENSIONES = frozenset({".ico"})
@@ -794,8 +802,12 @@ def huella(raiz: Path) -> str | None:
     carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). `bin/` tampoco: el
     agente no ejecuta el rclone de la unidad, pasa el suyo
     (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
-    lo que tarda en leerse un binario de 60 MB. `rclone.conf` entra: la opción
-    `ssh` de un remoto sftp es una orden.
+    lo que tarda en leerse un binario de 60 MB. `keepassxc/` tampoco (78 MB y
+    una configuración que cambia con el uso): lo que de ahí se lanza se
+    comprueba contra un SHA-256 fijado en `common/pins.py`, que sí entra en la
+    huella, antes de lanzarlo (`keepassxc.comprobar()`); las DLL y los demás
+    ficheros que van al lado del programa no se comprueban. `rclone.conf`
+    entra: la opción `ssh` de un remoto sftp es una orden.
     """
     base = app(raiz)
     rutas: list[Path] = []
@@ -841,16 +853,45 @@ def estado_de(raiz: Path) -> Path:
     return app(raiz) / "state"
 
 
-def nombre_de(raiz: Path, uid: str, recordado: str = "") -> str:
-    """Devuelve el nombre de la unidad en la flota.
+def nombre_guardado(unidad: equipo.Unidad | None, uid: str) -> str:
+    """Devuelve el nombre de una unidad que no se está viendo ahora.
 
-    Sale de su `state/fleet.json` (solo se lee); si no tiene, el que el agente
-    recuerda de ella y, si no, el principio del id.
+    Es el que el agente le conoció (`Unidad.nombre`) y, sin él,
+    `nombres.por_defecto()` con su id: la etiqueta del volumen solo se lee al
+    conectarla.
     """
-    guardado = store.read_json(estado_de(raiz) / "fleet.json").get("nombre")
-    if isinstance(guardado, str) and guardado.strip():
-        return guardado.strip()
-    return recordado or f"{APP_NAME.upper()} {uid[:8]}"
+    return (unidad.nombre if unidad is not None else "") or nombres.por_defecto(uid)
+
+
+def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = (),
+              con_etiqueta: bool = True) -> str:
+    """Devuelve el nombre con que se enseña la unidad conectada en `raiz`.
+
+    Es el de la bandeja, los avisos y el diario. Lo decide `nombres`: el que
+    alguien puso, y sin él la etiqueta del volumen o «prdrive · <id>». Lo que
+    se sabe de la unidad sale de su `state/fleet.json` (solo se lee): su
+    `nombre` y los equipos desde los que ha publicado, que dicen si ese nombre es
+    de verdad suyo o el del ordenador que la aprovisionó.
+
+    Args:
+        raiz: Donde está montada.
+        uid: Su id.
+        recordado: El nombre que el agente le conocía; vale si el fichero no
+            dice ninguno.
+        otros: Los nombres de las demás unidades: con uno igual se añade el
+            equipo (`nombres.distinguir()`).
+        con_etiqueta: Si se lee la etiqueta del volumen; una carpeta del equipo
+            no tiene la suya.
+    """
+    estado = store.read_json(estado_de(raiz) / "fleet.json")
+    guardado = estado.get("nombre")
+    guardado = guardado.strip() if isinstance(guardado, str) else ""
+    publicado = estado.get("publicado")
+    equipos = publicado.get("equipos") if isinstance(publicado, dict) else None
+    equipos = [e for e in equipos if isinstance(e, str)] if isinstance(equipos, list) else []
+    etiqueta = nombres.etiqueta_de(raiz) if con_etiqueta else ""
+    elegido = nombres.elegir(uid, guardado or recordado, etiqueta, equipos)
+    return nombres.distinguir(elegido, uid, otros)
 
 
 @dataclass(frozen=True)
@@ -1953,7 +1994,7 @@ class Agente:
         self.bitlocker_presentes = presentes
         for uid, raiz in vistas.items():
             if uid not in self.bitlocker:
-                diario(f"{self.ajustes.unidades[uid].nombre or uid[:8]}: bloqueada con "
+                diario(f"{nombre_guardado(self.ajustes.unidades[uid], uid)}: bloqueada con "
                        f"BitLocker en {raiz}")
         # La ventana de Windows de una que ya no está bloqueada (se abrió o se
         # quitó) se olvida, sin cerrarla: es de Windows.
@@ -2012,7 +2053,7 @@ class Agente:
             unidad = self.ajustes.unidades.get(uid)
             if unidad is None or not unidad.pide_al_conectar(equipo.CIFRADO_BITLOCKER):
                 continue
-            diario(f"{unidad.nombre or uid[:8]}: su ajuste pide la contraseña al conectarla")
+            diario(f"{nombre_guardado(unidad, uid)}: su ajuste pide la contraseña al conectarla")
             self._desbloquear_bitlocker(uid, ahora)
 
     def _bloqueada_bitlocker(self, uid: str) -> Path | None:
@@ -2053,7 +2094,7 @@ class Agente:
             uid: El id de una unidad de la lista (`_es_de_bitlocker()`).
             ahora: La hora del reloj del agente.
         """
-        nombre = self.ajustes.unidades[uid].nombre or uid[:8]
+        nombre = nombre_guardado(self.ajustes.unidades[uid], uid)
         raiz = self._bloqueada_bitlocker(uid)
         if raiz is None:
             diario(f"{nombre}: no está bloqueada con BitLocker ahora")
@@ -2140,7 +2181,7 @@ class Agente:
             del abiertas[uid]
             if uid not in self.fantasmas:
                 self.fantasmas.add(uid)
-                avisar(f"{unidad.nombre or APP_NAME}: el volumen no responde",
+                avisar(f"{nombre_guardado(unidad, uid)}: el volumen no responde",
                        f"{unidad.ruta} sigue ahí, pero su contenedor está cerrado. "
                        f"Bloquéala y vuelve a desbloquearla.", True)
 
@@ -2155,7 +2196,7 @@ class Agente:
             if uid in abiertas:
                 if uid in self.ausentes:
                     self.ausentes.discard(uid)
-                    diario(f"{unidad.nombre or uid[:8]}: la raíz vuelve a estar en "
+                    diario(f"{nombre_guardado(unidad, uid)}: la raíz vuelve a estar en "
                            f"{unidad.ruta}")
                 continue
             if unidad.cifrada:
@@ -2168,20 +2209,27 @@ class Agente:
                 if hay:
                     if uid in self.ausentes:
                         self.ausentes.discard(uid)
-                        diario(f"{unidad.nombre or uid[:8]}: su contenedor vuelve a "
+                        diario(f"{nombre_guardado(unidad, uid)}: su contenedor vuelve a "
                                f"estar en {unidad.contenedor}")
                 elif uid not in self.ausentes:
                     self.ausentes.add(uid)
-                    avisar(f"{unidad.nombre or APP_NAME}: no encuentro su contenedor",
+                    avisar(f"{nombre_guardado(unidad, uid)}: no encuentro su contenedor",
                            f"La raíz cifrada de este equipo tenía que estar en "
                            f"{unidad.contenedor}. Si lo has movido, vuelve a ponerlo "
                            f"ahí o reinstala.", True)
                 continue
             if uid not in self.ausentes:
                 self.ausentes.add(uid)
-                avisar(f"{unidad.nombre or APP_NAME}: no encuentro su carpeta",
+                avisar(f"{nombre_guardado(unidad, uid)}: no encuentro su carpeta",
                        f"La raíz de este equipo tenía que estar en {unidad.ruta}. "
                        f"Si la has movido, vuelve a ponerla ahí o reinstala.", True)
+
+    def _nombres_de_otras(self, uid: str) -> set[str]:
+        """Devuelve los nombres que ya tienen las demás unidades, conectadas o de la lista."""
+        otros = {c.nombre for k, c in self.conexiones.items() if k != uid}
+        otros.update(u.nombre for k, u in self.ajustes.unidades.items()
+                     if k != uid and u.nombre)
+        return otros
 
     def _conectar(self, uid: str, raiz: Path, ahora: float) -> None:
         """Da por conectada una unidad que se ha visto `ESTABLE` veces.
@@ -2191,7 +2239,9 @@ class Agente:
         nada suyo. Si no, se atiende según su modo.
         """
         unidad = self.ajustes.unidades.get(uid)
-        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
+        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "",
+                           self._nombres_de_otras(uid),
+                           con_etiqueta=not (unidad is not None and unidad.es_raiz))
         con = Conexion(uid, raiz, nombre, ahora)
         # Un lock con nuestro pid es de la conexión anterior (se desenchufó y
         # no se escribe en una unidad que no está): si no se la vuelve a servir
@@ -2373,7 +2423,7 @@ class Agente:
                 continue
             del self.cerradas[uid]
             self.vestibulos[uid] = str(raiz)
-            nombre = unidad.nombre or uid[:8]
+            nombre = nombre_guardado(unidad, uid)
             if not unidad.pide_al_conectar(equipo.CIFRADO_VERACRYPT):
                 diario(f"{nombre}: cifrada y cerrada en {raiz}; no se abre sola (su "
                        f"«Pedir la contraseña al conectarla» está apagado)")
@@ -3824,7 +3874,7 @@ class Agente:
         Returns:
             `True` si lanzó VeraCrypt.
         """
-        nombre = unidad.nombre or APP_NAME
+        nombre = nombre_guardado(unidad, unidad.id)
         if unidad.id in self.conexiones or unidad.id in self.vistas:
             diario(f"{nombre}: ya está abierta")
             return False
@@ -3893,7 +3943,7 @@ class Agente:
                     or ahora - d.desde >= ESPERA_ABRIR):
                 del self.desbloqueos[uid]
                 unidad = self.ajustes.unidades.get(uid)
-                diario(f"{(unidad.nombre if unidad else '') or uid[:8]}: no se ha "
+                diario(f"{nombre_guardado(unidad, uid)}: no se ha "
                        f"desbloqueado (¿contraseña cancelada?); sigue bloqueada")
 
     def _bloqueos(self, ahora: float) -> None:
@@ -3909,7 +3959,7 @@ class Agente:
             if unidad is None or not unidad.cifrada:
                 del self.bloqueos[uid]
                 continue
-            nombre = unidad.nombre or APP_NAME
+            nombre = nombre_guardado(unidad, uid)
             con = self.conexiones.get(uid)
             if b.proc is None:
                 if con is None and uid not in self.fantasmas:
@@ -4116,8 +4166,7 @@ class Agente:
         for uid, e in list(self.expulsiones.items()):
             con = self.conexiones.get(uid)
             unidad = self.ajustes.unidades.get(uid)
-            nombre = con.nombre if con is not None else ((unidad.nombre if unidad else "")
-                                                         or uid[:8])
+            nombre = con.nombre if con is not None else nombre_guardado(unidad, uid)
             if e.resultado is not None:
                 if not e.avisada:
                     e.avisada = True
@@ -4593,7 +4642,7 @@ class Agente:
                 self._guardar(self.ajustes.con_unidad(replace(unidad, pausada=True)))
             self.urgentes = [u for u in self.urgentes if u[0] != uid]
             con = self.conexiones.get(uid)
-            nombre = con.nombre if con is not None else (unidad.nombre or uid[:8])
+            nombre = con.nombre if con is not None else nombre_guardado(unidad, uid)
             if con is not None:
                 con.reanudar = False
                 dlog(con.raiz, "servicio (agente del equipo) en pausa: «Pausar» desde su "
@@ -4631,7 +4680,7 @@ class Agente:
                 con.cambiada = False
                 unidad = replace(unidad, codigo=con.huella or "")
             self._guardar(self.ajustes.con_unidad(unidad))
-            diario(f"{unidad.nombre or nombre or uid[:8]}: modo {modo}")
+            diario(f"{unidad.nombre or nombre}: modo {modo}")
         elif que == equipo.PIDE_RAIZ:
             # Lo que pide el asistente vuelto a pasar con el agente instalado:
             # la raíz que acaba de poner en este equipo.
@@ -4651,7 +4700,7 @@ class Agente:
                         ruta=ruta.strip(), contenedor=hc.strip())))
             self.ausentes.discard(uid)
             self.pedidas.add(uid)           # la acaba de dejar abierta el asistente
-            diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}"
+            diario(f"raíz de este equipo añadida: {nombre or nombres.por_defecto(uid)} en {ruta}"
                    + (f" (cifrada, contenedor {hc})" if hc else ""))
         elif que == equipo.PIDE_DESBLOQUEAR and self._es_de_bitlocker(uid):
             self._desbloquear_bitlocker(uid, ahora)
@@ -4761,7 +4810,7 @@ class Agente:
         if unidad is None or unidad.es_raiz:
             diario(f"ajuste {clave} de {uid[:8]!r}: no es una unidad de la lista")
             return
-        nombre = unidad.nombre or uid[:8]
+        nombre = nombre_guardado(unidad, uid)
         if valor is not None and not isinstance(valor, bool):
             diario(f"{nombre}: ajuste {clave} = {valor!r}: no es sí, no ni lo de siempre")
             return
@@ -5006,12 +5055,12 @@ class Agente:
             else:
                 self._lanzar_ventana(con)
         elif llavero:
-            diario(f"{que} {unidad.nombre or uid[:8]}: no está abierta aquí ahora")
+            diario(f"{que} {nombre_guardado(unidad, uid)}: no está abierta aquí ahora")
         elif unidad.cifrada and uid not in self.ausentes:
             self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
                               else "para abrirla", abrir=not explorador, explorar=explorador)
         else:
-            diario(f"{que} {unidad.nombre or uid[:8]}: no está aquí ahora")
+            diario(f"{que} {nombre_guardado(unidad, uid)}: no está aquí ahora")
 
     def _explorar(self, con: Conexion) -> None:
         """Abre esa raíz en el explorador de archivos (`explorar()`)."""
@@ -5201,7 +5250,7 @@ class Agente:
                              "llavero_conflicto": len(con.copias),
                              "expulsable": self._expulsable(con),
                              "expulsando": con.id in self.expulsiones})
-        cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
+        cerradas = [nombre_guardado(u, u.id) for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
                 "pasada": None if self.pasada is None else {
@@ -5219,16 +5268,16 @@ class Agente:
                                     or self.ajustes.unidades[u].ruta)
                                    for u in self.ausentes if u in self.ajustes.unidades),
                 "bloqueadas": sorted(cerradas),
-                "desbloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                "desbloqueando": sorted(nombre_guardado(self.ajustes.unidades[u], u)
                                         for u in self.desbloqueos
                                         if u in self.ajustes.unidades),
-                "bloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                "bloqueando": sorted(nombre_guardado(self.ajustes.unidades[u], u)
                                      for u in self.bloqueos if u in self.ajustes.unidades),
                 "fantasmas": sorted(self.ajustes.unidades[u].ruta for u in self.fantasmas
                                     if u in self.ajustes.unidades),
                 # Las unidades de la lista enchufadas y bloqueadas con BitLocker.
                 "bitlocker": sorted(
-                    ({"id": uid, "nombre": self.ajustes.unidades[uid].nombre or uid[:8],
+                    ({"id": uid, "nombre": nombre_guardado(self.ajustes.unidades[uid], uid),
                       "raiz": str(raiz),
                       "desbloqueando": self._desbloqueando_bitlocker(uid),
                       "pedir_al_conectar": self.ajustes.unidades[uid].pide_al_conectar(
@@ -5237,7 +5286,7 @@ class Agente:
                      if self._bloqueada_bitlocker(uid) is not None),
                     key=lambda b: (b["nombre"], b["id"])),
                 # Las raíces de este equipo, con su estado: lo que pinta la bandeja.
-                "equipo": [{"id": uid, "nombre": u.nombre or APP_NAME, "ruta": u.ruta,
+                "equipo": [{"id": uid, "nombre": nombre_guardado(u, uid), "ruta": u.ruta,
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
