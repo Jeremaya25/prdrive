@@ -73,6 +73,16 @@ RCLONE_VERSION = "v1.75.2"
 """Versión de rclone que se descarga para cada plataforma elegida.
 
 Es fija: «la última» puede ser una que nadie ha probado.
+
+**Al moverla hay que regenerar `common/flags_rclone.json`** con
+`python generar_flags_rclone.py` (baja la rclone fijada, comprobada, y vuelca sus
+flags): es lo que el editor de flags de una pareja ofrece y comprueba sin red
+(`ui/flags_ayuda.py`), y un flag nuevo o cambiado de rclone no aparece en él
+hasta entonces. `tests/test_flags_ayuda.py` falla si el fichero es de otra versión.
+Después, `git diff` dice qué flags han llegado, han cambiado de tipo o se han ido;
+las tablas a mano de `ui/flags_ayuda.py` (borrado, choques, solo-sincroniza) se
+cruzan con el fichero en ese mismo test, y falla si rclone quita o renombra un
+flag que citan.
 """
 
 PYTHON_RELEASE = "20261001"          # el tag de la release en GitHub

@@ -120,6 +120,35 @@ ejecutarla: es la misma que monta `sync.py`, y lo que pone prdrive en cada pasad
 (`--config`, `--log-file`, `--workdir`…) sale sombreado, porque no se puede
 cambiar desde aquí.
 
+**Al escribir un flag, el editor ayuda sin conexión.** Con lo que escribes en el
+cuadro de la izquierda sale, bajo el cursor, la lista de flags de rclone que
+empiezan (o contienen) lo escrito, con su tipo («sí o no», «duración», «tamaño»…)
+y, en la pista de debajo, para qué sirve el marcado (el texto es el de rclone, en
+inglés). La lista es la de la versión de rclone que lleva prdrive: no hace falta
+red. **Tab** acepta el primero, **↑/↓** recorren la lista y **Intro** acepta el que
+hayas marcado (si no has marcado ninguno, Intro es un salto de línea), **Esc**
+la cierra y un clic en una fila la acepta. Los flags que prdrive pone por su
+cuenta o que no se pueden poner aquí no se ofrecen.
+
+- **Un flag que no sale en la lista se puede escribir igual.** La lista ayuda, no
+  limita: rclone tiene la última palabra, y los flags nuevos se añaden
+  escribiéndolos.
+- **El tipo del valor se comprueba al guardar**, y solo cuando rclone seguro lo
+  rechazaría: un número donde va una duración con unidad (`timeout = 30` pide
+  `"30s"`), un tamaño que no lo es, `checksum = "true"` con comillas (rclone lo
+  leería como un argumento suelto de la orden y la pasada fallaría). Con un valor
+  así, la ventana no se cierra y dice qué se esperaba, con un ejemplo. `false` vale
+  siempre: es quitar el flag. De un flag que la lista no conoce, o de un valor
+  cuyo tipo no se comprueba (un horario de `bwlimit`), no se dice nada.
+- **Los avisos no impiden guardar.** Aparecen en un recuadro ámbar bajo el cuadro y
+  la línea del flag se sombrea. Son de tres clases: *otro modo* (un flag que solo
+  es de bisync en una pareja que no lo es: rclone no lo conoce y la pasada
+  fallaría; o uno de sincronizar en un modo que solo copia: no hace nada), *choque*
+  (dos flags que no pueden ir juntos o se pisan, como dos de `--delete-*`, o
+  `--remove-empty-dirs` con el `--create-empty-src-dirs` que ya pone prdrive) y
+  *borrado* (borra o reescribe ficheros: pruébalo antes con «Simular», que es
+  `--dry-run`, sobre todo en una pareja `*-mirror`).
+
 ## `device_remote`
 
 `device_remote = "disp"` en `[defaults]` hace que el lado local sea un remote
