@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """«Ajustes → Configuración»: cómo trabaja el servicio, lo que se toca poco.
 
-Solo dibuja. Dos cosas, y la segunda no siempre:
+Solo dibuja. Tres cosas, y las dos últimas no siempre:
 - El intervalo del servicio, el «cada cuánto» que antes estaba junto al pie de
   la ventana principal. Qué se escribe y qué no lo decide `ui/prefs.py`
   (`revisar_intervalo`, `guardar_intervalo`): solo el intervalo, nunca las
@@ -11,8 +11,9 @@ Solo dibuja. Dos cosas, y la segunda no siempre:
   se le pide por su buzón (`watch.pedir_al_iniciar`, `watch.pedir_ajuste`).
 - «Pedir la contraseña al conectarla», solo en una unidad cifrada (VeraCrypt o
   BitLocker) que el agente atiende. También es del agente y se le pide por su
-  buzón (`watch.pedir_al_conectar`, `watch.pedir_ajuste_unidad`). Nunca sale
-  junto al anterior: uno es de la raíz del equipo y el otro de una unidad.
+  buzón (`watch.pedir_al_conectar`, `watch.pedir_ajuste_unidad`). Cada una va
+  en su propia fila (`_casilla()`), de modo que no se pisan aunque algún día
+  salgan a la vez.
 
 Nada se guarda hasta «Guardar», y lo que no ha cambiado no se escribe. Se
 dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
@@ -38,6 +39,35 @@ def open_dialog(parent, config: Config) -> bool:
     """
     return dialogo(parent, "Configuración", lambda p: construir(p, config),
                    defecto=False, ensenar=mostrar)
+
+
+def _casilla(marco, fila: int, texto: str, valor: bool, ayuda: str):
+    """Dibuja una tarjeta con una casilla y su ayuda en esa fila de `marco`.
+
+    Args:
+        marco: Donde va la tarjeta.
+        fila: La fila de su rejilla; cada tarjeta, la suya.
+        texto: Lo que dice la casilla.
+        valor: Si empieza marcada.
+        ayuda: La frase de debajo, que dice qué hace.
+
+    Returns:
+        La variable de la casilla, para leer al «Guardar» si ha cambiado.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    tarjeta = ttk.Frame(marco, style="Card.TFrame",
+                        padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+    tarjeta.grid(row=fila, column=0, sticky="ew", pady=(theme.E3, 0))
+    tarjeta.columnconfigure(0, weight=1)
+    marcada = tk.BooleanVar(marco, value=valor)
+    ttk.Checkbutton(tarjeta, text=texto, variable=marcada,
+                    style="Card.Fuerte.TCheckbutton").grid(row=0, column=0, sticky="w")
+    ttk.Label(tarjeta, style="Card.Pista.TLabel", justify="left",
+              wraplength=theme.medida(520), text=ayuda).grid(
+        row=1, column=0, sticky="w", pady=(theme.E1, 0))
+    return marcada
 
 
 def construir(panel: Panel, config: Config) -> None:
@@ -83,44 +113,26 @@ def construir(panel: Panel, config: Config) -> None:
                            "«Sincronizar ahora» no lo usa.").grid(
         row=1, column=0, columnspan=4, sticky="w", pady=(theme.E2, 0))
 
-    # La raíz cifrada de este equipo: si el agente pide su contraseña al
-    # iniciar sesión. Es un ajuste del EQUIPO y no de la raíz: se le pide al
-    # agente por su buzón, así que lo tiene también quien no tiene bandeja.
-    marcada = None
+    # Las casillas de contraseña, cada una en su fila: la raíz cifrada de este equipo
+    # (si el agente pide su contraseña al iniciar sesión) y una unidad cifrada (si se
+    # la pide al conectarla). Son ajustes del EQUIPO y no de la raíz ni de la unidad:
+    # se le piden al agente por su buzón, así que los tiene también quien no tiene
+    # bandeja.
+    fila = 2
+    marcada = conectada = None
     if pedir is not None:
-        cifrada = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
-        cifrada.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
-        cifrada.columnconfigure(0, weight=1)
-        marcada = tk.BooleanVar(marco, value=pedir)
-        ttk.Checkbutton(cifrada, text="Pedir la contraseña al iniciar sesión",
-                        variable=marcada,
-                        style="Card.Fuerte.TCheckbutton").grid(row=0, column=0,
-                                                              sticky="w")
-        ttk.Label(cifrada, style="Card.Pista.TLabel", justify="left",
-                  wraplength=theme.medida(520),
-                  text="Al iniciar sesión, el agente le pide a VeraCrypt que abra "
-                       "esta carpeta cifrada, una vez. Sin marcar, se queda "
-                       "bloqueada hasta que pidas «Desbloquear». Lo guarda el agente "
-                       "de este equipo, no la carpeta.").grid(
-            row=1, column=0, sticky="w", pady=(theme.E1, 0))
-
-    # Una unidad cifrada: si el agente le pide la contraseña al conectarla. También
-    # es de este equipo y no de la unidad, y se le pide al agente por su buzón.
-    conectada = None
+        marcada = _casilla(
+            marco, fila, "Pedir la contraseña al iniciar sesión", pedir,
+            "Al iniciar sesión, el agente le pide a VeraCrypt que abra esta carpeta "
+            "cifrada, una vez. Sin marcar, se queda bloqueada hasta que pidas "
+            "«Desbloquear». Lo guarda el agente de este equipo, no la carpeta.")
+        fila += 1
     if conectar is not None:
-        cifrada = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
-        cifrada.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
-        cifrada.columnconfigure(0, weight=1)
-        conectada = tk.BooleanVar(marco, value=conectar.valor)
-        ttk.Checkbutton(cifrada, text="Pedir la contraseña al conectarla",
-                        variable=conectada,
-                        style="Card.Fuerte.TCheckbutton").grid(row=0, column=0,
-                                                              sticky="w")
-        ttk.Label(cifrada, style="Card.Pista.TLabel", justify="left",
-                  wraplength=theme.medida(520),
-                  text=watch.ayuda_al_conectar(conectar.cifrado)
-                  + " Lo guarda el agente de este equipo, no la unidad.").grid(
-            row=1, column=0, sticky="w", pady=(theme.E1, 0))
+        conectada = _casilla(
+            marco, fila, "Pedir la contraseña al conectarla", conectar.valor,
+            watch.ayuda_al_conectar(conectar.cifrado)
+            + " Lo guarda el agente de este equipo, no la unidad.")
+        fila += 1
 
     def guardar() -> None:
         """Guarda lo que ha cambiado y cierra; si algo no se puede, lo dice y se queda."""
@@ -152,7 +164,7 @@ def construir(panel: Panel, config: Config) -> None:
             panel.devolver(True)
         panel.terminar("Guardado." if algo else "")
 
-    botones = pie(marco, 3)
+    botones = pie(marco, fila)
     botones.columnconfigure(0, weight=1)
     ttk.Button(botones, text="Cancelar", command=panel.terminar).grid(
         row=0, column=1, padx=(0, theme.E2))

@@ -1192,6 +1192,29 @@ with sandbox():
       (tk_configuracion.open_dialog(raiz, cfg), visto_conectar["marcada"],
        "Windows" in "".join(visto_conectar["ayuda"]), unidad_pedida),
       (True, False, True, [("pedir_al_conectar", True)]))
+    def filas_de_tarjetas(self, *_a, **_k):
+        """Apunta en qué fila de la rejilla va cada casilla y el pie, y cierra."""
+        pila, filas = [self], {}
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, (ttk.Checkbutton, ttk.Button)):
+                filas[str(w.cget("text"))] = int(w.master.grid_info()["row"])
+        visto_conectar["filas"] = filas
+        pulsar("Cancelar")(self)
+
+    previo_iniciar = watch.pedir_al_iniciar
+    watch.pedir_al_iniciar = lambda: True
+    tk.Toplevel.wait_window = filas_de_tarjetas
+    tk_configuracion.open_dialog(raiz, cfg)
+    watch.pedir_al_iniciar = previo_iniciar
+    filas = visto_conectar["filas"]
+    tarjetas = [filas["Pedir la contraseña al iniciar sesión"],
+                filas["Pedir la contraseña al conectarla"]]
+    c("las dos casillas de contraseña, aunque llegaran a la vez, no comparten fila "
+      "y el pie queda debajo de las dos",
+      (len(set(tarjetas)), filas["Guardar"] > max(tarjetas)), (2, True))
+    tk.Toplevel.wait_window = al_conectar_y("Guardar", True)
     errores.clear()
     watch.pedir_ajuste_unidad = lambda clave, valor: False
     c("  si no se puede dejar la petición, se dice y no se cierra como guardado",
