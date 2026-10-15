@@ -105,17 +105,106 @@ def preguntar_resync(parent, pending: list[str],
             subió (`ui.carpetas_del_programa()`); sale en el cuadro, que es
             cuando se puede decir.
     """
-    from tkinter import messagebox
     avisos = avisos_de_resync(carpetas or {})
     aparte = "\n\n" + "\n".join(avisos) if avisos else ""
-    return bool(messagebox.askyesno(
-        TITLE,
+    return preguntar(
+        parent, "Resync",
         "Estas parejas requieren --resync (primera vez, baseline perdido o "
         "filtros cambiados):\n\n  " + "\n  ".join(pending) +
         "\n\nEl resync compara ambos lados y fija la referencia; no borra por "
         "diferencias." + aparte +
         "\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
-        parent=parent))
+        "Sí", "No")
+
+
+def _suelto(parent) -> bool:
+    """Indica si el padre no se enseña (`root_oculto()`): el diálogo no puede colgar de él."""
+    try:
+        return parent.state() == "withdrawn"
+    except Exception:                                # noqa: BLE001 — un padre que ya no está
+        return False
+
+
+def preguntar(parent, titulo: str, texto: str, aceptar: str = "Aceptar",
+              cancelar: str = "Cancelar") -> bool:
+    """Pregunta sí o no con un diálogo del tema y devuelve si se ha aceptado.
+
+    Es lo que ven los cuadros que salen con la ventana principal abierta: el
+    `askokcancel` del sistema salía claro sobre una ventana oscura. Se hace con
+    `modal()` y `mostrar()`, como el resto. Intro acepta y Escape cancela, como
+    en el del sistema; cerrar con la X, también cancela. Es de módulo para que
+    los tests lo sustituyan.
+
+    Args:
+        parent: La ventana de la que cuelga; puede ser la raíz oculta de
+            `root_oculto()`.
+        titulo: Lo que dice la barra de la ventana y su primera línea.
+        texto: La pregunta.
+        aceptar: El botón que dice que sí (el principal).
+        cancelar: El que dice que no.
+    """
+    from tkinter import ttk
+
+    dlg = modal(parent, titulo, suelto=_suelto(parent))
+    respuesta = {"si": False}
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
+    marco.columnconfigure(0, weight=1)
+    ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(marco, text=texto, wraplength=theme.medida(440), justify="left").grid(
+        row=1, column=0, sticky="w", pady=(theme.E3, 0))
+    ttk.Separator(marco, orient="horizontal").grid(row=2, column=0, sticky="ew",
+                                                   pady=(theme.E4, 0))
+    pie = ttk.Frame(marco)
+    pie.grid(row=3, column=0, sticky="e", pady=(theme.E4, 0))
+
+    def si(_evento=None):
+        """Da el sí y cierra."""
+        respuesta["si"] = True
+        dlg.destroy()
+
+    ttk.Button(pie, text=cancelar, command=dlg.destroy).grid(row=0, column=0,
+                                                             padx=(0, theme.E2))
+    boton = ttk.Button(pie, text=aceptar, style="Primary.TButton", command=si)
+    boton.grid(row=0, column=1)
+    dlg.bind("<Return>", si)
+    dlg.bind("<Escape>", lambda _e: dlg.destroy())
+    boton.focus_set()
+    mostrar(dlg, parent)
+    return respuesta["si"]
+
+
+def avisar(parent, titulo: str, texto: str, tono: str = "Azul.") -> None:
+    """Dice algo con un diálogo del tema y un «Aceptar»; es el `showinfo`/`showerror` del tema.
+
+    Como `preguntar()`, para lo que sale con la ventana principal abierta. El
+    texto va en un aviso del tono que se diga (`theme.aviso()`): `"Rojo."` para
+    un error, `"Verde."` para algo que ha ido bien, `"Azul."` para informar.
+    Intro y Escape lo cierran. Es de módulo para que los tests lo sustituyan.
+
+    Args:
+        parent: La ventana de la que cuelga; puede ser la raíz oculta.
+        titulo: Lo que dice la barra de la ventana y su primera línea.
+        texto: Lo que se dice.
+        tono: El del aviso.
+    """
+    from tkinter import ttk
+
+    dlg = modal(parent, titulo, suelto=_suelto(parent))
+    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E5, theme.E5, theme.E4))
+    marco.columnconfigure(0, weight=1)
+    ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(row=0, column=0, sticky="w")
+    theme.aviso(marco, "", texto, tono=tono, ancho=440).grid(
+        row=1, column=0, sticky="ew", pady=(theme.E3, 0))
+    ttk.Separator(marco, orient="horizontal").grid(row=2, column=0, sticky="ew",
+                                                   pady=(theme.E4, 0))
+    pie = ttk.Frame(marco)
+    pie.grid(row=3, column=0, sticky="e", pady=(theme.E4, 0))
+    boton = ttk.Button(pie, text="Aceptar", style="Primary.TButton", command=dlg.destroy)
+    boton.grid(row=0, column=0)
+    dlg.bind("<Return>", lambda _e: dlg.destroy())
+    dlg.bind("<Escape>", lambda _e: dlg.destroy())
+    boton.focus_set()
+    mostrar(dlg, parent)
 
 
 def root_oculto():
@@ -1865,10 +1954,7 @@ class VentanaPrincipal:
             TclError: Si no hay entorno gráfico.
         """
         import tkinter as tk
-        # Se cargan al abrir, antes del primer pintado: `update` pregunta su
-        # caché y los botones usan `messagebox`.
-        from tkinter import messagebox  # noqa: F401
-
+        # Se cargan al abrir, antes del primer pintado: `update` pregunta su caché.
         from common import update
 
         from . import principal, segundo_plano, tk_principal  # noqa: F401
@@ -2288,12 +2374,10 @@ class VentanaPrincipal:
         que es mejor que quedarse con una ventana en blanco. Las parejas nuevas
         nacen marcadas; las que siguen, como estén.
         """
-        from tkinter import messagebox
-
         try:
             nuevo = model.load_config()
         except model.ConfigError as e:
-            messagebox.showerror(TITLE, f"El config no se puede leer:\n\n{e}")
+            avisar(self.root, "Configuración", f"El config no se puede leer:\n\n{e}", "Rojo.")
             return
         conocidas = set(self.config.names)
         self.marcadas = frozenset(self.selected()) | {n for n in nuevo.names
@@ -2574,8 +2658,6 @@ class VentanaPrincipal:
         quitan a la letra el nombre y el icono que se le pasaron al Explorador
         (`cifrado.olvidar_letra()`).
         """
-        from tkinter import messagebox
-
         root = self.root
         try:
             script = cifrado.expulsion()
@@ -2592,7 +2674,7 @@ class VentanaPrincipal:
         else:
             pregunta = ("Se cierra el llavero (KeePassXC, si está abierto) y esta ventana. "
                         f"Después, quita la unidad {QUITAR_UNIDAD}.")
-        if not messagebox.askokcancel(TITLE, pregunta, parent=root):
+        if not preguntar(root, "Expulsar", pregunta, "Expulsar"):
             return
         # El llavero antes que nada: KeePassXC y su proxy retienen la unidad,
         # y lo que quede sin subir se sube ahora (`keepassxc.cerrar_llavero()`).
@@ -2605,14 +2687,13 @@ class VentanaPrincipal:
         self.volcar_seleccion()
         store.matar_hijos()
         if script is None:
-            messagebox.showinfo(TITLE, f"Ya puedes quitarla {QUITAR_UNIDAD}.", parent=root)
+            avisar(root, "Expulsar", f"Ya puedes quitarla {QUITAR_UNIDAD}.", "Verde.")
             self.cerrar()
             return
         try:
             cifrado.lanzar_expulsion(script)
         except OSError as e:
-            messagebox.showerror(TITLE, f"No he podido lanzar {script.name}: {e}",
-                                 parent=root)
+            avisar(root, "Expulsar", f"No he podido lanzar {script.name}: {e}", "Rojo.")
             # La ventana sigue abierta: lo que se leía se acaba de cortar.
             self.refrescar_instantanea()
             return
@@ -2627,20 +2708,18 @@ class VentanaPrincipal:
         espera a que esta ventana se haya ido (y a la pareja en curso) y
         desmonta sin `/silent`.
         """
-        from tkinter import messagebox
-
         root = self.root
         inst = self.inst
         uid = None if inst is None else inst.bloqueo
         con_llavero = self.config.pareja_llavero is not None
-        if uid is None or not messagebox.askokcancel(TITLE, (
+        if uid is None or not preguntar(root, "Bloquear", (
                 ("Se cierra el llavero (KeePassXC, si está abierto), esta ventana y "
                  if con_llavero else "Se cierra esta ventana y ")
                 + "el agente cierra el contenedor cifrado. "
                 "Hasta que lo desbloquees, nada de dentro se puede leer ni se "
                 "sincroniza.\n\n"
                 "Si algún otro programa tiene abierto algo de dentro, VeraCrypt "
-                "te preguntará si forzar el cierre."), parent=root):
+                "te preguntará si forzar el cierre."), "Bloquear"):
             return
         if con_llavero:
             from . import tk_llavero
@@ -2650,9 +2729,9 @@ class VentanaPrincipal:
         self.volcar_seleccion()
         store.matar_hijos()
         if not cifrado.pedir_bloqueo(uid):
-            messagebox.showerror(TITLE, (
+            avisar(root, "Bloquear", (
                 "El agente de este equipo no está en marcha, y es quien cierra el "
-                "contenedor. Ciérralo desde VeraCrypt."), parent=root)
+                "contenedor. Ciérralo desde VeraCrypt."), "Rojo.")
             self.refrescar_instantanea()  # sigue abierta, y sus lecturas se han cortado
             return
         self.cerrar()
@@ -2776,13 +2855,10 @@ class VentanaPrincipal:
         nada que arrancar, el agente ya es el servicio. La línea enseña lo
         pedido, que el agente aplica en unos segundos (`watch.tras_servicio`).
         """
-        from tkinter import messagebox
-
         from . import watch
 
         if not watch.pedir_servicio(accion):
-            messagebox.showerror(TITLE, "No he podido dejarle la petición al "
-                                        "agente.", parent=self.root)
+            avisar(self.root, "Agente", "No he podido dejarle la petición al agente.", "Rojo.")
             return
         actual = self.vigilante_actual()
         if actual is not None:
@@ -3122,7 +3198,7 @@ def output_window(title: str, cmd: list[str], parent=None,
         El código de salida, o `None` si no espera.
     """
     import tkinter as tk
-    from tkinter import filedialog, font as tkfont, messagebox, ttk
+    from tkinter import filedialog, font as tkfont, ttk
 
     q: queue.Queue = queue.Queue()
     DONE = object()
@@ -3225,8 +3301,7 @@ def output_window(title: str, cmd: list[str], parent=None,
             with open(destino, "w", encoding="utf-8") as f:
                 f.write("".join(salida.completa))
         except OSError as e:
-            messagebox.showerror(TITLE, f"No se ha podido guardar:\n\n{e}",
-                                 parent=root)
+            avisar(root, "Guardar el log", f"No se ha podido guardar:\n\n{e}", "Rojo.")
 
     # El pie.
     ttk.Separator(root, orient="horizontal").grid(row=2, column=0, columnspan=2,

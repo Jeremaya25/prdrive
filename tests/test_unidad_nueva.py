@@ -116,8 +116,8 @@ F.vueltas(ag, 2)
 preguntas()[-1].rc = 1                  # tk_agente.AHORA_NO
 F.vueltas(ag, 1)
 c("«Ahora no» en la ventana", ag.conexiones[TRES].respuesta, pl.AHORA_NO)
-c("  sin nombre en la flota, se la llama por su id",
-  ag.conexiones[TRES].nombre, "PRDRIVE 33333333")
+c("  sin nombre en la flota ni etiqueta, se la llama por el principio de su id",
+  ag.conexiones[TRES].nombre, "prdrive · 3333")
 
 # La ventana que no se puede abrir (sin Tk): «Ahora no» al momento.
 CUATRO = "4" * 32
