@@ -25,6 +25,8 @@ import sync
 c = Checks("flags efectivos y orden de rclone (common/model.py, common/orden.py)")
 
 FILTROS = Path("FILTROS/pareja.txt")
+FILTROS_TXT = str(FILTROS)
+"""Cómo llega ese fichero a la orden: con la barra del sistema (`\\` en Windows)."""
 
 PROGRAMA = model.REGLA_SIN_PROGRAMA.partition(" ")[2]
 """El patrón con el que una pareja de la raíz deja fuera la carpeta del programa."""
@@ -89,7 +91,7 @@ CASOS = {
     "bisync": (
         BISYNC, {}, dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
-         'FILTROS/pareja.txt', '--verbose', '--create-empty-src-dirs', '--stats', '2s',
+         FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
          '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--config', CONF, '--log-file', LOG, '--workdir',
@@ -98,7 +100,7 @@ CASOS = {
         {**BISYNC, "flags": {"resync-mode": "newer", "transfers": 8}}, {},
         dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
-         'FILTROS/pareja.txt', '--verbose', '--create-empty-src-dirs', '--stats', '2s',
+         FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
          '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--transfers', '8', '--config', CONF,
@@ -106,7 +108,7 @@ CASOS = {
     "bisync-resync": (
         {**BISYNC, "flags": {"resync-mode": "newer"}}, {}, dict(resync=True),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
-         'FILTROS/pareja.txt', '--verbose', '--create-empty-src-dirs', '--stats', '2s',
+         FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
          '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--resync-mode', 'newer', '--config', CONF,
@@ -114,7 +116,7 @@ CASOS = {
     "bisync-versiones": (
         {**BISYNC, "versions": True}, {}, dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
-         'FILTROS/pareja.txt', '--verbose', '--create-empty-src-dirs', '--stats', '2s',
+         FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
          '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--config', CONF, '--log-file', LOG, '--workdir',
@@ -125,7 +127,7 @@ CASOS = {
         {**BISYNC, "versions": True, "flags": {"conflict-loser": "num"}}, {},
         dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
-         'FILTROS/pareja.txt', '--verbose', '--create-empty-src-dirs', '--stats', '2s',
+         FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
          '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--conflict-loser', 'num', '--config', CONF,
@@ -198,7 +200,7 @@ with sandbox():
                              model.ORIGEN_PRDRIVE))
     c("el fichero de filtros, también",
       [t.args for t in tramos if t.origen == model.ORIGEN_PRDRIVE and not t.nombre][1],
-      ("--filters-file", "FILTROS/pareja.txt"))
+      ("--filters-file", FILTROS_TXT))
     for flag in ("config", "log-file", "workdir", "dry-run", "resync", "backup-dir1",
                  "backup-dir2", "suffix", "suffix-keep-extension", "conflict-loser"):
         c(f"--{flag} lo pone el programa", origen_de.get(flag), model.ORIGEN_PRDRIVE)

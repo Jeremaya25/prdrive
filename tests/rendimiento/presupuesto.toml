@@ -67,8 +67,12 @@
 # Solo bajan, con las tareas que las rebajan. Las dos tablas son un lienzo (etapa 3, tarea 7):
 # «Dispositivos» pasó de 134 a 44 widgets (con la flota de muestra; ya no crece con ella) y el
 # editor de flags de 69 a 26 (el recuadro rojo, que se hace con el primer error, suma 5 más).
+# El de flags sube de 26 a 31 con #124 (15/10/2026): «Sobrescribir» y «Volver a heredar» (2 botones)
+# y la orden de rclone que saldría (un rótulo, el texto y su leyenda: 3). Son fijos, no crecen con
+# los flags ni con lo que se escribe, y la medida es la del editor de la primera pareja, que es de
+# este dispositivo y por eso lleva la orden (la de una pareja del catálogo no la lleva).
 "widgets.dispositivos" = 44
-"widgets.flags" = 26
+"widgets.flags" = 31
 "tema.abrir.dispositivos" = 0
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0
