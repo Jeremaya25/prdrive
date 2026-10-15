@@ -9,10 +9,15 @@ aquí se decide qué va dentro, en qué raíz y con qué icono.
 **En qué raíz:** la del volumen donde vive prdrive, `DEVICE_ROOT`, que es el
 que lleva los datos. Sin cifrar es la unidad que se enchufa; con BitLocker, el
 volumen que se ve al desbloquearla (bloqueada, Windows no lee nada de dentro);
-con VeraCrypt, el volumen que aparece al abrir el contenedor, y el Explorador
-lee su `autorun.inf` al montarlo, como el de una unidad que llega. La raíz
-física de fuera del contenedor (la del vestíbulo, `vestibulo.raiz_fisica()`)
-no se toca: es la del pendrive, que conserva el nombre y el icono que tenga.
+con VeraCrypt, el volumen que aparece al abrir el contenedor. La raíz física
+de fuera del contenedor (la del vestíbulo, `vestibulo.raiz_fisica()`) no se
+toca: es la del pendrive, que conserva el nombre y el icono que tenga.
+
+**Con VeraCrypt en Windows el Explorador no lee ese `autorun.inf`.** Lo que sí
+lee son unas claves por letra en el registro de la persona, y
+`common/explorador.py` copia ahí lo que dice el fichero mientras el volumen
+está abierto: al guardar aquí, al abrir prdrive desde él y al atenderlo el
+agente. El fichero sigue siendo el que manda.
 
 **Dónde va el icono:** dentro de `.prdrive/`, con `icon=.prdrive\icono-….ico`,
 para no dejar nada más en la raíz.
@@ -44,7 +49,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from common import autorun, fleet, model, vestibulo
+from common import autorun, explorador, fleet, model, vestibulo
 
 from . import icons
 
@@ -112,6 +117,10 @@ class Estado:
         dispositivo: Cómo se llama ahora este dispositivo en la flota
             (`fleet.nombre()`), que puede no coincidir con `nombre`: es el que
             «Guardar» sustituye.
+        letra: La letra de `raiz` si es un volumen de VeraCrypt en Windows,
+            cuyo `autorun.inf` el Explorador no lee: el nombre y el icono le
+            llegan por el registro (`common/explorador.py`) y se ven al
+            guardar. Vacía en los demás casos.
     """
     raiz: Path
     fuera: Path | None
@@ -119,6 +128,7 @@ class Estado:
     clave: str
     icono: str
     dispositivo: str = ""
+    letra: str = ""
 
     @property
     def carpeta(self) -> Path:
@@ -230,7 +240,7 @@ def leer() -> Estado:
     raiz, fuera = raiz_del_volumen()
     actual = autorun.leer(raiz)
     return Estado(raiz, fuera, actual.etiqueta, clave_de(actual.icono),
-                  actual.icono, fleet.nombre())
+                  actual.icono, fleet.nombre(), explorador.letra_veracrypt(raiz))
 
 
 def revisar_nombre(texto: str) -> str:
@@ -268,10 +278,25 @@ def cuando_se_ve(estado: Estado) -> str:
     """Devuelve cuándo lee el Explorador lo guardado, para acabar una frase.
 
     Lo lee al llegar el volumen: el de una unidad en un contenedor llega al
-    abrirlo, no al enchufarla.
+    abrirlo, no al enchufarla. En un volumen de VeraCrypt en Windows se le pasa
+    al guardar, por el registro (`Estado.letra`).
     """
+    if estado.letra:
+        return "enseguida en «Este equipo» (en una ventana ya abierta, al pulsar F5)"
     return ("la próxima vez que abras la unidad" if estado.fuera is not None
             else "la próxima vez que conectes la unidad")
+
+
+def como_se_lee(estado: Estado) -> str:
+    """Devuelve el párrafo de la ventana que dice quién lee lo guardado, y cuándo se ve."""
+    if estado.letra:
+        return ("Ese fichero no ejecuta nada, y en un volumen de VeraCrypt Windows ni "
+                "siquiera lo lee: mientras el contenedor esté abierto, prdrive le pasa "
+                f"al Explorador el nombre y el icono de {estado.letra}:, y los quita al "
+                f"expulsarlo. El cambio se verá {cuando_se_ve(estado)}.")
+    return ("Ese fichero no ejecuta nada: Windows no arranca programas al conectar "
+            "una unidad extraíble, pero sí lee de ahí el nombre y el icono, al "
+            f"llegar la unidad. El cambio se verá {cuando_se_ve(estado)}.")
 
 
 def mensaje_guardado(estado: Estado, nombre: str) -> str:
@@ -364,6 +389,10 @@ def guardar(estado: Estado, nombre: str, clave: str,
     a un icono que no está: primero el icono, luego el fichero y, solo al
     final, se recogen los iconos que ya no se usan.
 
+    En la letra de un volumen de VeraCrypt en Windows, después del fichero se
+    le pasan al Explorador por el registro (`explorador.poner()`, que no
+    lanza: lo que manda ya está escrito).
+
     Con nombre, ese mismo nombre pasa a ser el de este dispositivo en la flota
     (`fleet.guardar_nombre()`), y lo último de todo: si la unidad no se pudo
     escribir, el dispositivo no cambia de nombre. Sin nombre no se toca el de
@@ -409,6 +438,7 @@ def guardar(estado: Estado, nombre: str, clave: str,
         raise VolumenError(f"No he podido escribir {destino}: {e}") from e
 
     recoger(estado, icono)
+    explorador.poner(raiz)
     if nombre and not fleet.guardar_nombre(nombre):
         raise VolumenError(
             "He guardado el nombre y el icono de la unidad, pero no he podido "

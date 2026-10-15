@@ -451,3 +451,21 @@ equipo de uso, y sobre todo un portátil.
 | C9 | W, L | Con una unidad atendida y quieta, mirar su luz de actividad o su tráfico (`iostat`, el Monitor de recursos). Abrir su ventana y cerrarla. | Casi sin tráfico entre pasadas; la ventana se abre sin esperar más que antes y, al cerrarla, el agente vuelve en los 15 s de siempre. | `mirar_estado()`, `Agente._registro()` |
 | C10 · local 12/10: ok (F18, F23 y F28: orden con y sin /silent, botón de su ventana, desmontaje automático forzando y sin forzar); el ajuste ya viene encendido; faltan el .bat entero y un pendrive | W | `agente.py ajuste avisos_veracrypt sí`, reiniciar el agente, y con una pareja `watch` en un volumen de VeraCrypt: desmontarlo desde la ventana de VeraCrypt, con `Expulsar PRDRIVE.bat`, con su desmontaje automático, y con un fichero abierto dentro. | El diario dice que oye los volúmenes de VeraCrypt y la pareja no se recorre; el desmontaje no pregunta «¿forzar?» por culpa del agente; si se cancela, a los 5 s se vuelve a oír. Visto el 12/10/2026 en un sobremesa: el ajuste viene encendido. | `ReadDirectoryChanges.volumen()` |
 | C11 | W, L | Una unidad con cuatro parejas del mismo intervalo: mirar los procesos en una pasada. | Tras la primera vuelta, un solo `sync.py` por ciclo con sus cuatro rclone seguidos; cada pareja con su resultado en la ventana y en la bandeja. | `Agente._acompanan()` |
+
+## El nombre y el icono de una unidad VeraCrypt (#63)
+
+El Explorador no lee el `autorun.inf` de un volumen que monta VeraCrypt, así que prdrive copia su
+`label=` e `icon=` a `HKCU\Software\Classes\Applications\Explorer.exe\Drives\<letra>\DefaultLabel`
+y `DefaultIcon`, con la marca `PRDRIVE` (`common/explorador.py`, `drive-name-icon.md`). Visto en real
+el 15/10/2026: `DefaultIcon` en un volumen VeraCrypt (a mano, comentario D1 del #63) y los dos en una
+letra de `subst` (`poner()`/`quitar()` de verdad, y la subrutina `:olvidar_letra` del `.bat`).
+Falta con prdrive abriendo un volumen VeraCrypt de verdad, en un pendrive con un `.ico` propio.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| I1 | W | Abrir la unidad con `Abrir PRDRIVE.bat` y abrir «Este equipo» en una ventana nueva. | La letra del volumen sale con el nombre y el icono de «Nombre e icono», no «PRDRIVE» con el icono genérico. En `regedit` están `DefaultIcon` (ruta absoluta del `.ico`) y `DefaultLabel`, cada una con `PRDRIVE` = el id de la unidad. | `cifrado.nombrar_letra()`, `explorador.poner()` |
+| I2 | W | Con «Este equipo» ya abierto, cambiar el icono y el nombre en «Ajustes → Nombre e icono» y guardar. | La ventana abierta cambia sola (`SHChangeNotify`) o, si no, al pulsar F5 (lo que dice la ventana). Apuntar cuál de las dos. | `volumen.guardar()`, `explorador.avisar_shell()` |
+| I3 | W | «Expulsar» desde la ventana de prdrive; luego `Expulsar PRDRIVE.bat` de un vestíbulo reescrito (paso 5 o «Añadir plataformas…»). | En los dos, la subclave de la letra desaparece (y `Applications\Explorer.exe` si no tenía nada más). Con un vestíbulo de antes, el `.bat` no la quita: lo hace la ventana o el siguiente arranque de prdrive. | `cifrado.olvidar_letra()`, `:olvidar_letra` |
+| I4 | W | Cerrar el volumen desde la ventana de VeraCrypt (o quitar el pendrive sin expulsar), conectar otra unidad que tome esa letra y abrir prdrive desde otro dispositivo. | Al arrancar prdrive se borran las claves huérfanas: la otra unidad sale con su nombre y su icono, no con el `.ico` que ya no está. | `explorador.limpiar()` |
+| I5 | W | Con el agente atendiendo la unidad (o la raíz cifrada del equipo): conectarla/desbloquearla y expulsarla/bloquearla desde la bandeja. | Igual que I1 al conectarse y que I3 al irse, sin abrir la ventana de prdrive. | `Agente._conectar()`, `Agente._desconectar()` |
+| I6 | W | Con BitLocker, y con una unidad sin cifrar, abrir prdrive. | No se escribe ninguna clave: solo se hace con volúmenes de VeraCrypt (`\Device\VeraCryptVolume<letra>`). | `explorador.de_veracrypt()` |

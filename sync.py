@@ -500,12 +500,14 @@ def execute(ctx: RunContext, cmd: list[str], logfile: Path | None = None) -> int
     return proc.returncode
 
 
-def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
+def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, bool, int | None]:
     """Hace las comprobaciones previas de una pareja bisync.
 
     Returns:
-        `(hace_falta_resync, código_con_el_que_abortar)`. Con código `None` se
-        puede seguir adelante.
+        `(hace_falta_resync, referencia_vacía, código_con_el_que_abortar)`.
+        `referencia_vacía` es que el resync parte de un baseline vacío
+        (`bisync.referencia_vacia()`), para que quien mide la pasada no lo
+        cuente como que movió algo. Con código `None` se puede seguir adelante.
     """
     bisync.migrate_legacy_state(pair)
 
@@ -513,8 +515,18 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
     print(f"  estado: {state.status} — {state.detail}")
 
     reasons = bisync.resync_reasons(pair, state)
-    need_resync = ctx.force_resync or bool(reasons)
-    if need_resync and pair.llavero and reasons:
+    # Con los dos listados vacíos no queda nada que proteger, y rclone se niega
+    # a pasar con ellos (`checkListing()`): se rehacen, sin pedirlo. Sin carpeta
+    # local no entra (lo comprueba `referencia_vacia()`): ahí manda el aborto de
+    # más abajo.
+    vacia = bisync.referencia_vacia(pair, state)
+    need_resync = ctx.force_resync or bool(reasons) or vacia
+    if vacia:
+        for reason in reasons:
+            print(f"  requiere --resync -> {reason}")
+        print("  la referencia está vacía: se rehace con --resync, sin pedirlo (no hay "
+              "nada que proteger, y un --resync no borra nada).")
+    elif need_resync and pair.llavero and reasons:
         # El llavero no espera a que nadie lo apruebe: con `resync-mode =
         # newer` gana la versión más nueva y la otra queda en `.prversions/`
         # (el backup-dir también vale en un --resync). Saltarlo lo dejaría sin
@@ -527,16 +539,16 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
         for reason in reasons:
             print(f"  requiere --resync -> {reason}")
         print(f"[{pair.name}] Saltada: requiere --resync y no está aprobado.")
-        return need_resync, SKIPPED
+        return need_resync, vacia, SKIPPED
 
     # Con baseline y sin carpeta local (dispositivo a medio montar), crearla
     # vacía haría que bisync viese «han borrado todo».
     if state.has_baseline and not pair.local_abs.exists():
         print(f"[{pair.name}] ERROR: existe baseline pero la ruta local "
               f"'{pair.local_abs}' no existe. Se aborta (no se crea vacía a propósito).")
-        return need_resync, 2
+        return need_resync, vacia, 2
 
-    return need_resync, None
+    return need_resync, vacia, None
 
 
 def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
@@ -636,8 +648,9 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
         return 2
 
     need_resync = ctx.force_resync
+    vacia = False
     if pair.is_bisync:
-        need_resync, abort_code = _bisync_preflight(ctx, pair)
+        need_resync, vacia, abort_code = _bisync_preflight(ctx, pair)
         if abort_code is not None:
             record_result(ctx, pair, abort_code, None, reloj)
             return abort_code
@@ -667,7 +680,10 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
-    medida.resync = bool(need_resync)
+    # Un resync que parte de una referencia vacía solo mueve algo si trae
+    # ficheros: lo dirá la comparación de los listados (`parte.Medida.acabar()`),
+    # no el simple hecho de ser un resync.
+    medida.resync = bool(need_resync) and not vacia
     rc = execute(ctx, cmd, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
