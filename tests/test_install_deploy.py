@@ -619,17 +619,24 @@ c("sin congelar se usa el intérprete actual",
   install.python_command(), [sys.executable])
 
 which_original, frozen_antes = _shutil.which, getattr(sys, "frozen", None)
-install.shutil.which = lambda nombre: ("/usr/bin/" + nombre
+# Una carpeta que no existe en ninguna máquina: si los Python falsos viviesen en
+# `/usr/bin/`, un intérprete que sea de verdad `/usr/bin/python` (la imagen de la
+# nube) igualaría lo que devuelve el `which` falso y «no se usa sys.executable»
+# no podría cumplirse nunca.
+bin_falso = "/prdrive-no-existe/bin/"
+c("el Python falso no puede ser el intérprete que ejecuta el test",
+  sys.executable.startswith(bin_falso), False)
+install.shutil.which = lambda nombre: (bin_falso + nombre
                                        if nombre in ("python", "python3") else None)
 sys.frozen = True
 try:
     congelado = install.python_command()
     c("congelado NO se usa sys.executable", sys.executable in congelado, False)
-    c("sino un Python de verdad que se busca aparte", congelado, ["/usr/bin/python"])
+    c("sino un Python de verdad que se busca aparte", congelado, [bin_falso + "python"])
 
-    install.shutil.which = lambda nombre: "/usr/bin/py" if nombre == "py" else None
+    install.shutil.which = lambda nombre: bin_falso + "py" if nombre == "py" else None
     c("y si no hay ninguno, vale el lanzador 'py'",
-      install.python_command(), ["/usr/bin/py", "-3"])
+      install.python_command(), [bin_falso + "py", "-3"])
 
     install.shutil.which = lambda nombre: None
     c("sin ningún Python se dice que no hay", install.python_command(), None)

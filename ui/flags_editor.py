@@ -26,7 +26,11 @@ Hay dos decisiones que conviene no deshacer:
 
 Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y
 la regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando
-código.
+código. Lo único que se comprueba de un flag que sí está en los datos de la
+rclone fijada es el tipo de su valor (`flags_ayuda.problema_valor()`, por la
+misma puerta), y solo cuando es seguro que rclone lo rechazaría. El
+autocompletado y los avisos que no bloquean (`flags_ayuda.sugerir()`,
+`avisos()`) viven en `ui/flags_ayuda.py`.
 
 Además del texto, el editor enseña los flags EFECTIVOS de la pareja, cada uno
 con la capa de la que sale (`effective()`), deja sobrescribir uno heredado o
@@ -44,6 +48,7 @@ from typing import Any, Mapping, NamedTuple
 
 from common import config_file, model, orden
 from common.model import ConfigError, FlagEfectivo
+from . import flags_ayuda
 
 
 class FlagReservado(ConfigError):
@@ -206,6 +211,9 @@ def _validar(key: str, value: Any) -> None:
     motivo = model.problema_valor_flag(value)
     if motivo:
         raise ConfigError(f"'{key}': en su valor, {motivo}")
+    motivo = flags_ayuda.problema_valor(key, value)
+    if motivo:
+        raise ConfigError(f"'{key}': {motivo}")
 
 
 def dump_extra(extra: Any) -> str:
