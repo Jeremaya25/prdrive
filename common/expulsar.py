@@ -16,7 +16,15 @@ de un dispositivo extraíble (USB o tarjeta). No lo son:
 Nunca se fuerza: con algo abierto dentro, la unidad no se suelta y se dice. Las
 dos mitades de este módulo (`compatible()` y `expulsar()`) son puntos de
 indirección que los tests sustituyen, como las llamadas al sistema que hay
-debajo (`_ejecutar()`, `_bus_windows()`, `_expulsar_windows()`).
+debajo (`_ejecutar()`, `_bus_windows()`, `_cadena_windows()`,
+`_retirar_dispositivo()`, `_expulsar_windows()`).
+
+En Windows, tras bloquear y desmontar el volumen se pide la retirada del
+DISPOSITIVO, como el «Quitar hardware de forma segura» (`CM_Request_Device_EjectW`):
+con solo expulsar el medio (`IOCTL_STORAGE_EJECT_MEDIA`) el dispositivo y su
+letra seguían en el Explorador hasta quitar el pendrive. Si Windows lo veta se
+dice por qué; si no hay dispositivo extraíble que retirar (un disco virtual),
+se hace lo de siempre y se expulsa el medio.
 """
 
 from __future__ import annotations
@@ -192,7 +200,46 @@ FSCTL_DISMOUNT_VOLUME = 0x00090020
 IOCTL_STORAGE_MEDIA_REMOVAL = 0x002D4804
 IOCTL_STORAGE_EJECT_MEDIA = 0x002D4808
 IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+IOCTL_STORAGE_GET_DEVICE_NUMBER = 0x002D1080
 """Los códigos de `DeviceIoControl` que usa la expulsión (`winioctl.h`)."""
+
+FILE_DEVICE_DISK = 7
+"""`STORAGE_DEVICE_NUMBER.DeviceType` de un disco (`winioctl.h`)."""
+CM_DEVCAP_REMOVABLE = 0x00000004
+CM_DRP_CAPABILITIES = 0x00000010
+CR_SUCCESS = 0x00000000
+CR_REMOVE_VETOED = 0x00000017
+"""Lo que usa el árbol de dispositivos (`cfgmgr32.h`): la capacidad de ser extraíble,
+la propiedad que la lleva y los `CONFIGRET` que distinguen el sí del veto."""
+GUID_DEVINTERFACE_DISK = "53f56307-b6bf-11d0-94f2-00a0c91efb8b"
+DEVPKEY_INSTANCE_ID = ("78c34fc8-104a-4aca-9ea4-524d52996e57", 256)
+"""La clase de interfaz de los discos y la propiedad con el id de instancia de un dispositivo
+(`devpkey.h`: `DEVPKEY_Device_InstanceId`)."""
+PROFUNDIDAD_MAXIMA = 16
+"""Cuántos padres se suben como mucho: el árbol de un USB no pasa de media docena."""
+LARGO_VETO = 260
+"""Cuántos caracteres caben en el nombre de quien veta (`MAX_PATH`)."""
+
+PNP_VETOS = {
+    0: "Windows no da más explicación.",
+    1: "Un dispositivo antiguo ({nombre}) no deja quitarla.",
+    2: "Windows está cerrando lo que tenía abierto de ella: vuelve a pedirlo en unos segundos.",
+    3: "Un programa la está usando ({nombre}): ciérralo y vuelve a pedirlo.",
+    4: "Un servicio de Windows la está usando ({nombre}).",
+    5: "Algo la tiene abierta ({nombre}): ciérralo y vuelve a pedirlo.",
+    6: "Otro dispositivo depende de ella ({nombre}).",
+    7: "Su controlador no deja quitarla ({nombre}).",
+    8: "Windows no deja quitarla ahora.",
+    9: "No hay energía bastante en el equipo para quitarla ahora.",
+    10: "Windows no deja desactivarla ({nombre}).",
+    11: "Un controlador antiguo ({nombre}) no deja quitarla.",
+    12: "Faltan permisos para quitarla: prueba con una cuenta de administrador.",
+}
+"""Lo que Windows quiere decir con cada `PNP_VETO_TYPE` (`winnt.h`), en palabras.
+
+`{nombre}` es quien veta: un programa, un servicio o un dispositivo, según el
+tipo; si Windows no lo da se quita del texto (`_texto_veto()`).
+"""
 
 
 def _kernel32():
@@ -229,13 +276,18 @@ def _ioctl(k32, handle, codigo: int, entrada: bytes = b"", salida: int = 0) -> b
     return sal.raw[:devueltos.value] if ok else None
 
 
-def _abrir_volumen(k32, letra: str, acceso: int):
-    """Abre el volumen `letra` como dispositivo (`\\\\.\\E:`); `None` si no se puede."""
+def _abrir_ruta(k32, ruta: str, acceso: int):
+    """Abre `ruta` (un volumen o un dispositivo) con ese acceso; `None` si no se puede."""
     import ctypes
     FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING = 1, 2, 3
-    handle = k32.CreateFileW(f"\\\\.\\{letra}", acceso, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    handle = k32.CreateFileW(ruta, acceso, FILE_SHARE_READ | FILE_SHARE_WRITE,
                              None, OPEN_EXISTING, 0, None)
     return None if handle is None or handle == ctypes.c_void_p(-1).value else handle
+
+
+def _abrir_volumen(k32, letra: str, acceso: int):
+    """Abre el volumen `letra` como dispositivo (`\\\\.\\E:`); `None` si no se puede."""
+    return _abrir_ruta(k32, f"\\\\.\\{letra}", acceso)
 
 
 def _bus_windows(letra: str) -> tuple[bool, int] | None:
@@ -273,17 +325,288 @@ def _compatible_windows(raiz: Path) -> bool:
     return dato is not None and (dato[0] or dato[1] in BUS_EXTRAIBLES)
 
 
+@dataclass(frozen=True)
+class Nodo:
+    """Un dispositivo del árbol de Windows entre el disco de un volumen y la raíz.
+
+    Args:
+        id: Su id de instancia (`USB\\VID_…\\<serie>`), con el que se vuelve a
+            localizar.
+        extraible: Si se declara extraíble (`CM_DEVCAP_REMOVABLE`).
+    """
+    id: str
+    extraible: bool
+
+
+def _bytes_de(guid: str, pid: int | None = None):
+    """Devuelve un búfer con ese GUID en el formato de Win32 (y, con `pid`, una `DEVPROPKEY`).
+
+    Es lo que esperan `cfgmgr32` y `setupapi` por puntero: el GUID en
+    pequeño-endian y, en la clave de una propiedad, su `pid` detrás. Un búfer en
+    vez de una `Structure` porque solo se pasa por puntero.
+    """
+    import ctypes
+    import uuid
+    crudo = uuid.UUID(guid).bytes_le
+    if pid is not None:
+        crudo += struct.pack("<I", pid)
+    return ctypes.create_string_buffer(crudo, len(crudo))
+
+
+def _cfgmgr32():
+    """Devuelve cfgmgr32 con los prototipos de lo que usa esto (solo Windows).
+
+    Todos los `CONFIGRET` son `DWORD` y todos los `DEVINST`, también.
+    """
+    import ctypes
+    from ctypes import wintypes
+    cm = ctypes.WinDLL("cfgmgr32", use_last_error=True)
+    ulong_p = ctypes.POINTER(wintypes.ULONG)
+    dword_p = ctypes.POINTER(wintypes.DWORD)
+    cm.CM_Get_Device_Interface_List_SizeW.argtypes = [ulong_p, ctypes.c_void_p,
+                                                      wintypes.LPCWSTR, wintypes.ULONG]
+    cm.CM_Get_Device_Interface_ListW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
+                                                 ctypes.c_void_p, wintypes.ULONG,
+                                                 wintypes.ULONG]
+    cm.CM_Get_Device_Interface_PropertyW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p,
+                                                     ulong_p, ctypes.c_void_p, ulong_p,
+                                                     wintypes.ULONG]
+    cm.CM_Locate_DevNodeW.argtypes = [dword_p, wintypes.LPCWSTR, wintypes.ULONG]
+    cm.CM_Get_DevNode_Registry_PropertyW.argtypes = [wintypes.DWORD, wintypes.ULONG, ulong_p,
+                                                     ctypes.c_void_p, ulong_p, wintypes.ULONG]
+    cm.CM_Get_Parent.argtypes = [dword_p, wintypes.DWORD, wintypes.ULONG]
+    cm.CM_Get_Device_IDW.argtypes = [wintypes.DWORD, ctypes.c_void_p, wintypes.ULONG,
+                                     wintypes.ULONG]
+    cm.CM_Request_Device_EjectW.argtypes = [wintypes.DWORD, ctypes.POINTER(ctypes.c_int),
+                                            ctypes.c_void_p, wintypes.ULONG, wintypes.ULONG]
+    for nombre in ("CM_Get_Device_Interface_List_SizeW", "CM_Get_Device_Interface_ListW",
+                   "CM_Get_Device_Interface_PropertyW", "CM_Locate_DevNodeW",
+                   "CM_Get_DevNode_Registry_PropertyW", "CM_Get_Parent",
+                   "CM_Get_Device_IDW", "CM_Request_Device_EjectW"):
+        getattr(cm, nombre).restype = wintypes.DWORD
+    return cm
+
+
+def _numero_de_dispositivo(k32, ruta: str) -> tuple[int, int] | None:
+    """Devuelve `(tipo, número)` del disco que hay detrás de esa ruta de dispositivo, o `None`.
+
+    Es `IOCTL_STORAGE_GET_DEVICE_NUMBER` (`STORAGE_DEVICE_NUMBER`: tipo,
+    número y partición, tres DWORD), que no pide acceso: se pregunta con 0.
+    """
+    handle = _abrir_ruta(k32, ruta, 0)
+    if handle is None:
+        return None
+    try:
+        datos = _ioctl(k32, handle, IOCTL_STORAGE_GET_DEVICE_NUMBER, b"", 12)
+    finally:
+        k32.CloseHandle(handle)
+    if datos is None or len(datos) < 8:
+        return None
+    tipo, numero = struct.unpack_from("<II", datos, 0)
+    return tipo, numero
+
+
+def _rutas_de_discos(cm) -> list[str]:
+    """Devuelve las rutas de las interfaces de disco presentes (`GUID_DEVINTERFACE_DISK`)."""
+    import ctypes
+    from ctypes import wintypes
+    guid = _bytes_de(GUID_DEVINTERFACE_DISK)
+    largo = wintypes.ULONG(0)
+    if cm.CM_Get_Device_Interface_List_SizeW(ctypes.byref(largo), guid,
+                                             None, 0) != CR_SUCCESS or largo.value < 2:
+        return []
+    buffer = ctypes.create_unicode_buffer(largo.value)
+    if cm.CM_Get_Device_Interface_ListW(guid, None, buffer, largo.value, 0) != CR_SUCCESS:
+        return []
+    return [r for r in ctypes.wstring_at(buffer, largo.value).split("\0") if r]
+
+
+def _instancia_de_interfaz(cm, ruta: str) -> str | None:
+    """Devuelve el id de instancia del dispositivo de esa interfaz, o `None` (`DEVPKEY_Device_InstanceId`)."""
+    import ctypes
+    from ctypes import wintypes
+    clave = _bytes_de(*DEVPKEY_INSTANCE_ID)
+    tipo = wintypes.ULONG(0)
+    largo = wintypes.ULONG(LARGO_VETO * 2)             # bytes: es una cadena UTF-16
+    buffer = ctypes.create_string_buffer(largo.value)
+    if cm.CM_Get_Device_Interface_PropertyW(ruta, clave, ctypes.byref(tipo),
+                                            buffer, ctypes.byref(largo), 0) != CR_SUCCESS:
+        return None
+    return ctypes.wstring_at(buffer, largo.value // 2).rstrip("\0") or None
+
+
+def _nodo(cm, devinst: int) -> Nodo | None:
+    """Devuelve el nodo de ese `DEVINST`: su id y si se declara extraíble, o `None`."""
+    import ctypes
+    from ctypes import wintypes
+    buffer = ctypes.create_unicode_buffer(LARGO_VETO)
+    if cm.CM_Get_Device_IDW(devinst, buffer, LARGO_VETO, 0) != CR_SUCCESS:
+        return None
+    capacidades = wintypes.ULONG(0)
+    largo = wintypes.ULONG(4)
+    if cm.CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_CAPABILITIES, None,
+                                            ctypes.byref(capacidades), ctypes.byref(largo),
+                                            0) != CR_SUCCESS:
+        capacidades.value = 0
+    return Nodo(buffer.value, bool(capacidades.value & CM_DEVCAP_REMOVABLE))
+
+
+def _cadena_windows(letra: str) -> list[Nodo] | None:
+    """Devuelve el disco del volumen `letra` y sus padres hasta la raíz, o `None`.
+
+    Es el camino volumen → disco → `CM_Get_Parent`: el número de dispositivo del
+    volumen (`IOCTL_STORAGE_GET_DEVICE_NUMBER`) dice qué interfaz de disco es
+    el suyo, de ella sale su dispositivo y de él, subiendo, los demás. El
+    primero de la lista es el disco; el último, lo más alto que se alcanzó.
+    `None` si algo no se deja preguntar: un volumen que abarca varios discos, uno
+    que no es de disco, un sistema que no contesta. Un punto de indirección: los
+    tests lo sustituyen.
+    """
+    import ctypes
+    from ctypes import wintypes
+    k32, cm = _kernel32(), _cfgmgr32()
+    handle = _abrir_volumen(k32, letra, 0)
+    if handle is None:
+        return None
+    try:
+        numero = _ioctl(k32, handle, IOCTL_STORAGE_GET_DEVICE_NUMBER, b"", 12)
+    finally:
+        k32.CloseHandle(handle)
+    if numero is None or len(numero) < 8:
+        return None
+    buscado = struct.unpack_from("<II", numero, 0)
+    if buscado[0] != FILE_DEVICE_DISK:
+        return None
+    instancia = None
+    for ruta in _rutas_de_discos(cm):
+        if _numero_de_dispositivo(k32, ruta) == buscado:
+            instancia = _instancia_de_interfaz(cm, ruta)
+            break
+    devinst = wintypes.DWORD(0)
+    if instancia is None or cm.CM_Locate_DevNodeW(ctypes.byref(devinst), instancia, 0) != CR_SUCCESS:
+        return None
+    cadena: list[Nodo] = []
+    actual = devinst.value
+    for _ in range(PROFUNDIDAD_MAXIMA):
+        nodo = _nodo(cm, actual)
+        if nodo is None:
+            break
+        cadena.append(nodo)
+        padre = wintypes.DWORD(0)
+        if cm.CM_Get_Parent(ctypes.byref(padre), actual, 0) != CR_SUCCESS:
+            break
+        actual = padre.value
+    return cadena or None
+
+
+def _elegir_nodo(cadena: list[Nodo]) -> Nodo | None:
+    """Elige qué dispositivo se retira: el primer padre del disco que se declara extraíble.
+
+    Es el dispositivo que Windows enseña en «Quitar hardware de forma segura»
+    (para un pendrive, el «dispositivo de almacenamiento masivo USB» y no su
+    disco). Si ningún padre lo es, el propio disco, si lo es (un lector de
+    tarjetas con el disco colgando de otro tipo de bus). `None` si nada de la
+    cadena se declara extraíble: un disco virtual o uno interno.
+    """
+    for nodo in cadena[1:]:
+        if nodo.extraible:
+            return nodo
+    return cadena[0] if cadena and cadena[0].extraible else None
+
+
+def _dispositivo_a_retirar(letra: str) -> Nodo | None:
+    """Devuelve el dispositivo que hay que retirar tras soltar el volumen, o `None`.
+
+    Solo de un volumen que `_bus_windows()` da por extraíble (el criterio de
+    `compatible()`: un bus USB, SD o MMC, o `RemovableMedia`): un disco virtual
+    que cuelga de un árbol con algo extraíble no se retira. Sin dispositivo, la
+    expulsión sigue como siempre, expulsando el medio.
+    """
+    dato = _bus_windows(letra)
+    if dato is None or not (dato[0] or dato[1] in BUS_EXTRAIBLES):
+        return None
+    try:
+        cadena = _cadena_windows(letra)
+    except (OSError, AttributeError):
+        return None
+    return _elegir_nodo(cadena) if cadena else None
+
+
+def _pedir_retirada(cm, devinst: int) -> tuple[int, int, str]:
+    """Pide a Windows retirar ese `DEVINST` (`CM_Request_Device_EjectW`) y devuelve su contestación.
+
+    Returns:
+        `(CONFIGRET, tipo de veto, nombre de quien veta)`. Con `CR_SUCCESS` el
+        dispositivo se ha ido; con `CR_REMOVE_VETOED`, los otros dos dicen por qué no.
+    """
+    import ctypes
+    veto = ctypes.c_int(0)
+    nombre = ctypes.create_unicode_buffer(LARGO_VETO)
+    cr = cm.CM_Request_Device_EjectW(devinst, ctypes.byref(veto), nombre, LARGO_VETO, 0)
+    return cr, veto.value, nombre.value
+
+
+def _retirar_dispositivo(instancia: str) -> tuple[int, int, str]:
+    """Retira el dispositivo de ese id de instancia como el «Quitar hardware de forma segura».
+
+    Se vuelve a localizar por su id (un `DEVINST` guardado de antes podría ser
+    de otro) y se pide la retirada: es lo que hace desaparecer su letra del
+    Explorador. Espera a que Windows acabe. Un punto de indirección: los tests
+    lo sustituyen.
+
+    Returns:
+        Lo de `_pedir_retirada()`; si ni siquiera se encuentra el dispositivo, el
+        `CONFIGRET` de esa búsqueda y nada más.
+    """
+    import ctypes
+    from ctypes import wintypes
+    cm = _cfgmgr32()
+    devinst = wintypes.DWORD(0)
+    cr = cm.CM_Locate_DevNodeW(ctypes.byref(devinst), instancia, 0)
+    if cr != CR_SUCCESS:
+        return cr, 0, ""
+    return _pedir_retirada(cm, devinst.value)
+
+
+def _texto_veto(letra: str, tipo: int, nombre: str) -> str:
+    """Devuelve por qué Windows no deja quitar la unidad `letra`, en cristiano."""
+    plantilla = PNP_VETOS.get(tipo, PNP_VETOS[0])
+    nombre = nombre.strip()
+    if not nombre:
+        plantilla = plantilla.replace(" ({nombre})", "")
+    return f"Windows no deja quitar la unidad {letra}: {plantilla.format(nombre=nombre)}"
+
+
+def _expulsar_medio(letra: str) -> None:
+    """Expulsa el medio de un volumen ya desmontado (`IOCTL_STORAGE_EJECT_MEDIA`), si se deja."""
+    k32 = _kernel32()
+    handle = _abrir_volumen(k32, letra, 0xC0000000)        # GENERIC_READ | GENERIC_WRITE
+    if handle is None:
+        return
+    try:
+        _ioctl(k32, handle, IOCTL_STORAGE_EJECT_MEDIA)
+    finally:
+        k32.CloseHandle(handle)
+
+
 def _expulsar_windows(letra: str) -> Resultado:
-    """Bloquea, desmonta y expulsa el volumen `letra`, sin forzar.
+    """Bloquea, desmonta y retira el dispositivo del volumen `letra`, sin forzar.
 
     Es lo que hace el «Quitar de forma segura» del sistema por debajo: con el
     volumen bloqueado (`FSCTL_LOCK_VOLUME`) nadie más lo tiene abierto, así que
     desmontarlo vacía lo pendiente y es seguro quitarlo. Si el bloqueo no se
     consigue (un programa o una ventana del Explorador lo usa), no se desmonta
-    ni se fuerza. Si tras desmontar el sistema no expulsa el medio (algunos
-    pendrives se declaran fijos), el volumen ya está desmontado y se puede
-    quitar igual.
+    ni se fuerza.
+
+    Con el volumen desmontado y el manejador cerrado (abierto, el volumen vetaría
+    la retirada), se pide a Windows retirar el dispositivo extraíble
+    (`_dispositivo_a_retirar()`), que es lo que hace desaparecer su letra; un
+    veto se dice con su causa. Sin dispositivo que retirar (un disco virtual,
+    uno que no se deja preguntar) o si Windows no puede ni pedirlo, se expulsa el
+    medio como antes: si ni eso se consigue, el volumen ya está desmontado y se
+    puede quitar igual.
     """
+    nodo = _dispositivo_a_retirar(letra)
     k32 = _kernel32()
     handle = _abrir_volumen(k32, letra, 0xC0000000)        # GENERIC_READ | GENERIC_WRITE
     if handle is None:
@@ -301,10 +624,18 @@ def _expulsar_windows(letra: str) -> Resultado:
         if _ioctl(k32, handle, FSCTL_DISMOUNT_VOLUME) is None:
             return Resultado(False, f"El sistema no ha podido desmontar la unidad {letra}.")
         _ioctl(k32, handle, IOCTL_STORAGE_MEDIA_REMOVAL, b"\0")     # no impedir sacarlo
-        _ioctl(k32, handle, IOCTL_STORAGE_EJECT_MEDIA)
-        return Resultado(True, "Ya puedes quitarla.")
+        if nodo is None:
+            _ioctl(k32, handle, IOCTL_STORAGE_EJECT_MEDIA)
     finally:
         k32.CloseHandle(handle)
+    if nodo is None:
+        return Resultado(True, "Ya puedes quitarla.")
+    cr, tipo, quien = _retirar_dispositivo(nodo.id)
+    if cr == CR_REMOVE_VETOED:
+        return Resultado(False, _texto_veto(letra, tipo, quien))
+    if cr != CR_SUCCESS:
+        _expulsar_medio(letra)          # Windows no ha podido ni pedirlo: lo de siempre
+    return Resultado(True, "Ya puedes quitarla.")
 
 
 # --- Lo que usa el agente ------------------------------------------------

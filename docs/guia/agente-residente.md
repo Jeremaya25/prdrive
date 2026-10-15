@@ -136,8 +136,9 @@ agente»**. El diseño completo está en
   sincronizando, un aviso, en pausa, la raíz cifrada o una unidad bloqueada) y, con clic
   derecho o izquierdo, un menú: **Abrir** la raíz de este equipo o una unidad
   de su lista, **Sincronizar ahora**, **Expulsar** (una unidad extraíble de su
-  lista: la suelta para que puedas quitarla; si algo la tiene abierta, no la
-  fuerza y te lo dice), **Pausar**/**Reanudar**, **Desbloquear**
+  lista: la suelta para que puedas quitarla (en Windows también la retira
+  como «Quitar hardware de forma segura», así que su letra desaparece del
+  Explorador); si algo la tiene abierta, no la fuerza y te dice qué), **Pausar**/**Reanudar**, **Desbloquear**
   y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
   sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
   enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión).

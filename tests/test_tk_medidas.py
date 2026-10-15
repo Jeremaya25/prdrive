@@ -730,6 +730,29 @@ try:
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 
+                # Los cuadros con el tema de la ventana principal (`uitk.preguntar()`
+                # y `uitk.avisar()`), con el peor texto de cada uno: el del resync
+                # con las doce parejas y el aviso de la carpeta del programa, y un
+                # error largo del sistema.
+                for que, fabricar in (
+                        ("la pregunta de «Expulsar»",
+                         lambda: uitk.preguntar(
+                             raiz, "Expulsar", "Se cierra el llavero (KeePassXC, si está abierto) "
+                             f"y esta ventana. Después, quita la unidad {uitk.QUITAR_UNIDAD}.",
+                             "Expulsar")),
+                        ("la pregunta del resync con todas las parejas",
+                         lambda: uitk.preguntar_resync(
+                             raiz, [f"pareja{i}" for i in range(12)],
+                             {"pareja0": "/datos/compartidos/de/toda/la/casa/.prdrive"})),
+                        ("un error largo del sistema",
+                         lambda: uitk.avisar(
+                             raiz, "Expulsar", "No he podido lanzar Expulsar PRDRIVE.bat: "
+                             "[WinError 2] El sistema no puede encontrar el archivo "
+                             "especificado " + "C:\\Usuarios\\alguien\\" * 4, "Rojo."))):
+                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala, modulo=uitk)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
                 # La ventana de una pareja, como se abre y en su caso más alto:
                 # con «Avanzado» desplegado, el aviso ámbar de un espejo y, bajo
                 # cada campo, lo que dice el catálogo.
