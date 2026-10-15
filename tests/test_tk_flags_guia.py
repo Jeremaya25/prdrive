@@ -363,7 +363,8 @@ c("  el de uno sin explicación marca la ayuda de rclone como inglés",
   "inglés" in nota["detalle_use-cookies"], True)
 c("  el de uno libre trae el ejemplo para copiar", "transfers = 8" in nota["detalle_transfers"],
   True)
-c("  y el valor que le pone prdrive, el de uno que lo tiene", "2s" in nota["detalle_stats"], True)
+c("  y el valor que le pone prdrive, el de uno que lo tiene",
+  str(model.BASE_FLAGS["stats"]) in nota["detalle_stats"], True)
 c("  en un texto con rótulos y nombre destacados, que no se puede escribir encima",
   (nota["tags"], nota["solo_lectura"]), ({"rotulo", "nombre"}, "disabled"))
 

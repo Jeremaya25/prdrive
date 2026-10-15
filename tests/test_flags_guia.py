@@ -122,19 +122,21 @@ for modo in model.MODES.values():
             fallos.append((modo.name, n, texto))
 c("el valor que trae cada modo sale del modelo, con el modo al que pertenece", fallos, [])
 maximo = guia.ficha("max-delete").prdrive
-c("max-delete dice sus dos valores (25 en bisync, 50 en los espejo) y a qué modo es cada uno",
-  ("25" in maximo, "50" in maximo, "bisync" in maximo, "up-mirror" in maximo,
-   "down-mirror" in maximo), (True,) * 5)
+c("max-delete dice el valor de cada modo que lo trae, y a qué modo es cada uno",
+  sorted(m.name for m in model.MODES.values() if "max-delete" in m.flags
+         and not (m.name in maximo and flags_editor.valor_texto(m.flags["max-delete"]) in maximo)),
+  [])
 c("conflict-loser, que prdrive solo pone al guardar versiones, lo dice",
   ("delete" in guia.ficha("conflict-loser").prdrive
    and "versiones" in guia.ficha("conflict-loser").prdrive), True)
-c("un flag que prdrive no toca no trae valor de prdrive", guia.ficha("transfers").prdrive, "")
+c("un flag que prdrive no toca no trae valor de prdrive",
+  sorted(f.nombre for f in guia.fichas() if f.estado == guia.ESTADO_LIBRE and f.prdrive), [])
 
 # ----------------------------------------------------------------------------
 # El modelo cambia por debajo de la guía y ella sigue diciendo la verdad
 # ----------------------------------------------------------------------------
 
-def con_el_modelo_cambiado(reservar=(), base=None):
+def con_el_modelo_cambiado(reservar=(), base=None, quitar=()):
     """Rehace las fichas con el modelo cambiado, y lo deja como estaba al salir.
 
     Es lo que pasa cuando otro cambio añade un flag reservado o pone uno en `BASE_FLAGS`:
@@ -145,8 +147,8 @@ def con_el_modelo_cambiado(reservar=(), base=None):
     @contextmanager
     def _cambio():
         reservados, base_antes = model.FLAGS_RESERVADOS, model.BASE_FLAGS
-        model.FLAGS_RESERVADOS = {**reservados, **{n: "lo pone sync.py: motivo de prueba"
-                                                   for n in reservar}}
+        model.FLAGS_RESERVADOS = {**{k: v for k, v in reservados.items() if k not in quitar},
+                                  **{n: "lo pone sync.py: motivo de prueba" for n in reservar}}
         model.BASE_FLAGS = {**base_antes, **(base or {})}
         guia.reiniciar()
         try:
@@ -157,10 +159,9 @@ def con_el_modelo_cambiado(reservar=(), base=None):
     return _cambio()
 
 
+# Se parte de lo que sea el modelo ahora (otro cambio puede haber reservado ya `force` o puesto
+# `modify-window` en `BASE_FLAGS`): lo que se comprueba es lo que la guía hace con lo que cambia.
 ANTES = {n: (guia.ficha(n).estado, guia.ficha(n).tema) for n in ("force", "modify-window")}
-c("hoy force y modify-window son libres y cada uno de su tema",
-  ANTES, {"force": (guia.ESTADO_LIBRE, guia.TEMA_BORRADO),
-          "modify-window": (guia.ESTADO_LIBRE, guia.TEMA_COMPARAR)})
 
 PAGINA_ANTES = guia.a_markdown()
 with con_el_modelo_cambiado(reservar=("force",), base={"modify-window": "2s"}):
@@ -172,8 +173,13 @@ with con_el_modelo_cambiado(reservar=("force",), base={"modify-window": "2s"}):
     c("  y no enseña como «en su lugar» el flag rechazado ni ningún TOML escribible",
       [t for r, t in guia.detalle(forzado) if r == guia.R_EN_SU_LUGAR and "force" in t.lower()
        and "=" in t], [])
-    c("  ni el ejemplo de uno que ya no se escribe",
-      guia.R_EJEMPLO in dict(guia.detalle(forzado)), False)
+    c("  ni el ejemplo de uno que ya no se escribe, ni el «Ojo» de ponerlo en una pareja",
+      (guia.R_EJEMPLO in dict(guia.detalle(forzado)),
+       guia.R_CUIDADO in dict(guia.detalle(forzado))), (False, False))
+    c("  y dice cómo forzar una sola pasada", "Forzar sincronización" in
+      dict(guia.detalle(forzado))[guia.R_EN_SU_LUGAR], True)
+    c("  sin decir que el programa lo pone en cada pasada (no lo pone: lo pide una persona)",
+      "en cada pasada" in dict(guia.detalle(forzado))[guia.R_PRDRIVE], False)
     c("si modify-window pasa a BASE_FLAGS, la guía dice el valor de prdrive",
       (ventana.estado, ventana.prdrive), (guia.ESTADO_VALOR, "2s en todos los modos"))
     c("  y lo pasa al tema de los que pone prdrive", ventana.tema, guia.TEMA_PRDRIVE)
@@ -261,11 +267,11 @@ c("toda ficha explicada lleva título, para qué sirve y efecto",
 c("  y un ejemplo si se escribe (o, si no lo lleva, un cuidado que diga por qué)",
   sorted(f.nombre for f in explicadas
          if f.estado in ESCRIBIBLES and not (f.ejemplo.strip() or f.cuidado.strip())), [])
-c("  o qué hacer en su lugar si no se puede escribir (lo que prdrive pone o el config rechaza)",
-  sorted(f.nombre for f in explicadas
-         if f.estado not in ESCRIBIBLES and not f.en_su_lugar.strip()), [])
-c("  y un flag que ya no se escribe no lleva un ejemplo que copiar",
-  sorted(f.nombre for f in explicadas if f.estado not in ESCRIBIBLES and f.ejemplo.strip()), [])
+c("  y a uno que no se escribe no se le enseña un ejemplo ni un «Ojo» de ponerlo en una pareja, "
+  "pero sí qué hacer en su lugar (haya o no un texto a mano)",
+  sorted(f.nombre for f in explicadas if f.estado not in ESCRIBIBLES and not (
+      guia.R_EJEMPLO not in dict(guia.detalle(f)) and guia.R_CUIDADO not in dict(guia.detalle(f))
+      and dict(guia.detalle(f)).get(guia.R_EN_SU_LUGAR, "").strip())), [])
 c("  los títulos son de una línea",
   sorted(f.nombre for f in explicadas if len(f.titulo) > 80 or "\n" in f.titulo), [])
 c("  las frases acaban en punto",
@@ -299,19 +305,23 @@ c("el ejemplo de cada flag que se puede escribir es TOML que el cuadro admite, d
 c("un flag que se puede escribir sin ejemplo es porque copiarlo sería un error, y dice por qué",
   sorted(f.nombre for f in explicadas if f.estado in (guia.ESTADO_LIBRE, guia.ESTADO_VALOR)
          and not f.ejemplo.strip() and not f.cuidado.strip()), [])
-c("force no ofrece ejemplo: en una pareja valdría para TODAS las pasadas, también las que nadie "
-  "vigila, y quitaría el freno de los borrados en cada una",
-  (guia.ficha("force").ejemplo, "todas las pasadas" in guia.ficha("force").cuidado,
-   guia.ficha("force").cuidado in dict(guia.detalle(guia.ficha("force")))[guia.R_CUIDADO]),
-  ("", True, True))
+with con_el_modelo_cambiado(quitar=("force",)):
+    escribible = guia.ficha("force")
+    c("force, mientras se pueda escribir, no ofrece ejemplo: en una pareja valdría para TODAS las "
+      "pasadas, también las que nadie vigila, y quitaría el freno de los borrados en cada una",
+      (escribible.estado, escribible.ejemplo, "todas las pasadas" in escribible.cuidado,
+       escribible.cuidado in dict(guia.detalle(escribible))[guia.R_CUIDADO],
+       guia.R_EJEMPLO in dict(guia.detalle(escribible))),
+      (guia.ESTADO_LIBRE, "", True, True, False))
 c("  y la página tampoco lo enseña como algo que escribir",
   "`force = true`" in guia.a_markdown(), False)
 c("ningún ejemplo de la guía es un flag que quite un freno de seguridad de una pasada normal",
   [f.nombre for f in explicadas if f.ejemplo.strip() and
    flags_ayuda.normalizar(f.ejemplo.split("=")[0]) in ("force", "ignore-errors")], [])
-c("el de un reservado no se escribe: dice qué usar en su lugar",
-  sorted(f.nombre for f in explicadas if f.estado in (guia.ESTADO_FIJO, guia.ESTADO_NO_ADMITIDO)
-         and not f.en_su_lugar.strip()), [])
+c("lo que el catálogo dice «en su lugar» es de un flag que hoy no se escribe, salvo force "
+  "(que lo dirá cuando el modelo lo reserve)",
+  sorted(f.nombre for f in explicadas if f.en_su_lugar.strip() and f.estado in ESCRIBIBLES),
+  ["force"])
 
 
 def parsear(ejemplo: str) -> dict:

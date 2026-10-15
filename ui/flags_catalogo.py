@@ -433,6 +433,8 @@ ENTRADAS: tuple[Entrada, ...] = (
        "--max-delete.",
        "Quita justo la protección que evita que una unidad vacía arrase el otro lado.",
        modos=BISYNC,
+       en_su_lugar="Para forzar una sola pasada, «Reparación» → «Forzar sincronización…»: pide "
+                   "confirmación y la pasada siguiente vuelve a frenar.",
        cuidado="No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, "
                "también las que nadie vigila (las del servicio y las del agente), y quitaría el "
                "freno de los borrados en cada una de ellas.",

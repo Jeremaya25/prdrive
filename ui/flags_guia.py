@@ -457,7 +457,7 @@ def _valor_texto(f: Ficha) -> str:
     if f.prdrive:
         return f.prdrive
     if f.estado == ESTADO_FIJO:
-        return "Lo pone en cada pasada; no se escribe."
+        return "Lo pone el programa cuando toca, no la pareja; no se escribe."
     if f.estado == ESTADO_NO_ADMITIDO:
         return "No lo pone: el config lo rechaza."
     por_defecto = f" (rclone usa {f.defecto})" if f.defecto else ""
@@ -471,6 +471,17 @@ def _ayuda_texto(f: Ficha) -> str:
     if f.ayuda:
         partes.append(f.ayuda)
     return " · ".join(partes)
+
+
+def _cuidado(f: Ficha) -> list[tuple[str, str]]:
+    """Devuelve la fila del «Ojo» si hay uno y el flag se puede escribir.
+
+    El cuidado es sobre ponerlo en una pareja; si el modelo ya lo reserva o el config lo
+    rechaza, no se puede poner y la fila sobra.
+    """
+    if f.cuidado and f.estado in (ESTADO_LIBRE, ESTADO_VALOR):
+        return [(R_CUIDADO, f.cuidado)]
+    return []
 
 
 def _ejemplo_o_alternativa(f: Ficha) -> list[tuple[str, str]]:
@@ -523,7 +534,7 @@ def detalle(f: Ficha, modo: str | None = None) -> list[tuple[str, str]]:
     if f.estado != ESTADO_LIBRE:
         filas.append((R_ESTADO, _marca(f)))
     filas += [(R_PARA_QUE, f.para_que), (R_EFECTO, f.efecto),
-              *([(R_CUIDADO, f.cuidado)] if f.cuidado else []),
+              *_cuidado(f),
               (R_RIESGO, ETIQUETAS_RIESGO[f.riesgo or RIESGO_LEE]),
               (R_MODOS, _modos_texto(f.modos)), *_tu_pareja(f, modo),
               (R_PRDRIVE, _valor_texto(f)), *_ejemplo_o_alternativa(f),
@@ -570,8 +581,7 @@ def _bloque(f: Ficha) -> list[str]:
         lineas += [f"> **{ETIQUETA_ESTADO[f.estado]}**" + (f" ({f.motivo})" if f.motivo else ""),
                    ""]
     lineas += [f"- **{R_PARA_QUE}:** {f.para_que}", f"- **{R_EFECTO}:** {f.efecto}"]
-    if f.cuidado:
-        lineas.append(f"- **{R_CUIDADO}:** {f.cuidado}")
+    lineas += [f"- **{rotulo}:** {texto}" for rotulo, texto in _cuidado(f)]
     lineas += [f"- **{R_RIESGO}:** {ETIQUETAS_RIESGO[f.riesgo or RIESGO_LEE]}",
                f"- **{R_MODOS}:** {_modos_texto(f.modos)}",
                f"- **{R_PRDRIVE}:** {_valor_texto(f)}"]

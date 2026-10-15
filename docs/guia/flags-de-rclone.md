@@ -182,7 +182,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive en cada pasada y no se puede cambiar: cambiarlo sacaría a rclone de las conexiones del dispositivo.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe: es el rclone.conf del dispositivo, el mismo para todas las parejas.
 
 ### `--log-file`
@@ -195,7 +195,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive y no se puede cambiar: es lo que hace que cada pasada tenga su log y que el progreso en vivo funcione.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Los logs se abren desde «Abrir los logs».
 
 ### `--dry-run`
@@ -208,7 +208,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive cuando usas «Simular», para que valga en todas las parejas y modos. Pruébalo siempre antes en una pareja *-mirror, que borra en el otro lado.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Se usa con el botón «Simular» de la pantalla de parejas.
 
 ### `--workdir`
@@ -221,7 +221,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive y no se puede cambiar: apuntarlo a otra carpeta haría que bisync comparase con una referencia que no es la de esta pareja.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** bisync
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe.
 
 ### `--resync`
@@ -234,7 +234,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Reescribe lo que sea distinto: gana un lado (por defecto el dispositivo). Lo pone prdrive solo cuando tú lo pides y te pregunta antes; escribirlo aquí lo forzaría en cada pasada.
 - **Riesgo:** Borra o reescribe
 - **Modos donde sirve:** bisync
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Se pide desde la ventana cuando una pareja lo necesita.
 
 ### `--backup-dir`
@@ -247,7 +247,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** En bisync prdrive no usa este flag sino --backup-dir1 y --backup-dir2, uno por lado, y solo con la casilla «Guardar versiones».
 - **Riesgo:** Cambia nombres
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Marca «Guardar versiones» en la pareja.
 
 ### `--backup-dir1`
@@ -260,7 +260,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive cuando la pareja guarda versiones y no se puede cambiar.
 - **Riesgo:** Cambia nombres
 - **Modos donde sirve:** bisync
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Marca «Guardar versiones» en la pareja.
 
 ### `--backup-dir2`
@@ -273,7 +273,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive cuando la pareja guarda versiones y no se puede cambiar.
 - **Riesgo:** Cambia nombres
 - **Modos donde sirve:** bisync
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Marca «Guardar versiones» en la pareja.
 
 ### `--suffix`
@@ -286,7 +286,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive en cada pasada, porque cada una tiene la suya; no se puede escribir aquí.
 - **Riesgo:** Cambia nombres
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe.
 
 ### `--suffix-keep-extension`
@@ -299,7 +299,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive junto con la marca de fecha y no se puede cambiar.
 - **Riesgo:** Cambia nombres
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe.
 
 ### `--filters-file`
@@ -312,7 +312,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo hace prdrive a partir de los cuadros «Incluir» y «Excluir» de la pareja. Cambiar los patrones de una pareja bisync pide un --resync.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** bisync
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.
 
 ### `--filter`
@@ -325,7 +325,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** No se admite aquí: mezclada con los cuadros «Incluir» y «Excluir» rompe el filtrado de la pareja.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.
 
 ### `--filter-from`
@@ -338,7 +338,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** No se admite aquí: mezclado con los cuadros «Incluir» y «Excluir» rompe el filtrado de la pareja.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.
 
 ### `--include`
@@ -351,7 +351,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive a partir del cuadro «Incluir» de la pareja, y no se puede escribir aquí. Con «Incluir» lleno, todo lo demás se queda fuera.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. Pon el patrón en el cuadro «Incluir» de la pareja, como *.docx.
 
 ### `--exclude`
@@ -364,7 +364,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Qué hace en la práctica:** Lo pone prdrive a partir del cuadro «Excluir» de la pareja, y no se puede escribir aquí. Un patrón por línea; lo que encaja se queda fuera de la pasada.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
-- **Lo que pone prdrive:** Lo pone en cada pasada; no se escribe.
+- **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
 - **En su lugar:** No se escribe. En el cuadro «Excluir» de la pareja, una línea por patrón: *.tmp, ~$*, .~lock.*#, Thumbs.db.
 
 ### `--cpuprofile`
