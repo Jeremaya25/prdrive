@@ -75,16 +75,16 @@ jobs:
       RENDIMIENTO_RONDAS: ${{ inputs.rondas || (github.event.pull_request.draft && '3' || '7') }}
     steps:
       # El PR (su fusión con la base) en pr/ y la base en base/: dos carpetas, dos árboles.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: pr
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha || inputs.base || 'main' }}
           path: base
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -102,7 +102,7 @@ jobs:
         id: pins
         run: python pr/tests/_runtime_ci.py clave
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/prdrive-cache
           key: runtime-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
@@ -122,7 +122,7 @@ jobs:
         if: runner.os == 'Windows'
         run: python pr/tests/rendimiento/correr.py --pr pr --base base --trabajo "${{ runner.temp }}/rendimiento" --rondas "$env:RENDIMIENTO_RONDAS" --capturas
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rendimiento-${{ matrix.plat }}

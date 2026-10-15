@@ -48,11 +48,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Solo lanza el paso que baja el runtime (corre `_runtime_ci.py` con 3.11, que
       # también lo mantiene en el suelo): la suite corre con el del dispositivo.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -65,7 +65,7 @@ jobs:
         id: pins
         run: python tests/_runtime_ci.py clave
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/prdrive-cache
           key: runtime-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
@@ -111,11 +111,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Sin xvfb ni python3-tk a propósito: los tests de Tk se saltan solos, y con
       # ellos se acabaría probando otra vez el Tk 8.6 que ya no se admite.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 

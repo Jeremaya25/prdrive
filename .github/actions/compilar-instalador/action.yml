@@ -18,7 +18,7 @@ runs:
   using: composite
   steps:
     # Solo para lanzar tests/_runtime_ci.py y leer el pin: el .exe se compila con el fijado.
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: "3.11"
 
@@ -28,7 +28,7 @@ runs:
       run: python tests/_runtime_ci.py clave
 
     # La misma caché que llena tests.yml (el trabajo `tests`, windows-x64).
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/prdrive-cache
         key: runtime-windows-x64-${{ steps.pins.outputs.clave }}
