@@ -14,6 +14,9 @@
   la combinación, pulsar con XTEST, el bloqueo de mayúsculas, la tecla
   mantenida y que el proceso sobrevive a que el servidor se vaya. Sin Xvfb,
   libX11 o libXtst, se salta.
+
+En Windows solo corre la elección del motor: los hilos se despiertan con un
+`select()` sobre un pipe, que allí no existe.
 """
 
 from __future__ import annotations
@@ -43,6 +46,18 @@ def esperar(condicion, segundos=3.0) -> bool:
             return True
         time.sleep(0.01)
     return condicion()
+
+
+c("elegir: Wayland es el portal y X11 XGrabKey",
+  (type(al.poner(atajos.PORTAL, print, print)).__name__,
+   type(al.poner(atajos.X11, print, print)).__name__), ("Portal", "X11"))
+
+if os.name == "nt":
+    # Lo que sigue corre los hilos de los motores, que se despiertan con un pipe
+    # vigilado por select(), y en Windows select() solo admite sockets. En
+    # Windows los atajos los pone la bandeja (`tests/test_bandeja_windows.py`).
+    print("  (saltado) los motores de atajos de Linux: solo en Linux")
+    sys.exit(c.report())
 
 
 # --- X11 con una Xlib de mentira
@@ -251,9 +266,6 @@ CON_PORTAL[0] = False
 p = al.Portal(PULSADOS.append, lambda *a: None, conectar=lambda: CONEXION)
 c("sin el portal no hay atajos, y se dice por qué", (p.arrancar(), p.motivo),
   (False, atajos.SIN_PORTAL))
-c("elegir: Wayland es el portal y X11 XGrabKey",
-  (type(al.poner(atajos.PORTAL, print, print)).__name__,
-   type(al.poner(atajos.X11, print, print)).__name__), ("Portal", "X11"))
 
 
 # --- X de verdad, en un Xvfb propio
