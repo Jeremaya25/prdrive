@@ -20,8 +20,9 @@ Quién lo atiende, una sola cosa a la vez (`Vigilancia`, sus reglas puras):
 
 Lo de antes de cada pasada (`preparar()`, lo llama `sync.py`):
 - El compañero fijo, `LEEME.txt`: con una sola base, un guardado sería «han
-  cambiado todos los ficheros» y bisync se pararía (H-12). Si falta, se pone;
-  si la persona lo cambió, no se toca.
+  cambiado todos los ficheros» y bisync se pararía (H-12). Si falta, se pone,
+  siempre con la misma hora (`LEEME_HORA`, #115); si la persona lo cambió, no se
+  toca.
 - Que cada base esté entera (`common/kdbx.py`): una a medio guardar no se sube.
   Se mira otra vez a los `ESPERA_ENTERA` segundos, por si el guardado estaba
   acabando.
@@ -62,6 +63,16 @@ LEEME_TEXTO = (
     "parezca «ha cambiado todo» a quien sincroniza.\n"
 )
 """Lo que dice `LEEME.txt`. No se cambia: un cambio viajaría a todos los dispositivos."""
+LEEME_HORA = 946684800
+"""La hora de modificación de `LEEME.txt` en todos los dispositivos y versiones: 2000-01-01 00:00:00 UTC.
+
+No se cambia nunca: dos versiones con horas distintas se pisarían la hora entre sí. Lo crea
+cada dispositivo, y con la hora de ese momento el segundo en llegar parecía «más nuevo»: su
+primer `--resync` (`resync-mode = newer`) le cambiaba la hora al del remoto, y el primer
+dispositivo veía cambiados todos sus ficheros («all files were changed») y dejaba de subir
+(#115). Es un número entero y par de segundos, que es lo único que FAT y exFAT guardan sin
+redondear (de 2 s en 2 s), y cae dentro de lo que ellos guardan (de 1980 a 2107).
+"""
 ESPERA_ENTERA = 2.0  # segundos
 """Lo que se espera antes de mirar otra vez una base que no está entera."""
 
@@ -129,24 +140,65 @@ def rotas(donde: Path) -> list[Rota]:
     return salida
 
 
-def asegurar_leeme(donde: Path) -> bool:
-    """Pone `LEEME.txt` si falta; si está, no lo toca aunque diga otra cosa.
+def asegurar_leeme(donde: Path, corregir_hora: bool = True) -> bool:
+    """Pone `LEEME.txt` si falta, con la hora fija; si dice otra cosa, no lo toca.
 
-    Se escriben los bytes tal cual, con `\\n` en todos los sistemas: dos
-    dispositivos que lo pongan cada uno el suyo tienen que dejar el mismo
-    fichero, o se pisarían en el remoto.
+    Se escriben los bytes tal cual, con `\\n` en todos los sistemas, y se le pone
+    `LEEME_HORA`: dos dispositivos que lo pongan cada uno el suyo tienen que dejar
+    el mismo fichero, con la misma hora, o se pisarían en el remoto. Uno que ya
+    estaba con el texto de siempre y otra hora (de antes de #115) se corrige: es
+    nuestro y no cambia de contenido. Si dice otra cosa, ni el texto ni la hora.
+
+    Args:
+        donde: La carpeta del llavero.
+        corregir_hora: Si se le corrige la hora a uno que ya existía. Una simulación
+            (`--dry-run`) no escribe en el dispositivo: pasa `False`, y la corrección espera a
+            la pasada de verdad. Uno recién creado siempre sale con su hora.
 
     Returns:
         True si lo ha escrito.
     """
-    return store.crear_exclusivo(donde / LEEME, LEEME_TEXTO.encode("utf-8")) is True
+    ruta = donde / LEEME
+    creado = store.crear_exclusivo(ruta, LEEME_TEXTO.encode("utf-8"))
+    if creado is not None and (creado or corregir_hora) and _es_el_leeme_nuestro(ruta):
+        _poner_hora_fija(ruta)
+    return creado is True
 
 
-def preparar(pair: model.Pair) -> str | None:
+def _es_el_leeme_nuestro(ruta: Path) -> bool:
+    """Indica si `LEEME.txt` dice exactamente lo que dice el de prdrive."""
+    try:
+        return ruta.read_bytes() == LEEME_TEXTO.encode("utf-8")
+    except OSError:
+        return False
+
+
+def _poner_hora_fija(ruta: Path) -> None:
+    """Le pone a `LEEME.txt` su hora fija, salvo que rclone ya la dé por la misma.
+
+    «La misma» es la ventana de rclone (`TOLERANCIA_HORA`): reescribirla cada pasada
+    solo gastaría escrituras en el pendrive. Si el sistema de ficheros no deja, se
+    queda como está: no es motivo para no sincronizar.
+    """
+    fija = LEEME_HORA * 1_000_000_000
+    try:
+        if abs(ruta.stat().st_mtime_ns - fija) < TOLERANCIA_HORA:
+            return
+        os.utime(ruta, ns=(fija, fija))
+    except OSError:
+        return
+
+
+def preparar(pair: model.Pair, simulacro: bool = False) -> str | None:
     """Prepara la pareja del llavero para una pasada y dice si no se puede subir.
 
     Pone el compañero fijo y comprueba las bases. No crea la carpeta: eso lo
     decide `sync.py` con sus reglas (nunca si hay baseline).
+
+    Args:
+        pair: La pareja del llavero.
+        simulacro: Si la pasada es un `--dry-run`: no le corrige la hora a un
+            `LEEME.txt` que ya existe (`asegurar_leeme()`).
 
     Returns:
         El motivo para no hacer la pasada, o `None` si se puede.
@@ -157,7 +209,7 @@ def preparar(pair: model.Pair) -> str | None:
             return None
     except OSError:
         return None
-    asegurar_leeme(donde)
+    asegurar_leeme(donde, corregir_hora=not simulacro)
     malas = rotas(donde)
     if not malas:
         return None

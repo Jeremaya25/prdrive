@@ -92,9 +92,8 @@ c("ver qué se borraría se ofrece donde hay borrados, y no donde lo que pasa es
   [repair.puede_simular_forzado(h) for h in (borrados, cambiados, espejo, fallo)],
   [True, False, True, False])
 
-# La pareja del llavero la pone el código y su freno no se salta desde aquí. Hoy sus fallos
-# ni siquiera llegan a «Reparación» (`Config.names` no la lleva), así que el hallazgo se
-# construye a mano: lo que se prueba es la puerta, que se cierra aunque algún día llegue.
+# La pareja del llavero la pone el código y su freno no se salta desde aquí: ni se ofrece forzar
+# ni se explica con el «se puede forzar UNA pasada» de las demás.
 llave = model.parse_config({"defaults": {"remote": "nas"}, "pair": [BISYNC],
                             "keychain": {"base": "personal.kdbx", "fichero_llave": True,
                                          "nombre_llave": "personal.keyx"}})
@@ -104,13 +103,57 @@ c("el freno del llavero no se ofrece forzar",
   (repair.puede_forzar(del_llavero), repair.puede_simular_forzado(del_llavero)), (False, False))
 c("  y aviso_forzar se niega aunque se le pida, diciendo qué hacer",
   "Combinar" in (imposible(llave, del_llavero) or ""), True)
-with sandbox():
+
+
+def del_llavero_con(texto, rc=1):
+    """Deja ese log como el de la última pasada fallida del llavero y devuelve sus hallazgos."""
     log = model.LOG_DIR / "keychain_x.log"
-    log.write_text(BISYNC_BORRADOS, encoding="utf-8")
-    results.apuntar(model.LLAVERO, 1, log)
-    c("el llavero sigue sin hallazgo de freno: se resuelve solo (`repetir_sin_freno`) o en «Combinar»",
+    log.write_text(texto, encoding="utf-8")
+    results.apuntar(model.LLAVERO, rc, log)
+    return [h for h in revision.revisar(llave)
+            if h.pareja == model.LLAVERO and h.clave in ("freno", "fallo")]
+
+
+# Si tras la repetición con --force (#115) o sin el freno de borrados (`repetir_sin_freno`) el
+# llavero sigue parado, no es un «código 1» mudo: «Reparación» y `--doctor` lo explican, con el
+# nombre del llavero y sin ofrecer forzarlo.
+with sandbox():
+    hallazgos = del_llavero_con(BISYNC_CAMBIADOS)
+    c("«han cambiado todos» en el llavero es un hallazgo de freno, no un fallo mudo",
+      [h.clave for h in hallazgos], ["freno"])
+    h = hallazgos[0]
+    c("  con el nombre del llavero, nunca el de su pareja", ("El llavero" in h.titulo, "keychain" in h.titulo),
+      (True, False))
+    c.contains("  dice qué ha pasado", h.detalle, "han cambiado todos los ficheros")
+    c.contains("  y que prdrive la repite una vez con --force, sin dar por hecho que ya lo hizo",
+               h.detalle, "repite solo la pasada una vez con --force")
+    c("  (no dice «ya ha repetido»: puede que no se pudiera, o que la única repetición fuera otra)",
+      "ya ha repetido" in h.detalle, False)
+    c.contains("  y la salida: rehacer la referencia, que no pierde nada", h.detalle,
+               "python sync.py keychain --resync")
+    c("  no ofrece forzarlo ni lo trata como las demás parejas",
+      (frenos.COMO_FORZAR in h.detalle, "Si es lo que querías" in h.detalle,
+       "sync.py keychain --force" in h.detalle), (False, False, False))
+    c("  y la ventana no le da botón de forzar", (repair.puede_forzar(h), repair.puede_simular_forzado(h)),
+      (False, False))
+    c.contains("  --doctor lo cuenta igual", "\n".join(revision.informe(llave)),
+               "python sync.py keychain --resync")
+    results.apuntar(model.LLAVERO, 0, None)
+    c("  cuando la pasada siguiente va bien, se va",
       [h.clave for h in revision.revisar(llave)
        if h.pareja == model.LLAVERO and h.clave in ("freno", "fallo")], [])
+
+with sandbox():
+    hallazgos = del_llavero_con(BISYNC_BORRADOS)
+    c("el freno de borrados del llavero también es un hallazgo, y manda a «Combinar»",
+      ([h.clave for h in hallazgos], "Combinar" in hallazgos[0].detalle if hallazgos else None),
+      (["freno"], True))
+    c("  sin ofrecer forzarlo", [frenos.COMO_FORZAR in h.detalle for h in hallazgos], [False])
+
+with sandbox():
+    c("un fallo del llavero que no es un freno (sin red, un rclone que cae) sigue sin hallazgo: "
+      "lo cuenta la línea del llavero y se reintenta solo",
+      del_llavero_con("2026/10/15 09:35:36 ERROR : Failed to create file system: sin red\n"), [])
 
 # ---- Los argumentos: lo que se lanza ------------------------------------------------------
 

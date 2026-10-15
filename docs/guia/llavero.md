@@ -236,7 +236,8 @@ asistente), el llavero va igual, con tres diferencias:
   acabes.
 - **No toques `.keychain/` a mano.** El `LEEME.txt` de dentro está ahí a
   propósito: con una sola base, sin él la sincronización creería que «ha cambiado
-  todo».
+  todo». Lleva siempre la misma fecha en todos los dispositivos, para que traer el
+  llavero a uno nuevo no haga que los demás crean que ha cambiado todo; no se la cambies.
 - **Los equipos prestados.** Lo que tecleas en un equipo con algo malo instalado
   se puede leer, también la contraseña de la base. Las passkeys no lo arreglan:
   con la base abierta, ese equipo puede usarlas. Abre el llavero solo en equipos
