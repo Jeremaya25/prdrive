@@ -158,11 +158,9 @@ results.fallos = lambda cfg: []
 # quitar la unidad. El botón no desmonta nada él mismo —este proceso corre
 # desde dentro del contenedor—: lanza el script del vestíbulo y se cierra.
 from pathlib import Path  # noqa: E402
-from tkinter import messagebox  # noqa: E402
-
 from ui import cifrado  # noqa: E402
 
-reales = (cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel)
+reales = (cifrado.expulsion, cifrado.lanzar_expulsion, uitk.preguntar)
 reales_expulsion = cifrado.expulsion
 SCRIPT = Path("E:/Expulsar PRDRIVE.bat")
 lanzados: list = []
@@ -184,7 +182,7 @@ try:
 
     with sandbox():
         cancelado = {}
-        messagebox.askokcancel = lambda *a, **k: False
+        uitk.preguntar = lambda *a, **k: False
 
         def sonda_cancelar(self, *_a, **_k):
             """Sonda: pulsa «Expulsar» y comprueba que cancelar no cierra la ventana."""
@@ -200,7 +198,7 @@ try:
 
     with sandbox():
         hecho = {}
-        messagebox.askokcancel = lambda *a, **k: True
+        uitk.preguntar = lambda *a, **k: True
 
         def sonda_expulsar(self, *_a, **_k):
             """Sonda: pulsa «Expulsar» y mira si la ventana se cierra."""
@@ -217,22 +215,22 @@ try:
           hecho["viva"], False)
         c("sin devolverle nada a runsync: no hay servicio que arrancar", eleccion, None)
 finally:
-    cifrado.expulsion, cifrado.lanzar_expulsion, messagebox.askokcancel = reales
+    cifrado.expulsion, cifrado.lanzar_expulsion, uitk.preguntar = reales
 
 # «Bloquear»: la raíz cifrada de un equipo
 #
 # No hay script del vestíbulo: el contenedor lo cierra el agente residente. El
 # botón se lo pide por su buzón y cierra la ventana.
-reales = (cifrado.bloqueo, cifrado.pedir_bloqueo, messagebox.askokcancel,
-          messagebox.showerror)
+reales = (cifrado.bloqueo, cifrado.pedir_bloqueo, uitk.preguntar,
+          uitk.avisar)
 pedidos: list = []
 errores: list = []
 UID = "c" * 32
 try:
     cifrado.bloqueo = lambda: UID
     cifrado.expulsion = lambda **_k: None
-    messagebox.askokcancel = lambda *a, **k: True
-    messagebox.showerror = lambda *a, **k: errores.append(a)
+    uitk.preguntar = lambda *a, **k: True
+    uitk.avisar = lambda *a, **k: errores.append(a)
 
     with sandbox():
         sin_agente = {}
@@ -270,8 +268,8 @@ try:
         c("y la ventana se cierra, para que el agente pueda desmontar",
           (hecho["viva"], eleccion), (False, None))
 finally:
-    (cifrado.bloqueo, cifrado.pedir_bloqueo, messagebox.askokcancel,
-     messagebox.showerror) = reales
+    (cifrado.bloqueo, cifrado.pedir_bloqueo, uitk.preguntar,
+     uitk.avisar) = reales
     cifrado.expulsion = reales_expulsion
 
 c("cada lectura de la ventana se hizo sin fallos", [f for f in lecturas if f], [])

@@ -47,7 +47,7 @@ from ui import principal, theme  # noqa: E402
 
 try:
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import ttk
     theme.nitidez()
     raiz = tk.Tk()
     raiz.withdraw()
@@ -973,13 +973,13 @@ try:
         c("lo marcado se escribe al iniciar el servicio, antes de cerrar la ventana",
           (visto["pairs"], eleccion.pairs), (["a", "b"], ("a", "b")))
 
-    reales_mb = (messagebox.askokcancel, cifrado.lanzar_expulsion)
+    reales_mb = (uitk.preguntar, cifrado.lanzar_expulsion)
     with sandbox():
         prefs.PREFS.unlink(missing_ok=True)
         visto = {}
         cortados: list = []
         real_matar = uitk.store.matar_hijos
-        messagebox.askokcancel = lambda *a, **k: True
+        uitk.preguntar = lambda *a, **k: True
 
         def expulsion_apuntada(script) -> None:
             """Apunta qué script se lanza y qué había escrito al lanzarlo."""
@@ -997,7 +997,7 @@ try:
         try:
             abrir(TRES, tras_marcar(expulsar))
         finally:
-            messagebox.askokcancel, cifrado.lanzar_expulsion = reales_mb
+            uitk.preguntar, cifrado.lanzar_expulsion = reales_mb
             uitk.store.matar_hijos = real_matar
             cifrado.expulsion = lambda **_k: SCRIPT
         c("lo marcado se escribe antes de lanzar el script de expulsar",
@@ -1006,13 +1006,13 @@ try:
         c("  con el script que hay al pulsar, no el de la lectura", visto["script"],
           Path("F:/Otro PRDRIVE.bat"))
 
-    reales_bloqueo = (messagebox.askokcancel, cifrado.bloqueo, cifrado.pedir_bloqueo)
+    reales_bloqueo = (uitk.preguntar, cifrado.bloqueo, cifrado.pedir_bloqueo)
     with sandbox():
         prefs.PREFS.unlink(missing_ok=True)
         visto = {}
         cortados = []
         real_matar = uitk.store.matar_hijos
-        messagebox.askokcancel = lambda *a, **k: True
+        uitk.preguntar = lambda *a, **k: True
         cifrado.bloqueo = lambda: "raiz-1"
 
         def bloqueo_apuntado(uid) -> bool:
@@ -1027,7 +1027,7 @@ try:
         try:
             abrir(TRES, tras_marcar(lambda root: boton(root, "Bloquear").invoke()))
         finally:
-            messagebox.askokcancel, cifrado.bloqueo, cifrado.pedir_bloqueo = reales_bloqueo
+            uitk.preguntar, cifrado.bloqueo, cifrado.pedir_bloqueo = reales_bloqueo
             uitk.store.matar_hijos = real_matar
         c("lo marcado se escribe antes de pedirle al agente que bloquee",
           (visto["uid"], visto["pairs"]), ("raiz-1", ["a", "b"]))
@@ -1038,7 +1038,7 @@ finally:
 
 # 6j. si «Expulsar» o «Bloquear» no llegan a hacerse, la ventana sigue y vuelve a leer
 # (sus lecturas se cortaron justo antes)
-reales_6j = (messagebox.askokcancel, messagebox.showerror, cifrado.lanzar_expulsion,
+reales_6j = (uitk.preguntar, uitk.avisar, cifrado.lanzar_expulsion,
              cifrado.bloqueo, cifrado.pedir_bloqueo)
 
 
@@ -1068,15 +1068,15 @@ for texto in ("Expulsar", "Bloquear"):
             visto["lecturas"] = len(encargos) - antes
             visto["la última"] = root.instantanea is encargos[-1]
 
-        messagebox.askokcancel = lambda *a, **k: True
-        messagebox.showerror = lambda *a, **k: visto.setdefault("error", True)
+        uitk.preguntar = lambda *a, **k: True
+        uitk.avisar = lambda *a, **k: visto.setdefault("error", True)
         cifrado.lanzar_expulsion = no_se_lanza
         cifrado.bloqueo = (lambda: "raiz-1") if texto == "Bloquear" else (lambda: None)
         cifrado.pedir_bloqueo = lambda uid: False
         try:
             abrir(TRES, falla_al_soltar, lanzar=apuntando)
         finally:
-            (messagebox.askokcancel, messagebox.showerror, cifrado.lanzar_expulsion,
+            (uitk.preguntar, uitk.avisar, cifrado.lanzar_expulsion,
              cifrado.bloqueo, cifrado.pedir_bloqueo) = reales_6j
         c(f"si «{texto}» no se hace, lo dice y la ventana sigue abierta",
           (visto.get("error"), visto["abierta"]), (True, True))

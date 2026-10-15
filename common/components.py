@@ -8,11 +8,12 @@ cuáles TOCAN; aquí se lee cuáles LLEVA y se restan.
 
 Vive en `common/` y no en `install/` porque quien lo pregunta es el
 dispositivo: la ventana pinta ese aviso en su primer pintado, sin red ni
-instalador. Solo lee ficheros diminutos del propio dispositivo, así que
-contesta al instante y no lanza nunca (la misma regla que `update.pending()` y
-`store.read_json()`). Quien ARREGLA lo detectado es `install/components.py`,
-que baja y verifica y se ejecuta desde el zip del código, como el aplicador de
-la actualización del programa.
+instalador. Solo lee ficheros diminutos del propio dispositivo (lo único que
+escribe es el apunte de KeePassXC de más arriba), así que contesta al instante
+y no lanza nunca (la misma regla que `update.pending()` y `store.read_json()`).
+Quien ARREGLA lo detectado es `install/components.py`, que baja y verifica y se
+ejecuta desde el zip del código, como el aplicador de la actualización del
+programa.
 
 Por qué hay sellos: un binario no dice su versión sin ejecutarlo y el de otra
 plataforma no se puede ejecutar aquí (un Windows no arranca el rclone de Linux
@@ -27,7 +28,10 @@ ni un x64 el de ARM). Cada componente deja escrito de dónde salió:
   `install/traveler.py` el último, con la versión y el SHA-256 de cada fichero.
 - `keepassxc/<paquete>/PRDRIVE-KEEPASSXC`: lo escribe
   `install/keepassxc_bin.py` el último, con la versión y el SHA-256 de cada
-  fichero.
+  fichero. Dice de dónde salió el paquete, no que sus ficheros sigan siendo
+  esos: eso lo comprueba `keepassxc.comprobar()` al lanzar, y lo que encuentra
+  lo deja en `state/keepassxc-no-oficial.json` (`keepassxc_alterado()`) para
+  que esta ventana ofrezca «Actualizar…» sin resumir nada.
 
 Un dispositivo aprovisionado antes de los sellos no tiene el de rclone: se lee
 como «no consta» y eso CUENTA como pendiente, que es la única respuesta
@@ -51,7 +55,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import APP_NAME, model, pins, vestibulo
+from . import APP_NAME, model, pins, store, vestibulo
 from .pins import PLATAFORMAS, Plataforma
 
 RUNTIME_SUBDIR = "runtime"
@@ -100,6 +104,15 @@ KEEPASSXC_APPIMAGE = "KeePassXC.AppImage"
 Con un nombre fijo y no el de la release (`KeePassXC-2.7.12-x86_64.AppImage`):
 cambiar de versión sustituye la carpeta, y quien lo busca no tiene que saber
 de qué versión es.
+"""
+KEEPASSXC_NO_OFICIAL = "keepassxc-no-oficial.json"
+"""Fichero de `state/` donde se apunta un KeePassXC cuyo sello está al día pero no sus ficheros.
+
+`keepassxc.comprobar()` resume el ejecutable justo antes de lanzarlo y, si no es
+el fijado, lo deja aquí: `{paquete: {"version": …, "fichero": …}}`. Lo lee
+`keepassxc_pendiente()`, que no puede resumir 11 MB al pintar la ventana, para
+ofrecer el «Actualizar…» de siempre. Lo borra `keepassxc_bin.instalar()` al
+reponer el paquete, o al ver que sus ficheros ya cuadran.
 """
 
 RCLONE = "rclone"
@@ -272,6 +285,81 @@ def keepassxc_version(app_dir: Path | str | None, paquete: str) -> str | None:
     if not _existe(keepassxc_exe(app_dir, paquete)):
         return None
     return keepassxc_sello(app_dir, paquete).get(KEEPASSXC) or None
+
+
+def _estado(app_dir: Path | str | None) -> Path:
+    """Devuelve la carpeta `state/` de ese dispositivo; sin argumento, la de ESTE.
+
+    Como `_base()`, se resuelve al llamar: sin argumento es `model.STATE_DIR`,
+    que los tests reenganchan.
+    """
+    return model.STATE_DIR if app_dir is None else Path(app_dir) / "state"
+
+
+def keepassxc_alterado(app_dir: Path | str | None, paquete: str) -> dict[str, str]:
+    """Devuelve lo apuntado de que un fichero de ese KeePassXC no cuadra, o `{}`.
+
+    Es `{"version": …, "fichero": …}`: la versión que decía el sello cuando
+    `keepassxc.comprobar()` rechazó ese fichero. Un fichero que falta, a medias
+    o que no es un objeto se lee como «no consta nada»; nunca lanza.
+    """
+    apunte = store.read_json(_estado(app_dir) / KEEPASSXC_NO_OFICIAL).get(paquete)
+    if not isinstance(apunte, dict):
+        return {}
+    version, fichero = apunte.get("version"), apunte.get("fichero")
+    if not (isinstance(version, str) and version and isinstance(fichero, str) and fichero):
+        return {}
+    return {"version": version, "fichero": fichero}
+
+
+def keepassxc_anotar_alterado(app_dir: Path | str | None, paquete: str, version: str,
+                              fichero: str) -> bool:
+    """Apunta que ese fichero del KeePassXC de ese paquete no es el oficial.
+
+    Solo se apunta el último: basta para que la ventana ofrezca «Actualizar…»,
+    que repone el paquete entero. Es un favor a quien mira después, no una
+    condición de nada: si el dispositivo es de solo lectura o ya se extrajo, no
+    se escribe y se devuelve `False`; nunca lanza.
+
+    Args:
+        version: La que decía el sello; si cambia, el apunte deja de contar.
+        fichero: Su nombre dentro de la carpeta del paquete.
+    """
+    ruta = _estado(app_dir) / KEEPASSXC_NO_OFICIAL
+    datos = store.read_json(ruta)
+    nuevo = {"version": version, "fichero": fichero}
+    if datos.get(paquete) == nuevo:
+        return True
+    datos[paquete] = nuevo
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return store.write_json(ruta, datos)
+
+
+def keepassxc_olvidar_alterado(app_dir: Path | str | None, paquete: str) -> bool:
+    """Olvida lo apuntado de ese paquete; quien no tenía nada apuntado no es un error.
+
+    Con el último apunte se va el fichero entero. Nunca lanza.
+
+    Returns:
+        `False` solo si había algo apuntado y no se ha podido quitar.
+    """
+    ruta = _estado(app_dir) / KEEPASSXC_NO_OFICIAL
+    datos = store.read_json(ruta)
+    if paquete not in datos:
+        return True
+    del datos[paquete]
+    if datos:
+        return store.write_json(ruta, datos)
+    try:
+        ruta.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    return True
 
 
 def leer_sello(texto: str) -> dict[str, str]:
@@ -548,10 +636,18 @@ def keepassxc_pendiente(app_dir: Path | str | None, paquete: str) -> Pendiente |
     el llavero no se abre. Sale como «no consta», igual que un rclone sin sello,
     y es lo que hace que activar el llavero desde «Ajustes» lo traiga con el
     «Actualizar…» de siempre.
+
+    El sello solo dice de dónde salió el paquete, no que sus ficheros sigan
+    siendo esos. Resumirlos aquí (11 MB en Windows, 47 en Linux) frenaría el
+    primer pintado, así que se mira lo que apuntó quien sí los resumió
+    (`keepassxc_alterado()`): con el sello al día y un fichero que no cuadró, el
+    paquete sale pendiente igual, como lo que lleva con ficheros que no cuadran.
     """
     lleva = keepassxc_version(app_dir, paquete) or DESCONOCIDA
     if lleva == pins.KEEPASSXC_VERSION:
-        return None
+        if keepassxc_alterado(app_dir, paquete).get("version") != lleva:
+            return None
+        lleva = f"{lleva} (con ficheros que no cuadran)"
     return Pendiente(None, KEEPASSXC, lleva, pins.KEEPASSXC_VERSION,
                      ruta=keepassxc_dir(app_dir, paquete))
 

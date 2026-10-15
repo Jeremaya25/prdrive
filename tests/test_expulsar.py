@@ -173,6 +173,8 @@ c("  y el sistema que no contesta, también", expulsar._bus_windows("E:"), None)
 expulsar._abrir_volumen = lambda k, letra, acceso: None
 c("  y una letra que no se abre", expulsar._bus_windows("E:"), None)
 
+dispositivo_real = expulsar._dispositivo_a_retirar
+expulsar._dispositivo_a_retirar = lambda letra: None      # lo de siempre: expulsar el medio
 LLAMADAS: list[int] = []
 RECHAZADAS: set[int] = set()
 PEDIDO = []
@@ -224,5 +226,147 @@ c("si no puede abrir el volumen, lo dice", (r.ok, "no deja abrir la unidad E:" i
   (False, True))
 r = expulsar.expulsar(Path("E:\\carpeta"))
 c("una carpeta no es la raíz de una unidad", (r.ok, "no es la raíz" in r.texto), (False, True))
+
+
+# --- Windows: retirar el dispositivo, no solo expulsar el medio -----------
+Nodo = expulsar.Nodo
+DISCO = Nodo("USBSTOR\\DISK&VEN_X\\1", True)
+USB = Nodo("USB\\VID_0781&PID_5567\\4C53", True)
+HUB = Nodo("USB\\ROOT_HUB30\\4&1", False)
+RAIZ = Nodo("ACPI\\PNP0A08\\0", False)
+c("se retira el primer padre del disco que se declara extraíble (el «dispositivo USB»)",
+  expulsar._elegir_nodo([DISCO, USB, HUB, RAIZ]), USB)
+c("  el más cercano, si hay dos", expulsar._elegir_nodo([DISCO, USB, Nodo("USB\\HUB", True), RAIZ]), USB)
+c("  aunque el disco no se declare extraíble",
+  expulsar._elegir_nodo([Nodo("D", False), HUB, USB]), USB)
+c("sin padre extraíble, el propio disco (un lector de tarjetas)",
+  expulsar._elegir_nodo([DISCO, HUB, RAIZ]), DISCO)
+c("nada extraíble en la cadena (un disco virtual o interno): ninguno",
+  expulsar._elegir_nodo([Nodo("D", False), HUB, RAIZ]), None)
+c("  una cadena vacía, también", expulsar._elegir_nodo([]), None)
+
+# `_dispositivo_a_retirar`: el bus y la cadena, con dobles
+bus_real, cadena_real = expulsar._bus_windows, expulsar._cadena_windows
+PREGUNTAS: list[str] = []
+BUS = {}
+CADENA = {}
+
+
+def cadena_doble(letra):
+    """Apunta la pregunta y contesta la cadena del test (o lanza si es una excepción)."""
+    PREGUNTAS.append(letra)
+    valor = CADENA.get(letra)
+    if isinstance(valor, Exception):
+        raise valor
+    return valor
+
+
+expulsar._dispositivo_a_retirar = dispositivo_real
+expulsar._bus_windows = lambda letra: BUS.get(letra)
+expulsar._cadena_windows = cadena_doble
+BUS["E:"], CADENA["E:"] = (True, expulsar.BUS_USB), [DISCO, USB, HUB]
+c("un volumen USB: el dispositivo que se retira es el USB", expulsar._dispositivo_a_retirar("E:"), USB)
+BUS["F:"], CADENA["F:"] = (False, expulsar.BUS_SD), [DISCO, USB]
+c("  una tarjeta SD aunque no declare extraíble el medio", expulsar._dispositivo_a_retirar("F:"), USB)
+BUS["G:"], CADENA["G:"] = (True, 11), [DISCO, USB]
+c("  un medio declarado extraíble en otro bus", expulsar._dispositivo_a_retirar("G:"), USB)
+PREGUNTAS.clear()
+BUS["H:"], CADENA["H:"] = (False, 15), [DISCO, USB]
+c("un disco virtual (bus «file backed», medio fijo) no se retira, ni se mira su cadena",
+  (expulsar._dispositivo_a_retirar("H:"), PREGUNTAS), (None, []))
+c("  una letra que no contesta, tampoco", (expulsar._dispositivo_a_retirar("Z:"), PREGUNTAS), (None, []))
+BUS["I:"], CADENA["I:"] = (True, expulsar.BUS_USB), None
+c("  una cadena que no se deja leer: ninguno", expulsar._dispositivo_a_retirar("I:"), None)
+BUS["J:"], CADENA["J:"] = (True, expulsar.BUS_USB), OSError("no deja")
+c("  y si la lectura se rompe, ninguno y sin lanzar", expulsar._dispositivo_a_retirar("J:"), None)
+BUS["K:"], CADENA["K:"] = (True, expulsar.BUS_USB), [Nodo("D", False), HUB]
+c("  una cadena sin nada extraíble: ninguno", expulsar._dispositivo_a_retirar("K:"), None)
+expulsar._bus_windows, expulsar._cadena_windows = bus_real, cadena_real
+
+# El veto, en palabras
+t = expulsar._texto_veto("E:", 3, "winword.exe")
+c("un veto de un programa dice cuál", ("unidad E:" in t, "winword.exe" in t), (True, True))
+t = expulsar._texto_veto("E:", 5, "")
+c("  sin nombre, no deja un paréntesis vacío", ("()" in t, "( )" in t, "abierta" in t), (False, False, True))
+c("  un permiso que falta lo dice", "administrador" in expulsar._texto_veto("E:", 12, ""), True)
+c("  un tipo que no conoce dice lo general",
+  "no da más explicación" in expulsar._texto_veto("E:", 99, "x"), True)
+c("  cada tipo conocido tiene su frase",
+  sorted(expulsar.PNP_VETOS), list(range(13)))
+
+# La orden de la expulsión con dispositivo: bloquear, desmontar, cerrar el volumen y SOLO ENTONCES retirar
+RETIRADAS: list[tuple] = []
+CONTESTA = [(expulsar.CR_SUCCESS, 0, "")]
+ABIERTOS_AL_RETIRAR: list[int] = []
+
+
+def retirar_doble(instancia):
+    """Apunta la petición, con cuántos manejadores seguían abiertos, y contesta lo del test."""
+    RETIRADAS.append((instancia,))
+    ABIERTOS_AL_RETIRAR.append(Kernel.abiertos)
+    return CONTESTA[0]
+
+
+Kernel.abiertos = 0
+cerrar_original = Kernel.CloseHandle
+
+
+def abrir_doble(k, letra, acceso):
+    """Abre un manejador de mentira y lo cuenta."""
+    Kernel.abiertos += 1
+    return 7
+
+
+def cerrar_cuenta(self, h):
+    """Cierra y descuenta."""
+    Kernel.abiertos -= 1
+    cerrar_original(self, h)
+
+
+Kernel.CloseHandle = cerrar_cuenta
+expulsar._abrir_volumen = abrir_doble
+expulsar._retirar_dispositivo = retirar_doble
+expulsar._dispositivo_a_retirar = lambda letra: USB
+LLAMADAS.clear()
+RECHAZADAS.clear()
+r = expulsar.expulsar(Path("E:\\"))
+c("con dispositivo que retirar, bloquea y desmonta pero NO expulsa el medio",
+  LLAMADAS, [expulsar.FSCTL_LOCK_VOLUME, expulsar.FSCTL_DISMOUNT_VOLUME,
+             expulsar.IOCTL_STORAGE_MEDIA_REMOVAL])
+c("  retira el dispositivo por su id, ya con el volumen cerrado (abierto, lo vetaría)",
+  (RETIRADAS, ABIERTOS_AL_RETIRAR), ([(USB.id,)], [0]))
+c("  y va bien", (r.ok, r.texto), (True, "Ya puedes quitarla."))
+
+RETIRADAS.clear()
+CONTESTA[0] = (expulsar.CR_REMOVE_VETOED, 3, "winword.exe")
+r = expulsar.expulsar(Path("E:\\"))
+c("si Windows lo veta, no es ok y dice la causa",
+  (r.ok, "winword.exe" in r.texto, "unidad E:" in r.texto), (False, True, True))
+
+LLAMADAS.clear()
+CONTESTA[0] = (0x0D, 0, "")                      # CR_NO_SUCH_DEVNODE: ni lo encuentra
+r = expulsar.expulsar(Path("E:\\"))
+c("si Windows ni puede pedirlo, se expulsa el medio como antes y se da por buena",
+  (r.ok, LLAMADAS.count(expulsar.IOCTL_STORAGE_EJECT_MEDIA), Kernel.abiertos), (True, 1, 0))
+
+RETIRADAS.clear()
+LLAMADAS.clear()
+CONTESTA[0] = (expulsar.CR_SUCCESS, 0, "")
+RECHAZADAS.add(expulsar.FSCTL_LOCK_VOLUME)
+r = expulsar.expulsar(Path("E:\\"))
+c("si no consigue bloquear, no retira nada", (r.ok, RETIRADAS), (False, []))
+RECHAZADAS.clear()
+RECHAZADAS.add(expulsar.FSCTL_DISMOUNT_VOLUME)
+r = expulsar.expulsar(Path("E:\\"))
+c("  ni si no puede desmontar", (r.ok, RETIRADAS), (False, []))
+RECHAZADAS.clear()
+
+expulsar._dispositivo_a_retirar = lambda letra: None
+LLAMADAS.clear()
+RETIRADAS.clear()
+r = expulsar.expulsar(Path("E:\\"))
+c("sin dispositivo que retirar (un disco virtual), se expulsa el medio y no se pide retirar nada",
+  (r.ok, LLAMADAS[-1], RETIRADAS), (True, expulsar.IOCTL_STORAGE_EJECT_MEDIA, []))
+Kernel.CloseHandle = cerrar_original
 
 raise SystemExit(c.report())

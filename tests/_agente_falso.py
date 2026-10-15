@@ -17,7 +17,7 @@ from _harness import tmpdir
 
 import agente
 import penwatch
-from common import equipo, expulsar, moderacion, store
+from common import equipo, expulsar, moderacion, nombres, store
 
 
 class Proc:
@@ -52,6 +52,8 @@ ABIERTOS: list[Path] = []
 """Los contenedores que se han pedido abrir."""
 RAICES: list[Path] = []
 """Lo que «encuentra» el recorrido."""
+ETIQUETAS: dict[Path, str] = {}
+"""La etiqueta del volumen de cada raíz (`nombres.etiqueta_de()`); sin ella, ninguna."""
 COMPATIBLES: set[Path] = set()
 """Las raíces cuyo volumen `expulsar.compatible()` da por expulsable."""
 EXPULSADAS: list[Path] = []
@@ -93,6 +95,8 @@ def preparar() -> Path:
     agente.cerrar_keepassxc_huerfano = lambda raiz: 0
     agente.keepassxc_huerfano_abierto = lambda raiz: False
     agente.hay_keepassxc = lambda: True
+    # Ni la etiqueta del volumen de verdad: la que el test diga, o ninguna.
+    nombres.etiqueta_de = lambda raiz: ETIQUETAS.get(Path(raiz), "")
     expulsar.compatible = lambda raiz: Path(raiz) in COMPATIBLES
     expulsar.expulsar = lambda raiz: EXPULSADAS.append(Path(raiz)) or RESULTADO_EXPULSAR[0]
     # Su rclone: el que pasa a sus hijos y con el que sondea (no hace nada).
@@ -116,13 +120,15 @@ def pasar(segundos: float) -> None:
 
 def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
            daemon: str = "", extra: dict | None = None,
-           locales: dict | None = None) -> Path:
+           locales: dict | None = None, equipos: tuple[str, ...] = ()) -> Path:
     """Una unidad prdrive de mentira, con su id y sus parejas.
 
     Args:
         uid: El id de la unidad.
         parejas: Los nombres de sus parejas.
         nombre: Su nombre en la flota, si lo tiene.
+        equipos: Los equipos desde los que ha publicado su nota (`publicado.equipos`
+            de su `state/fleet.json`), el más reciente primero.
         daemon: Lo que va tras `[defaults]` (la tabla `[daemon]`).
         extra: Líneas de TOML que añadir a algunas parejas, por nombre
             (`{"docs": "watch = true\\n"}`).
@@ -140,8 +146,11 @@ def unidad(uid: str, parejas=("docs", "fotos"), nombre: str | None = None,
                     f'remote_path = "/R/{p}"\n{extra.get(p, "")}\n' for p in parejas)
     (app / "sync_config.toml").write_text(
         f'[defaults]\nremote = "nas"\n\n{daemon}\n{pares}', encoding="utf-8")
-    if nombre:
-        store.write_json(app / "state" / "fleet.json", {"nombre": nombre})
+    if nombre or equipos:
+        datos = {"nombre": nombre} if nombre else {}
+        if equipos:
+            datos["publicado"] = {"equipos": list(equipos)}
+        store.write_json(app / "state" / "fleet.json", datos)
     return raiz
 
 
