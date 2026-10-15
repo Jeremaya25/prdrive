@@ -284,3 +284,64 @@ SIMULACION_ESPEJO = """\
 2026/10/15 09:44:30 NOTICE:           0 B / 0 B, -, 0 B/s, ETA -
 """
 """`sync.py notas --dry-run --force` sobre el `up-mirror` de arriba (`--max-delete -1`): rc 0, no toca nada y apunta cada borrado que haría."""
+
+SIMULACION_BISYNC_VERSIONES = """\
+2026/10/15 11:12:32 INFO  : Setting --ignore-listing-checksum as neither --checksum nor --compare checksum are set.
+2026/10/15 11:12:32 INFO  : Bisyncing with Comparison Settings: 
+{
+	"Modtime": true,
+	"Size": true,
+	"Checksum": false,
+	"HashType1": 0,
+	"HashType2": 0,
+	"NoSlowHash": false,
+	"SlowHashSyncOnly": false,
+	"SlowHashDetected": true,
+	"DownloadHash": false
+}
+2026/10/15 11:12:32 INFO  : Synching Path1 "disp{bI9xF}:sync-data/notas/" with Path2 "nas:/tmp/prdrive-frenos/remoto/notas/"
+2026/10/15 11:12:32 INFO  : Using filters file /tmp/prdrive-frenos/filters/notas.txt
+2026/10/15 11:12:32 INFO  : Building Path1 and Path2 listings
+2026/10/15 11:12:32 INFO  : Path1 checking for diffs
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota01.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota02.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota03.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota04.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota05.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota06.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota07.md
+2026/10/15 11:12:32 NOTICE: - Path1             File was deleted                            - nota08.md
+2026/10/15 11:12:32 NOTICE: - Path1             File changed: size (larger), time (newer)   - nota09.md
+2026/10/15 11:12:32 NOTICE: - Path1             File changed: size (larger), time (newer)   - nota10.md
+2026/10/15 11:12:32 INFO  : Path1:   10 changes:    0 new,    2 modified,    8 deleted
+2026/10/15 11:12:32 INFO  : (Modified:    2 newer,    0 older,    2 larger,    0 smaller)
+2026/10/15 11:12:32 INFO  : Path2 checking for diffs
+2026/10/15 11:12:32 INFO  : Applying changes
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota01.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota02.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota03.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota04.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota05.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota06.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota07.md
+2026/10/15 11:12:32 NOTICE: - Path2             Queue delete                                - nas:/tmp/prdrive-frenos/remoto/notas/nota08.md
+2026/10/15 11:12:32 NOTICE: - Path1             Queue copy to Path2                         - nas:/tmp/prdrive-frenos/remoto/notas/nota09.md
+2026/10/15 11:12:32 NOTICE: - Path1             Queue copy to Path2                         - nas:/tmp/prdrive-frenos/remoto/notas/nota10.md
+2026/10/15 11:12:32 NOTICE: - Path1             Do queued copies to                         - Path2
+2026/10/15 11:12:32 NOTICE: nota09.md: Skipped move to nota09~20261015-100000.md as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota09.md: Skipped copy as --dry-run is set (size 29)
+2026/10/15 11:12:32 NOTICE: nota10.md: Skipped move to nota10~20261015-100000.md as --dry-run is set (size 8)
+2026/10/15 11:12:32 NOTICE: nota10.md: Skipped copy as --dry-run is set (size 29)
+2026/10/15 11:12:32 NOTICE: nota02.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota03.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota05.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota08.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota07.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota01.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota06.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 NOTICE: nota04.md: Skipped move into backup dir as --dry-run is set (size 7)
+2026/10/15 11:12:32 INFO  : Updating listings
+2026/10/15 11:12:32 INFO  : Bisync successful
+2026/10/15 11:12:32 NOTICE:          73 B / 73 B, 100%, 0 B/s, ETA -
+"""
+"""`sync.py notas --dry-run --force` sobre un bisync con `versions = true`: 8 ficheros borrados en el dispositivo y 2 modificados. Lo que borra va a `.prversions/` y rclone lo apunta como `Skipped move into backup dir`, no como `Skipped delete`; lo que sobrescribe, como `Skipped move to <nombre>~<marca>` y `Skipped copy`."""

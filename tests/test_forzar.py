@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 from _harness import Checks, sandbox
-from _logs_frenos import SIMULACION_BISYNC, SIMULACION_ESPEJO
+from _logs_frenos import SIMULACION_BISYNC, SIMULACION_BISYNC_VERSIONES, SIMULACION_ESPEJO
 
 import sync
-from common import bisync, model, orden, results
+from common import bisync, frenos, model, orden, results
 from common.model import ConfigError
 
 c = Checks("forzar una pasada")
@@ -71,6 +71,43 @@ with sandbox():
     c("  el tope que la pareja se haya puesto tampoco cuenta en esa pasada",
       (valores(orden_de(propio), "--max-delete"), valores(orden_de(propio, force=True),
                                                         "--max-delete")), (["7"], ["-1"]))
+
+    # rclone se queda con el ÚLTIMO `--max-delete` que recibe, y la cascada guarda las claves
+    # como están escritas (`max_delete` y `max-delete` son dos): forzar ha de quitarlas todas,
+    # y también las de `extra_flags`, que van detrás de todo. Si no, «sin tope» frena igual.
+    def sin_tope(raw, **ctx):
+        """Devuelve los `--max-delete` (con su valor) que lleva la orden de una pasada de ese espejo."""
+        cmd = orden_de(raw, **ctx)
+        return ([cmd[i + 1] for i, a in enumerate(cmd[:-1]) if a == "--max-delete"]
+                + [a for a in cmd if a.startswith("--max-delete=")])
+
+    for que, raw in (("`max_delete` en la pareja", dict(SUBIDA, flags={"max_delete": 5})),
+                     ("`max-delete` en la pareja", dict(SUBIDA, flags={"max-delete": 5})),
+                     ("`--max-delete N` en extra_flags", dict(SUBIDA, extra_flags=["--max-delete", "7"])),
+                     ("`--max-delete=N` en extra_flags", dict(SUBIDA, extra_flags=["--max-delete=7"])),
+                     ("las dos cosas a la vez", dict(SUBIDA, flags={"max_delete": 5},
+                                                     extra_flags=["--max-delete", "7"]))):
+        c(f"espejo forzado con {que}: llega a rclone un solo --max-delete, el -1",
+          sin_tope(raw, force=True), ["-1"])
+    c("  y sin forzar no se toca nada de lo escrito (rclone se queda con lo último)",
+      (sin_tope(dict(SUBIDA, flags={"max_delete": 5})),
+       sin_tope(dict(SUBIDA, extra_flags=["--max-delete=7"]))), (["50", "5"], ["50", "--max-delete=7"]))
+    con_otros = dict(SUBIDA, extra_flags=["--checksum", "--max-delete", "7", "--fast-list"])
+    c("  y de extra_flags solo se va el --max-delete y su valor, el resto se queda",
+      [a for a in orden_de(con_otros, force=True) if a in ("--checksum", "--fast-list", "7")],
+      ["--checksum", "--fast-list"])
+    tamano = dict(SUBIDA, extra_flags=["--max-delete-size", "5M"])
+    c("  `--max-delete-size` es otro freno y no se quita: forzar `max-delete` no lo salta",
+      ("--max-delete-size" in orden_de(tamano, force=True), "5M" in orden_de(tamano, force=True)),
+      (True, True))
+    c("  y la vista previa del editor de flags dice lo mismo que la orden",
+      [t.args for t in orden.tramos(pareja(dict(SUBIDA, flags={"max_delete": 5})), binario="R",
+                                    filtros=None, config="c", logfile="l", forzar=True)
+       if t.args[0] == "--max-delete"], [("--max-delete", "-1")])
+    en_bisync = dict(BISYNC, flags={"max_delete": 40})
+    c("bisync forzado no toca el tope que se haya puesto: lo salta el --force",
+      ("--force" in orden_de(en_bisync, force=True),
+       valores(orden_de(en_bisync, force=True), "--max-delete")), (True, ["25", "40"]))
 
     c("un copy no borra y no tiene freno: forzarlo no cambia la orden",
       orden_de(COPIA, force=True), orden_de(COPIA))
@@ -214,6 +251,29 @@ with sandbox():
       ("se borrarían 8 ficheros" in salida, "en el remoto" in salida, "nota08.md" in salida),
       (True, False, True))
 with sandbox():
+    # Con versiones, lo que se borra va a `.prversions/` y rclone lo apunta como «move into backup
+    # dir»; lo que se sobrescribe, como «move to <nombre>~…» y «copy»: solo lo primero es un borrado.
+    rc, salida, _, _ = correr(dict(BISYNC, versions=True), force=True, dry_run=True,
+                              texto_log=SIMULACION_BISYNC_VERSIONES)
+    c("una simulación forzada de un bisync con versiones cuenta lo que va a .prversions/",
+      (rc, "se borrarían 8 ficheros" in salida,
+       all(f"nota{n:02d}.md" in salida for n in range(1, 9))), (0, True, True))
+    c("  y no cuenta como borrados los dos que solo se sobrescriben",
+      ("nota09.md" in salida, "nota10.md" in salida), (False, False))
+
+with sandbox():
+    # Un espejo cuya carpeta se ha desmontado: cien mil ficheros. El número es el que la persona
+    # mira antes de forzar, así que se lee el log entero (pesa más que lo que se lee al pintar).
+    cien_mil = "".join(f"2026/10/15 09:44:06 NOTICE: dato{i:06d}.md: Skipped delete as --dry-run is set "
+                       "(size 8)\n" for i in range(100_000))
+    c("la simulación lee el log entero: el log de prueba pasa del tope de lectura",
+      len(cien_mil) > frenos.TOPE_LECTURA, True)
+    rc, salida, _, _ = correr(SUBIDA, force=True, dry_run=True, texto_log=cien_mil)
+    c("  y dice el número exacto, no el de la última parte",
+      "se borrarían 100000 ficheros en el remoto" in salida, True)
+    c.contains("  del resto, que son muchos, dice cuántos faltan por nombrar", salida, "y 99980 más")
+
+with sandbox():
     muchos = "".join(f"2026/10/15 09:44:06 NOTICE: n{i:03d}.md: Skipped delete as --dry-run is "
                      f"set (size 1)\n" for i in range(30))
     rc, salida, _, _ = correr(SUBIDA, force=True, dry_run=True, texto_log=muchos)
@@ -221,7 +281,9 @@ with sandbox():
       ("n019.md" in salida, "n020.md" in salida, "y 10 más" in salida), (True, False, True))
 with sandbox():
     rc, salida, _, _ = correr(SUBIDA, force=True, dry_run=True)
-    c.contains("si no habría borrado nada, lo dice", salida, "no se borraría ningún fichero")
+    c.contains("si el log no apunta borrados, lo dice sin afirmar más de lo que sabe", salida,
+               "no ha apuntado ningún borrado")
+    c("  y no asegura que no se borre nada", "no se borraría" in salida, False)
 with sandbox():
     rc, salida, _, _ = correr(SUBIDA, dry_run=True, texto_log=SIMULACION_ESPEJO)
     c("una simulación normal no cambia: no lista nada", "se borrarían" in salida, False)

@@ -188,6 +188,28 @@ with sandbox():
     c("  sin una sola unidad de porcentaje, ni --resync",
       ("%" in consecuencias + avisos, "--resync" in avisos), (False, False))
 
+# El tope que la siguiente pasada llevará es el que le llegue a rclone, que se queda con el último
+# `--max-delete`: da igual si está escrito `max-delete` o `max_delete`, o en `extra_flags`.
+for que, raw, esperado in (
+        ("`max_delete` en la pareja", dict(SUBIDA, flags={"max_delete": 5}), "su tope de 5 ficheros"),
+        ("`--max-delete N` en extra_flags", dict(SUBIDA, extra_flags=["--max-delete", "10"]),
+         "su tope de 10 ficheros"),
+        ("`--max-delete=N` en extra_flags", dict(SUBIDA, extra_flags=["--max-delete=12"]),
+         "su tope de 12 ficheros"),
+        ("la de fábrica", SUBIDA, "su tope de 50 ficheros")):
+    with sandbox():
+        cfg, pair, h = con_freno(raw, ESPEJO_UP, rc=7)
+        c.contains(f"el plan dice el tope de la siguiente pasada de un espejo ({que})",
+                   " ".join(repair.aviso_forzar(cfg, h).consequences), esperado)
+for que, raw, esperado in (
+        ("`max_delete` en la pareja", dict(BISYNC, flags={"max_delete": 40}), "(40 %)"),
+        ("`max-delete = -1`, que en bisync es su 50 % de fábrica", dict(BISYNC, flags={"max-delete": -1}),
+         "(50 %)")):
+    with sandbox():
+        cfg, pair, h = con_freno(raw, BISYNC_BORRADOS)
+        c.contains(f"  y el de un bisync, en %: {que}",
+                   " ".join(repair.aviso_forzar(cfg, h).consequences), esperado)
+
 with sandbox():
     cfg, pair, h = con_freno(BAJADA, ESPEJO_DOWN, rc=7)
     c.contains("hacia el dispositivo, el destino es el dispositivo",

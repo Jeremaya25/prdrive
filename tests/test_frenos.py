@@ -15,7 +15,7 @@ from pathlib import Path
 
 from _harness import Checks, mkcfg, sandbox
 from _logs_frenos import (BISYNC_BORRADOS, BISYNC_CAMBIADOS, ESPEJO_DOWN, ESPEJO_UP,
-                          SIMULACION_BISYNC, SIMULACION_ESPEJO)
+                          SIMULACION_BISYNC, SIMULACION_BISYNC_VERSIONES, SIMULACION_ESPEJO)
 
 import sync
 from common import frenos, model, results, revision
@@ -120,6 +120,8 @@ c("una simulación forzada de un espejo dice qué ficheros borraría: los cinco 
   ["nota07.md", "nota09.md", "nota24.md", "nota39.md", "nota41.md"])
 c("  y los de bisync, los ocho que el dispositivo había borrado, en orden",
   frenos.borrarian(SIMULACION_BISYNC), [f"nota{n:02d}.md" for n in range(1, 9)])
+c("  con versiones, lo que va a .prversions/ también es un borrado, y lo que solo se sobrescribe no",
+  frenos.borrarian(SIMULACION_BISYNC_VERSIONES), [f"nota{n:02d}.md" for n in range(1, 9)])
 c("  un log que no es de una simulación no borra nada", frenos.borrarian(ESPEJO_UP), [])
 c("  y uno vacío tampoco", frenos.borrarian(""), [])
 con_repetidos = SIMULACION_ESPEJO + SIMULACION_ESPEJO
@@ -128,6 +130,26 @@ c("  un fichero que sale dos veces cuenta una",
 c("  un nombre con dos puntos y espacios se entiende entero",
   frenos.borrarian("2026/10/15 09:44:06 NOTICE: a: b/c d.md: Skipped delete as --dry-run is "
                    "set (size 3)\n"), ["a: b/c d.md"])
+
+# ---- Un log más grande que lo que se lee --------------------------------------------------
+
+with sandbox():
+    # Al pintar «Reparación» solo se lee el final del log (`TOPE_LECTURA`): lo que sale de TODO
+    # el log, como cuántos ficheros borró un espejo, no se puede decir si no se leyó entero.
+    grande = model.LOG_DIR / "espejo_grande.log"
+    cola = "".join(ESPEJO_UP.splitlines(keepends=True)[-6:])
+    grande.write_text("".join(f"2026/10/15 09:35:36 INFO  : f{i:06d}.md: Deleted\n"
+                              for i in range(100_000)) + cola, encoding="utf-8")
+    c("el log de prueba pasa del tope de lectura", grande.stat().st_size > frenos.TOPE_LECTURA, True)
+    c("leer() da solo el final", len(frenos.leer(grande)) <= frenos.TOPE_LECTURA, True)
+    c("  y completo=True, todo", frenos.leer(grande, completo=True).count(": Deleted"), 100_000)
+    visto = frenos.detectar_en(grande, P["espejo"])
+    c("detectar_en() reconoce el freno por lo que dice el final: lo que faltaba por borrar",
+      (visto.tipo, visto.pendientes), (frenos.ESPEJO, 5))
+    c("  pero no dice cuántos borró, que cuenta todo el log y no se leyó entero", visto.borrados, None)
+    chico = model.LOG_DIR / "espejo_chico.log"
+    chico.write_text(ESPEJO_UP, encoding="utf-8")
+    c("  con un log que se lee entero, sí", frenos.detectar_en(chico, P["espejo"]).borrados, 50)
 
 # ---- Lo que sale por la consola (KNOWN_ERRORS) --------------------------------------------
 
@@ -244,6 +266,14 @@ with sandbox():
     c("  sin una sola unidad de porcentaje", "%" in d, False)
     c.contains("  hacia el dispositivo, el destino es el dispositivo",
                abajo["freno"].detalle, "borrado 50 ficheros en el dispositivo")
+
+with sandbox():
+    cfg, P = parejas()
+    fallar("espejo", "".join(f"2026/10/15 09:35:36 INFO  : f{i:06d}.md: Deleted\n"
+                             for i in range(100_000)) + "".join(ESPEJO_UP.splitlines(keepends=True)[-6:]), 7)
+    d = de(revision.revisar(cfg), "espejo")["freno"].detalle
+    c("el hallazgo de un espejo con un log enorme no afirma un número de borrados que no sabe",
+      ("Ya ha borrado" in d, "faltan 5 por borrar" in d), (False, True))
 
 with sandbox():
     cfg, P = parejas()

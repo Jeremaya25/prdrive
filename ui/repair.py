@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from common import bisync, frenos, model, revision, store
+from common import bisync, frenos, model, orden, revision, store
 from common.model import Config, Pair
 from common.revision import Hallazgo, aviso_carpeta_programa
 
@@ -367,12 +367,19 @@ def _carpeta_vacia(ruta: Path) -> bool:
 
 
 def _tope(pair: Pair, freno: frenos.Freno) -> int | None:
-    """Devuelve el tope que la pareja llevará en la próxima pasada (`max-delete`), o `None`."""
-    valor = pair.flags.get("max-delete", freno.tope)
-    try:
-        return int(valor)
-    except (TypeError, ValueError):
-        return None
+    """Devuelve el tope que la pareja llevará en la próxima pasada (`max-delete`), o `None`.
+
+    Es el que le llega a rclone (`orden.max_delete_efectivo()`: el último, escrito como
+    sea), no el de la clave `max-delete` a secas. En bisync es un % entre 0 y 100, y un
+    valor negativo no lo apaga, vuelve a su 50 % de fábrica; en un espejo, uno negativo
+    es «sin tope» y no hay cifra que decir.
+    """
+    valor = orden.max_delete_efectivo(pair)
+    if pair.is_bisync:
+        if valor is None:
+            return freno.tope
+        return frenos.TOPE_BISYNC_DE_FABRICA if valor < 0 else min(valor, 100)
+    return None if valor is None or valor < 0 else valor
 
 
 def _versiones(pair: Pair, que: str) -> str:

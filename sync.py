@@ -641,19 +641,22 @@ def decir_lo_que_borraria(pair: Pair, logfile: Path) -> None:
 
     Es lo que enseña la ventana antes de que nadie fuerce de verdad: la salida de
     una simulación buena es solo «OK» y su log se tira, así que sin esto no hay
-    forma de ver qué se borraría. Se calla si no se puede leer el log (el
-    dispositivo ha desaparecido): la pasada ya lo dirá por su cuenta.
+    forma de ver qué se borraría. Lee el log ENTERO, no solo el final: la cifra
+    es la que la persona mira antes de forzar, y con cien mil ficheros el final
+    no la da. Se calla si no se puede leer el log (el dispositivo ha desaparecido):
+    la pasada ya lo dirá por su cuenta.
 
     Args:
         pair: La pareja simulada.
         logfile: El log temporal de la pasada, que `dispose_log()` va a tirar.
     """
     try:
-        nombres = frenos.borrarian(frenos.leer(logfile))
+        nombres = frenos.borrarian(frenos.leer(logfile, completo=True))
     except OSError:
         return
     if not nombres:
-        print("  Simulación forzada: no se borraría ningún fichero. No se ha tocado nada.")
+        print("  Simulación forzada: el log de la simulación no ha apuntado ningún borrado. "
+              "No se ha tocado nada.")
         return
     donde = "" if pair.is_bisync else f" en {frenos.nombre_lado(pair.mode.dest)}"
     print(f"  Simulación forzada: se borrarían {len(nombres)} "

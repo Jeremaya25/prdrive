@@ -26,7 +26,7 @@ decide una persona, desde la ventana, para una sola pasada (`ui/repair.py`).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .model import Pair
@@ -60,8 +60,22 @@ _BORRADO_ESPEJO = re.compile(r": Deleted$", re.M)
 """Una línea `INFO` de un fichero borrado en el destino (con el `--verbose` de fábrica)."""
 _PENDIENTES = re.compile(r"failed to delete (\d+) files?\b")
 """Cuántos ficheros se quedaron sin borrar, según rclone."""
-_SIMULADO = re.compile(r"NOTICE: (.*?): Skipped delete as --dry-run is set", re.M)
-"""Lo que rclone apunta de cada fichero que una simulación habría borrado."""
+_SIMULADO = re.compile(
+    r"NOTICE: (.*?): Skipped (?:delete|move into backup dir) as --dry-run is set", re.M)
+"""Lo que rclone apunta de cada fichero que una simulación habría borrado.
+
+Con `versions = true` (`--backup-dir1/2`) lo que se borra va al directorio de
+versiones y rclone lo apunta como `Skipped move into backup dir` en vez de
+`Skipped delete` (`DeleteFileWithBackupDir()`). Lo que solo se sobrescribe es
+otra cosa (`Skipped move to <nombre>~<marca>` y `Skipped copy`): no entra.
+"""
+
+TOPE_BISYNC_DE_FABRICA = 50
+"""El `--max-delete` (un %) que bisync usa cuando no se le da uno válido.
+
+`Options.applyContext()` (`cmd/bisync/cmd.go`) solo atiende un valor `>= 0`: con
+`-1` bisync no deja de frenar, vuelve a su `DefaultMaxDelete`.
+"""
 
 COMO_FORZAR = "fuerza UNA pasada desde «Reparación» o con `python sync.py <pareja> --force`"
 """Cómo se salta el freno, tal como lo dicen las explicaciones de la consola."""
@@ -222,17 +236,42 @@ def borrarian(texto: str) -> list[str]:
     return sorted(set(_SIMULADO.findall(texto)))
 
 
-def leer(log: Path) -> str:
-    """Lee el final de un log (`TOPE_LECTURA` bytes como mucho) para buscar en él un freno.
+def leer(log: Path, *, completo: bool = False) -> str:
+    """Lee un log: el final (`TOPE_LECTURA` bytes como mucho) o, con `completo`, entero.
+
+    Lo que se mira al pintar una ventana se lee por el final; lo que una persona va
+    a usar para decidir (cuántos ficheros borraría una simulación) se lee entero.
+
+    Args:
+        log: El log.
+        completo: Si se lee entero, pese a lo que pese.
 
     Raises:
         OSError: Si no se puede abrir o leer (el dispositivo ha desaparecido).
     """
     with log.open("rb") as f:
         tam = f.seek(0, 2)
-        f.seek(max(0, tam - TOPE_LECTURA))
+        f.seek(0 if completo else max(0, tam - TOPE_LECTURA))
         datos = f.read()
     return datos.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def detectar_en(log: Path, pair: Pair) -> Freno | None:
+    """Devuelve el freno que paró la pasada de ese log, leyendo solo su final.
+
+    Lo que el final del log dice entero (el aborto de bisync con sus cifras, los
+    ficheros que un espejo se dejó sin borrar) se reconoce igual. Lo que sale de
+    contar líneas de todo el log, cuántos ficheros había borrado ya un espejo, no
+    se puede decir si el log pesa más de lo que se leyó: queda en `None` y no se
+    da un número que sea solo el de la última parte.
+
+    Raises:
+        OSError: Si no se puede leer el log.
+    """
+    freno = detectar(leer(log), pair)
+    if freno is not None and freno.tipo == ESPEJO and log.stat().st_size > TOPE_LECTURA:
+        return replace(freno, borrados=None)
+    return freno
 
 
 def nombre_lado(lado: str) -> str:

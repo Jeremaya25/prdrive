@@ -17,7 +17,7 @@ programa en cada pasada y no se configura (`--config`, `--log-file`,
 from __future__ import annotations
 
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterable, NamedTuple
 
 from . import frenos, model
 from .model import FlagEfectivo, Pair
@@ -71,6 +71,69 @@ def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
     return [a for t in tramos_de_filtrado(pair, ffile) for a in t.args]
 
 
+def _es_max_delete(nombre: str) -> bool:
+    """Indica si ese nombre de flag, tal como está escrito, es el `max-delete` de rclone."""
+    return model.normalizar_flag(nombre) == "max-delete"
+
+
+def _sin_max_delete(extra: Iterable[str]) -> list[str]:
+    """Devuelve `extra_flags` sin el `--max-delete` ni su valor.
+
+    Vale `--max-delete N` (en dos argumentos) y `--max-delete=N`. `--max-delete-size`
+    es otro flag y se queda.
+    """
+    salida: list[str] = []
+    saltar_valor = False
+    for arg in extra:
+        texto = str(arg)
+        if saltar_valor:
+            saltar_valor = False
+            if not texto.startswith("--"):
+                continue
+        nombre, igual, _ = texto.partition("=")
+        if nombre.startswith("--") and _es_max_delete(nombre[2:]):
+            saltar_valor = not igual
+            continue
+        salida.append(arg)
+    return salida
+
+
+def max_delete_efectivo(pair: Pair) -> int | None:
+    """Devuelve el `--max-delete` que una pasada normal de la pareja le da a rclone.
+
+    rclone se queda con el último que recibe: el de la cascada de flags (que guarda
+    las claves como están escritas: `max_delete` y `max-delete` son dos, y gana la
+    que se emite después) y, tras todos los flags, el de `extra_flags`.
+
+    Returns:
+        El valor, o `None` si ninguna capa lo pone o no es un número.
+    """
+    valor = None
+    for nombre, v in pair.flags.items():
+        if _es_max_delete(nombre):
+            valor = v
+    extra = [str(a) for a in pair.extra_flags]
+    for i, arg in enumerate(extra):
+        nombre, igual, resto = arg.partition("=")
+        if nombre.startswith("--") and _es_max_delete(nombre[2:]):
+            valor = resto if igual else (extra[i + 1] if i + 1 < len(extra) else None)
+    if isinstance(valor, bool):
+        return None
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _salta_el_tope(pair: Pair, forzar: bool, resync: bool) -> bool:
+    """Indica si la orden de esta pasada quita el `--max-delete` de un espejo (`forzar`).
+
+    Solo un espejo (`sync`): bisync se salta el suyo con `--force`, que no quita nada, y un
+    resync no pasa por el freno.
+    """
+    return forzar and not resync and frenos.tiene_freno(pair) and not pair.is_bisync
+
+
 def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
                        simulacro: bool = False, resync: bool = False,
                        sello: str = "", forzar: bool = False) -> list[FlagEfectivo]:
@@ -90,8 +153,10 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
         sello: El sufijo de las versiones que guarda la pasada (`--suffix`).
         forzar: Si la pasada salta el freno de borrados: `--force` en bisync (que
             conserva su `--max-delete`, un %, y lo salta) y `--max-delete -1` en un
-            espejo, en lugar de su tope (una cuenta). En un `copy`, o en un resync, no
-            cambia nada. Es de esta pasada y de ninguna otra: no se lee del TOML.
+            espejo, en lugar de su tope (una cuenta), y se quita el que haya escrito la
+            pareja con cualquier grafía (`max_delete`) o en `extra_flags`. En un `copy`,
+            o en un resync, no cambia nada. Es de esta pasada y de ninguna otra: no se
+            lee del TOML.
     """
     flags = {nombre: FlagEfectivo(nombre, valor,
                                   pair.origen_flags.get(nombre, model.ORIGEN_PAREJA))
@@ -123,6 +188,10 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
         if pair.is_bisync:
             pone("force", True)
         else:
+            # rclone se queda con el último `--max-delete`: se quitan todos los de la
+            # cascada, escritos como se escriban, y `tramos()` los de `extra_flags`.
+            for nombre in [n for n in flags if _es_max_delete(n)]:
+                del flags[nombre]
             pone("max-delete", -1)
 
     if pair.versions:
@@ -167,7 +236,9 @@ def tramos(pair: Pair, *, binario: str, filtros: Path | None, config: str | Path
         args = model.flags_to_args({flag.nombre: flag.valor})
         if args:
             salida.append(Tramo(tuple(args), flag.origen, flag.nombre))
-    salida += [Tramo((arg,), model.ORIGEN_EXTRA) for arg in pair.extra_flags]
+    extra = (_sin_max_delete(pair.extra_flags) if _salta_el_tope(pair, forzar, resync)
+             else pair.extra_flags)
+    salida += [Tramo((arg,), model.ORIGEN_EXTRA) for arg in extra]
     return salida
 
 

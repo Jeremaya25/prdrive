@@ -260,7 +260,7 @@ def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
     if fallo.log is None or pair is None:
         return None
     try:
-        return frenos.detectar(frenos.leer(fallo.log), pair)
+        return frenos.detectar_en(fallo.log, pair)
     except OSError:
         return None
 
