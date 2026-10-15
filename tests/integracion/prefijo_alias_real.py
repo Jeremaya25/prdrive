@@ -130,9 +130,13 @@ def main() -> int:
     if "--de-verdad" not in sys.argv[1:] and not os.environ.get("CI"):
         print("Esto baja rclone y lo lanza de verdad: en un equipo propio, con --de-verdad.")
         return 2
-    from install import rclone_bin
-
-    rclone = rclone_bin.cached() or rclone_bin.download_rclone(lambda *_: None)
+    # En el CI el rclone lo deja listo `tests/_runtime_ci.py rclone` (con caché);
+    # a mano, el de la caché del instalador, o uno recién bajado.
+    if os.environ.get("PRDRIVE_RCLONE_CI"):
+        rclone = Path(os.environ["PRDRIVE_RCLONE_CI"])
+    else:
+        from install import rclone_bin
+        rclone = rclone_bin.cached() or rclone_bin.download_rclone(lambda *_: None)
     raiz = Path(tempfile.mkdtemp(prefix="prdrive-alias-")).resolve()
     try:
         (raiz / "remoto" / "datos" / "prueba").mkdir(parents=True)

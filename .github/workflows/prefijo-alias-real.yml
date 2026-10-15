@@ -2,19 +2,20 @@ name: Prefijo de un alias, con rclone de verdad
 
 # El nombre que rclone da a los listados de bisync cuando el remoto de la pareja
 # es un `alias` (`tests/integracion/prefijo_alias_real.py`), frente a lo que
-# calcula `bisync.expected_prefix()`. Baja el rclone fijado y lo lanza, así que
+# calcula `bisync.expected_prefix()`. Lanza el rclone fijado de verdad, así que
 # no va en `tests.yml`: corre en estas máquinas de usar y tirar cuando cambia lo
 # que nombra el baseline, o a mano. Es la única comprobación que ve el caso de
-# Windows (`C:\…` con `\\?\` por medio) contra rclone de verdad.
+# Windows (`C:\…` con `\\?\` por medio) contra rclone de verdad. El rclone se
+# baja una vez y se guarda en la caché (`tests/_runtime_ci.py rclone`, que lo
+# comprueba contra su SHA256SUMS aunque salga de la caché).
 on:
   pull_request:
     paths:
       - "common/bisync.py"
-      - "common/revision.py"
       - "common/pairing.py"
-      - "common/model.py"
       - "common/pins.py"
       - "install/rclone_bin.py"
+      - "tests/_runtime_ci.py"
       - "tests/integracion/prefijo_alias_real.py"
       - ".github/workflows/prefijo-alias-real.yml"
   workflow_dispatch:
@@ -31,15 +32,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            plat: linux-x64
+          - os: windows-latest
+            plat: windows-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+
+      - name: Clave de la caché
+        id: pins
+        run: python tests/_runtime_ci.py clave
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/prdrive-cache
+          key: rclone-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
+
+      - name: El rclone fijado
+        run: python tests/_runtime_ci.py rclone ${{ matrix.plat }} "${{ runner.temp }}/prdrive-cache"
 
       - name: Los listados de un alias, contra rclone
         run: python tests/integracion/prefijo_alias_real.py
