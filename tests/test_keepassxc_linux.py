@@ -259,6 +259,23 @@ def extraer_falso(appimage: Path, donde: Path) -> int:
 PIN_REAL = pins.KEEPASSXC_EJECUTABLES
 
 
+def proceso_muerto() -> subprocess.Popen:
+    """Lanza un proceso y espera a que acabe; mientras se guarde, su pid es de un muerto.
+
+    Un pid inventado no vale: en Windows los pids son múltiplos de 4 y
+    `OpenProcess` no mira sus dos bits bajos, así que «el mío con un 9 detrás»
+    abre el proceso que viva en el múltiplo de 4 de debajo (otro script de la
+    suite, por ejemplo) y `store.pid_alive()` lo da por vivo. Uno que ya acabó
+    tampoco vale si se suelta: Windows reparte su pid a otro. Mientras este
+    `Popen` viva, su handle sigue abierto y el pid no se reparte, y
+    `pid_alive()` lo da por muerto por su código de salida. En Linux ya está
+    recogido, y el núcleo no lo reparte hasta dar la vuelta a `pid_max`.
+    """
+    proceso = subprocess.Popen([sys.executable, "-c", ""])
+    proceso.wait()
+    return proceso
+
+
 def poner_appimage(app: Path, datos: bytes, version: str = pins.KEEPASSXC_VERSION,
                    sha: str | None = None, fijado_en: str | None = None) -> None:
     """Deja el AppImage en la unidad con su sello y lo fija en la tabla de `pins`.
@@ -291,8 +308,9 @@ try:
     poner_appimage(app, APPIMAGE)
     (cache / "2.7.10" / keepassxc.EXTRAIDO).mkdir(parents=True)          # una vieja
     (cache / "2.7.11").mkdir()                                           # una en uso
+    muerto = proceso_muerto()
     (cache / ".2.7.12.nuevo-999999999").mkdir()                          # un resto
-    (cache / f".2.7.12.nuevo-{os.getpid()}9").mkdir()                    # ídem
+    (cache / f".2.7.12.nuevo-{muerto.pid}").mkdir()                      # ídem
     vivo = cache / f".2.7.12.nuevo-{os.getppid()}"                       # otra, extrayendo
     vivo.mkdir()
     store.procesos_desde = lambda carpeta: ({1: "keepassxc"} if Path(carpeta).name == "2.7.11"
