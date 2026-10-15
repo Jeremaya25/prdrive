@@ -445,3 +445,24 @@ Falta con prdrive abriendo un volumen VeraCrypt de verdad, en un pendrive con un
 | I4 | W | Cerrar el volumen desde la ventana de VeraCrypt (o quitar el pendrive sin expulsar), conectar otra unidad que tome esa letra y abrir prdrive desde otro dispositivo. | Al arrancar prdrive se borran las claves huérfanas: la otra unidad sale con su nombre y su icono, no con el `.ico` que ya no está. | `explorador.limpiar()` |
 | I5 | W | Con el agente atendiendo la unidad (o la raíz cifrada del equipo): conectarla/desbloquearla y expulsarla/bloquearla desde la bandeja. | Igual que I1 al conectarse y que I3 al irse, sin abrir la ventana de prdrive. | `Agente._conectar()`, `Agente._desconectar()` |
 | I6 | W | Con BitLocker, y con una unidad sin cifrar, abrir prdrive. | No se escribe ninguna clave: solo se hace con volúmenes de VeraCrypt (`\Device\VeraCryptVolume<letra>`). | `explorador.de_veracrypt()` |
+
+## Atajos de teclado globales (#109)
+
+«Atajos de teclado…» de la bandeja abre la ventana que los graba (`ui/tk_atajos.py`, por
+`pregunta.py --atajos`); el agente los pone con `RegisterHotKey` en el hilo de la bandeja en
+Windows, `XGrabKey` en X11 y el portal `org.freedesktop.portal.GlobalShortcuts` en Wayland
+(`ui/atajos_linux.py`), y cada atajo pulsado es una petición más (`atajo`) sobre la última unidad
+usada (`tray.md`, `agent-window.md`). Visto en la nube: F29 (Windows, con el Bloc de notas
+delante) y F30 (X11 en un Xvfb, con otra aplicación con el foco, que no recibe la tecla). El
+portal no se ha visto en ningún escritorio: ni Plasma, ni GNOME 48, ni Hyprland.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| K1 | W | Con una unidad atendida: «Atajos de teclado…», grabar Ctrl+Alt+S en «Sincronizar ahora» y guardar. Con el navegador delante, pulsarlo; mantenerlo pulsado. | La ventana se cierra sola al guardar. Sale el aviso «PEN: sincronizando» y la pasada empieza; el navegador no recibe la tecla. Mantenida, una sola vez (`MOD_NOREPEAT`). | `Bandeja._poner_atajos()`, `WM_HOTKEY`, `Agente._atajo()` |
+| K2 | W | Grabar una combinación que ya tenga otro programa (la de un reproductor o la Barra de juegos, `Win+Alt+R`) y guardar; luego una de Windows (`Win+E`). | La ventana sigue abierta y la fila dice «…no se ha podido poner: otro programa (o el propio sistema) ya la usa»; queda sin atajo. Apuntar qué dice Windows de `Win+E`. | `atajos.motivo_windows()`, `Agente._atajos_puestos()` |
+| K3 | L | X11 (GNOME en Xorg, XFCE o KDE en X11): lo mismo que K1, también con el bloqueo de mayúsculas o el numérico encendidos. | Igual que K1, en los tres casos. | `atajos_linux.X11`, `atajos.BLOQUEOS_X11` |
+| K4 | L | X11: grabar una combinación del escritorio (`Ctrl+Alt+T`, la terminal) y guardar. | Se dice al guardar: «otro programa (o el propio sistema) ya la usa». Si el escritorio no la agarra con `XGrabKey` (la oye de otra forma), el atajo se pone y pulsarlo hace las dos cosas: apuntarlo. | `Xlib.agarrar()` (`BadAccess`) |
+| K5 | L | Wayland con el portal (Plasma 6, GNOME 48 o posterior, Hyprland): «Atajos de teclado…», grabar y guardar; confirmar en la ventana del escritorio. Luego, con otra aplicación delante, pulsarlo. Repetir cancelando la ventana del escritorio. Cerrar sesión y volver a entrar. | Sale la ventana del escritorio con «prdrive: Sincronizar ahora»; aceptada, la de prdrive se cierra y el atajo hace su acción con otra aplicación delante; cancelada, la fila dice «se ha cancelado en la ventana del escritorio». Al volver a entrar, ¿pregunta otra vez el escritorio al arrancar el agente? Apuntarlo: si pregunta, el portal pide guardar la sesión de otra forma. | `atajos_linux.Portal`, `Registry.Register("prdrive")` |
+| K6 | L | Wayland sin el portal de atajos (GNOME anterior a 48, o un compositor sin `xdg-desktop-portal`): «Atajos de teclado…». | La ventana solo dice «No se pueden usar en este equipo» y por qué (le falta el portal GlobalShortcuts); el diario lo dice una vez. | `atajos.mecanismo()`, `Portal._correr()` |
+| K7 | W, L | Dos unidades atendidas: abrir la ventana de una con su propio acceso (no desde la bandeja) y, con ella cerrada, pulsar «Abrir su carpeta»; luego «Configurar» de la otra en la bandeja y otra vez el atajo; luego «Pausar o reanudar» dos veces. | Primero la carpeta de la primera, luego la de la segunda. Pausar dice «PEN: en pausa» y su desplegable «(en pausa)»; la segunda vez, «PEN: reanudada». | `atajos.objetivo()`, `Agente._usada()` |
+| K8 | L | X11: con atajos puestos, cerrar la sesión; y matar el servidor X con el agente en marcha (`sudo systemctl restart display-manager`, en una máquina de pruebas). | El agente no deja un volcado ni un aviso de que ha fallado; su diario sigue (o termina con «agente detenido»). | `XSetIOErrorExitHandler`, `Xlib.vivo()` |

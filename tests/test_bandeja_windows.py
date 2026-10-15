@@ -28,7 +28,7 @@ import time
 from _harness import Checks, tmpdir
 
 from common import avisos, equipo
-from ui import bandeja, bandeja_windows as bw, icons
+from ui import atajos, bandeja, bandeja_windows as bw, icons
 
 c = Checks("la bandeja de Windows, con un Windows de mentira")
 
@@ -58,6 +58,19 @@ class ApiFalsa:
         self.menus: list = []
         self.soltados: list = []
         self.fin = threading.Event()
+        self.registrados: dict[int, tuple[int, int]] = {}
+        self.ocupados: set[tuple[int, int]] = set()
+
+    def registrar_atajo(self, hwnd, ident, mods, vk):
+        """Registra un atajo, salvo que la combinación la tenga «otro programa»."""
+        if (mods, vk) in self.ocupados:
+            return 1409                 # ERROR_HOTKEY_ALREADY_REGISTERED
+        self.registrados[ident] = (mods, vk)
+        return 0
+
+    def soltar_atajo(self, hwnd, ident):
+        """Quita un atajo registrado."""
+        self.registrados.pop(ident, None)
 
     def mensaje_registrado(self, nombre):
         """Devuelve el id de `TaskbarCreated`, o 0 para otro nombre."""
@@ -280,8 +293,39 @@ c("  con NIF_INFO, título y texto, y de aviso si es urgente",
 c("avisos.enviar en Windows usa la bandeja, sin icono de paso",
   (avisos._windows("t", "x", False), api.llamadas[-1][1]["info_titulo"]), (True, "t"))
 
+# los atajos de teclado globales (RegisterHotKey en el hilo de la bandeja)
+PUESTOS: list = []
+b.atajos_puestos = lambda combos, rechazados: PUESTOS.append((combos, rechazados))
+api.ocupados.add(atajos.windows("ctrl+alt+v"))
+c("poner atajos se le pide al hilo de la bandeja",
+  b.poner_atajos({atajos.SINCRONIZAR: "ctrl+alt+s", atajos.VENTANA: "ctrl+alt+v"}), True)
+c("  registra cada uno con RegisterHotKey, y el ocupado se dice con su motivo",
+  (esperar(lambda: bool(PUESTOS)), sorted(api.registrados.values()),
+   PUESTOS[-1][1] if PUESTOS else None),
+  (True, [atajos.windows("ctrl+alt+s")], {atajos.VENTANA: atajos.YA_LA_USA}))
+antes = len(PEDIDAS)
+ident = next(iter(api.registrados))
+api.enviar(bw.WM_HOTKEY, ident, 0)
+c("WM_HOTKEY con su id es una petición más, como las del menú",
+  esperar(lambda: PEDIDAS[antes:] == [{"pide": equipo.PIDE_ATAJO,
+                                       "accion": atajos.SINCRONIZAR}]), True)
+api.enviar(bw.WM_HOTKEY, 9999, 0)
+api.enviar(bw.WM_NULL, 0, 0)
+c("  un id que no es nuestro no pide nada", esperar(lambda: api.cola.empty())
+  and len(PEDIDAS) == antes + 1, True)
+b.poner_atajos({atajos.CARPETA: "super+f9"})
+c("otros atajos sueltan los de antes y ponen los nuevos",
+  (esperar(lambda: len(PUESTOS) == 2), sorted(api.registrados.values()), PUESTOS[-1][1]),
+  (True, [atajos.windows("super+f9")], {}))
+b.poner_atajos({})
+c("  sin ninguno, ninguno registrado", (esperar(lambda: len(PUESTOS) == 3), api.registrados),
+  (True, {}))
+b.poner_atajos({atajos.PAUSAR: "ctrl+alt+p"})
+esperar(lambda: len(PUESTOS) == 4)
+
 # cerrar
 b.cerrar()
+c("al cerrar se sueltan los atajos", api.registrados, {})
 c("al cerrar se quita el icono", esperar(lambda: api.llamadas[-1][0] == bw.NIM_DELETE), True)
 c("  se sueltan los iconos cargados", sorted(api.soltados),
   ["H:bandeja-bien.ico", "H:bandeja-pausa.ico"])
