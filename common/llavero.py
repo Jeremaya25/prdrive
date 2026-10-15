@@ -551,22 +551,22 @@ def vigilante_vivo() -> bool:
 VIGILAR = "--vigilar-llavero"
 """El argumento de `runsync.py` que lo hace vigilante: lo que lo distingue de otro proceso."""
 ESPERA_MUERTE = 3.0  # segundos
-"""Lo que se espera a que un proceso terminado deje de estar vivo: la señal no es instantánea."""
+"""Lo que se espera a que un proceso terminado deje de estar vivo: la señal no es instantánea.
+
+Se cuenta en pasos de `dormir()` (`PASO_MUERTE`) y no con un reloj, como los demás plazos
+del llavero: con un `dormir()` de mentira, los tests no esperan de verdad.
+"""
+PASO_MUERTE = 0.1  # segundos
+"""Cada cuánto se mira si un proceso terminado ha muerto ya."""
 
 
 def apuntar_diario(texto: str) -> None:
-    """Añade una línea con la hora al diario del servicio (`state/daemon.log`), como `runsync.dlog()`.
+    """Añade una línea con la hora al diario del servicio (`state/daemon.log`).
 
-    No lanza: el diario no es vital. Es función de módulo para que los tests
-    la sustituyan.
+    Es `store.apuntar_diario()`, la misma regla que `runsync.dlog()`. No lanza.
+    Es función de módulo para que los tests la sustituyan.
     """
-    ruta = model.STATE_DIR / "daemon.log"
-    try:
-        store.recortar_diario(ruta)
-        with ruta.open("a", encoding="utf-8") as f:
-            f.write(f"{store.stamp()} {texto}\n")
-    except OSError:
-        pass
+    store.apuntar_diario(model.STATE_DIR / "daemon.log", texto)
 
 
 INTERPRETES = ("python.exe", "pythonw.exe")
@@ -620,9 +620,10 @@ def terminar_vigilante() -> bool:
                  "ha podido comprobar que ese pid sea el suyo")
     else:
         matar_arbol(pid)
-        limite = time.monotonic() + ESPERA_MUERTE
-        while store.pid_alive(pid) and time.monotonic() < limite:
-            dormir(0.1)                     # morir no es instantáneo: la señal llega después
+        for _ in range(round(ESPERA_MUERTE / PASO_MUERTE)):
+            if not store.pid_alive(pid):
+                break
+            dormir(PASO_MUERTE)             # morir no es instantáneo: la señal llega después
         if store.pid_alive(pid):
             dicho = f"[llavero] el vigilante (pid {pid}) no se iba, y sigue vivo tras terminarlo"
         else:

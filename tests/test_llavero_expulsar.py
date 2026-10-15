@@ -17,6 +17,7 @@ import contextlib
 import io
 import os
 import sys
+import time
 import types
 
 from _harness import Checks, sandbox
@@ -237,11 +238,14 @@ try:
         # ni terminándolo se va (un permiso, un antivirus): se dice, y la unidad se deja quitar
         vigilante_con(DEL_EQUIPO, SUYA)
         llavero.matar_arbol = lambda pid: eq.matados.append(pid)
-        real_muerte, llavero.ESPERA_MUERTE = llavero.ESPERA_MUERTE, 0.05
+        empieza = time.monotonic()
         cierre = keepassxc.cerrar_llavero(config())
-        llavero.matar_arbol, llavero.ESPERA_MUERTE = eq.matar_arbol, real_muerte
+        tardado = time.monotonic() - empieza
+        llavero.matar_arbol = eq.matar_arbol
         c("si ni terminándolo se va, se intenta una vez y se dice que sigue vivo",
           (eq.matados, "sigue vivo" in lo_dicho(), cierre.listo), ([VIGILANTE], True, True))
+        c("  esperando por pasos de dormir() y no por reloj de pared: con dormir() de mentira "
+          "no se espera de verdad", tardado < 1.0, True)
         c("  y su registro se queda: sigue siendo suyo", registro_v.exists(), True)
         diario.unlink(missing_ok=True)
         eq.vivos.pop(VIGILANTE, None)

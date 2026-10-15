@@ -191,7 +191,7 @@ DIARIO_QUEDAN = 300
 def recortar_diario(ruta: Path) -> None:
     """Recorta un diario de texto que ha pasado de `DIARIO_TOPE`.
 
-    Lo usan `runsync.dlog` y `agente.dlog` antes de añadir su línea. Pasado el
+    Lo usan `apuntar_diario()` (`runsync.dlog` y el llavero) y `agente.dlog` antes de añadir su línea. Pasado el
     tope reescribe el fichero con las últimas `DIARIO_QUEDAN` líneas, de forma
     atómica (`write_text`). No protege una línea que otro proceso añada entre la
     lectura y la reescritura: es un diario, y la escribe un solo servicio por
@@ -242,6 +242,24 @@ def recortar_diario(ruta: Path) -> None:
                 os.close(fd)
             except OSError:
                 pass
+
+def apuntar_diario(ruta: Path, texto: str) -> None:
+    """Añade una línea con la hora a un diario de texto, recortándolo antes si ha pasado del tope.
+
+    Es la regla del diario del servicio (`runsync.dlog()`) y de lo que el
+    llavero deja en él (`llavero.apuntar_diario()`): `recortar_diario()` y
+    luego `<hora> <texto>`. Abre y cierra el fichero en cada línea, para no
+    mantener ningún descriptor abierto sobre el dispositivo: bloquearía su
+    extracción segura. No lanza: el diario no es vital (dispositivo ausente o
+    de solo lectura). El del agente (`agente.dlog()`) no pasa por aquí: se abre
+    sin seguir enlaces y dentro de la raíz.
+    """
+    try:
+        recortar_diario(ruta)
+        with ruta.open("a", encoding="utf-8") as f:
+            f.write(f"{stamp()} {texto}\n")
+    except OSError:
+        pass
 
 
 def crear_exclusivo(ruta: Path, datos: bytes) -> bool | None:

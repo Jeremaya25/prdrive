@@ -197,6 +197,32 @@ c("  las más nuevas", lineas[-1].startswith("linea 002999"), True)
 c("  empezando por la 2700", lineas[0].startswith("linea 002700"), True)
 c("  sin dejar un temporal", sorted(p.name for p in ruta.parent.iterdir()), ["daemon.log"])
 
+# una línea al diario: la regla es una, de `store`, y la usan runsync y el llavero
+diario = tmpdir("prdrive-apuntar-") / "daemon.log"
+store.apuntar_diario(diario, "[llavero] primera")
+store.apuntar_diario(diario, "[llavero] segunda")
+lineas = diario.read_text(encoding="utf-8").splitlines()
+c("apuntar_diario añade una línea por llamada, con la hora delante",
+  [linea.split(" ", 2)[2] for linea in lineas], ["[llavero] primera", "[llavero] segunda"])
+c("  y la hora es la de store.stamp()", len(lineas[0].split(" ", 2)[0] + " " + lineas[0].split(" ", 2)[1]),
+  len(store.stamp()))
+diario.write_text("".join(f"linea {i:06d} " + "x" * 80 + "\n" for i in range(3000)),
+                  encoding="utf-8")
+store.apuntar_diario(diario, "la última")
+lineas = diario.read_text(encoding="utf-8").splitlines()
+c("  pasado el tope lo recorta antes de añadir: las últimas 300 más la nueva",
+  (len(lineas) <= store.DIARIO_QUEDAN + 1, lineas[-1].endswith("la última")), (True, True))
+store.apuntar_diario(diario.parent / "no-existe" / "daemon.log", "nada")
+c("  y si no se puede escribir (carpeta que no está) no lanza", True, True)
+runsync_dlog = runsync.DLOG
+try:
+    runsync.DLOG = tmpdir("prdrive-dlog-") / "daemon.log"
+    runsync.dlog("[servicio] hola")
+    c("runsync.dlog escribe lo mismo, con la misma regla", runsync.DLOG.read_text(
+        encoding="utf-8").splitlines()[0].endswith(" [servicio] hola"), True)
+finally:
+    runsync.DLOG = runsync_dlog
+
 # lo que no se puede leer ni reescribir no lanza
 store.recortar_diario(ruta.parent)
 c("recortar algo que no es un fichero no lanza", True, True)
