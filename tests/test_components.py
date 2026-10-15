@@ -240,6 +240,85 @@ sello_vc = components.veracrypt_stamp_text(
 c("un sello escrito a mano no saca a nadie de la carpeta",
   components.veracrypt_ficheros(sello_vc), {"VeraCrypt-x64.exe": "a" * 64})
 
+# KeePassXC con el sello al día y un fichero que no cuadra: la ventana no resume 11 MB
+# al pintarse, así que lo sabe por lo que apuntó quien sí lo resumió (`comprobar()`)
+kpx = tmpdir("prdrive-comp-kpx-") / ".prdrive"
+poner_rclone(kpx, WIN, pins.RCLONE_VERSION)
+(kpx / "sync_config.toml").write_text('[keychain]\nbase = "personal.kdbx"\n', encoding="utf-8")
+kpx_dir = components.keepassxc_dir(kpx, "windows-x64")
+kpx_dir.mkdir(parents=True)
+(kpx_dir / components.KEEPASSXC_EXE).write_bytes(b"MZ")
+(kpx_dir / components.KEEPASSXC_STAMP).write_text(
+    components.keepassxc_stamp_text(pins.KEEPASSXC_VERSION, "x.zip", "0" * 64, {}),
+    encoding="utf-8")
+
+
+def kpx_pendiente(app: Path = kpx):
+    """Devuelve el KeePassXC pendiente de ese dispositivo, o `None`."""
+    return next((p for p in components.pendientes(app, fisica=None)
+                 if p.que == components.KEEPASSXC), None)
+
+
+c("KeePassXC con el sello al día y sin nada apuntado no está pendiente", kpx_pendiente(), None)
+c("  y nada apuntado se lee como vacío", components.keepassxc_alterado(kpx, "windows-x64"), {})
+c("apuntar que un fichero no cuadra se escribe en state/",
+  components.keepassxc_anotar_alterado(kpx, "windows-x64", pins.KEEPASSXC_VERSION,
+                                       "keepassxc-cli.exe"), True)
+c("  en el fichero de state/ que lee la ventana",
+  (kpx / "state" / components.KEEPASSXC_NO_OFICIAL).is_file(), True)
+c("  y se lee tal cual",
+  components.keepassxc_alterado(kpx, "windows-x64"),
+  {"version": pins.KEEPASSXC_VERSION, "fichero": "keepassxc-cli.exe"})
+alterado = kpx_pendiente()
+c("con el sello al día pero un fichero que no cuadra, sale pendiente",
+  (alterado.que, alterado.ruta) if alterado else None,
+  (components.KEEPASSXC, kpx_dir))
+c("  se puede poner al día desde la ventana", components.actualizables([alterado]), [alterado])
+c.contains("  y lo que lleva no es el mismo número que lo que toca", alterado.lleva,
+           "ficheros que no cuadran")
+c("  porque lo que toca sigue siendo la versión fijada", alterado.deberia, pins.KEEPASSXC_VERSION)
+c.contains("  y se cuenta en una frase", alterado.describe(), "KeePassXC del llavero")
+c("lo apuntado de otro paquete no cuenta para este",
+  components.keepassxc_alterado(kpx, "linux-x64"), {})
+components.keepassxc_anotar_alterado(kpx, "windows-x64", "2.7.10", "keepassxc-cli.exe")
+c("lo apuntado de otra versión que la del sello ya no cuenta",
+  kpx_pendiente(), None)
+components.keepassxc_anotar_alterado(kpx, "windows-x64", pins.KEEPASSXC_VERSION,
+                                     "keepassxc-cli.exe")
+c("olvidar lo apuntado apaga el aviso",
+  (components.keepassxc_olvidar_alterado(kpx, "windows-x64"), kpx_pendiente()), (True, None))
+c("  y olvidar lo que no estaba no es un error",
+  components.keepassxc_olvidar_alterado(kpx, "windows-x64"), True)
+components.keepassxc_anotar_alterado(kpx, "windows-x64", pins.KEEPASSXC_VERSION, "a.exe")
+components.keepassxc_anotar_alterado(kpx, "linux-x64", pins.KEEPASSXC_VERSION, "b")
+components.keepassxc_olvidar_alterado(kpx, "windows-x64")
+c("olvidar un paquete no olvida el otro",
+  (components.keepassxc_alterado(kpx, "windows-x64"),
+   components.keepassxc_alterado(kpx, "linux-x64")),
+  ({}, {"version": pins.KEEPASSXC_VERSION, "fichero": "b"}))
+(kpx / "state" / components.KEEPASSXC_NO_OFICIAL).write_text("{ a medias", encoding="utf-8")
+c("un fichero a medias se lee como «no consta nada», no lanza",
+  (components.keepassxc_alterado(kpx, "windows-x64"), kpx_pendiente()), ({}, None))
+(kpx / "state" / components.KEEPASSXC_NO_OFICIAL).write_text('["no", "es", "un", "objeto"]',
+                                                             encoding="utf-8")
+c("  ni uno que no es un objeto", components.keepassxc_alterado(kpx, "windows-x64"), {})
+(kpx / "state" / components.KEEPASSXC_NO_OFICIAL).write_text('{"windows-x64": "raro"}',
+                                                             encoding="utf-8")
+c("  ni uno cuyo apunte no es un objeto",
+  (components.keepassxc_alterado(kpx, "windows-x64"), kpx_pendiente()), ({}, None))
+(kpx / "state" / components.KEEPASSXC_NO_OFICIAL).unlink()
+(kpx / "state").rmdir()
+c("sin state/ (un dispositivo que se retira) apuntar no lanza",
+  components.keepassxc_anotar_alterado(kpx, "windows-x64", pins.KEEPASSXC_VERSION, "a.exe"),
+  True)
+(kpx / "state" / components.KEEPASSXC_NO_OFICIAL).unlink()
+(kpx / "state").rmdir()
+(kpx / "state").write_text("no soy una carpeta", encoding="utf-8")
+c("  y con un state que no es una carpeta, tampoco: devuelve que no se pudo",
+  components.keepassxc_anotar_alterado(kpx, "windows-x64", pins.KEEPASSXC_VERSION, "a.exe"),
+  False)
+(kpx / "state").unlink()
+
 # deriva: el instalador escribe donde el dispositivo lee
 raiz = tmpdir("prdrive-deriva-")
 app_r = raiz / ".prdrive"

@@ -38,8 +38,10 @@ Nada de `.prdrive/keepassxc/` entra en la huella del agente (`agente.huella()`),
 así que cada ejecutable de la unidad que se lanza o se registra se compara antes
 con el SHA-256 de `pins.KEEPASSXC_EJECUTABLES` (`comprobar()`; en Linux,
 `preparar_appimage()` resume la copia que va a extraer). Si no cuadra no se
-lanza nada y se dice por qué (`NoOficial`). Las DLL y el resto de ficheros que
-van al lado del programa no se comprueban.
+lanza nada y se dice por qué (`NoOficial`), y lo que no cuadra se apunta en
+`state/` para que la ventana ofrezca «Actualizar…», que lo repone
+(`components.keepassxc_alterado()`). Las DLL y el resto de ficheros que van al
+lado del programa no se comprueban.
 """
 
 from __future__ import annotations
@@ -301,21 +303,35 @@ NO_OFICIAL = ("El KeePassXC de la unidad no es el oficial ({motivo}), así que n
               "nada de él. {salida}")
 """Lo que se dice cuando un ejecutable no cuadra con su pin."""
 SALIDA_ACTUALIZAR = "Pulsa «Actualizar…» en la ventana de prdrive: le pone el oficial."
-"""Cómo seguir si lo que falta es el sello o la versión: «Actualizar…» los trae."""
-SALIDA_BORRAR = ("Borra la carpeta «{carpeta}» de la unidad y pulsa «Actualizar…» en la "
-                 "ventana de prdrive: vuelve a ponerlo.")
-"""Cómo seguir si un fichero no cuadra con un sello que sí está al día.
+"""Cómo seguir sea cual sea el motivo: «Actualizar…» pone el KeePassXC oficial.
 
-Con el sello al día, «Actualizar…» no se ofrece y poner el llavero otra vez no
-vuelve a copiar nada (`keepassxc_bin.al_dia()` mira el sello, no los ficheros):
-hace falta quitar la carpeta para que el paquete conste como ausente.
+Lo trae si falta el sello o es de otra versión, y también si un fichero no
+cuadra con un sello que sí está al día: `_alterado()` lo apunta en `state/` para
+que la ventana lo ofrezca, y `keepassxc_bin.al_dia()` mira además los
+ejecutables fijados, así que `instalar()` los repone. No hace falta borrar nada.
 """
 
 
-def _no_oficial(motivo: str, carpeta: Path | None = None) -> NoOficial:
-    """Devuelve el aviso de que algo no es el oficial; con `carpeta`, pide borrarla."""
-    salida = SALIDA_BORRAR.format(carpeta=carpeta) if carpeta else SALIDA_ACTUALIZAR
-    return NoOficial(NO_OFICIAL.format(motivo=motivo, salida=salida))
+def _no_oficial(motivo: str) -> NoOficial:
+    """Devuelve el aviso de que algo no es el oficial."""
+    return NoOficial(NO_OFICIAL.format(motivo=motivo, salida=SALIDA_ACTUALIZAR))
+
+
+def _alterado(motivo: str, app_dir: Path | None, paquete: str, version: str,
+              fichero: str) -> NoOficial:
+    """Devuelve el aviso de un fichero de la unidad que no cuadra, y lo deja apuntado.
+
+    Lo apunta en `state/` (`components.keepassxc_anotar_alterado()`) para que la
+    ventana, que no puede resumir 11 MB al pintarse, ofrezca «Actualizar…». Es
+    un favor: si no se puede escribir, el aviso sale igual.
+
+    Args:
+        app_dir: El del dispositivo; `None`, el de este.
+        version: La que dice el sello (la de `esperado()`).
+        fichero: El que no cuadra, tal como se llama en la carpeta del paquete.
+    """
+    components.keepassxc_anotar_alterado(app_dir, paquete, version, fichero)
+    return _no_oficial(motivo)
 
 
 def esperado(paquete: str | None, nombre: str,
@@ -383,10 +399,11 @@ def comprobar(ruta: Path, paquete: str | None, app_dir: Path | None = None) -> N
         if resumen is None:
             resumen = RESUMENES[clave] = _resumen(ruta)
     except OSError as e:
-        raise _no_oficial(f"no se ha podido leer {ruta.name}: {e}") from e
+        raise _alterado(f"no se ha podido leer {ruta.name}: {e}", app_dir, paquete, version,
+                        ruta.name) from e
     if resumen != oficial:
-        raise _no_oficial(f"{ruta.name} no es el de la versión {version}",
-                          components.keepassxc_dir(app, paquete))
+        raise _alterado(f"{ruta.name} no es el de la versión {version}", app_dir, paquete,
+                        version, ruta.name)
 
 
 def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
@@ -432,8 +449,9 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
         copia = nuevo / components.KEEPASSXC_APPIMAGE
         shutil.copyfile(appimage, copia)
         if _resumen(copia) != oficial:
-            raise _no_oficial(f"{components.KEEPASSXC_APPIMAGE} no es el de la versión "
-                              f"{version}", components.keepassxc_dir(app, paquete))
+            raise _alterado(f"{components.KEEPASSXC_APPIMAGE} no es el de la versión "
+                            f"{version}", app_dir, paquete, version,
+                            components.KEEPASSXC_APPIMAGE)
         copia.chmod(0o700)
         codigo = extraer_appimage(copia, nuevo)
         if codigo != 0 or not (nuevo / EXTRAIDO / APPRUN).is_file():

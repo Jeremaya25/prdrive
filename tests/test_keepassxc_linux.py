@@ -328,6 +328,10 @@ try:
     c("  ni toca lo que había", (len(extracciones),
                                  (hecho / "usr" / "bin" / "keepassxc").read_bytes()),
       (2, b"ELF " + OTRO))
+    c("  y apunta en state/ que el paquete no cuadra, para que la ventana ofrezca «Actualizar…»",
+      components.keepassxc_alterado(app, "linux-x64"),
+      {"version": pins.KEEPASSXC_VERSION, "fichero": components.KEEPASSXC_APPIMAGE})
+    components.keepassxc_olvidar_alterado(app, "linux-x64")
     poner_appimage(app, APPIMAGE, version="2.7.99", fijado_en=pins.KEEPASSXC_VERSION)
     try:
         keepassxc.preparar_appimage("linux-x64", app)
@@ -336,6 +340,8 @@ try:
         c.contains("una versión que no está en la tabla no se extrae", str(e), "2.7.99")
     c("  ni deja carpeta de esa versión en la caché",
       (len(extracciones), (cache / "2.7.99").exists()), (2, False))
+    c("  ni lo apunta como un fichero que no cuadra: el sello ya dice que toca «Actualizar…»",
+      components.keepassxc_alterado(app, "linux-x64"), {})
     poner_appimage(app, b"\x7fELF sin sello")
     (components.keepassxc_dir(app, "linux-x64") / components.KEEPASSXC_STAMP).unlink()
     try:

@@ -121,12 +121,18 @@ try:
         c.contains("  y se dice en español que no es el oficial", malo or "",
                    "El KeePassXC de la unidad no es el oficial")
         c.contains("  con cuál ha sido", malo or "", keepassxc.CLI)
-        c.contains("  y cómo seguir: borrar la carpeta y «Actualizar…»", malo or "",
-                   f"Borra la carpeta «{pkg}»")
-        c.contains("  que lo vuelve a poner", malo or "", "«Actualizar…»")
+        c.contains("  y cómo seguir: «Actualizar…», que lo vuelve a poner", malo or "",
+                   "«Actualizar…»")
+        c("  sin pedir que se borre nada ni nombrar la carpeta",
+          ("Borra" in (malo or ""), str(pkg) in (malo or "")), (False, False))
+        c("  y deja apuntado en state/ que el paquete no cuadra, para que la ventana ofrezca "
+          "«Actualizar…» sin resumir nada al pintarse",
+          components.keepassxc_alterado(None, "windows-x64"),
+          {"version": "9.9.9", "fichero": keepassxc.CLI})
         c("  y uno cambiado no hace daño a los demás", veredicto(exe), None)
         cli.write_bytes(CONTENIDO[keepassxc.CLI])
         keepassxc.RESUMENES.clear()
+        components.keepassxc_olvidar_alterado(None, "windows-x64")
 
         sellar("9.9.8")
         sin_pin = veredicto(exe)
@@ -137,17 +143,39 @@ try:
         sin_sello = veredicto(exe)
         c("sin sello, tampoco", sin_sello is not None, True)
         c.contains("  y se dice", sin_sello or "", "sello")
+        c("  y ni lo uno ni lo otro se apunta: la versión ya dice que toca «Actualizar…»",
+          components.keepassxc_alterado(None, "windows-x64"), {})
         sellar("9.9.9")
         (pkg / "otro.exe").write_bytes(b"MZ otro")
         c("un fichero que la tabla no nombra tampoco", veredicto(pkg / "otro.exe") is not None,
           True)
         c("un paquete que no es de la tabla tampoco",
           veredicto(exe, "windows-arm64") is not None, True)
+        c("  y esos tampoco se apuntan: no son un fichero cambiado",
+          components.keepassxc_alterado(None, "windows-x64"), {})
         pins.KEEPASSXC_EJECUTABLES["9.9.9"]["windows-x64"]["falta.exe"] = suma(b"x")
         falta = veredicto(pkg / "falta.exe")
         c("uno que la tabla nombra y no se puede leer se dice, no se da por bueno",
           falta is not None, True)
         c.contains("  con el motivo", falta or "", "no se ha podido leer")
+        c.contains("  y que «Actualizar…» lo repone", falta or "", "«Actualizar…»")
+        c("  y se apunta como uno que no cuadra, porque `al_dia()` también lo contaría",
+          components.keepassxc_alterado(None, "windows-x64"),
+          {"version": "9.9.9", "fichero": "falta.exe"})
+        components.keepassxc_olvidar_alterado(None, "windows-x64")
+
+        # apuntarlo es un favor a la ventana: si no se puede, el aviso sale igual
+        estado_bueno = model.STATE_DIR
+        model.STATE_DIR = root / "estado-roto"
+        model.STATE_DIR.write_text("no soy una carpeta", encoding="utf-8")
+        cli.write_bytes(b"MZ otra cli")
+        keepassxc.RESUMENES.clear()
+        c.contains("si no se puede escribir state/, se dice igual que no es el oficial",
+                   veredicto(cli) or "", "no es el oficial")
+        model.STATE_DIR = estado_bueno
+        cli.write_bytes(CONTENIDO[keepassxc.CLI])
+        keepassxc.RESUMENES.clear()
+        c("  y no deja nada apuntado", components.keepassxc_alterado(None, "windows-x64"), {})
 
         # el resultado se recuerda mientras no cambie la ruta, el tamaño ni el mtime
         keepassxc.RESUMENES.clear()
