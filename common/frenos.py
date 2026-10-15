@@ -157,12 +157,20 @@ def es_espejo(texto: str) -> bool:
     return _ESPEJO in texto
 
 
+EXPLICACION_LLAVERO = (
+    "El freno de borrados del llavero no se salta: sus bases son tus contraseñas. Comprueba "
+    "que no falte ninguna en un lado y, si hay copias de conflicto, usa «Combinar» al abrir "
+    "el llavero.")
+"""Lo que se dice en la consola cuando es el llavero el que ha topado con un freno de borrados."""
+
 ENTRADAS = [
     (es_borrados_bisync, EXPLICACION_BORRADOS),
     (es_cambiados_bisync, EXPLICACION_CAMBIADOS),
     (es_espejo, EXPLICACION_ESPEJO),
 ]
 """Las entradas que `sync.KNOWN_ERRORS` toma de aquí: una aguja y su explicación."""
+EXPLICACIONES = tuple(explicacion for _, explicacion in ENTRADAS)
+"""Las explicaciones de `ENTRADAS`: las que dicen cómo forzar y no valen para el llavero."""
 
 
 def tiene_freno(pair: Pair) -> bool:
@@ -171,6 +179,17 @@ def tiene_freno(pair: Pair) -> bool:
     bisync y los espejos (`sync`); un `copy` no borra y no tiene nada que forzar.
     """
     return pair.is_bisync or pair.mode.verb == "sync"
+
+
+def se_puede_forzar(pair: Pair) -> bool:
+    """Indica si a esa pareja se le puede saltar el freno de borrados en una pasada.
+
+    Si tiene freno (`tiene_freno()`) y no es la del llavero: sus bases son
+    contraseñas, y su salida cuando algo se borra es «Combinar», no `--force`.
+    Es la única regla: la orden de rclone, el aviso de `sync.py`, su línea de
+    órdenes y «Reparación» la comparten.
+    """
+    return tiene_freno(pair) and not pair.llavero
 
 
 def _lado(pair: Pair, camino: str) -> str:

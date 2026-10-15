@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from _harness import Checks, sandbox
-from _logs_frenos import SIMULACION_BISYNC, SIMULACION_BISYNC_VERSIONES, SIMULACION_ESPEJO
+from _logs_frenos import BISYNC_BORRADOS, SIMULACION_BISYNC, SIMULACION_BISYNC_VERSIONES, SIMULACION_ESPEJO
 
 import sync
 from common import bisync, frenos, model, orden, results
@@ -326,6 +326,79 @@ with sandbox():
         sync.execute = original
     c("INVARIANTE: baseline sin carpeta local aborta con 2 aunque se fuerce",
       (rc, ordenes), (2, []))
+
+# ---- El llavero no se fuerza: sus bases son contraseñas ---------------------------------
+
+CON_LLAVERO = {"defaults": DEF, "pair": [BISYNC],
+               "keychain": {"base": "personal.kdbx", "fichero_llave": True,
+                            "nombre_llave": "personal.keyx"}}
+cfg_llavero = model.parse_config(CON_LLAVERO)
+llavero_pair = cfg_llavero.select([model.LLAVERO])[0]
+c("la pareja del llavero se elige por su nombre (por eso hay que cerrarle la puerta aquí)",
+  llavero_pair.llavero, True)
+c("la orden del llavero no lleva --force aunque se pida forzar",
+  "--force" in orden.orden_rclone(llavero_pair, binario="R", filtros=None, config="c",
+                                  logfile="l", forzar=True), False)
+c("  ni la de una pareja normal deja de llevarlo",
+  "--force" in orden.orden_rclone(cfg_llavero.pairs[0], binario="R", filtros=None, config="c",
+                                  logfile="l", forzar=True), True)
+c("  la línea de aviso dice que al llavero no se le fuerza",
+  "llavero" in sync.avisar_forzada(llavero_pair), True)
+
+with sandbox():
+    model.CONFIG_FILE.write_text(
+        '[defaults]\nremote = "nas"\n\n[[pair]]\nname = "notas"\nlocal = "sync-data/notas"\n'
+        'remote_path = "/R/notas"\n\n[keychain]\nbase = "personal.kdbx"\nfichero_llave = true\n'
+        'nombre_llave = "personal.keyx"\n', encoding="utf-8")
+    model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+    lanzado = []
+    run_all, binario = sync.run_all, model.rclone_binary
+    sync.run_all = lambda ctx, selected: lanzado.append(ctx.force) or 0
+    model.rclone_binary = lambda: "RCLONE"
+    argv, sys.argv = sys.argv, ["sync.py", model.LLAVERO, "--force"]
+    try:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                sync.main()
+            dicho = "no salió"
+        except SystemExit as e:
+            dicho = str(e.code)
+    finally:
+        sync.run_all, model.rclone_binary, sys.argv = run_all, binario, argv
+    c("`sync.py keychain --force` se rechaza antes de lanzar nada y dice por qué",
+      (lanzado, "llavero" in dicho, "Combinar" in dicho), ([], True, True))
+
+    # Y sin forzar el llavero sigue yéndose por su nombre como siempre.
+    sys.argv = ["sync.py", model.LLAVERO]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync.run_all, model.rclone_binary = (lambda ctx, selected: lanzado.append(
+                [p.name for p in selected]) or 0), (lambda: "RCLONE")
+            sync.main()
+    finally:
+        sync.run_all, model.rclone_binary, sys.argv = run_all, binario, argv
+    c("  sin --force, el llavero se sincroniza como siempre", lanzado[-1], [model.LLAVERO])
+
+
+def explicar(pareja, texto):
+    """Devuelve lo que `sync.explain_failure()` dice de ese log para esa pareja."""
+    log = sync.temp_log("explicar")
+    log.write_text(texto, encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sync.explain_failure(log, pareja)
+    log.unlink(missing_ok=True)
+    return buf.getvalue()
+
+
+with sandbox():
+    del_llavero = explicar(llavero_pair, BISYNC_BORRADOS)
+    c("la consola no manda forzar el freno del llavero: dice que no se salta y lo suyo",
+      ("--force" in del_llavero, "Reparación" in del_llavero, "Combinar" in del_llavero),
+      (False, False, True))
+    de_notas = explicar(cfg_llavero.pairs[0], BISYNC_BORRADOS)
+    c("  y la de una pareja normal sigue diciendo cómo forzar",
+      ("--force" in de_notas, "Combinar" in de_notas), (True, False))
 
 # ---- El TOML no puede fijarlo -----------------------------------------------------------
 

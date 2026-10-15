@@ -316,10 +316,16 @@ def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
     print("---")
 
 
-def explain_failure(lpath: Path | None) -> None:
+def explain_failure(lpath: Path | None, pair: Pair | None = None) -> None:
     """Traduce el error de rclone a algo accionable.
 
     Los casos nuevos se añaden a `KNOWN_ERRORS`, nunca en quien llama.
+
+    Args:
+        lpath: El log de la pasada.
+        pair: La pareja que falló, si se sabe. Las explicaciones de un freno de
+            borrados dicen cómo forzar la pasada, y al llavero no se le fuerza:
+            para él se dice lo suyo (`frenos.EXPLICACION_LLAVERO`).
     """
     if lpath is None:
         return
@@ -331,6 +337,8 @@ def explain_failure(lpath: Path | None) -> None:
         return          # ya lo ha dicho print_log_tail, que va antes
     for needle, explanation in KNOWN_ERRORS:
         if needle(text) if callable(needle) else needle in text:
+            if pair is not None and pair.llavero and explanation in frenos.EXPLICACIONES:
+                explanation = frenos.EXPLICACION_LLAVERO
             print(f"  >> {explanation}")
             return
 
@@ -669,7 +677,10 @@ def decir_lo_que_borraria(pair: Pair, logfile: Path) -> None:
 
 def avisar_forzada(pair: Pair) -> str:
     """Devuelve la línea que dice cómo salta el freno una pasada forzada, o que no hay freno."""
-    if not frenos.tiene_freno(pair):
+    if pair.llavero:
+        return ("--force no se aplica al llavero: sus bases son tus contraseñas y su freno no "
+                "se salta. Sigue la pasada normal.")
+    if not frenos.se_puede_forzar(pair):
         return (f"--force no hace nada aquí: el modo {pair.mode.name} no tiene freno de "
                 "borrados. Sigue la pasada normal.")
     como = "--force" if pair.is_bisync else "--max-delete -1"
@@ -730,7 +741,7 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     # no el simple hecho de ser un resync.
     medida.resync = bool(need_resync) and not vacia
     rc = execute(ctx, cmd, logfile)
-    if ctx.dry_run and ctx.force and rc == 0 and frenos.tiene_freno(pair):
+    if ctx.dry_run and ctx.force and rc == 0 and frenos.se_puede_forzar(pair):
         decir_lo_que_borraria(pair, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
@@ -746,7 +757,7 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     else:
         print(f"[{pair.name}] FALLÓ (código {rc}). Log: {saved}")
         print_log_tail(saved)
-        explain_failure(saved)
+        explain_failure(saved, pair)
     record_result(ctx, pair, rc, saved, reloj, final)
     if not pair.llavero and not ctx.dry_run:
         # El llavero puede dar otra pasada aquí debajo: su parte se cierra al final.
@@ -967,6 +978,9 @@ def main() -> int:
         selected = config.select(args.pairs) if args.pairs else list(config.pairs)
     except model.ConfigError as e:
         sys.exit(str(e))
+    if args.force and any(p.llavero for p in selected):
+        sys.exit("--force no vale para el llavero: sus bases son tus contraseñas y su freno no "
+                 "se salta. Si hay copias de conflicto, usa «Combinar» al abrir el llavero.")
     if not model.RCLONE_CONF.exists():
         sys.exit(f"No existe {model.RCLONE_CONF}. Crea la config de rclone con el "
                  f"remote SFTP.")

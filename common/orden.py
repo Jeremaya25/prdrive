@@ -131,7 +131,7 @@ def _salta_el_tope(pair: Pair, forzar: bool, resync: bool) -> bool:
     Solo un espejo (`sync`): bisync se salta el suyo con `--force`, que no quita nada, y un
     resync no pasa por el freno.
     """
-    return forzar and not resync and frenos.tiene_freno(pair) and not pair.is_bisync
+    return forzar and not resync and frenos.se_puede_forzar(pair) and not pair.is_bisync
 
 
 def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
@@ -155,8 +155,8 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
             conserva su `--max-delete`, un %, y lo salta) y `--max-delete -1` en un
             espejo, en lugar de su tope (una cuenta), y se quita el que haya escrito la
             pareja con cualquier grafía (`max_delete`) o en `extra_flags`. En un `copy`,
-            o en un resync, no cambia nada. Es de esta pasada y de ninguna otra: no se
-            lee del TOML.
+            o en un resync, no cambia nada, ni en la pareja del llavero. Es de esta pasada y de ninguna otra:
+            no se lee del TOML.
     """
     flags = {nombre: FlagEfectivo(nombre, valor,
                                   pair.origen_flags.get(nombre, model.ORIGEN_PAREJA))
@@ -184,7 +184,7 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
 
     # Un resync no pasa por el freno de borrados (no compara contra el listado
     # anterior): no tiene nada que saltar, y juntos `--resync --force` no se piden.
-    if forzar and frenos.tiene_freno(pair) and not resync:
+    if forzar and frenos.se_puede_forzar(pair) and not resync:
         if pair.is_bisync:
             pone("force", True)
         else:
