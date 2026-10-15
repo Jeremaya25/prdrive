@@ -41,9 +41,17 @@ def pareja():
     return par
 
 
-def listado(par, sufijo):
-    """Devuelve la ruta de un listado del baseline, con el nombre que rclone espera."""
-    return par.workdir / (bisync.expected_prefix(par) + sufijo)
+def listado(par, sufijo, prefijo=None):
+    """Devuelve la ruta de un listado del baseline, con el nombre que rclone espera.
+
+    Con `prefijo`, el de un baseline que guardó otra pareja o este mismo con otros extremos.
+    """
+    return par.workdir / ((prefijo or bisync.expected_prefix(par)) + sufijo)
+
+
+def claves(hallazgos):
+    """Devuelve las claves de los hallazgos, sin repetir y ordenadas."""
+    return sorted({h.clave for h in hallazgos})
 
 
 def con_resync(ordenes):
@@ -51,15 +59,15 @@ def con_resync(ordenes):
     return bool(ordenes) and "--resync" in ordenes[0]
 
 
-def baseline(par, uno=CABECERA, otro=CABECERA):
+def baseline(par, uno=CABECERA, otro=CABECERA, prefijo=None):
     """Deja en el workdir los dos listados con ese contenido, y el `.md5` de los filtros.
 
     Sin el `.md5` de un `--resync` previo, los filtros cuentan como nuevos y la
     pareja pediría un resync por ellos antes de llegar al caso.
     """
     par.workdir.mkdir(parents=True, exist_ok=True)
-    listado(par, bisync.PATH1_SUFFIX).write_text(uno, encoding="utf-8")
-    listado(par, bisync.PATH2_SUFFIX).write_text(otro, encoding="utf-8")
+    listado(par, bisync.PATH1_SUFFIX, prefijo).write_text(uno, encoding="utf-8")
+    listado(par, bisync.PATH2_SUFFIX, prefijo).write_text(otro, encoding="utf-8")
     ffile = bisync.filters_file_for(par)
     if ffile:
         Path(str(ffile) + ".md5").write_text(
@@ -272,5 +280,76 @@ with sandbox():
     baseline(par, CABECERA + FICHERO, CABECERA + FICHERO)
     c("--doctor no lo dice si hay algo en la referencia",
       "referencia: vacía" in "\n".join(revision.informe(cfg)), False)
+
+# --- el baseline tiene que ser de ESTA pareja ---------------------------------------
+
+OTRO_PREFIJO = "disp_sync-data_docs..nas__otro_destino"
+"""Lo que quedaría guardado si el extremo cambió sin apartar el baseline (TOML a mano, un alias)."""
+
+with sandbox():
+    par = pareja()
+    cfg = model.parse_config({"defaults": DEF, "pair": [BI]})
+    baseline(par, prefijo=OTRO_PREFIJO)
+    c("un baseline vacío con el prefijo de OTRO destino no es de esta pareja",
+      bisync.referencia_vacia(par), False)
+    rc, salida, ordenes, _ = pasar(par)
+    c("y la pasada no lo rehace sola: sin --resync, como hasta ahora",
+      (rc, con_resync(ordenes)), (0, False))
+    c("ni dice que lo rehace", "referencia está vacía" in salida, False)
+    c("--doctor no promete rehacerlo",
+      "referencia: vacía" in "\n".join(revision.informe(cfg)), False)
+    c("y «Reparación» sigue diciendo que el baseline no es de esta pareja",
+      "prefijo" in claves(revision.revisar(cfg, fisica=None)), True)
+
+
+# --- sin carpeta local, la pasada no la rehace: --doctor no puede decir que sí ---------
+
+with sandbox():
+    par = pareja()
+    cfg = model.parse_config({"defaults": DEF, "pair": [BI]})
+    baseline(par)
+    par.local_abs.rmdir()
+    c("referencia vacía y sin carpeta local: la pasada no la rehace",
+      bisync.referencia_vacia(par), False)
+    texto = "\n".join(revision.informe(cfg))
+    c("--doctor no promete que la próxima pasada la rehace",
+      "la próxima pasada la rehace" in texto, False)
+    c("y sí avisa de que falta la carpeta local",
+      "local" in claves(revision.revisar(cfg, fisica=None)), True)
+
+
+# --- la decisión se toma una vez, en el preflight ----------------------------------------
+
+with sandbox():
+    ctx = sync.RunContext(binary="RCLONE", env={})
+    par = pareja()
+    baseline(par)
+    with contextlib.redirect_stdout(io.StringIO()):
+        c("preflight de una referencia vacía: resync, vacía, sin abortar",
+          sync._bisync_preflight(ctx, par), (True, True, None))
+        baseline(par, CABECERA + FICHERO, CABECERA + FICHERO)
+        c("preflight de una referencia llena: ni resync ni vacía",
+          sync._bisync_preflight(ctx, par), (False, False, None))
+        baseline(par)
+        par.local_abs.rmdir()
+        c("preflight de una referencia vacía sin carpeta local: aborta con 2",
+          sync._bisync_preflight(ctx, par), (False, False, 2))
+
+with sandbox():
+    par = pareja()
+    baseline(par)
+    llamadas = []
+    original = bisync.referencia_vacia
+
+    def contada(*args, **kwargs):
+        llamadas.append(args)
+        return original(*args, **kwargs)
+
+    bisync.referencia_vacia = contada
+    try:
+        pasar(par)
+    finally:
+        bisync.referencia_vacia = original
+    c("una pasada pregunta una sola vez si la referencia está vacía", len(llamadas), 1)
 
 raise SystemExit(c.report())

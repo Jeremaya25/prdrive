@@ -426,28 +426,40 @@ def _sin_entradas(lst: Path) -> bool:
 
 
 def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
-    """Indica si el baseline de la pareja no tiene ni un fichero ni una carpeta.
+    """Indica si la pasada va a rehacer sola el baseline de la pareja, por estar vacío.
 
-    Es lo que deja un `--resync` sobre dos lados vacíos, y rclone aborta con
-    ello toda pasada que no sea otro `--resync` (`checkListing()`, «Empty prior
-    Path1 listing», código 7) porque no sabe distinguir una carpeta vacía de
-    una sin montar. Tienen que estar vacíos los DOS listados: si solo lo está
-    uno, un lado se ha vaciado desde la última pasada buena y rclone debe
-    pararla. Con una referencia vacía no queda nada que proteger, y la rehace
-    sola `sync._bisync_preflight()`.
+    Un baseline vacío es lo que deja un `--resync` sobre dos lados vacíos, y
+    rclone aborta con él toda pasada que no sea otro `--resync`
+    (`checkListing()`, «Empty prior Path1 listing», código 7) porque no sabe
+    distinguir una carpeta vacía de una sin montar. Con la referencia vacía no
+    queda nada que proteger, y la rehace sola `sync._bisync_preflight()`. Esa
+    decisión es esta función, y `--doctor` dice lo mismo porque la usa también.
+    Tiene que cumplirse todo:
+
+    - El baseline es de ESTA pareja: su prefijo es el esperado
+      (`expected_prefix()`). Si un extremo cambió sin apartarlo (el TOML a
+      mano, el destino de un `alias`), rclone no lo encontraría, y rehacer sin
+      preguntar contra los extremos nuevos es decisión de una persona
+      («Reparación», hallazgo `prefijo`).
+    - La carpeta local existe. Sin ella, con baseline, la pasada aborta con 2
+      y no crea nada: un lado vacío se lee como «han borrado todo».
+    - Los DOS listados están vacíos. Si solo lo está uno, un lado se ha vaciado
+      desde la última pasada buena y rclone debe pararla.
 
     Args:
         state: El estado ya calculado, para no recorrer otra vez el workdir.
 
     Returns:
-        `True` si hay baseline y sus dos listados están vacíos; `False` si no
-        lo hay, si falta uno o no se puede leer, y fuera de bisync.
+        `True` si se cumple todo lo anterior; `False` si no, si falta un
+        listado o no se puede leer, y fuera de bisync.
     """
     if not pair.is_bisync:
         return False
     if state is None:
         state = pair_state(pair)
-    if not state.has_baseline:
+    if not state.has_baseline or state.prefix != expected_prefix(pair):
+        return False
+    if not pair.local_abs.exists():
         return False
     return all(_sin_entradas(pair.workdir / (state.prefix + sufijo))
                for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX))
