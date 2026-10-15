@@ -15,6 +15,7 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 | Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
 | Ficheros en conflicto | Elegir con qué versión te quedas |
 | La última pasada falló | Abrir el log que lo explica |
+| **El freno de borrados paró la pasada** (casi todo ha desaparecido de un lado, o han cambiado todos los ficheros) | Ver qué se borraría y, si es lo que querías, **forzar una sola pasada** ([más abajo](#cuando-salta-el-freno-de-borrados)) |
 | Un contenedor VeraCrypt **dinámico** se queda sin sitio fuera (menos de 1 GiB libre en la unidad) | Liberar sitio fuera del contenedor. Si se llena, lo de dentro da errores de escritura en mitad de una pasada |
 | **La carpeta local no está** | **Nada, a propósito**: ver abajo |
 
@@ -24,6 +25,52 @@ tiene baseline, **no se ofrece crearla**: un lado local vacío se lee como «se 
 borrado todo» y eso se propagaría al remoto. Lo que hay que arreglar está fuera
 del programa —el volumen no está montado donde se cree, o la carpeta se movió—,
 así que la pantalla lo dice y se calla.
+
+## Cuando salta el freno de borrados
+
+Si de golpe desaparece casi todo de un lado, lo más probable es un error —la
+unidad no está montada donde toca, la carpeta es otra, el remoto está vacío— y no
+una decisión tuya. Por eso rclone frena, y no se mide igual en todos los modos:
+
+- **Las parejas `bisync`** paran cuando ha desaparecido de un lado más de un
+  **porcentaje** de los ficheros que había en la última sincronización (un 25 % de
+  fábrica). Al parar no han copiado nada. Paran también si **todos** los ficheros
+  de un lado han cambiado (pasa con un cambio de hora, o al tocar toda la carpeta).
+- **Los espejos** (`up-mirror`, `down-mirror`) borran hasta un **número** de
+  ficheros (50 de fábrica) y paran. Ojo: esos ya se han borrado y no vuelven; lo
+  que frena es lo que queda por borrar.
+
+«Reparación» lo cuenta con las cifras y el lado, en vez de dejarlo en un «la última
+pasada falló»: *«Se han borrado 3429 de 3452 ficheros (99 %) en el dispositivo… La
+pasada se paró para no copiar ese borrado al remoto.»* Y trae tres botones:
+
+| Botón | Qué hace |
+|---|---|
+| **Ver qué se borraría** | La misma pasada en simulacro (`--dry-run`): enseña los ficheros que borraría y no toca nada. No pide confirmación. |
+| **Forzar sincronización…** | Enseña lo que va a pasar —qué se borrará y dónde, y que si ese lado está desmontado o vacío por error, se pierde— y solo si le dices que sí lanza **una** pasada sin el freno. |
+| **Ver el log** | Abre el log de la pasada que paró. |
+
+Forzar vale **para esa pasada y nada más**: la siguiente vuelve a llevar el freno. No
+lo hace nunca el servicio, ni el arranque automático, ni el agente, ni se puede
+dejar puesto en el config. Y no se ofrece si falta la carpeta local, ni en la
+pareja del llavero.
+
+Antes de forzar, mira ese lado: ¿está montado el volumen?, ¿es la carpeta de
+siempre? Hay salidas menos peligrosas:
+
+- En una pareja `bisync`, si los ficheros se borraron por error, un `--resync` los
+  recupera desde el otro lado: junta los dos lados sin borrar nada.
+- En un espejo, arregla el origen (móntalo, recupera la carpeta) y la siguiente
+  pasada vuelve a copiar lo que falte. Un espejo no guarda versiones: lo que ya
+  borró no se puede recuperar de ahí.
+
+Desde la consola, con la pareja nombrada (sin nombre, o junto a `--resync`, se
+rechaza):
+
+```bash
+python sync.py notas --dry-run --force   # qué borraría, sin tocar nada
+python sync.py notas --force             # una pasada sin el freno
+```
 
 Desde ahí también se puede **simular una pasada** (`--dry-run`) antes de
 sincronizar de verdad, y ver el informe completo, que es lo mismo que:

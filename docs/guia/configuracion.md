@@ -47,8 +47,8 @@ funden en cuatro capas y gana la última:
 BASE_FLAGS  <  flags del modo  <  [defaults.flags]  <  [pair.flags]
 ```
 
-El script se reserva `--config`, `--log-file`, `--dry-run`, `--workdir` y
-`--resync`, porque dependen de *esta* ejecución. Para lo que no quepa en el
+El script se reserva `--config`, `--log-file`, `--dry-run`, `--workdir`,
+`--resync` y `--force`, porque dependen de *esta* ejecución. Para lo que no quepa en el
 esquema está `extra_flags`, una lista de cadenas que se pasan crudas.
 
 ### Lo que el config no admite
@@ -66,7 +66,10 @@ leerlo si trae:
   `memprofile` guardarían (o vaciarían) la ruta que les pongas.
 - **Un flag que ya pone el script**, también en `extra_flags`: `resync = true`
   forzaría un `--resync` en cada pasada, y un `--config` o un `--workdir` propios
-  pisarían los del dispositivo.
+  pisarían los del dispositivo. Lo mismo `force = true`: dejaría
+  saltado para siempre el freno de borrados. Se pide en cada pasada, con la ventana o
+  `sync.py PAREJA --force` ([Diagnóstico](diagnostico.md#cuando-salta-el-freno-de-borrados)).
+  `max-delete = -1` (sin tope) sí se admite: es tu decisión y rclone lo entiende.
 - **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
   letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
   o comillas, rclone lo leería como una conexión con sus propias opciones

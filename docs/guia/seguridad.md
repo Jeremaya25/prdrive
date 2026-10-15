@@ -36,7 +36,11 @@ Léelo entero antes de usar esto con datos que te importen.
   ni `--temp-dir`, `--cache-dir` o los ficheros de filtros (`--*-from`). Con una
   unidad ajena, léelo antes de enchufarla.
 - **Los modos `*-mirror` borran.** `--max-delete` es el único freno automático.
-  Prueba siempre con `--dry-run` primero.
+  Prueba siempre con `--dry-run` primero. Saltarse un freno es siempre
+  cosa tuya y de **una** pasada: «Forzar sincronización…» en «Reparación», tras leer lo
+  que va a pasar, o `python sync.py PAREJA --force`. No hay forma de dejarlo puesto en el
+  config, y el servicio, el arranque automático y el agente no lo hacen
+  ([Diagnóstico](diagnostico.md#cuando-salta-el-freno-de-borrados)).
 - **Escribir el catálogo es lo más arriesgado del programa**, porque gobierna
   borrados en todos tus dispositivos. Por eso `catalog.push()` genera y verifica
   el TOML antes de tocar la red, **relee el remoto y se niega si ha cambiado**
