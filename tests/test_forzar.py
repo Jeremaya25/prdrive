@@ -430,6 +430,14 @@ for donde, trozos in (
     c(f"--force no se acepta desde el TOML ({donde})", dicho is not None, True)
 c.contains("  y el mensaje dice cuál y qué hacer", motivo(con(pair={"flags": {"force": True}})),
            "Quítalo del config")
+# Antes de esto `force = true` era la ÚNICA forma de pasarle el --force de rclone (que él mismo
+# anuncia en sus abortos): quien lo tenga puesto ve este mensaje con la ventana cerrada, así que
+# dice cómo se consigue ahora lo que buscaba.
+for donde, trozos in (("[pair.flags]", {"pair": {"flags": {"force": True}}}),
+                      ("extra_flags", {"pair": {"extra_flags": ["--force"]}})):
+    dicho = motivo(con(**trozos))
+    c(f"  y a quien ya lo tenía ({donde}) le dice cómo forzar una pasada ahora",
+      ("Reparación" in dicho, "sync.py PAREJA --force" in dicho), (True, True))
 
 # Decisión: `max-delete = -1` SIGUE valiendo. En un espejo es el «sin tope» de rclone y en bisync
 # vuelve al 50 % de fábrica (`applyContext()` solo atiende un valor >= 0): una elección
