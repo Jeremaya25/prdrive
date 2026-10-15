@@ -428,6 +428,9 @@ def _informe_pareja(pair: Pair) -> list[str]:
                 " (no se puede comprobar: un alias del rclone.conf no se puede resolver)")
     lineas += [f"  estado: {estado.status} — {estado.detail}",
                f"  prefijo esperado: {bisync.expected_prefix(pair)}{sin_fiar}"]
+    if bisync.referencia_vacia(pair, estado):
+        lineas.append("  referencia: vacía — la próxima pasada la rehace con --resync "
+                      "(no hay nada que proteger)")
     filtros = bisync.filters_state(bisync.filters_file_for(pair))
     lineas.append(f"  filtros: {filtros.status} — {filtros.detail}")
 
