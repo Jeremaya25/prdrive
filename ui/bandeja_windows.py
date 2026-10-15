@@ -60,6 +60,14 @@ dependencias, y **sin probar en un Windows real** (ver
 - **Los avisos** cuelgan del propio icono (`NIM_MODIFY` + `NIF_INFO`), que en
   Windows 10 y 11 salen como notificación del sistema: `common/avisos.GLOBO`
   apunta a `globo()` mientras la bandeja vive.
+- **Los atajos de teclado globales** (`ui/atajos.py`) se registran aquí, con
+  `RegisterHotKey` sobre esta ventana: Windows manda `WM_HOTKEY` a la cola del
+  hilo dueño de la ventana, y este es el que ya tiene bucle de mensajes. El
+  agente pide los que quiere con `poner_atajos()` (otro hilo: llega como
+  `WM_ATAJOS`); aquí se sueltan los de antes, se registran los nuevos y se le
+  dice cuáles no ha dejado poner Windows (`atajos_puestos`). Cada `WM_HOTKEY`
+  es una petición más, `{"pide": "atajo", "accion": …}`, por el mismo `pedir()`
+  que el menú. Con `MOD_NOREPEAT`, dejar la tecla pulsada no la repite.
 - **Los iconos** son los cinco `bandeja-<estado>.ico` que `ui/icons.py` repinta
   en la carpeta del agente, cargados con `LoadImageW` al tamaño del icono
   pequeño del sistema (`SM_CXSMICON`), con la densidad declarada
@@ -79,7 +87,7 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
 from common import APP_NAME, avisos, equipo
-from ui import bandeja, icons
+from ui import atajos, bandeja, icons
 
 # Mensajes de ventana (winuser.h).
 WM_NULL = 0x0000
@@ -90,10 +98,14 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_POWERBROADCAST = 0x0218
 WM_DEVICECHANGE = 0x0219
+WM_HOTKEY = 0x0312              # un atajo de `RegisterHotKey`, con su id en `wParam`
 WM_APP = 0x8000
 WM_ICONO = WM_APP + 1           # lo que manda el icono: clics, en `lParam`
 WM_PONER = WM_APP + 2           # hay una vista nueva que enseñar
 WM_GLOBO = WM_APP + 3           # hay un aviso que colgar del icono
+WM_ATAJOS = WM_APP + 4          # hay atajos de teclado nuevos que poner
+PRIMER_ATAJO = 1
+"""El id del primer atajo de `RegisterHotKey`: los de un programa van de 0 a 0xBFFF."""
 
 PBT_APMRESUMESUSPEND = 0x0007   # vuelta de la suspensión, con alguien delante
 PBT_APMRESUMEAUTOMATIC = 0x0012  # vuelta de la suspensión, siempre
@@ -469,6 +481,10 @@ class Bandeja:
         volumen: Quien atiende los avisos de desmontaje que llegan por letra
             (`ReadDirectoryChanges.volumen`: los de VeraCrypt), si hay alguien:
             se le llama con el aviso y las letras (`P:`).
+        atajos_puestos: A quien se le dice, tras `poner_atajos()`, qué
+            combinaciones no ha dejado poner Windows: `atajos_puestos(combos,
+            rechazados)`, con el motivo de cada una por acción. Se llama desde
+            el hilo de la bandeja.
     """
 
     def __init__(self, carpeta_iconos: Path, pedir: Callable[[dict], None],
@@ -480,6 +496,9 @@ class Bandeja:
         self.api = api
         self.dispositivo: Callable[[int, int, str], None] | None = None
         self.volumen: Callable[[int, tuple[str, ...]], None] | None = None
+        self.atajos_puestos: Callable[[dict, dict], None] | None = None
+        self._atajos_pedidos: dict[str, str] | None = None
+        self._atajos: dict[int, str] = {}
         self.hwnd = None
         self.vista = bandeja.Vista(icons.BIEN, bandeja.tip("arrancando"), ())
         self._pendiente: bandeja.Vista | None = None
@@ -531,6 +550,18 @@ class Bandeja:
             return False
         hecho.wait(ESPERA_GLOBO)
         return resultado[0]
+
+    def poner_atajos(self, combos: dict[str, str]) -> bool:
+        """Pide al hilo de la bandeja que los atajos sean exactamente estos, por acción.
+
+        No espera: lo que Windows no deje poner llega por `atajos_puestos`.
+
+        Returns:
+            False si no hay ventana a la que pedírselo.
+        """
+        with self._cerrojo:
+            self._atajos_pedidos = dict(combos)
+        return self._avisar(WM_ATAJOS)
 
     def cerrar(self) -> None:
         """Cierra la ventana y espera a que el hilo acabe."""
@@ -584,6 +615,14 @@ class Bandeja:
         if msg == WM_GLOBO:
             self._colgar_globos()
             return 0
+        if msg == WM_ATAJOS:
+            self._poner_atajos()
+            return 0
+        if msg == WM_HOTKEY:
+            accion = self._atajos.get(wparam)
+            if accion is not None:
+                self.pedir({"pide": equipo.PIDE_ATAJO, "accion": accion})
+            return 0
         if msg == WM_DEVICECHANGE:
             atender, letras = self.dispositivo, self.volumen
             if wparam in AVISOS_DE_HANDLE and lparam and (atender or letras) is not None:
@@ -611,6 +650,7 @@ class Bandeja:
             self.api.destruir(hwnd)
             return 0
         if msg == WM_DESTROY:
+            self._soltar_atajos()
             if self._puesto:
                 self.api.notificar(NIM_DELETE, hwnd=hwnd, id=ID_ICONO, flags=0)
                 self._puesto = False
@@ -653,6 +693,38 @@ class Bandeja:
                 info=texto[:255], info_titulo=titulo[:63],
                 info_flags=NIIF_WARNING if urgente else NIIF_INFO))
             hecho.set()
+
+    def _soltar_atajos(self) -> None:
+        """Quita todos los atajos registrados."""
+        for ident in list(self._atajos):
+            self.api.soltar_atajo(self.hwnd, ident)
+        self._atajos.clear()
+
+    def _poner_atajos(self) -> None:
+        """Pone los atajos pedidos y dice cuáles no ha dejado poner Windows."""
+        with self._cerrojo:
+            combos, self._atajos_pedidos = self._atajos_pedidos, None
+        if combos is None:
+            return
+        self._soltar_atajos()
+        rechazados: dict[str, str] = {}
+        for n, accion in enumerate(atajos.ACCIONES):
+            combo = combos.get(accion)
+            if not combo:
+                continue
+            try:
+                mods, vk = atajos.windows(combo)
+            except ValueError:
+                rechazados[accion] = "no se entiende"
+                continue
+            ident = PRIMER_ATAJO + n
+            error = self.api.registrar_atajo(self.hwnd, ident, mods, vk)
+            if error:
+                rechazados[accion] = atajos.motivo_windows(error)
+            else:
+                self._atajos[ident] = accion
+        if self.atajos_puestos is not None:
+            self.atajos_puestos(dict(combos), rechazados)
 
     def _menu(self) -> None:
         """Enseña el menú y manda al agente las peticiones de la entrada elegida."""
@@ -893,6 +965,26 @@ class Api:
     def post(self, hwnd, mensaje: int) -> bool:
         """Manda un mensaje a la ventana sin esperar y devuelve si se ha podido."""
         return bool(self.user32.PostMessageW(hwnd, mensaje, 0, 0))
+
+    def registrar_atajo(self, hwnd, ident: int, mods: int, vk: int) -> int:
+        """Registra un atajo global con `RegisterHotKey` sobre la ventana.
+
+        Returns:
+            0 si se ha registrado; si no, `GetLastError()`
+            (`ERROR_HOTKEY_ALREADY_REGISTERED` si otro ya la tiene).
+        """
+        u, wt = self.user32, self.wt
+        u.RegisterHotKey.restype = wt.BOOL
+        u.RegisterHotKey.argtypes = [wt.HWND, self.ct.c_int, wt.UINT, wt.UINT]
+        if u.RegisterHotKey(hwnd, ident, mods, vk):
+            return 0
+        return self.ct.get_last_error() or 1
+
+    def soltar_atajo(self, hwnd, ident: int) -> None:
+        """Quita un atajo registrado con `registrar_atajo()`."""
+        u, wt = self.user32, self.wt
+        u.UnregisterHotKey.argtypes = [wt.HWND, self.ct.c_int]
+        u.UnregisterHotKey(hwnd, ident)
 
     def icono(self, ruta: Path):
         """Carga un `.ico` al tamaño del icono pequeño del sistema.

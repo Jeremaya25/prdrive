@@ -149,6 +149,7 @@ ICONOS_DEL_TEMA = {
     bandeja.I_REINTENTAR: "view-refresh",
     bandeja.I_LLAVERO: "dialog-password",
     bandeja.I_EXPULSAR: "media-eject",
+    bandeja.I_ATAJOS: "preferences-desktop-keyboard",
 }
 """Los iconos de las entradas (`bandeja.I_*`) como nombres del tema del escritorio.
 

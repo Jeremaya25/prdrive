@@ -34,8 +34,11 @@ python agente.py ajuste pedir_al_iniciar sí|no      # or espera_unidad_nueva SE
 python agente.py actualizar                         # fetch the new release and put it in place
 python agente.py actualizar ID                      # put that root on the agent's version (the tray's «Actualizar a la vX»)
 python agente.py expulsar ID                         # release that removable drive (the tray's «Expulsar»)
+python agente.py atajos                             # open the window that records the keyboard shortcuts
+python agente.py atajo sincronizar|carpeta|pausar|ventana  # do that shortcut's action, as if pressed
 python pregunta.py --nombre N --segundos S [--cambiada]  # the «¿Atender esta unidad?» window, what the agent
                                                     # launches (`agente.py pregunta` is the fallback if it is missing)
+python pregunta.py --atajos [--motivo TEXTO]        # the shortcut-recording window the agent launches (tray.md)
 
 python prdrive-install.py          # install wizard for a NEW device (Tk only)
 python prdrive-install.py --check  # rclone + connection + catalogue, then exit
@@ -123,3 +126,4 @@ Everything that touches the network, a real device or the desktop is a **module-
 - **Installing the agent and the host root**: `install.pintar_iconos`, `install.agente.conseguir_runtime()`/`lanzar()`/`autostart_file()`/`acceso_menu()`/`crear_lnk()`/`matar_arbol()`/`conseguir_rclone()`/`conseguir_veracrypt()`, `raiz_equipo.carpetas_sincronizadas()`/`veracrypt_instalado()`/`abrir_o_crear()`/`veracrypt_portatil()`.
 - **Folder notices**: `avisos_carpeta.limite_de_vigilancias()` (`max_user_watches`), `avisos_carpeta.sistema_de()` (the filesystem from mountinfo), and per engine `Inotify._add_watch()`/`_rm_watch()` (a test makes them fail with `ENOSPC`); on Windows every call goes through the engine's `api` (`avisos_carpeta.Win32`; tests pass `Win32Falsa`), and the tray's `Api.handle_de()` reads a device event's handle.
 - **Trays and network notices**: `bandeja_windows.Api`, the Linux tray's `conectar`/`conectar_sistema`, `red.AvisosDeRed`'s `api` (`red.ApiWindows`)/`conectar_sistema`/`conectar_netlink`.
+- **Global keyboard shortcuts** (`tray.md`): `agente.poner_atajos()` (builds the engine, lazily, through `Agente.poner_motor`; tests set `poner_motor` to a fake engine with `poner()`/`cerrar()`/`nombre`/`suspende` that answers through `Agente.atajos_hechos`), on Windows the tray's `Api.registrar_atajo()`/`soltar_atajo()` (`RegisterHotKey`/`UnregisterHotKey`), on Linux `atajos_linux.abrir_xlib()` (or `X11(…, abrir=)`; `tests/test_atajos_linux.py` passes an `XlibFalsa`, and runs the real one against an `Xvfb` it starts itself, never the developer's display) and `Portal(…, conectar=)` (`tests/_bus_falso.py`), and for the recording window `atajos.leer_estado()`/`pedir()` (what the agent says in `estado.json`, and the request left in its mailbox; `ui/tk_atajos.py` only calls `atajos.guardar()`/`respuesta()`).

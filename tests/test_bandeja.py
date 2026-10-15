@@ -124,13 +124,13 @@ F.vueltas(ag, 1)
 v = falsa.vistas[-1]
 c("sin raíces ni unidades: bien, esperando unidades", (v.icono, v.tip),
   (icons.BIEN, "prdrive · esperando unidades"))
-c("  el menú, sin cabecera gris ni dispositivos: pausar, cerrar y la versión del agente",
-  textos(v), ["Pausar", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
+c("  el menú, sin cabecera gris ni dispositivos: pausar, los atajos, cerrar y la versión del agente",
+  textos(v), ["Pausar", "Atajos de teclado…", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
 c("  la versión, apagada: no es algo que se elija", entrada(v, PIE[1]).activa, False)
 c("  cada entrada con su icono, y todos existen como glifo",
   ([e.icono for e in v.menu if e.texto and e.activa],
    all(i in icons.GLIFOS for i in bandeja.ICONOS)),
-  ([bandeja.I_PAUSAR, bandeja.I_REINTENTAR, bandeja.I_CERRAR], True))
+  ([bandeja.I_PAUSAR, bandeja.I_ATAJOS, bandeja.I_REINTENTAR, bandeja.I_CERRAR], True))
 F.vueltas(ag, 3)
 c("el agente solo pasa la vista cuando cambia", len(falsa.vistas), 1)
 
@@ -148,7 +148,7 @@ v = falsa.vistas[-1]
 c("una pasada en marcha: sincronizando, con la unidad y la pareja",
   (v.icono, v.tip), (icons.SINCRONIZANDO, "prdrive · sincronizando PRDRIVE-1 · docs"))
 c("  el menú: su desplegable, y lo del agente fuera (con una sola, sin «todo»)",
-  textos(v), ["PRDRIVE-1", "", "Pausar", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
+  textos(v), ["PRDRIVE-1", "", "Pausar", "Atajos de teclado…", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
 c("  dentro, sin repetir su nombre: configurar, explorador, sincronizar y su versión",
   dentro(v, "PRDRIVE-1"),
   ["Configurar", "Abrir en explorador", "Sincronizar ahora", *VERSION])
@@ -287,7 +287,7 @@ v = falsa.vistas[-1]
 c("con dos atendidas, cada una su desplegable (bajo el aviso que sigue), y fuera "
   "«Sincronizar todo ahora»",
   textos(v), ["PRDRIVE-1: falla fotos · Abrir…", "", "PRDRIVE-1", "PRDRIVE-2", "",
-              "Sincronizar todo ahora", "Pausar", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
+              "Sincronizar todo ahora", "Pausar", "Atajos de teclado…", "", "Buscar actualizaciones", "Cerrar el agente", *PIE])
 c("  que pide las dos", [p["id"] for p in entrada(v, "Sincronizar todo ahora").pide],
   [UNO, DOS])
 c("  ya en la lista, su icono propio", desplegable(v, "PRDRIVE-2").emblema,
@@ -355,7 +355,7 @@ c("la raíz cifrada cerrada: icono de bloqueada, sin alarmar",
   (v.icono, v.tip), (icons.BLOQUEADO, "prdrive · Mi portátil bloqueada"))
 c("  su desplegable dice que está bloqueada, y lleva la marca de prdrive por icono",
   (textos(v), desplegable(v, R).emblema),
-  ([R, "", "Pausar", "", "Buscar actualizaciones", "Cerrar el agente", *PIE], bandeja.MARCA))
+  ([R, "", "Pausar", "Atajos de teclado…", "", "Buscar actualizaciones", "Cerrar el agente", *PIE], bandeja.MARCA))
 c("  dentro: configurar y explorador (desbloqueando antes), sincronizar apagado, "
   "desbloquear y la casilla",
   [(e.texto, e.activa) for e in desplegable(v, R).hijos],

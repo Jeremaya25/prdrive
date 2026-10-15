@@ -35,6 +35,8 @@ on:
       - "common/equipo.py"
       - "common/expulsar.py"
       - "ui/bandeja_windows.py"
+      - "ui/atajos.py"
+      - "ui/atajos_linux.py"
       - "install/deploy.py"
       - "install/runtime_bin.py"
       - "install/platforms.py"

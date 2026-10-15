@@ -12,7 +12,7 @@ hay ningún secreto aquí: ni clave, ni `rclone.conf`, ni listados.
     agente.json           QUÉ hace: raíces que atiende (unidades y la del equipo,
                           con su contenedor si va cifrada), su modo, si su
                           ventana la ha pausado, plazos, moderación,
-                          `pedir_al_iniciar`
+                          `pedir_al_iniciar`, los atajos de teclado
     instalacion.json      DÓNDE está: código, Python, cuándo se registró
     agente.lock.json      una sola instancia por usuario
     agente.pide           el buzón: lo que otros le piden al agente
@@ -78,6 +78,15 @@ Es lo único que `agente.json` acepta en `Unidad.volumen`
 TEXTO_MODO = {UI: "abrir la ventana", DAEMON: "sincronizar en segundo plano",
               SYNC: "una pasada al enchufarla", NADA: "nada"}
 """Cómo se nombra cada modo de cara al usuario."""
+
+ACCIONES_DE_ATAJO = ("sincronizar", "carpeta", "pausar", "ventana")
+"""Las acciones que pueden llevar un atajo de teclado global (`ui/atajos.py`)."""
+FORMA_ATAJO = re.compile(r"(?:(?:ctrl|alt|shift|super)\+){1,4}[a-z0-9]{1,8}")
+"""La forma de una combinación guardada en `agente.json` (`ctrl+alt+s`).
+
+Es solo la forma: qué tecla vale y qué modificadores hacen falta lo decide
+`ui/atajos.py` al guardarla.
+"""
 
 ESPERA_UNIDAD_NUEVA = 120.0             # segundos para contestar «¿Atenderla?»
 ESPERA_MINIMA, ESPERA_MAXIMA = 10.0, 3600.0
@@ -285,6 +294,10 @@ class Ajustes:
             de VeraCrypt se oyen con los avisos del sistema en vez de
             recorrerse (`avisos_carpeta.ReadDirectoryChanges.volumen()`).
             Encendido de fábrica; se lee al arrancar el agente.
+        atajos: Los atajos de teclado globales, por acción (`ui/atajos.py`),
+            con la combinación en su forma de dentro (`ctrl+alt+s`). De
+            fábrica, ninguno. Solo lleva los que el sistema dejó poner al
+            guardarlos (`PIDE_ATAJOS`).
     """
     unidades: Mapping[str, Unidad] = field(default_factory=dict)
     espera_unidad_nueva: float = ESPERA_UNIDAD_NUEVA
@@ -293,6 +306,7 @@ class Ajustes:
     pedir_al_iniciar: bool = True
     estirar_intervalo: bool = True
     avisos_veracrypt: bool = True
+    atajos: Mapping[str, str] = field(default_factory=dict)
 
     def con_unidad(self, unidad: Unidad) -> "Ajustes":
         """Devuelve unos ajustes iguales con esa unidad añadida o sustituida."""
@@ -365,6 +379,10 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         if isinstance(m.get("pausar_ahorro_energia"), bool)
         else fabrica.pausar_ahorro_energia)
     extra = datos.get("extra_roots")
+    crudos = datos.get("atajos") if isinstance(datos.get("atajos"), dict) else {}
+    atajos = {a: c.strip().lower() for a, c in crudos.items()
+              if a in ACCIONES_DE_ATAJO and isinstance(c, str)
+              and FORMA_ATAJO.fullmatch(c.strip().lower())}
     return Ajustes(
         unidades=unidades,
         espera_unidad_nueva=_numero(datos.get("espera_unidad_nueva"),
@@ -376,7 +394,8 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
         if isinstance(datos.get("pedir_al_iniciar"), bool) else True,
         estirar_intervalo=estirar,
         avisos_veracrypt=datos["avisos_veracrypt"]
-        if isinstance(datos.get("avisos_veracrypt"), bool) else True)
+        if isinstance(datos.get("avisos_veracrypt"), bool) else True,
+        atajos=atajos)
 
 
 def a_dict(aj: Ajustes) -> dict:
@@ -400,6 +419,7 @@ def a_dict(aj: Ajustes) -> dict:
         "pedir_al_iniciar": aj.pedir_al_iniciar,
         "estirar_intervalo": aj.estirar_intervalo,
         **({} if aj.avisos_veracrypt else {"avisos_veracrypt": False}),
+        **({"atajos": dict(aj.atajos)} if aj.atajos else {}),
     }
 
 
@@ -566,6 +586,9 @@ PIDE_ACTUALIZAR_UNIDAD = "actualizar_unidad"  # id: ponerle el código de la ver
 PIDE_BUSCAR_VERSION = "buscar_version"  # preguntarle a GitHub ya, sin esperar a la caché
 PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa propia, y volver ya
 PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
+PIDE_ATAJO = "atajo"            # accion: un atajo de teclado pulsado (`ui/atajos.py`)
+PIDE_ATAJOS = "atajos"          # atajos (por acción), vez: guardar los atajos de teclado
+PIDE_GRABAR_ATAJOS = "grabar_atajos"    # abrir la ventana que graba los atajos de teclado
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo",
                     "avisos_veracrypt")
 AJUSTES_DE_UNIDAD = ("pedir_al_conectar",)

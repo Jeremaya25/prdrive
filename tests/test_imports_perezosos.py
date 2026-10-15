@@ -57,6 +57,8 @@ ENTRADA = cargados("pregunta")
 c("import pregunta: llega a la ventanita, y no al agente ni a tkinter (que ha de ir después de `ui`)",
   ("ui.tk_agente" in ENTRADA, "agente" in ENTRADA, "common.equipo" in ENTRADA,
    "tkinter" in ENTRADA), (True, False, False, False))
+c("  ni a la ventana de los atajos, que solo se importa con --atajos",
+  ("ui.tk_atajos" in ENTRADA, "ui.atajos" in ENTRADA), (False, False))
 
 # nada de eso sube otra vez a la cabecera de los módulos: se mira el árbol, no solo el proceso
 ARRIBA = {"ui/__init__.py": {"bisync", "results", "revision"},
