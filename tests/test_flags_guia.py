@@ -318,10 +318,6 @@ c("  y la página tampoco lo enseña como algo que escribir",
 c("ningún ejemplo de la guía es un flag que quite un freno de seguridad de una pasada normal",
   [f.nombre for f in explicadas if f.ejemplo.strip() and
    flags_ayuda.normalizar(f.ejemplo.split("=")[0]) in ("force", "ignore-errors")], [])
-c("lo que el catálogo dice «en su lugar» es de un flag que hoy no se escribe, salvo force "
-  "(que lo dirá cuando el modelo lo reserve)",
-  sorted(f.nombre for f in explicadas if f.en_su_lugar.strip() and f.estado in ESCRIBIBLES),
-  ["force"])
 
 
 def parsear(ejemplo: str) -> dict:
