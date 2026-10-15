@@ -90,8 +90,8 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
         sello: El sufijo de las versiones que guarda la pasada (`--suffix`).
         forzar: Si la pasada salta el freno de borrados: `--force` en bisync (que
             conserva su `--max-delete`, un %, y lo salta) y `--max-delete -1` en un
-            espejo, en lugar de su tope (una cuenta). En un `copy` no cambia nada.
-            Es de esta pasada y de ninguna otra: no se lee del TOML.
+            espejo, en lugar de su tope (una cuenta). En un `copy`, o en un resync, no
+            cambia nada. Es de esta pasada y de ninguna otra: no se lee del TOML.
     """
     flags = {nombre: FlagEfectivo(nombre, valor,
                                   pair.origen_flags.get(nombre, model.ORIGEN_PAREJA))
@@ -117,7 +117,9 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
             # sync.py decide resincronizar.
             flags.pop("resync-mode", None)
 
-    if forzar and frenos.tiene_freno(pair):
+    # Un resync no pasa por el freno de borrados (no compara contra el listado
+    # anterior): no tiene nada que saltar, y juntos `--resync --force` no se piden.
+    if forzar and frenos.tiene_freno(pair) and not resync:
         if pair.is_bisync:
             pone("force", True)
         else:

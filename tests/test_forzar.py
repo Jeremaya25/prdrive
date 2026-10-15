@@ -81,7 +81,13 @@ with sandbox():
       (valores(orden_de(SUBIDA, force=True, dry_run=True), "--max-delete"),
        "--dry-run" in orden_de(SUBIDA, force=True, dry_run=True)), (["-1"], True))
 
+    # Un resync (también el que `_bisync_preflight()` decide solo con la referencia vacía,
+    # #113) no pasa por el freno de borrados: no tiene nada que saltar y no lleva --force.
     p = pareja(BISYNC)
+    resincronizada = orden.orden_rclone(p, binario="R", filtros=None, config="c", logfile="l",
+                                        resync=True, forzar=True)
+    c("una pasada que es un --resync no lleva --force, aunque se pida forzar",
+      ("--resync" in resincronizada, "--force" in resincronizada), (True, False))
     vista = orden.tramos(p, binario="R", filtros=None, config="c", logfile="l", forzar=True)
     forzado = [t for t in vista if t.nombre == "force"]
     c("la vista previa del editor de flags sabe quién pone el --force: el programa",
