@@ -695,8 +695,9 @@ class VistaPrincipal:
     def _pintar_arranque(self, antes, e, ctl) -> bool:
         """La línea del arranque automático y la frase de la pausa debajo.
 
-        Sigue encendida mientras sincroniza: el vigilante no toca nada del
-        dispositivo.
+        Sigue encendida mientras sincroniza: lo que escribe el vigilante va a la
+        carpeta del equipo, no a la unidad (salvo su `.prdrive/PRDRIVE`, si falta
+        o está vacío). Por qué, en `docs/agents/reference/ui.md`.
         """
         if antes is not None and (antes.arranque, antes.pausa) == (e.arranque, e.pausa):
             return False

@@ -84,6 +84,9 @@ GRUPOS = (
                  "prversions purgar histórico copias"),
     )),
     ("Este equipo", (
+        # La línea «Arranque automático…» de la ventana principal sigue activa
+        # durante una pasada (`principal.controles()`): lo que escribe penwatch
+        # va a la carpeta del equipo, no a la unidad. Por qué, en ui.md.
         Apartado("arranque", "Arranque automático", "arranque",
                  "vigilante agente enchufar penwatch tarea"),
     )),
