@@ -135,14 +135,19 @@ c("cuando el lock vuelve a estar libre, el agente lo toma otra vez",
 c("  con las parejas de la config que tiene ahora",
   F.lock(RAIZ).get("pairs"), ["docs"])
 
-# Un fallo al escribir no tumba la vuelta, y la pasada siguiente lo deja al día.
+# Un fallo al escribir no tumba la vuelta, y no se queda así: en cuanto la escritura
+# vuelve a funcionar, el registro se pone al día sin que acabe ninguna pasada ni
+# haya cambio de config (en modo sync, o con un intervalo largo, pasan horas hasta
+# la siguiente pasada). Y mientras falla, no se reintenta en cada vuelta.
 asentar(ag)
 real_write = store.write_json
+intentos = []
 
 
 def falla_el_registro(path, data):
     """`write_json` que no puede escribir el registro de la unidad (en uso, solo lectura)."""
     if Path(path).name == "daemon.lock.json":
+        intentos.append(data.get("pairs"))
         return False
     return real_write(path, data)
 
@@ -152,6 +157,7 @@ try:
     editar(RAIZ, config(("docs",), con_llavero=True))
     try:
         releer(ag)
+        F.vueltas(ag, 3)
         cayo = None
     except Exception as e:  # noqa: BLE001 - lo que se busca es que no caiga
         cayo = e
@@ -159,10 +165,11 @@ finally:
     store.write_json = real_write
 c("un fallo al escribir el registro no tumba la vuelta", cayo, None)
 c("  y el registro en disco sigue como estaba", F.lock(RAIZ).get("pairs"), ["docs"])
-F.pasar(10 * 60 + 1)                      # toca otra pasada: la que escribe el registro
+c("  y no se reintenta en cada vuelta", len(intentos), 1)
+
+F.pasar(agente.RELEER_REGISTROS)          # la misma ventana con que se relee un registro
 F.vueltas(ag, 1)
-asentar(ag)
-c("la pasada siguiente lo deja al día",
+c("en cuanto la escritura vuelve, el registro se pone al día, sin pasada ni cambio de config",
   F.lock(RAIZ).get("pairs"), ["docs", model.LLAVERO])
 
 # Una config que pasa a error (sin parejas) no escribe un registro a medias: se
