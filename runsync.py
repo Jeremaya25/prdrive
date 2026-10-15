@@ -945,6 +945,9 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
     # fallo (`ui.avisar_fallo`, que lo importa fuera de su `try`); `llavero`,
     # solo con `[keychain]`, abajo.
     from common import results, update  # noqa: F401
+    # El nombre y el icono de un volumen VeraCrypt, que el Explorador no lee de él.
+    from ui import cifrado
+    cifrado.nombrar_letra()
     llave = pareja_llavero()
     v = None
     if llave is not None:

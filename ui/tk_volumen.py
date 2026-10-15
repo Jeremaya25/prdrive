@@ -11,10 +11,11 @@ enseña.
 
 Tres cosas se dicen en la propia ventana porque sin ellas parece que no
 funciona: el Explorador lee el fichero **al llegar la unidad**, así que el
-cambio se ve la próxima vez que se conecte (con VeraCrypt, que se abra) y no al
-pulsar «Guardar»; con BitLocker no lo lee mientras esté bloqueada; y con
-VeraCrypt lo que cambia es el volumen que aparece al abrir el contenedor, no el
-pendrive que se enchufa.
+cambio se ve la próxima vez que se conecte y no al pulsar «Guardar» (con
+VeraCrypt en Windows no lo lee nunca: prdrive se lo pasa por el registro y se
+ve enseguida, `volumen.como_se_lee()`); con BitLocker no lo lee mientras esté
+bloqueada; y con VeraCrypt lo que cambia es el volumen que aparece al abrir el
+contenedor, no el pendrive que se enchufa.
 
 **Se pinta antes de leer la unidad.** Qué tiene puesto la unidad (`volumen.leer()`:
 su `autorun.inf`, la raíz física del contenedor, que en Windows recorre las
@@ -233,11 +234,7 @@ def construir(panel: Panel) -> None:
             donde = (f"Se guarda en {inf}, y el icono dentro de {estado.carpeta}. "
                      "Con BitLocker, Windows no puede leerlo mientras la unidad "
                      "esté bloqueada.")
-        notas.configure(text="\n".join((
-            donde,
-            "Ese fichero no ejecuta nada: Windows no arranca programas al conectar "
-            "una unidad extraíble, pero sí lee de ahí el nombre y el icono, al "
-            f"llegar la unidad. El cambio se verá {volumen.cuando_se_ve(estado)}.")))
+        notas.configure(text="\n".join((donde, volumen.como_se_lee(estado))))
         for control in dependientes:
             control.state(["!disabled"])
         panel.ajustar()

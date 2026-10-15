@@ -155,8 +155,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
-                    cifrada, components, consumo, equipo, expulsar, keepassxc, llavero,
-                    model, moderacion, parte, prioridad, store, update, vestibulo)
+                    cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
+                    llavero, model, moderacion, parte, prioridad, store, update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import bandeja, prefs, volumen  # noqa: E402
@@ -2176,6 +2176,8 @@ class Agente:
         if unidad.nombre != nombre:
             self._guardar(self.ajustes.con_unidad(replace(unidad, nombre=nombre)))
         self._apuntar_volumen(con)
+        # Su nombre y su icono, que el Explorador no lee de un volumen VeraCrypt.
+        explorador.poner(raiz, APP_SUBDIR)
         diario(f"{nombre}: " + ("raíz de este equipo" if unidad.es_raiz else "conectada")
                + f" en {raiz} (modo {unidad.modo})")
         if unidad.modo == equipo.UI:
@@ -2196,6 +2198,9 @@ class Agente:
         con = self.conexiones.pop(uid, None)
         if con is None:
             return
+        # La letra queda para otra unidad: fuera el nombre y el icono que se le
+        # pasaron al Explorador (los de esta unidad, no los de otra que la tome).
+        explorador.quitar(con.raiz, uid)
         if con.hijo is not None and con.hijo.poll() is None:
             try:
                 con.hijo.terminate()

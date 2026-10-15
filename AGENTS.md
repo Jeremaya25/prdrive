@@ -54,7 +54,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── common/         config and rclone; no Tk
 │   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
 │   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
-│   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
+│   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · explorador (a VeraCrypt letter's name and icon, HKCU) · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
 │   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive)
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
@@ -121,7 +121,7 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 
 - **Writing code**: `docs/agents/code-writing-conventions.md`, before changing Python. Comments, docstrings and everything the user sees are in **Spanish**; keep the technical citations (rclone, VeraCrypt, kernel, specs) in code that mirrors them. Docs under `docs/agents/` are English.
 - **Indirection points**: everything that touches the network, a real device or the desktop is a **module-level function tests can replace** (`catalog.run()`, `update.fetch()`, `tk.mostrar()`/`confirmar_plan()`, `equipo.DIR`…). New ones keep that shape; the registry is in `commands-testing.md`.
-- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended (the keychain excepted: `engine.md`).
+- **Windows traps**: `pid_alive()` uses `OpenProcess`, never `os.kill` (which *terminates* on Windows); background processes use `pythonw.exe` + `CREATE_NO_WINDOW`; child runs get `stdin=DEVNULL`, so a pair needing `--resync` is skipped rather than resynced unattended (the keychain and a pair whose reference is empty excepted: `engine.md`).
 - `.gitignore` excludes device/user paths (`bin/`, `runtime/`, `keys/`, `filters/`, `logs/`, `state/`, `sync_config.toml`, `rclone.conf`, `prdrive-profile.toml`), build artefacts and `install/secret.py`.
 
 ## Documentation

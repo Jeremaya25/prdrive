@@ -31,7 +31,7 @@ from pathlib import Path, PureWindowsPath
 
 from _harness import Checks, sandbox, tmpdir
 
-from common import autorun, fleet, model, store, vestibulo
+from common import autorun, explorador, fleet, model, store, vestibulo
 from install import deploy, device, traveler
 from ui import icons, volumen
 
@@ -479,6 +479,30 @@ with sandbox() as dentro:
     traveler.write_autorun(fisica)
     c("tras cambiar al portable, el icono es su ejecutable x64",
       autorun.leer(fisica).icono, "VeraCrypt\\VeraCrypt-x64.exe")
+
+    # En Windows el Explorador no lee el autorun.inf de un volumen VeraCrypt: se
+    # le pasa por el registro (`common/explorador.py`, con su propio test).
+    c("en un directorio cualquiera no hay letra de VeraCrypt", volumen.leer().letra, "")
+    c.contains("  y se dice que Windows lee el fichero al llegar la unidad",
+               volumen.como_se_lee(volumen.leer()), "al llegar la unidad")
+    letra_real, poner_real = explorador.letra_veracrypt, explorador.poner
+    puestas: list = []
+    explorador.letra_veracrypt = lambda raiz: "H"
+    explorador.poner = lambda raiz, app=None: puestas.append(
+        (raiz, autorun.leer(raiz).icono)) or True
+    try:
+        estado = volumen.leer()
+        c("en la letra de un volumen VeraCrypt, el estado la sabe", estado.letra, "H")
+        c.contains("  y se ve enseguida, no al volver a abrirla",
+                   volumen.mensaje_guardado(estado, ""), "enseguida en «Este equipo»")
+        c.contains("  la ventana dice que ahí Windows no lee el fichero",
+                   volumen.como_se_lee(estado), "ni siquiera lo lee")
+        c.contains("  y de qué letra se encarga prdrive", volumen.como_se_lee(estado), "H:")
+        volumen.guardar(estado, "Cifrado de Pere", "verde")
+        c("guardar se lo pasa al Explorador con el fichero ya escrito",
+          puestas, [(dentro, f"{DENTRO}\\icono-verde.ico")])
+    finally:
+        explorador.letra_veracrypt, explorador.poner = letra_real, poner_real
 
 store.hide = HIDE_DE_VERDAD
 
