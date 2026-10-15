@@ -115,6 +115,7 @@ PERMITIDOS = {
     "common/revision.py": "el texto del hallazgo del freno (lo imprime --doctor)",
     "sync.py": "el argumento de la línea de órdenes",
     "ui/repair.py": "los argumentos que lanza «Forzar sincronización…» y su plan",
+    "ui/flags_ayuda.py": "solo texto: un aviso del editor de flags («--force se salta --max-delete»)",
 }
 """Los únicos módulos que nombran `--force`, y por qué.
 
