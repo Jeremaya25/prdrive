@@ -431,6 +431,55 @@ c("  y no se salen por arriba", nota_teclado["tope"], True)
 c("Escape cierra la guía", nota_teclado["cerrada_con_escape"], True)
 
 
+def pulsar(guia_, keysym: str) -> None:
+    """Pulsa y SUELTA una tecla en el cuadro de búsqueda, como un teclado de verdad."""
+    guia_.entrada.focus_force()
+    guia_.entrada.event_generate(f"<KeyPress-{keysym}>")
+    guia_.entrada.event_generate(f"<KeyRelease-{keysym}>")
+    guia_.ventana.update()
+
+
+def guion_teclas_de_verdad(guia_, anotado):
+    """Una tecla de verdad se pulsa Y se suelta: soltarla no puede deshacer lo que hizo."""
+    teclear(guia_, "delete")
+    orden = list(guia_.tabla.orden)
+    anotado["orden"] = orden
+    pulsar(guia_, "Down")
+    anotado["abajo"] = guia_.tabla.elegida
+    pulsar(guia_, "Down")
+    anotado["abajo2"] = guia_.tabla.elegida
+    pulsar(guia_, "Up")
+    anotado["arriba"] = guia_.tabla.elegida
+    teclear(guia_, "")
+    guia_.mas.invoke()
+    guia_.ventana.update()
+    anotado["con_mas"] = len(filas(guia_))
+    elegida = guia_.tabla.orden[2]
+    guia_.tabla.elegir(elegida, True)
+    for tecla in ("Shift_L", "Control_L", "Alt_L", "Left", "Right"):
+        pulsar(guia_, tecla)
+    anotado["tras_modificadoras"] = (len(filas(guia_)), guia_.tabla.elegida == elegida)
+    pulsar(guia_, "Down")
+    anotado["tras_abajo_con_mas"] = (len(filas(guia_)),
+                                     guia_.tabla.elegida == guia_.tabla.orden[3])
+    guia_.entrada.insert("end", "x")
+    pulsar(guia_, "x")
+    anotado["al_escribir"] = len(filas(guia_))
+
+
+nota = abrir_guia(guion_teclas_de_verdad)
+c("Abajo, pulsada y soltada, pasa a la fila siguiente y se queda en ella",
+  (nota["abajo"], nota["abajo2"]), (nota["orden"][1], nota["orden"][2]))
+c("  y Arriba vuelve a la anterior", nota["arriba"], nota["orden"][1])
+c("soltar Mayúsculas, Control, Alt o las flechas laterales no repinta: «Ver más» sigue abierto "
+  "y la fila elegida no se mueve",
+  nota["tras_modificadoras"], (tk_flags_guia.MAX_FILAS + tk_flags_guia.PASO_VER_MAS, True))
+c("  ni tampoco las flechas, que mueven la fila sin cerrar «Ver más»",
+  nota["tras_abajo_con_mas"], (tk_flags_guia.MAX_FILAS + tk_flags_guia.PASO_VER_MAS, True))
+c("escribir una letra sí repinta la búsqueda desde las primeras filas",
+  nota["al_escribir"] <= tk_flags_guia.MAX_FILAS, True)
+
+
 def guion_limpieza(guia_, anotado):
     """Hace de todo y mira que no quede ningún reloj de Tk pendiente."""
     teclear(guia_, "borrados")

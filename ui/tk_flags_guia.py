@@ -105,6 +105,7 @@ class VentanaGuia:
         self.modo_de_la_pareja = modo
         self.resultados: list[flags_guia.Ficha] = []
         self.limite = MAX_FILAS
+        self._texto_buscado = ""
         self._claves_riesgo = {flags_guia.ETIQUETAS_RIESGO[r]: r for r in flags_guia.RIESGOS}
         self._claves_tema = {flags_guia.ETIQUETAS_TEMA[t]: t for t in flags_guia.TEMAS}
 
@@ -184,8 +185,14 @@ class VentanaGuia:
         return combo
 
     def _al_teclear(self, _evento=None) -> None:
-        """Repinta con lo que hay escrito; una tecla que no escribe no cambia nada."""
-        self.actualizar()
+        """Repinta si lo escrito ha cambiado; una tecla que no escribe no toca nada.
+
+        Soltar una tecla también llega aquí: la flecha que acaba de mover la fila, Mayúsculas o
+        Control no cambian el texto, y repintar desharía lo que hicieron (la fila elegida
+        volvería a la primera y «Ver más» se cerraría).
+        """
+        if self.entrada.get() != self._texto_buscado:
+            self.actualizar()
 
     def _valor(self, combo, ninguno: str, claves: dict[str, str] | None = None):
         """Devuelve lo que filtra un desplegable, o `None` si no filtra."""
@@ -203,8 +210,9 @@ class VentanaGuia:
         """
         if not conservar:
             self.limite = MAX_FILAS
+        self._texto_buscado = self.entrada.get()
         self.resultados = flags_guia.buscar(
-            self.entrada.get(),
+            self._texto_buscado,
             riesgo=self._valor(self.riesgo, CUALQUIER_RIESGO, self._claves_riesgo),
             modo=self._valor(self.modo, CUALQUIER_MODO),
             tema=self._valor(self.tema, CUALQUIER_TEMA, self._claves_tema))
@@ -247,10 +255,11 @@ class VentanaGuia:
             if f.titulo:
                 caja.insert("end", f"\n{f.titulo}", "titulo")        # cada párrafo, su línea
             for rotulo, texto in flags_guia.detalle(f, self.modo_de_la_pareja):
-                # Se sombrea lo que restringe (lo fija prdrive o el config lo rechaza), no lo
-                # que solo trae un valor de partida.
-                marca = (("marca",) if rotulo == flags_guia.R_ESTADO and f.estado in (
-                    flags_guia.ESTADO_FIJO, flags_guia.ESTADO_NO_ADMITIDO) else ())
+                # Se sombrea lo que restringe (lo fija prdrive o el config lo rechaza) y el
+                # «Ojo», no lo que solo trae un valor de partida.
+                marca = (("marca",) if rotulo == flags_guia.R_CUIDADO or (
+                    rotulo == flags_guia.R_ESTADO and f.estado in (
+                        flags_guia.ESTADO_FIJO, flags_guia.ESTADO_NO_ADMITIDO)) else ())
                 caja.insert("end", "\n")
                 caja.insert("end", f"{rotulo}: ", ("rotulo", *marca))
                 caja.insert("end", texto, marca)

@@ -103,8 +103,12 @@ R_TU_PAREJA = "En tu pareja"
 R_PRDRIVE = "Lo que pone prdrive"
 R_EJEMPLO = "Ejemplo"
 R_EN_SU_LUGAR = "En su lugar"
+R_CUIDADO = "Ojo"
 R_RCLONE = "Ayuda de rclone (en inglés)"
 """Los rótulos de `detalle()`, que la ventana y la página comparten."""
+
+SIN_ESCRIBIR = "No se escribe en una pareja."
+"""Lo que se dice «en su lugar» de un flag que no se escribe y no tiene nada más que decir."""
 
 SIN_EXPLICACION = ("Sin explicación propia: de este flag solo está la ayuda corta de rclone, "
                    "que viene en inglés.")
@@ -116,15 +120,17 @@ class Ficha(NamedTuple):
 
     Args:
         nombre: Sin guiones y con `-`, como lo ve rclone.
-        tema: Uno de `TEMAS`; `TEMA_PRDRIVE` para todo lo que prdrive pone o rechaza y
-            `TEMA_OTROS` para lo que no tiene explicación propia.
+        tema: Uno de `TEMAS`. Lo decide el estado y no el catálogo: `TEMA_PRDRIVE` para todo
+            lo que prdrive pone o reserva o el config rechaza (si el modelo empieza a reservar
+            un flag, pasa solo a este tema) y `TEMA_OTROS` para lo que no tiene explicación.
         estado: Uno de `ESTADOS`, leído del modelo.
         riesgo: Uno de `RIESGOS`, o `None` si el flag no está explicado.
         modos: Los modos donde sirve (en uno explicado) o donde rclone lo acepta.
         titulo: Una línea que dice de qué va; vacío si no está explicado.
         para_que: Para qué sirve; vacío si no está explicado.
         efecto: Qué hace en la práctica; vacío si no está explicado.
-        ejemplo: Cómo se escribe (TOML) o, en uno que no se escribe, qué usar en su lugar.
+        ejemplo: Cómo se escribe (TOML); vacío si el flag no se puede escribir o copiarlo
+            sería un error (`cuidado`).
         prdrive: El valor que pone prdrive, leído del modelo; vacío si no lo toca.
         motivo: Por qué no se puede escribir (de `model`), en `ESTADO_FIJO` y
             `ESTADO_NO_ADMITIDO`.
@@ -133,6 +139,9 @@ class Ficha(NamedTuple):
         tipo: El tipo según rclone.
         explicada: Si tiene explicación propia (está en `flags_catalogo.ENTRADAS`).
         buscar: Las palabras con las que se pregunta por él (solo para buscar).
+        en_su_lugar: Qué hacer si el flag no se puede escribir; vacío si no hay nada más que
+            decir (entonces sale `SIN_ESCRIBIR`).
+        cuidado: Lo que hay que saber antes de ponerlo en una pareja, si es mala idea.
     """
     nombre: str
     tema: str
@@ -150,6 +159,8 @@ class Ficha(NamedTuple):
     tipo: str
     explicada: bool
     buscar: str
+    en_su_lugar: str = ""
+    cuidado: str = ""
 
 
 def _unir(nombres: list[str]) -> str:
@@ -214,7 +225,11 @@ def _construir() -> tuple[Ficha, ...]:
         comandos = f.comandos if f else flags_ayuda.VERBOS
         if e is not None:
             modos = tuple(e.modos)
-            tema, riesgo = e.tema, e.riesgo
+            riesgo = e.riesgo
+            if estado != ESTADO_LIBRE:
+                tema = TEMA_PRDRIVE
+            else:
+                tema = e.tema if e.tema != TEMA_PRDRIVE else TEMA_OTROS
             textos = (e.titulo, e.para_que, e.efecto, e.ejemplo)
             buscar = e.buscar
             orden = (TEMAS.index(tema), posicion[nombre])
@@ -230,7 +245,8 @@ def _construir() -> tuple[Ficha, ...]:
             titulo=textos[0], para_que=textos[1], efecto=textos[2], ejemplo=textos[3],
             prdrive=valor, motivo=motivo, ayuda=f.ayuda if f else "",
             defecto=f.defecto if f else "", tipo=f.tipo if f else "",
-            explicada=e is not None, buscar=buscar)))
+            explicada=e is not None, buscar=buscar,
+            en_su_lugar=e.en_su_lugar if e else "", cuidado=e.cuidado if e else "")))
     return tuple(f for _clave, f in sorted(fichas, key=lambda par: par[0]))
 
 
@@ -249,6 +265,19 @@ def fichas() -> tuple[Ficha, ...]:
         _POR_NOMBRE.clear()
         _POR_NOMBRE.update({f.nombre: f for f in _FICHAS})
     return _FICHAS
+
+
+def reiniciar() -> None:
+    """Olvida las fichas y sus índices para que se rehagan con lo que diga el modelo ahora.
+
+    Las fichas leen del modelo (`FLAGS_RESERVADOS`, `BASE_FLAGS`…) la primera vez que se piden.
+    Solo lo necesita quien cambia el modelo en marcha: un test que simula que otro cambio
+    reserva o pone un flag.
+    """
+    global _FICHAS
+    _FICHAS = None
+    _POR_NOMBRE.clear()
+    _INDICES.clear()
 
 
 def ficha(nombre: str) -> Ficha | None:
@@ -444,6 +473,18 @@ def _ayuda_texto(f: Ficha) -> str:
     return " · ".join(partes)
 
 
+def _ejemplo_o_alternativa(f: Ficha) -> list[tuple[str, str]]:
+    """Devuelve la fila del ejemplo si el flag se escribe, o la de qué hacer en su lugar si no.
+
+    Lo decide el estado, que sale del modelo, y no lo que el catálogo supone: un flag que el
+    modelo pasa a reservar deja de enseñar su ejemplo aunque el catálogo no se haya tocado.
+    Un flag que se escribe pero sin ejemplo (copiarlo sería un error) no lleva fila.
+    """
+    if f.estado in (ESTADO_LIBRE, ESTADO_VALOR):
+        return [(R_EJEMPLO, f.ejemplo)] if f.ejemplo.strip() else []
+    return [(R_EN_SU_LUGAR, f.en_su_lugar or SIN_ESCRIBIR)]
+
+
 def sirve_en(f: Ficha, modo: str | None) -> bool:
     """Indica si el flag sirve en ese modo de pareja; sin modo (los comunes), sirve en todos."""
     return modo is None or modo in f.modos
@@ -482,11 +523,11 @@ def detalle(f: Ficha, modo: str | None = None) -> list[tuple[str, str]]:
     if f.estado != ESTADO_LIBRE:
         filas.append((R_ESTADO, _marca(f)))
     filas += [(R_PARA_QUE, f.para_que), (R_EFECTO, f.efecto),
+              *([(R_CUIDADO, f.cuidado)] if f.cuidado else []),
               (R_RIESGO, ETIQUETAS_RIESGO[f.riesgo or RIESGO_LEE]),
               (R_MODOS, _modos_texto(f.modos)), *_tu_pareja(f, modo),
-              (R_PRDRIVE, _valor_texto(f)),
-              (R_EJEMPLO if f.estado in (ESTADO_LIBRE, ESTADO_VALOR) else R_EN_SU_LUGAR,
-               f.ejemplo), (R_RCLONE, _ayuda_texto(f))]
+              (R_PRDRIVE, _valor_texto(f)), *_ejemplo_o_alternativa(f),
+              (R_RCLONE, _ayuda_texto(f))]
     return filas
 
 
@@ -528,14 +569,15 @@ def _bloque(f: Ficha) -> list[str]:
     if f.estado != ESTADO_LIBRE:
         lineas += [f"> **{ETIQUETA_ESTADO[f.estado]}**" + (f" ({f.motivo})" if f.motivo else ""),
                    ""]
-    escribible = f.estado in (ESTADO_LIBRE, ESTADO_VALOR)
-    ejemplo = f"`{f.ejemplo}`" if escribible else f.ejemplo
-    lineas += [f"- **{R_PARA_QUE}:** {f.para_que}", f"- **{R_EFECTO}:** {f.efecto}",
-               f"- **{R_RIESGO}:** {ETIQUETAS_RIESGO[f.riesgo or RIESGO_LEE]}",
+    lineas += [f"- **{R_PARA_QUE}:** {f.para_que}", f"- **{R_EFECTO}:** {f.efecto}"]
+    if f.cuidado:
+        lineas.append(f"- **{R_CUIDADO}:** {f.cuidado}")
+    lineas += [f"- **{R_RIESGO}:** {ETIQUETAS_RIESGO[f.riesgo or RIESGO_LEE]}",
                f"- **{R_MODOS}:** {_modos_texto(f.modos)}",
-               f"- **{R_PRDRIVE}:** {_valor_texto(f)}",
-               f"- **{R_EJEMPLO if escribible else R_EN_SU_LUGAR}:** {ejemplo}", ""]
-    return lineas
+               f"- **{R_PRDRIVE}:** {_valor_texto(f)}"]
+    for rotulo, texto in _ejemplo_o_alternativa(f):
+        lineas.append(f"- **{rotulo}:** " + (f"`{texto}`" if rotulo == R_EJEMPLO else texto))
+    return lineas + [""]
 
 
 def a_markdown() -> str:

@@ -131,6 +131,60 @@ c("conflict-loser, que prdrive solo pone al guardar versiones, lo dice",
 c("un flag que prdrive no toca no trae valor de prdrive", guia.ficha("transfers").prdrive, "")
 
 # ----------------------------------------------------------------------------
+# El modelo cambia por debajo de la guía y ella sigue diciendo la verdad
+# ----------------------------------------------------------------------------
+
+def con_el_modelo_cambiado(reservar=(), base=None):
+    """Rehace las fichas con el modelo cambiado, y lo deja como estaba al salir.
+
+    Es lo que pasa cuando otro cambio añade un flag reservado o pone uno en `BASE_FLAGS`:
+    la guía lee del modelo y no puede quedarse con lo que sabía.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cambio():
+        reservados, base_antes = model.FLAGS_RESERVADOS, model.BASE_FLAGS
+        model.FLAGS_RESERVADOS = {**reservados, **{n: "lo pone sync.py: motivo de prueba"
+                                                   for n in reservar}}
+        model.BASE_FLAGS = {**base_antes, **(base or {})}
+        guia.reiniciar()
+        try:
+            yield
+        finally:
+            model.FLAGS_RESERVADOS, model.BASE_FLAGS = reservados, base_antes
+            guia.reiniciar()
+    return _cambio()
+
+
+ANTES = {n: (guia.ficha(n).estado, guia.ficha(n).tema) for n in ("force", "modify-window")}
+c("hoy force y modify-window son libres y cada uno de su tema",
+  ANTES, {"force": (guia.ESTADO_LIBRE, guia.TEMA_BORRADO),
+          "modify-window": (guia.ESTADO_LIBRE, guia.TEMA_COMPARAR)})
+
+PAGINA_ANTES = guia.a_markdown()
+with con_el_modelo_cambiado(reservar=("force",), base={"modify-window": "2s"}):
+    forzado, ventana = guia.ficha("force"), guia.ficha("modify-window")
+    c("si force pasa a ser un reservado, la guía lo marca así, con el motivo del modelo",
+      (forzado.estado, forzado.motivo), (guia.ESTADO_FIJO, "lo pone sync.py: motivo de prueba"))
+    c("  y lo pasa al tema de los que pone prdrive, sin tocar el catálogo",
+      forzado.tema, guia.TEMA_PRDRIVE)
+    c("  y no enseña como «en su lugar» el flag rechazado ni ningún TOML escribible",
+      [t for r, t in guia.detalle(forzado) if r == guia.R_EN_SU_LUGAR and "force" in t.lower()
+       and "=" in t], [])
+    c("  ni el ejemplo de uno que ya no se escribe",
+      guia.R_EJEMPLO in dict(guia.detalle(forzado)), False)
+    c("si modify-window pasa a BASE_FLAGS, la guía dice el valor de prdrive",
+      (ventana.estado, ventana.prdrive), (guia.ESTADO_VALOR, "2s en todos los modos"))
+    c("  y lo pasa al tema de los que pone prdrive", ventana.tema, guia.TEMA_PRDRIVE)
+    c("  y el detalle ya no dice que prdrive no lo toca",
+      "no lo toca" in dict(guia.detalle(ventana))[guia.R_PRDRIVE], False)
+    c("la página que genera cambia con el modelo (por eso hay que regenerarla)",
+      guia.a_markdown() != PAGINA_ANTES, True)
+c("y al volver el modelo a lo de antes, las fichas también",
+  {n: (guia.ficha(n).estado, guia.ficha(n).tema) for n in ("force", "modify-window")}, ANTES)
+
+# ----------------------------------------------------------------------------
 # La guía y los datos de la rclone fijada no se contradicen
 # ----------------------------------------------------------------------------
 
@@ -167,7 +221,8 @@ c("  y los que de verdad borran o sobrescriben, que la guía clasifica como tale
                      "ignore-errors", "force", "remove-empty-dirs", "resync-mode", "inplace",
                      "no-check-dest", "conflict-loser", "max-delete", "max-delete-size")
          if guia.ficha(n).riesgo != guia.RIESGO_BORRA), [])
-c("lo que prdrive pone o reserva cuelga del tema «prdrive», y solo eso",
+c("lo que prdrive pone o reserva cuelga del tema «prdrive», y solo eso (lo decide el estado, "
+  "que sale del modelo, no el catálogo)",
   sorted(f.nombre for f in guia.fichas()
          if (f.estado != guia.ESTADO_LIBRE) != (f.tema == guia.TEMA_PRDRIVE)), [])
 c("lo que choca con otro, también está explicado",
@@ -181,7 +236,8 @@ c("cada uno trae la ayuda corta de rclone, tal cual",
   sorted(f.nombre for f in sin_explicar if f.ayuda != DATOS.flags[f.nombre].ayuda or not f.ayuda), [])
 c("  sin riesgo clasificado ni texto propio",
   sorted(f.nombre for f in sin_explicar
-         if f.riesgo is not None or f.para_que or f.efecto or f.ejemplo), [])
+         if f.riesgo is not None or f.para_que or f.efecto or f.ejemplo or f.en_su_lugar
+         or f.cuidado), [])
 c("  y los modos donde sirven según la orden de rclone, de los datos (sin los de copiar "
   "cuando rclone solo los usa al sincronizar)",
   sorted(f.nombre for f in sin_explicar
@@ -199,9 +255,17 @@ JERGA = re.compile(r"\b(baseline|BASE_FLAGS|Mode\.flags|tomllib|stdout|stderr)\b
 JERGA_PAGINA = re.compile(r"\b(BASE_FLAGS|Mode\.flags|tomllib|stdout|stderr)\b")
 """En la página de la guía vale «baseline»: es el motivo del modelo, que se cita tal cual."""
 explicadas = [f for f in guia.fichas() if f.explicada]
-c("toda ficha explicada lleva título, para qué sirve, efecto y ejemplo",
+ESCRIBIBLES = (guia.ESTADO_LIBRE, guia.ESTADO_VALOR)
+c("toda ficha explicada lleva título, para qué sirve y efecto",
+  sorted(f.nombre for f in explicadas if not (f.titulo and f.para_que and f.efecto)), [])
+c("  y un ejemplo si se escribe (o, si no lo lleva, un cuidado que diga por qué)",
   sorted(f.nombre for f in explicadas
-         if not (f.titulo and f.para_que and f.efecto and f.ejemplo)), [])
+         if f.estado in ESCRIBIBLES and not (f.ejemplo.strip() or f.cuidado.strip())), [])
+c("  o qué hacer en su lugar si no se puede escribir (lo que prdrive pone o el config rechaza)",
+  sorted(f.nombre for f in explicadas
+         if f.estado not in ESCRIBIBLES and not f.en_su_lugar.strip()), [])
+c("  y un flag que ya no se escribe no lleva un ejemplo que copiar",
+  sorted(f.nombre for f in explicadas if f.estado not in ESCRIBIBLES and f.ejemplo.strip()), [])
 c("  los títulos son de una línea",
   sorted(f.nombre for f in explicadas if len(f.titulo) > 80 or "\n" in f.titulo), [])
 c("  las frases acaban en punto",
@@ -209,15 +273,16 @@ c("  las frases acaban en punto",
          if not (f.para_que.endswith(".") and f.efecto.endswith("."))), [])
 c("  sin jerga de quien programa: la guía es para quien usa el dispositivo",
   sorted(f.nombre for f in explicadas
-         if JERGA.search(" ".join((f.titulo, f.para_que, f.efecto, f.ejemplo)))), [])
+         if JERGA.search(" ".join((f.titulo, f.para_que, f.efecto, f.ejemplo, f.en_su_lugar,
+                                   f.cuidado)))), [])
 c("  ni espacios dobles ni saltos sueltos que descuadrarían la ventana",
   sorted(f.nombre for f in explicadas
          if re.search(r"  |\n\n|^\s|\s$", " ".join((f.titulo, f.para_que, f.efecto)))), [])
 
 mal = []
 for f in explicadas:
-    if f.estado not in (guia.ESTADO_LIBRE, guia.ESTADO_VALOR):
-        continue                                    # un reservado no se escribe: el ejemplo es prosa
+    if f.estado not in (guia.ESTADO_LIBRE, guia.ESTADO_VALOR) or not f.ejemplo.strip():
+        continue                                    # un reservado no se escribe; force no da ejemplo
     try:
         escrito = flags_editor.parse(f.ejemplo)
     except model.ConfigError as e:
@@ -231,9 +296,22 @@ for f in explicadas:
             mal.append((f.nombre, motivo))
 c("el ejemplo de cada flag que se puede escribir es TOML que el cuadro admite, de ese flag y "
   "con un valor del tipo que rclone espera", mal, [])
+c("un flag que se puede escribir sin ejemplo es porque copiarlo sería un error, y dice por qué",
+  sorted(f.nombre for f in explicadas if f.estado in (guia.ESTADO_LIBRE, guia.ESTADO_VALOR)
+         and not f.ejemplo.strip() and not f.cuidado.strip()), [])
+c("force no ofrece ejemplo: en una pareja valdría para TODAS las pasadas, también las que nadie "
+  "vigila, y quitaría el freno de los borrados en cada una",
+  (guia.ficha("force").ejemplo, "todas las pasadas" in guia.ficha("force").cuidado,
+   guia.ficha("force").cuidado in dict(guia.detalle(guia.ficha("force")))[guia.R_CUIDADO]),
+  ("", True, True))
+c("  y la página tampoco lo enseña como algo que escribir",
+  "`force = true`" in guia.a_markdown(), False)
+c("ningún ejemplo de la guía es un flag que quite un freno de seguridad de una pasada normal",
+  [f.nombre for f in explicadas if f.ejemplo.strip() and
+   flags_ayuda.normalizar(f.ejemplo.split("=")[0]) in ("force", "ignore-errors")], [])
 c("el de un reservado no se escribe: dice qué usar en su lugar",
   sorted(f.nombre for f in explicadas if f.estado in (guia.ESTADO_FIJO, guia.ESTADO_NO_ADMITIDO)
-         and not f.ejemplo.strip()), [])
+         and not f.en_su_lugar.strip()), [])
 
 
 def parsear(ejemplo: str) -> dict:

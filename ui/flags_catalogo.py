@@ -74,14 +74,21 @@ class Entrada(NamedTuple):
         titulo: Una línea que dice de qué va, para la lista.
         para_que: Para qué sirve, en una frase.
         efecto: Qué hace en la práctica y qué cuidado pide.
-        ejemplo: Cómo se escribe en el cuadro de flags (TOML, y tiene que valer ahí). En un
-            flag que el config no admite no se escribe: dice qué usar en su lugar.
+        ejemplo: Cómo se escribe en el cuadro de flags (TOML, y tiene que valer ahí). Solo se
+            enseña si el flag se puede escribir: si el modelo lo reserva algún día, el ejemplo
+            deja de salir. Vacío solo si copiarlo sería un error (`cuidado` dice por qué).
         modos: Los modos donde sirve de verdad (`TODOS`, `BISYNC`…), no solo donde rclone
             lo acepta.
         buscar: Palabras con las que una persona preguntaría por él («ignorar temporales»),
             para la búsqueda por efecto. Sin tildes da igual.
         prdrive: Solo cuando el valor de prdrive NO está en el modelo (`conflict-loser`,
             que se pone al guardar versiones). El resto se lee de `model`.
+        en_su_lugar: Qué hacer si el flag NO se puede escribir (lo pone prdrive o el config lo
+            rechaza): «usa el cuadro «Excluir»…». Solo se enseña en ese caso; sin él sale un
+            texto general. Nunca va aquí un TOML que escribir.
+        cuidado: Lo que hay que saber antes de poner el flag en una pareja cuando eso es una
+            mala idea aunque rclone lo admita; sale aparte y marcado. En un flag sin `ejemplo`
+            es el motivo de que no lo tenga.
     """
     nombre: str
     tema: str
@@ -93,14 +100,16 @@ class Entrada(NamedTuple):
     modos: tuple[str, ...] = TODOS
     buscar: str = ""
     prdrive: str = ""
+    en_su_lugar: str = ""
+    cuidado: str = ""
 
 
 def _e(nombre: str, tema: str, riesgo: str, titulo: str, para_que: str, efecto: str,
-       ejemplo: str, modos: tuple[str, ...] = TODOS, buscar: str = "",
-       prdrive: str = "") -> Entrada:
+       ejemplo: str = "", modos: tuple[str, ...] = TODOS, buscar: str = "",
+       prdrive: str = "", en_su_lugar: str = "", cuidado: str = "") -> Entrada:
     """Hace una `Entrada` con los campos en el orden en que se leen."""
     return Entrada(nombre, tema, riesgo, titulo, para_que, efecto, ejemplo, modos, buscar,
-                   prdrive)
+                   prdrive, en_su_lugar, cuidado)
 
 
 ENTRADAS: tuple[Entrada, ...] = (
@@ -209,21 +218,21 @@ ENTRADAS: tuple[Entrada, ...] = (
        "esté enchufado.",
        "Lo pone prdrive en cada pasada y no se puede cambiar: cambiarlo sacaría a rclone "
        "de las conexiones del dispositivo.",
-       "No se escribe: es el rclone.conf del dispositivo, el mismo para todas las parejas.",
+       en_su_lugar="No se escribe: es el rclone.conf del dispositivo, el mismo para todas las parejas.",
        buscar="conexion remoto configuracion rclone.conf contrasenas"),
     _e("log-file", TEMA_PRDRIVE, RIESGO_LEE,
        "Dónde escribe rclone el log de la pasada",
        "Para que cada pasada deje su propio log, que luego se puede abrir y guardar.",
        "Lo pone prdrive y no se puede cambiar: es lo que hace que cada pasada tenga su log "
        "y que el progreso en vivo funcione.",
-       "No se escribe. Los logs se abren desde «Abrir los logs».",
+       en_su_lugar="No se escribe. Los logs se abren desde «Abrir los logs».",
        buscar="log registro guardar fichero pasada"),
     _e("dry-run", TEMA_PRDRIVE, RIESGO_LEE,
        "Probar sin cambiar nada",
        "Ver qué haría una pasada sin copiar, mover ni borrar nada.",
        "Lo pone prdrive cuando usas «Simular», para que valga en todas las parejas y "
        "modos. Pruébalo siempre antes en una pareja *-mirror, que borra en el otro lado.",
-       "No se escribe. Se usa con el botón «Simular» de la pantalla de parejas.",
+       en_su_lugar="No se escribe. Se usa con el botón «Simular» de la pantalla de parejas.",
        buscar="simular probar ensayo sin cambiar nada antes seguro prueba"),
     _e("workdir", TEMA_PRDRIVE, RIESGO_LEE,
        "Dónde guarda bisync su referencia",
@@ -231,7 +240,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "última pasada.",
        "Lo pone prdrive y no se puede cambiar: apuntarlo a otra carpeta haría que bisync "
        "comparase con una referencia que no es la de esta pareja.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        modos=BISYNC,
        buscar="referencia baseline estado carpeta listas bisync"),
     _e("resync", TEMA_PRDRIVE, RIESGO_BORRA,
@@ -241,7 +250,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "Reescribe lo que sea distinto: gana un lado (por defecto el dispositivo). Lo "
        "pone prdrive solo cuando tú lo pides y te pregunta antes; escribirlo aquí lo "
        "forzaría en cada pasada.",
-       "No se escribe. Se pide desde la ventana cuando una pareja lo necesita.",
+       en_su_lugar="No se escribe. Se pide desde la ventana cuando una pareja lo necesita.",
        modos=BISYNC,
        buscar="resincronizar rehacer referencia empezar de cero reescribir"),
     _e("backup-dir", TEMA_PRDRIVE, RIESGO_NOMBRES,
@@ -250,14 +259,14 @@ ENTRADAS: tuple[Entrada, ...] = (
        "o borra.",
        "En bisync prdrive no usa este flag sino --backup-dir1 y --backup-dir2, uno por "
        "lado, y solo con la casilla «Guardar versiones».",
-       "No se escribe. Marca «Guardar versiones» en la pareja.",
+       en_su_lugar="No se escribe. Marca «Guardar versiones» en la pareja.",
        buscar="versiones anteriores copia seguridad apartar guardar recuperar borrados"),
     _e("backup-dir1", TEMA_PRDRIVE, RIESGO_NOMBRES,
        "Carpeta de versiones del lado del dispositivo",
        "Apartar en <pareja>/.prversions lo que bisync cambia o borra en el "
        "dispositivo.",
        "Lo pone prdrive cuando la pareja guarda versiones y no se puede cambiar.",
-       "No se escribe. Marca «Guardar versiones» en la pareja.",
+       en_su_lugar="No se escribe. Marca «Guardar versiones» en la pareja.",
        modos=BISYNC,
        buscar="versiones anteriores copia seguridad apartar guardar recuperar borrados "
               "prversions"),
@@ -266,7 +275,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "Apartar en <pareja>/.prversions lo que bisync cambia o borra en el "
        "remoto.",
        "Lo pone prdrive cuando la pareja guarda versiones y no se puede cambiar.",
-       "No se escribe. Marca «Guardar versiones» en la pareja.",
+       en_su_lugar="No se escribe. Marca «Guardar versiones» en la pareja.",
        modos=BISYNC,
        buscar="versiones anteriores copia seguridad apartar guardar recuperar borrados "
               "prversions"),
@@ -276,14 +285,14 @@ ENTRADAS: tuple[Entrada, ...] = (
        "apartó.",
        "Lo pone prdrive en cada pasada, porque cada una tiene la suya; no se puede "
        "escribir aquí.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="versiones sufijo fecha hora marca apartar"),
     _e("suffix-keep-extension", TEMA_PRDRIVE, RIESGO_NOMBRES,
        "Que lo apartado conserve su extensión",
        "Para que una versión guardada siga acabando en .docx o .jpg, y se abra con "
        "su programa.",
        "Lo pone prdrive junto con la marca de fecha y no se puede cambiar.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="versiones extension nombre apartar"),
     _e("filters-file", TEMA_PRDRIVE, RIESGO_LEE,
        "El fichero con los patrones de «Incluir» y «Excluir»",
@@ -291,7 +300,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "cambian.",
        "Lo hace prdrive a partir de los cuadros «Incluir» y «Excluir» de la pareja. "
        "Cambiar los patrones de una pareja bisync pide un --resync.",
-       "No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
+       en_su_lugar="No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
        modos=BISYNC,
        buscar="filtros patrones incluir excluir ignorar ficheros"),
     _e("filter", TEMA_PRDRIVE, RIESGO_LEE,
@@ -299,14 +308,14 @@ ENTRADAS: tuple[Entrada, ...] = (
        "En rclone, añadir una regla «+» o «-» a mano.",
        "No se admite aquí: mezclada con los cuadros «Incluir» y «Excluir» rompe el filtrado "
        "de la pareja.",
-       "No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
+       en_su_lugar="No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
        buscar="filtros regla incluir excluir ignorar ficheros"),
     _e("filter-from", TEMA_PRDRIVE, RIESGO_LEE,
        "Leer las reglas de filtrado de un fichero",
        "En rclone, cargar reglas de filtrado de un fichero de texto.",
        "No se admite aquí: mezclado con los cuadros «Incluir» y «Excluir» rompe el "
        "filtrado de la pareja.",
-       "No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
+       en_su_lugar="No se escribe. Usa los cuadros «Incluir» y «Excluir» de la pareja.",
        buscar="filtros reglas fichero incluir excluir ignorar ficheros"),
     _e("include", TEMA_PRDRIVE, RIESGO_LEE,
        "Copiar solo los ficheros que encajen",
@@ -314,7 +323,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "ejemplo *.docx).",
        "Lo pone prdrive a partir del cuadro «Incluir» de la pareja, y no se puede escribir "
        "aquí. Con «Incluir» lleno, todo lo demás se queda fuera.",
-       "No se escribe. Pon el patrón en el cuadro «Incluir» de la pareja, como *.docx.",
+       en_su_lugar="No se escribe. Pon el patrón en el cuadro «Incluir» de la pareja, como *.docx.",
        buscar="incluir solo copiar patron filtros ficheros elegir"),
     _e("exclude", TEMA_PRDRIVE, RIESGO_LEE,
        "Dejar fuera ficheros que encajen",
@@ -322,7 +331,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "quieres llevar.",
        "Lo pone prdrive a partir del cuadro «Excluir» de la pareja, y no se puede escribir "
        "aquí. Un patrón por línea; lo que encaja se queda fuera de la pasada.",
-       "No se escribe. En el cuadro «Excluir» de la pareja, una línea por patrón: *.tmp, "
+       en_su_lugar="No se escribe. En el cuadro «Excluir» de la pareja, una línea por patrón: *.tmp, "
        "~$*, .~lock.*#, Thumbs.db.",
        buscar="ignorar ficheros temporales tmp omitir saltar excluir no copiar filtros "
               "cache papelera basura"),
@@ -331,28 +340,28 @@ ENTRADAS: tuple[Entrada, ...] = (
        "Guardar cuánto procesador gasta cada parte de rclone; es para quien depura rclone.",
        "No se admite en el config: escribe (o vacía) el fichero que se le diga, y el "
        "config viaja con el dispositivo a otros equipos.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="perfil depurar escribir fichero equipo"),
     _e("memprofile", TEMA_PRDRIVE, RIESGO_BORRA,
        "Volcar un perfil de memoria a un fichero",
        "Guardar cuánta memoria gasta cada parte de rclone; es para quien depura rclone.",
        "No se admite en el config: escribe (o vacía) el fichero que se le diga, y el "
        "config viaja con el dispositivo a otros equipos.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="perfil depurar memoria escribir fichero equipo"),
     _e("password-command", TEMA_PRDRIVE, RIESGO_LEE,
        "Un programa que da la contraseña de rclone",
        "En rclone, pedirle a un programa la contraseña del rclone.conf cifrado.",
        "No se admite en el config: haría correr ese programa en el equipo donde enchufes "
        "la unidad.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="contrasena programa ejecutar comando seguridad"),
     _e("metadata-mapper", TEMA_PRDRIVE, RIESGO_LEE,
        "Un programa que transforma los metadatos al subir",
        "En rclone, pasar los metadatos de cada fichero por un programa antes de subirlos.",
        "No se admite en el config: haría correr ese programa en el equipo donde enchufes "
        "la unidad.",
-       "No se escribe.",
+       en_su_lugar="No se escribe.",
        buscar="metadatos programa ejecutar comando seguridad"),
 
     # ------------------------------------------------------------------ borrados y sobrescrituras
@@ -411,20 +420,22 @@ ENTRADAS: tuple[Entrada, ...] = (
        "Seguir borrando aunque haya errores de lectura",
        "Para que un espejo siga borrando del destino aunque no haya podido leer "
        "parte del origen.",
-       "Es peligroso: un origen que no se ha leído entero parece vacío, y lo que no se "
-       "ve se borra del destino. Por defecto rclone se niega a borrar si hubo errores. "
-       "Solo vale en *-mirror.",
-       "ignore-errors = true",
+       "Un origen que no se ha leído entero parece vacío, y lo que no se ve se borra del "
+       "destino. Por defecto rclone se niega a borrar si hubo errores. Solo vale en *-mirror.",
        modos=ESPEJO,
+       cuidado="No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, "
+               "también las que nadie vigila, y una con errores de lectura borraría del destino "
+               "lo que no ha podido ver.",
        buscar="borrados borrar errores lectura peligro seguir forzar"),
     _e("force", TEMA_BORRADO, RIESGO_BORRA,
        "Saltarse el freno de los borrados",
        "Para que bisync haga una pasada aunque vaya a borrar más de lo que permite "
        "--max-delete.",
-       "Quita justo la protección que evita que una unidad vacía arrase el otro lado. "
-       "Úsalo una sola vez, sabiendo qué se va a borrar, y no lo dejes puesto.",
-       "force = true",
+       "Quita justo la protección que evita que una unidad vacía arrase el otro lado.",
        modos=BISYNC,
+       cuidado="No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, "
+               "también las que nadie vigila (las del servicio y las del agente), y quitaría el "
+               "freno de los borrados en cada una de ellas.",
        buscar="borrados borrar freno saltar forzar limite peligro seguridad"),
     _e("remove-empty-dirs", TEMA_BORRADO, RIESGO_BORRA,
        "Quitar todas las carpetas vacías al final",
@@ -600,8 +611,7 @@ ENTRADAS: tuple[Entrada, ...] = (
        "sistemas de ficheros que redondean.",
        "Algunos sistemas de ficheros (como FAT, que redondea a 2 segundos) y algunos remotos "
        "guardan las fechas redondeadas: con un margen (\"2s\") dejan de copiarse ficheros "
-       "que solo difieren en eso. Por defecto el margen es de 1 nanosegundo. Lleva unidad "
-       "obligatoria.",
+       "que solo difieren en eso. Lleva unidad obligatoria.",
        'modify-window = "2s"',
        buscar="fechas diferencia redondeo fat exfat igual tiempo margen comparar"),
 

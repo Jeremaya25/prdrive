@@ -483,22 +483,22 @@ Qué se borra del otro lado, cuándo, y lo que lo frena. Pruébalo todo antes co
 **Seguir borrando aunque haya errores de lectura**
 
 - **Para qué sirve:** Para que un espejo siga borrando del destino aunque no haya podido leer parte del origen.
-- **Qué hace en la práctica:** Es peligroso: un origen que no se ha leído entero parece vacío, y lo que no se ve se borra del destino. Por defecto rclone se niega a borrar si hubo errores. Solo vale en *-mirror.
+- **Qué hace en la práctica:** Un origen que no se ha leído entero parece vacío, y lo que no se ve se borra del destino. Por defecto rclone se niega a borrar si hubo errores. Solo vale en *-mirror.
+- **Ojo:** No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, también las que nadie vigila, y una con errores de lectura borraría del destino lo que no ha podido ver.
 - **Riesgo:** Borra o reescribe
 - **Modos donde sirve:** up-mirror, down-mirror
 - **Lo que pone prdrive:** Ninguno: prdrive no lo toca.
-- **Ejemplo:** `ignore-errors = true`
 
 ### `--force`
 
 **Saltarse el freno de los borrados**
 
 - **Para qué sirve:** Para que bisync haga una pasada aunque vaya a borrar más de lo que permite --max-delete.
-- **Qué hace en la práctica:** Quita justo la protección que evita que una unidad vacía arrase el otro lado. Úsalo una sola vez, sabiendo qué se va a borrar, y no lo dejes puesto.
+- **Qué hace en la práctica:** Quita justo la protección que evita que una unidad vacía arrase el otro lado.
+- **Ojo:** No lo pongas en una pareja: lo que se escribe aquí vale para todas las pasadas, también las que nadie vigila (las del servicio y las del agente), y quitaría el freno de los borrados en cada una de ellas.
 - **Riesgo:** Borra o reescribe
 - **Modos donde sirve:** bisync
 - **Lo que pone prdrive:** Ninguno: prdrive no lo toca.
-- **Ejemplo:** `force = true`
 
 ### `--remove-empty-dirs`
 
@@ -707,7 +707,7 @@ Cómo decide rclone que un fichero ya está al día o que hay que copiarlo.
 **Cuánta diferencia de fecha se considera igual**
 
 - **Para qué sirve:** Para que dos fechas casi iguales se traten como la misma, en remotos o sistemas de ficheros que redondean.
-- **Qué hace en la práctica:** Algunos sistemas de ficheros (como FAT, que redondea a 2 segundos) y algunos remotos guardan las fechas redondeadas: con un margen ("2s") dejan de copiarse ficheros que solo difieren en eso. Por defecto el margen es de 1 nanosegundo. Lleva unidad obligatoria.
+- **Qué hace en la práctica:** Algunos sistemas de ficheros (como FAT, que redondea a 2 segundos) y algunos remotos guardan las fechas redondeadas: con un margen ("2s") dejan de copiarse ficheros que solo difieren en eso. Lleva unidad obligatoria.
 - **Riesgo:** Solo lectura
 - **Modos donde sirve:** todos
 - **Lo que pone prdrive:** Ninguno: prdrive no lo toca (rclone usa 1ns).
