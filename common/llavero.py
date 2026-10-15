@@ -569,24 +569,33 @@ def apuntar_diario(texto: str) -> None:
         pass
 
 
+INTERPRETES = ("python.exe", "pythonw.exe")
+"""Los ejecutables que pueden ser el vigilante en Windows, donde no se ve su línea de órdenes."""
+
+
 def es_el_vigilante(pid: int) -> bool:
     """Indica si ese pid es de verdad el vigilante del llavero y no un número reutilizado.
 
     El registro (`registro_vigilante()`) de uno que murió sin limpiarlo
     nombra un pid que el sistema puede haberle dado ya a otro programa, y
     `vigilante_vivo()` lo daría por vivo. Antes de terminar nada hay que
-    saberlo. Donde se ve la línea de órdenes (Linux, `store.orden_de()`) tiene
-    que llevar `VIGILAR`; donde no (Windows) se mira el ejecutable, que ha de
-    correr desde el volumen: es el `pythonw.exe` de la unidad, que es lo que la
-    retiene (`store.procesos_desde()`).
+    saberlo. Nunca lo es quien expulsa ni su padre: terminarlos cortaría el
+    propio «Expulsar». Donde se ve la línea de órdenes (Linux,
+    `store.orden_de()`) tiene que llevar `VIGILAR`; donde no (Windows) el
+    ejecutable ha de ser un intérprete de Python (`INTERPRETES`) que corra desde
+    el volumen: el `pythonw.exe` de la unidad, que es lo que la retiene
+    (`store.procesos_desde()`), y no un rclone ni otro programa de ella.
     """
+    if pid in (os.getpid(), os.getppid()):
+        return False
     orden = store.orden_de(pid)
     if orden:
         return VIGILAR in orden
-    return pid in store.procesos_desde(model.DEVICE_ROOT)
+    exe = store.procesos_desde(model.DEVICE_ROOT).get(pid)
+    return exe is not None and Path(exe).name.lower() in INTERPRETES
 
 
-def terminar_vigilante() -> str:
+def terminar_vigilante() -> bool:
     """Termina al vigilante del llavero, y a lo que cuelga de él, sin esperarle.
 
     Es para el que no se va tras pedírselo (`parada_vigilante()`): colgado
@@ -595,15 +604,17 @@ def terminar_vigilante() -> str:
     (`es_el_vigilante()`); termina el árbol (`matar_arbol()`: `taskkill /F /T`
     en Windows, nunca un `os.kill` a ciegas) y, si lo ha conseguido, quita su
     registro y la petición de parada, que él ya no puede quitar. Lo cuenta en
-    el diario (`apuntar_diario()`).
+    el diario (`apuntar_diario()`). El bloqueo de bisync que deje una pasada
+    cortada a medias no se toca aquí: es de `quitar_candados_muertos()`.
 
     Returns:
-        Lo que se ha hecho, en una frase: es lo que se apunta en el diario.
+        Si el vigilante estaba, era él y ya no está.
     """
     info = store.read_json(registro_vigilante())
     pid = info.get("pid")
     if not isinstance(pid, int) or not vivo_aqui(info):
-        return ""
+        return False
+    terminado = False
     if not es_el_vigilante(pid):
         dicho = (f"[llavero] el vigilante (pid {pid}) no se iba, y no se ha terminado: no se "
                  "ha podido comprobar que ese pid sea el suyo")
@@ -615,6 +626,7 @@ def terminar_vigilante() -> str:
         if store.pid_alive(pid):
             dicho = f"[llavero] el vigilante (pid {pid}) no se iba, y sigue vivo tras terminarlo"
         else:
+            terminado = True
             for resto in (registro_vigilante(), parada_vigilante()):
                 try:
                     resto.unlink(missing_ok=True)
@@ -622,7 +634,44 @@ def terminar_vigilante() -> str:
                     pass
             dicho = f"[llavero] vigilante terminado a la fuerza (pid {pid}): no se iba al pararlo"
     apuntar_diario(dicho)
-    return dicho
+    return terminado
+
+
+def quitar_candados_muertos(pareja: model.Pair) -> list[str]:
+    """Borra los `.lck` de bisync de esa pareja cuyo dueño ya no vive; devuelve sus nombres.
+
+    Un bisync al que se mata a media pasada deja su bloqueo, y rclone no mira
+    si quien lo puso sigue vivo: con `--max-lock 2m` se niega a empezar hasta
+    que caduca (`prior lock file found`, comprobado con rclone v1.75.2, donde
+    sin él la pasada siguiente acabó la transferencia cortada). El bloqueo dice
+    de quién es (`PID`, el del rclone): solo se borra el de un pid que ya no
+    existe. Uno que sigue vivo (otra pasada en curso) o que no se entiende se
+    deja, y caduca solo. Lo apunta en el diario. No lanza.
+
+    Args:
+        pareja: La pareja del llavero, cuyo `workdir` es donde bisync deja los `.lck`.
+    """
+    quitados: list[str] = []
+    try:
+        candados = sorted(pareja.workdir.glob("*.lck"))
+    except OSError:
+        return quitados
+    for ruta in candados:
+        try:
+            pid = int(store.read_json(ruta).get("PID"))
+        except (TypeError, ValueError):
+            continue
+        if pid <= 0 or store.pid_alive(pid):
+            continue
+        try:
+            ruta.unlink()
+        except OSError:
+            continue
+        quitados.append(ruta.name)
+    if quitados:
+        apuntar_diario(f"[llavero] quitado el bloqueo de bisync que dejó la pasada cortada: "
+                       f"{', '.join(quitados)}")
+    return quitados
 
 
 def lanzar_vigilante() -> int | None:

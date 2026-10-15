@@ -15,6 +15,7 @@ pasada de lo pendiente devuelve el código que se le pida. Lo que se sujeta:
 
 import contextlib
 import io
+import os
 import sys
 import types
 
@@ -141,19 +142,49 @@ try:
             """Lo que el diario del servicio cuenta del vigilante."""
             return diario.read_text(encoding="utf-8") if diario.exists() else ""
 
+        # Lo que deja una pasada cortada: su `.lck`, que rclone respeta (--max-lock 2m) aunque
+        # el dueño haya muerto (rclone v1.75.2: «prior lock file found»). Dice de quién es.
+        trabajo = config().pareja_llavero.workdir
+        trabajo.mkdir(parents=True, exist_ok=True)
+        MUERTO, VIVO = 4242, 9999
+        eq.vivos[VIVO] = "rclone"
+        store.write_json(trabajo / "a..b.lck", {"Session": "x", "PID": str(MUERTO)})
+        store.write_json(trabajo / "otra..par.lck", {"Session": "y", "PID": str(VIVO)})
+        (trabajo / "rota..par.lck").write_text("{no es json", encoding="utf-8")
+
+        def candados():
+            return sorted(p.name for p in trabajo.glob("*.lck"))
+
+        TRES = ["a..b.lck", "otra..par.lck", "rota..par.lck"]
         llavero.vigilante_vivo = lambda: VIGILANTE in eq.vivos
         vigilante_con(DEL_EQUIPO, SUYA)
         llavero.dormir = lambda s: eq.vivos.pop(VIGILANTE, None)     # se va nada más pedírselo
         keepassxc.cerrar_llavero(config())
         c("al vigilante se le pide que pare", llavero.parada_vigilante().exists(), True)
         c("  y si se va, no se le toca ni se dice nada", (eq.matados, lo_dicho()), ([], ""))
+        c("  ni se toca ningún bloqueo", candados(), TRES)
         llavero.parada_vigilante().unlink()
         llavero.dormir = lambda s: None
 
+        vistos: list = []
+
+        def pasada_mirando(tope=None):
+            vistos.append(candados())
+            return eq.pasada(tope)
+
+        llavero.pasada, eq.pendiente = pasada_mirando, True
         vigilante_con(DEL_EQUIPO, SUYA)
         cierre = keepassxc.cerrar_llavero(config())
+        llavero.pasada, eq.pendiente = eq.pasada, False
+        eq.pasadas.clear()
         c("si no se va tras pedírselo y esperar, se termina con lo que cuelga de él (#119)",
           eq.matados, [VIGILANTE])
+        c("  y la pasada de lo pendiente no encuentra el bloqueo de su rclone muerto, que la "
+          "habría parado dos minutos (rclone no mira si el dueño vive)",
+          vistos, [["otra..par.lck", "rota..par.lck"]])
+        c.contains("  se dice en el diario", lo_dicho(), "a..b.lck")
+        c("  y el de una pasada que sigue viva, y el que no se entiende, se quedan",
+          candados(), ["otra..par.lck", "rota..par.lck"])
         c("  se dice en el diario, con su pid", ("vigilante" in lo_dicho(), "777" in lo_dicho()),
           (True, True))
         c("  su registro y la petición de parada se van con él",
@@ -181,6 +212,27 @@ try:
         eq.vivos.pop(VIGILANTE, None)
         registro_v.unlink(missing_ok=True)
         llavero.parada_vigilante().unlink(missing_ok=True)
+
+        # En Windows basta con que el ejecutable corra desde la unidad, y con un pid
+        # reutilizado eso puede ser quien expulsa, su padre o un programa que no es el vigilante
+        carpeta_app = model.DEVICE_ROOT / ".prdrive"
+        for etiqueta, pid, exe in (
+                ("quien expulsa", os.getpid(), EN_LA_UNIDAD),
+                ("su padre", os.getppid(), EN_LA_UNIDAD),
+                ("un rclone de la unidad", 5552, str(carpeta_app / "bin" / "rclone.exe"))):
+            store.write_json(registro_v, {"pid": pid, "host": llavero.equipo(),
+                                          "started": store.stamp()})
+            eq.vivos[pid], ordenes[pid] = exe, []
+            eq.matados.clear()
+            llavero.vigilante_vivo = lambda p=pid: p in eq.vivos
+            keepassxc.cerrar_llavero(config())
+            c(f"el pid de {etiqueta} no es el del vigilante, aunque su ejecutable corra desde "
+              "la unidad: no se termina", (eq.matados, pid in eq.vivos), ([], True))
+            eq.vivos.pop(pid, None)
+            diario.unlink(missing_ok=True)
+        registro_v.unlink(missing_ok=True)
+        llavero.parada_vigilante().unlink(missing_ok=True)
+        llavero.vigilante_vivo = lambda: VIGILANTE in eq.vivos
 
         # ni terminándolo se va (un permiso, un antivirus): se dice, y la unidad se deja quitar
         vigilante_con(DEL_EQUIPO, SUYA)

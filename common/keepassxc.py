@@ -1856,12 +1856,13 @@ ESPERA_CIERRE = 180.0  # segundos
 """Lo que se espera a que KeePassXC salga después de pedírselo: puede estar preguntando."""
 TOPE_PASADA = 60.0  # segundos
 """Lo más que dura la pasada de lo pendiente al expulsar."""
-ESPERA_VIGILANTE = 30.0  # segundos
+ESPERA_VIGILANTE = 90.0  # segundos
 """Lo que se espera a que el vigilante se vaya tras pedírselo; pasado, se le termina.
 
-Mira la parada cada `runsync.POLL_SECONDS` (5 s), y si está en una pasada la
-acaba antes: una del llavero, de tres o cuatro ficheros, dura segundos. Lo que
-pase de aquí es un vigilante colgado, que retiene la unidad con su Python.
+Mira la parada solo entre pasadas, y una pasada del llavero no tiene tope: en
+un remoto lento (SFTP por el móvil, un Drive limitado) puede pasar de medio
+minuto, y terminarla a medias la habría de rehacer la de lo pendiente. Por eso
+se le deja el margen de siempre y solo se actúa con uno que de verdad no se va.
 """
 
 
@@ -1969,7 +1970,9 @@ def cerrar_llavero(config: model.Config) -> Cierre:
     2. Termina su proxy, que vive lo que el navegador.
     3. Para el vigilante del llavero y espera a que se vaya; si pasa
        `ESPERA_VIGILANTE` sin irse, lo termina con lo que cuelga de él
-       (`llavero.terminar_vigilante()`) y lo deja en el diario.
+       (`llavero.terminar_vigilante()`), quita el bloqueo de bisync que deje
+       su rclone muerto (`llavero.quitar_candados_muertos()`: si no, la pasada
+       del paso 4 se negaría dos minutos) y lo deja en el diario.
     4. Si queda algo sin subir, una pasada con un tope de `TOPE_PASADA`.
     5. Deja las claves del navegador como estaban (`cerrar_navegador()`).
 
@@ -1998,8 +2001,8 @@ def cerrar_llavero(config: model.Config) -> Cierre:
         limite = reloj() + ESPERA_VIGILANTE
         while llavero.vigilante_vivo() and reloj() < limite:
             llavero.dormir(0.5)
-        if llavero.vigilante_vivo():
-            llavero.terminar_vigilante()
+        if llavero.vigilante_vivo() and llavero.terminar_vigilante():
+            llavero.quitar_candados_muertos(pareja)
     if llavero.pendiente(pareja):
         rc, _ = llavero.pasada(tope=TOPE_PASADA)
         if rc != 0:
