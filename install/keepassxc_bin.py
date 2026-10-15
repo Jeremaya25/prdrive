@@ -28,6 +28,13 @@ Qué se escribe en la unidad:
 Cada fichero se vuelve a leer de la unidad y a resumir: una unidad que escribe
 mal no deja un KeePassXC a medias con un sello que diga que está bien.
 
+El sello dice de dónde salió el paquete, no que sus ficheros sigan siendo esos:
+`al_dia()` mira además que cada ejecutable que fija `pins.KEEPASSXC_EJECUTABLES`
+tenga su suma, y `instalar()` repone el paquete si uno no cuadra. Resumir 11 MB
+es cosa del instalador y del aplicador, en segundo plano; la ventana, al
+pintarse, solo lee lo que apuntó `keepassxc.comprobar()` en `state/`
+(`components.keepassxc_pendiente()`), y `instalar()` lo olvida al reponer.
+
 El cambio es el de `traveler.sustituir()`: se mira antes el sitio libre, se
 extrae en `.<paquete>.nuevo-<pid>`, se escribe el sello el ÚLTIMO, se aparta el
 de antes como `.<paquete>.viejo-<pid>` y se coloca el nuevo de un renombrado.
@@ -237,11 +244,53 @@ def miembros(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
     return salida
 
 
-def al_dia(app_dir: Path | str, clave: str = PAQUETE) -> bool:
-    """Indica si la unidad lleva ya ese KeePassXC: la versión fijada, del paquete fijado."""
+def _sello_al_dia(app_dir: Path | str, clave: str) -> bool:
+    """Indica si el sello dice que la unidad lleva la versión fijada, del paquete fijado."""
     return (components.keepassxc_version(app_dir, clave) == pins.KEEPASSXC_VERSION
             and components.keepassxc_sello(app_dir, clave).get("sha256")
             == paquete(clave)[1])
+
+
+def _fijados(clave: str) -> dict[str, str]:
+    """Devuelve `{fichero: sha256}` de los ejecutables que `pins` fija de ese paquete.
+
+    Vacío si esta versión de prdrive no fija ninguno: nada que dar por bueno.
+    """
+    return pins.KEEPASSXC_EJECUTABLES.get(pins.KEEPASSXC_VERSION, {}).get(clave, {})
+
+
+def ficheros_que_no_cuadran(app_dir: Path | str, clave: str = PAQUETE) -> list[str]:
+    """Devuelve cuáles de los ejecutables fijados de ese paquete no son los de la tabla.
+
+    Un fichero que falta o que no se puede leer cuenta como que no cuadra. Lee
+    cada uno entero (11 MB en Windows, 47 en Linux): lo hace el instalador y el
+    aplicador, en segundo plano, nunca la ventana al pintarse (`components`).
+    No mira las DLL ni el resto del paquete: es lo que se aceptó al dejar la
+    carpeta fuera de la huella del agente (`pins.KEEPASSXC_EJECUTABLES`).
+    """
+    carpeta = components.keepassxc_dir(app_dir, clave)
+    malos = []
+    for nombre, suma in _fijados(clave).items():
+        try:
+            cuadra = _resumen(carpeta / nombre) == suma
+        except OSError:
+            cuadra = False
+        if not cuadra:
+            malos.append(nombre)
+    return malos
+
+
+def al_dia(app_dir: Path | str, clave: str = PAQUETE) -> bool:
+    """Indica si la unidad lleva ya ese KeePassXC: el fijado, y con sus ejecutables intactos.
+
+    El sello dice de dónde salió el paquete, no que sus ficheros sigan siendo
+    esos, así que además cada ejecutable que fija `pins.KEEPASSXC_EJECUTABLES`
+    ha de tener su suma. Si esta versión de prdrive no fija ninguno del paquete
+    no hay con qué comprobarlo y no se da por al día: `keepassxc.comprobar()`
+    tampoco lo dejaría lanzar.
+    """
+    return (_sello_al_dia(app_dir, clave) and bool(_fijados(clave))
+            and not ficheros_que_no_cuadran(app_dir, clave))
 
 
 def _mb(n: int) -> str:
@@ -254,7 +303,10 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
     """Deja en `app_dir/keepassxc/<clave>/` el KeePassXC fijado, con su sello.
 
     No mira si está en uso: eso lo hace quien lo pide (ver el docstring del
-    módulo). Si ya está el bueno no toca nada.
+    módulo). Si ya está el bueno, con sus ejecutables intactos (`al_dia()`), no
+    toca nada; con el sello al día y un ejecutable que no cuadra, lo vuelve a
+    poner. Lo que `keepassxc.comprobar()` apuntó de ese paquete en `state/` se
+    olvida al reponerlo y al ver que sus ficheros ya cuadraban.
 
     Returns:
         Lo hecho, una línea por paso; vacío si ya estaba.
@@ -270,8 +322,13 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
             progreso(msg)
 
     if al_dia(app_dir, clave):
+        components.keepassxc_olvidar_alterado(app_dir, clave)
         decir(f"KeePassXC {pins.KEEPASSXC_VERSION} ya está en la unidad.")
         return []
+    malos = ficheros_que_no_cuadran(app_dir, clave) if _sello_al_dia(app_dir, clave) else []
+    if malos:
+        decir(f"KeePassXC {pins.KEEPASSXC_VERSION}: no cuadra con el oficial "
+              f"{', '.join(malos)}; se vuelve a poner el paquete.")
     nombre, sha_zip = paquete(clave)
     archivo = ensure_zip(clave, progreso)
     carpeta = components.keepassxc_dir(app_dir, clave)
@@ -346,6 +403,7 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
                            f"El que había sigue en su sitio.") from e
     if apartado:
         shutil.rmtree(viejo, ignore_errors=True)    # si no se deja, la próxima vez
+    components.keepassxc_olvidar_alterado(app_dir, clave)
     decir(f"KeePassXC {pins.KEEPASSXC_VERSION} listo en {carpeta}")
     return [f"KeePassXC {pins.KEEPASSXC_VERSION} en {carpeta}"]
 

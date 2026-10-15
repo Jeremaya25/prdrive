@@ -732,8 +732,15 @@ def app(raiz: Path) -> Path:
     return raiz / APP_SUBDIR
 
 
-HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin"})
-"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se ejecuta."""
+HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin",
+                                 "keepassxc"})
+"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se lee entero.
+
+`keepassxc/` es el programa del llavero y su configuración, que KeePassXC
+reescribe al usarlo. El programa SÍ se ejecuta, pero no por la huella: cada
+ejecutable se comprueba contra su SHA-256 en `common/pins.py` justo antes de
+lanzarlo (`keepassxc.comprobar()`), y esos dos ficheros sí entran en la huella.
+"""
 HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
 """Ficheros que la huella deja fuera: la configuración y el fichero de control."""
 HUELLA_SIN_EXTENSIONES = frozenset({".ico"})
@@ -760,8 +767,12 @@ def huella(raiz: Path) -> str | None:
     carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). `bin/` tampoco: el
     agente no ejecuta el rclone de la unidad, pasa el suyo
     (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
-    lo que tarda en leerse un binario de 60 MB. `rclone.conf` entra: la opción
-    `ssh` de un remoto sftp es una orden.
+    lo que tarda en leerse un binario de 60 MB. `keepassxc/` tampoco (78 MB y
+    una configuración que cambia con el uso): lo que de ahí se lanza se
+    comprueba contra un SHA-256 fijado en `common/pins.py`, que sí entra en la
+    huella, antes de lanzarlo (`keepassxc.comprobar()`); las DLL y los demás
+    ficheros que van al lado del programa no se comprueban. `rclone.conf`
+    entra: la opción `ssh` de un remoto sftp es una orden.
     """
     base = app(raiz)
     rutas: list[Path] = []

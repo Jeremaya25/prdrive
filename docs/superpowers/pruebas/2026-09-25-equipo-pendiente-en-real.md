@@ -326,6 +326,19 @@ R17–R23 y, para Linux, R24–R31 de
 `docs/superpowers/specs/2026-10-04-llavero-keepassxc-design.md` (§15), con las
 del resto del llavero: no se repiten aquí.
 
+### KeePassXC fuera de la huella, comprobado contra su SHA-256 (#117)
+
+`keepassxc/` ya no entra en la huella del agente; antes de lanzar o registrar
+un ejecutable de la unidad se compara con `pins.KEEPASSXC_EJECUTABLES`. Los
+tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| KP1 | W | Un pendrive de verdad con el llavero ya activo y la unidad atendida: abrir «Abrir llavero», mover la ventana de KeePassXC, cambiar un ajuste, expulsar y volver a enchufarla, también en otro equipo con otra letra. | Ninguna pregunta «su código ha cambiado». La huella (`agente.huella()`, a mano) tarda milisegundos, no los 8–9 s de antes. | `agente.HUELLA_SIN_CARPETAS` |
+| KP2 | W | Con el KeePassXC 2.7.12 que deja el instalador (sin tocar nada a mano), exFAT y NTFS: «Abrir llavero», «Combinar» una copia de conflicto y la sonda del fichero llave (llavero sin contraseña). | Se abre y combina sin avisar de que no es el oficial: las sumas de la tabla son las de los ficheros que el instalador deja en la unidad. | `keepassxc.comprobar()` |
+| KP3 | W | Cambiar un byte de `keepassxc-proxy.exe` y, aparte, de `KeePassXC.exe`, con el sello intacto; «Abrir llavero». Luego, sin borrar nada, mirar la ventana y pulsar «Actualizar…». | No se abre, no se escribe ni la configuración ni ninguna clave del registro, y el aviso manda a «Actualizar…» (no a borrar ninguna carpeta). Tras el aviso, la ventana ofrece «Actualizar…» («lleva 2.7.12 (con ficheros que no cuadran)»); al pulsarlo se repone el paquete, se apaga el aviso (`state/keepassxc-no-oficial.json` sin el apunte) y se abre. | `NoOficial`, `SALIDA_ACTUALIZAR`, `keepassxc_bin.al_dia()` |
+| KP4 | L | KP2 en Linux x64 con el AppImage. Después, con lo extraído en `~/.cache/prdrive/keepassxc/`, cambiar el AppImage de la unidad; y lo mismo con esa caché borrada. | Con la caché al día se abre igual; sin ella no se extrae nada y el aviso lo dice. | `keepassxc.preparar_appimage()` |
+
 ## El modo de ahorro de energía
 
 El agente no lanza pasadas ni recorre carpetas vigiladas mientras el sistema
