@@ -42,6 +42,11 @@ penwatch.installed_veracrypt = lambda: VC
 penwatch._con_escritorio = lambda: True
 RETENIDO: list = [None]             # lo que contesta vestibulo.retenido (Linux: None)
 vestibulo.retenido = lambda hc: RETENIDO[0]
+# El nombre y el icono de la letra en el Explorador: solo se apunta a quién se le pide.
+EXPLORADOR: list = []
+agente.explorador.poner = lambda raiz, app=None: EXPLORADOR.append(("poner", raiz, app))
+agente.explorador.quitar = lambda raiz, dispositivo=None: EXPLORADOR.append(
+    ("quitar", raiz, dispositivo))
 
 # Lo que sigue es Linux: la raíz se monta en una carpeta, con el `veracrypt` de
 # la línea de órdenes. En Windows va en una letra fija (la sección «las órdenes
@@ -108,6 +113,8 @@ c("  y nada se lanza", F.pasadas(), [])
 montar()
 F.vueltas(ag, 3)
 c("abierta en cuanto se ve su id: se atiende", UID in ag.conexiones, True)
+c("  le pasa al Explorador su nombre y su icono, con la carpeta de la raíz",
+  EXPLORADOR, [("poner", PUNTO, penwatch.APP_SUBDIR)])
 c("  con su servicio", F.lock(PUNTO).get("agente"), True)
 c("  y una pasada", len(F.pasadas(PUNTO)), 1)
 c("  ya no sale como bloqueada", ag.resumen()["bloqueadas"], [])
@@ -133,6 +140,8 @@ desmontar()
 F.vueltas(ag, 2)
 c("bloqueada cuando el volumen se ha ido de verdad",
   (UID in ag.bloqueos, UID in ag.conexiones), (False, False))
+c("  y se le quitan a su letra el nombre y el icono, solo los de esta unidad",
+  EXPLORADOR[-1], ("quitar", PUNTO, UID))
 c("  el diario lo dice", any("bloqueada" in d for d in F.DIARIO), True)
 c("  y el estado", ag.resumen()["bloqueadas"], ["Mi portátil"])
 

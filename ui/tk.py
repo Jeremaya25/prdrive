@@ -2558,7 +2558,9 @@ class VentanaPrincipal:
         que espera a que esta ventana se haya ido, y se cierra. Con la ventana
         abierta no hay servicio en marcha (abrirla lo para), así que no queda
         nada nuestro con ficheros abiertos dentro. El script se busca ahora y no
-        en la lectura de la ventana, que puede ser de hace rato.
+        en la lectura de la ventana, que puede ser de hace rato. Lanzado, se le
+        quitan a la letra el nombre y el icono que se le pasaron al Explorador
+        (`cifrado.olvidar_letra()`).
         """
         from tkinter import messagebox
 
@@ -2602,6 +2604,7 @@ class VentanaPrincipal:
             # La ventana sigue abierta: lo que se leía se acaba de cortar.
             self.refrescar_instantanea()
             return
+        cifrado.olvidar_letra()
         self.cerrar()
 
     def bloquear(self) -> None:

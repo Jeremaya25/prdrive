@@ -30,6 +30,7 @@ from types import SimpleNamespace
 
 from _harness import Checks, tmpdir
 
+from common import explorador
 from common import vestibulo as v
 from install import CONTAINER_NAME, IS_WIN, device, vestibulo
 
@@ -170,6 +171,21 @@ def bloque(texto, etiqueta):
                  len(lineas))
     return lineas[desde:hasta]
 
+
+olvidar = [ln for ln in bloque(expulsar, "olvidar_letra") if ln]
+c("expulsar: apunta la letra antes de desmontar (luego :buscar ya no la ve)",
+  expulsar.index('set "LETRA=%RAIZ:~0,1%"') < expulsar.index("/dismount"), True)
+c("expulsar: cerrado, quita el nombre y el icono de esa letra en el Explorador",
+  bloque(expulsar, "cerrado")[0], "call :olvidar_letra")
+c("expulsar: sin letra (ya estaba cerrado) no toca nada",
+  olvidar[0], "if not defined LETRA exit /b 0")
+borrados = [ln for ln in olvidar if "reg delete" in ln]
+c("expulsar: solo borra las dos subclaves, nunca la de la letra entera",
+  [ln.split("reg delete ")[1].split('"')[1].rsplit("\\", 1)[1] for ln in borrados],
+  [explorador.ICONO, explorador.NOMBRE])
+c("expulsar: y cada una solo si lleva la marca con el id de esta unidad",
+  all(ln.startswith("reg query ") and f"/v {explorador.MARCA}" in ln
+      and '| find /i "%ID%" >nul && reg delete' in ln for ln in borrados), True)
 
 llave = [ln for ln in bloque(expulsar, "llavero") if ln]
 c("expulsar: el llavero solo si la unidad lo lleva (su Llavero.bat)",

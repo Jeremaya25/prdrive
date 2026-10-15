@@ -71,6 +71,17 @@ def lanzar_expulsion(script: Path) -> None:
                      stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def olvidar_letra() -> None:
+    """Quita el nombre y el icono que prdrive le puso a la letra de este volumen.
+
+    Va tras lanzar la expulsión: el volumen se va y la letra queda para otra
+    unidad (`common/explorador.py`). Solo las claves de este dispositivo; fuera
+    de Windows, o sin ninguna, no hace nada. No lanza.
+    """
+    from common import explorador, fleet, model
+    explorador.quitar(model.DEVICE_ROOT, fleet.device_id() or None)
+
+
 def bloqueo() -> str | None:
     """Devuelve el id de ESTA raíz si es la raíz cifrada de este equipo, o `None`.
 
