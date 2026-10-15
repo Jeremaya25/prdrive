@@ -330,6 +330,14 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
     else:
         riesgo = ("Puede ser lo que querías o un error (el dispositivo sin montar donde "
                   "toca, la carpeta equivocada): mira ese lado antes de seguir.")
+    if pair.llavero:
+        # Sus bases son contraseñas: no se ofrece forzar, ni se dice «si es lo que querías».
+        # Lo que se puede hacer lo dice `frenos`, igual que la consola.
+        detalle = f"{que} {frenos.salida_llavero(freno.tipo)}"
+        if racha is not None:
+            detalle += f" {_frase_racha(racha)}"
+        return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
+                        pair.name, AVISO, (log, freno))
     detalle = f"{que} {riesgo}"
     if racha is not None:
         detalle += f" {_frase_racha(racha)}"
@@ -348,9 +356,16 @@ def _fallos(config: Config) -> list[Hallazgo]:
     pasadas sale desde cuándo falla, que distingue un tropiezo de una avería; sin
     diario (un dispositivo recién actualizado o que no se deja leer) la avería se
     cuenta igual, sin esa frase.
+
+    El llavero no está en `Config.names`, pero si un freno lo para (tras la repetición
+    que ya hace `sync.repetir_sin_freno()`) entra aquí, con su nombre y sin que se
+    ofrezca forzarlo (#115). Un fallo suyo que no es un freno (sin red) sigue sin
+    hallazgo: ya lo dice la línea del llavero y se reintenta solo.
     """
     try:
         fallos = results.fallos(config)
+        if config.pareja_llavero is not None:
+            fallos += results.fallos_de([model.LLAVERO])
     except Exception:                                   # noqa: BLE001
         return []
     try:
@@ -362,6 +377,8 @@ def _fallos(config: Config) -> list[Hallazgo]:
     for f in fallos:
         racha = rachas.get(f.pareja)
         freno = _freno(f, parejas.get(f.pareja))
+        if freno is None and f.pareja == model.LLAVERO:
+            continue
         if freno is not None:
             hallazgos.append(_hallazgo_freno(parejas[f.pareja], freno, f.log, racha))
             continue

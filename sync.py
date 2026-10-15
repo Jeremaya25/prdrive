@@ -338,7 +338,7 @@ def explain_failure(lpath: Path | None, pair: Pair | None = None) -> None:
     for needle, explanation in KNOWN_ERRORS:
         if needle(text) if callable(needle) else needle in text:
             if pair is not None and pair.llavero and explanation in frenos.EXPLICACIONES:
-                explanation = frenos.EXPLICACION_LLAVERO
+                explanation = frenos.explicacion_llavero(explanation)
             print(f"  >> {explanation}")
             return
 
@@ -771,14 +771,25 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
 
 def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: Path,
                       rc: int) -> tuple[int, Path]:
-    """Repite la pasada del llavero sin el freno de borrados, si solo lo pisan copias de conflicto.
+    """Repite UNA vez la pasada del llavero sin el freno que la ha parado, si ese freno se puede quitar.
 
-    El freno (`--max-delete`, 25 % del listado anterior) para la pasada cuando
-    un lado parece vaciado. El llavero tiene tan pocos ficheros que quitar una
-    copia de conflicto ya lo pisa, al combinar aquí o al ver en otro
-    dispositivo que se fue del remoto, y abortaría así cada vez. Si todo lo
-    borrado son copias (`llavero.solo_copias_borradas()`), se repite una vez
-    con `llavero.FRENO_SIN_COPIAS`; si hay una base entre lo borrado, no.
+    Son dos, los de rclone que `--force` salta (`frenos.py`), y los dos son seguros en el
+    llavero porque lo que pisa cada lado se queda en `.prversions/` (backup-dir, también en un
+    conflicto):
+
+    - **Borrados** (`--max-delete`, 25 % del listado anterior): el llavero tiene tan pocos
+      ficheros que quitar una copia de conflicto ya lo pisa, al combinar aquí o al ver en otro
+      dispositivo que se fue del remoto. Si todo lo borrado son copias
+      (`llavero.solo_copias_borradas()`), se repite con `llavero.FRENO_SIN_COPIAS`; si hay una
+      base entre lo borrado, no.
+    - **Han cambiado todos los ficheros de un lado** (#115): con dos ficheros, una base y
+      `LEEME.txt`, basta con que cambie la hora de los dos, y pasaba al traer el llavero a un
+      segundo dispositivo. Se repite con `--force`.
+
+    Una sola repetición por pasada, sea cual sea el freno: si la repetida vuelve a pararse
+    (por ese u otro), se queda el fallo, que `explain_failure()` y «Reparación» explican. Esto
+    es de la pasada del llavero y de ninguna otra, y no pasa por `RunContext.force`: a una
+    persona no se le deja forzar el llavero (`frenos.se_puede_forzar()`).
 
     Returns:
         `(código, log)`: los de la pasada repetida, o los mismos si no se repite.
@@ -788,13 +799,23 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
     except OSError:
         return rc, logfile
     copias = llavero.solo_copias_borradas(texto, pair) if "too many deletes" in texto else None
-    if copias is None:
+    if copias is not None:
+        print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
+              f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
+        dispose_log(pair.name, logfile, 0, ctx.keep_logs)
+        cambio = {"max-delete": llavero.FRENO_SIN_COPIAS}
+    elif frenos.es_cambiados_bisync(texto):
+        # El log de la pasada parada se guarda aunque la repetida vaya bien: es lo que dice por
+        # qué se forzó, y de la repetida no queda nada (su log se tira si sale bien).
+        parada = dispose_log(pair.name, logfile, rc, True)
+        print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha parado "
+              f"(Log: {parada}). El llavero deja lo que pisa cada lado en {model.VERSIONS_DIR}: "
+              "se repite la pasada una vez con --force.")
+        cambio = {"force": True}
+    else:
         return rc, logfile
-    print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
-          f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
-    dispose_log(pair.name, logfile, 0, ctx.keep_logs)
-    sin_freno = replace(pair, flags={**pair.flags, "max-delete": llavero.FRENO_SIN_COPIAS})
-    cmd, logfile = build_command(ctx, sin_freno, ffile, False)
+    repetida = replace(pair, flags={**pair.flags, **cambio})
+    cmd, logfile = build_command(ctx, repetida, ffile, False)
     return execute(ctx, cmd, logfile), logfile
 
 

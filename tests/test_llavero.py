@@ -11,20 +11,25 @@ el equipo se sustituye. Lo que se sujeta:
   mismos bytes, y una base que no está entera no se sube.
 - El llavero se resincroniza solo, sin que nadie lo apruebe; las demás
   parejas, no.
+- El compañero fijo lleva siempre la misma hora, la de `llavero.LEEME_HORA` (#115).
+- Un freno de «han cambiado todos los ficheros» se repite una vez con `--force`,
+  solo en el llavero, y nunca dos veces en la misma pasada (#115).
 """
 
 import contextlib
 import hashlib
 import io
+import os
 import struct
 import sys
+import time
 from pathlib import Path
 
 from _harness import Checks, sandbox
 
 import sync
 import ui
-from common import bisync, catalog, config_file, kdbx, llavero, model, orden, revision
+from common import bisync, catalog, config_file, frenos, kdbx, llavero, model, orden, revision
 from common.model import ConfigError
 
 c = Checks("el llavero")
@@ -260,6 +265,101 @@ with sandbox() as root:
     rc, salida, ordenes = correr_abortando([borrado("Path1", copia1), borrado("Path1", "personal.kdbx")])
     c("con la base entre lo borrado, el freno manda: no se repite", (rc, len(ordenes)), (7, 1))
 
+    # «Han cambiado todos los ficheros» (#115): lo de LL-6 de las pruebas del 12/10, con el
+    # log tal como sale (Pruebas.kdbx y LEEME.txt, los dos ficheros del llavero, con otra
+    # hora en el remoto). rclone se para en `operations.go` y `--force` lo salta; el llavero
+    # guarda al perdedor en `.prversions/`, así que se repite UNA vez.
+    TODOS = (
+        "2026/10/12 17:38:16 INFO  : - Path2             File changed: time (newer)          - LEEME.txt\n"
+        "2026/10/12 17:38:16 INFO  : - Path2             File changed: time (newer)          - Pruebas.kdbx\n"
+        "2026/10/12 17:38:16 INFO  : Path2:    2 changes:    0 new,    2 modified,    0 deleted\n"
+        "2026/10/12 17:38:16 ERROR : Safety abort: all files were changed on Path2 "
+        "\"nas:prdrive-catalog/keychain/\". Run with --force if desired.\n"
+        "2026/10/12 17:38:16 NOTICE: Bisync aborted. Please try again.\n"
+        "2026/10/12 17:38:16 NOTICE: Failed to bisync: all files were changed")
+
+    def correr_pasadas(par, *pasadas, aprobado=False):
+        """run_pair con rclone simulado: la pasada N-ésima acaba con `(rc, texto del log)`."""
+        ordenes = []
+
+        def execute_simulado(ctx, cmd, logfile=None):
+            hechas = sum(1 for o in ordenes if o[1] == "bisync")
+            ordenes.append(cmd)
+            if cmd[1] != "bisync":                      # el mkdir de la carpeta del remoto
+                return 0
+            rc_, texto = pasadas[min(hechas, len(pasadas) - 1)]
+            Path(cmd[cmd.index("--log-file") + 1]).write_text(texto + "\n", encoding="utf-8")
+            return rc_
+
+        original, sync.execute = sync.execute, execute_simulado
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc_ = sync.run_pair(sync.RunContext(binary="RCLONE", env={},
+                                                    resync_approved=aprobado), par)
+            return rc_, buf.getvalue(), ordenes
+        finally:
+            sync.execute = original
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, "bien"))
+    c("«han cambiado todos» en el llavero: la pasada se repite una vez, con --force",
+      (rc, len(ordenes), "--force" in ordenes[0], "--force" in ordenes[1]), (0, 2, False, True))
+    c("  sin --resync, que no lo necesita, y con el freno de borrados que tenía",
+      ("--resync" in ordenes[1], freno(ordenes[1])), (False, "25"))
+    c.contains("  y lo dice, con qué hace y por qué es seguro", salida,
+               "se repite la pasada una vez con --force")
+    c.contains("  (cada lado guarda lo que pierda en las versiones)", salida, model.VERSIONS_DIR)
+    c("  el log de la pasada parada se queda, que es la prueba de por qué se forzó",
+      any("all files were changed" in p.read_text(encoding="utf-8")
+          for p in model.LOG_DIR.glob("keychain*")), True)
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS))
+    c("  si la repetida vuelve a pararse, no hay una tercera: una vez por pasada, nunca dos seguidas",
+      (rc, len(ordenes)), (1, 2))
+    explicacion = [linea for linea in salida.splitlines() if linea.strip().startswith(">>")]
+    c("  y el fallo no queda mudo: lo explica, con el llavero por su nombre y sin ofrecer forzar",
+      (len(explicacion), "llavero" in " ".join(explicacion),
+       frenos.COMO_FORZAR in " ".join(explicacion), "--resync" in " ".join(explicacion)),
+      (1, True, False, True))
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS.replace("Path2", "Path1")), (0, "bien"))
+    c("  se repite igual si los que han cambiado son los de este lado", (rc, len(ordenes)), (0, 2))
+
+    # Con el freno de copias de conflicto ya se ha repetido: una sola repetición en toda la pasada.
+    rc, salida, ordenes = correr_pasadas(
+        pareja, (7, "\n".join([borrado("Path1", copia1), ABORTO])), (1, TODOS), (0, "bien"))
+    c("  tras repetir sin el freno de borrados no se repite otra vez con --force",
+      (rc, len(ordenes), ["--force" in o for o in ordenes]), (1, 2, [False, False]))
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, "Failed to bisync: lo que sea"), (0, "bien"))
+    c("  otro fallo cualquiera del llavero no se repite", (rc, len(ordenes)), (1, 1))
+
+    # Ni en un resync: ahí no hay listado anterior con el que comparar, y `--force` no se pide con él.
+    sin_listados = [p for p in pareja.workdir.iterdir()]
+    for p in sin_listados:
+        p.rename(p.with_name(p.name + ".guardado"))
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, "bien"))
+    c("  un --resync no se repite con --force", (rc, [o[1] for o in ordenes],
+                                                 any("--force" in o for o in ordenes)),
+      (1, ["mkdir", "bisync"], False))
+    for p in sin_listados:
+        p.with_name(p.name + ".guardado").rename(p)
+
+    # Solo el llavero: otra pareja bisync con el mismo log no se fuerza nunca.
+    otra = config().pairs[1]
+    otra.workdir.mkdir(parents=True, exist_ok=True)
+    for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+        (otra.workdir / f"{bisync.expected_prefix(otra)}{sufijo}").write_text(
+            "listado\n", encoding="utf-8")
+    otro_filtro = bisync.filters_file_for(otra)
+    Path(str(otro_filtro) + ".md5").write_text(
+        hashlib.md5(otro_filtro.read_bytes()).hexdigest(), encoding="utf-8")
+    (otra.local_abs).mkdir(parents=True, exist_ok=True)
+    rc, salida, ordenes = correr_pasadas(otra, (1, TODOS), (0, "bien"))
+    c("  otra pareja con ese log no se repite ni se fuerza", (rc, len(ordenes),
+                                                              any("--force" in o for o in ordenes)),
+      (1, 1, False))
+
     # Tras un conflicto que gana el remoto, rclone (v1.75.1) deja la base fuera
     # de los dos listados (`modifyListing()`): se vuelve a pasar en seguida,
     # con las dos iguales, para que la apunte. Líneas como las de rclone.
@@ -327,6 +427,60 @@ with sandbox() as root:
     (carpeta / "personal.conflicto-remoto1.kdbx").write_bytes(base_kdbx4())
     c("las de un conflicto sí", [r.name for r in llavero.bases(carpeta)],
       ["personal.conflicto-remoto1.kdbx", "personal.kdbx"])
+
+# El compañero fijo lleva la misma hora en todos los dispositivos (#115). Lo crea cada uno, y
+# con la hora de ese momento el segundo en llegar parecía «más nuevo»: su primer --resync
+# (resync-mode = newer) le cambiaba la hora al del remoto y el primer dispositivo veía sus dos
+# ficheros cambiados («all files were changed»).
+HORA_NS = llavero.LEEME_HORA * 1_000_000_000
+c("la hora fija no cambia nunca (dos versiones con otra se pisarían la hora entre sí): 2000-01-01",
+  llavero.LEEME_HORA, 946684800)
+c("  es de un segundo entero y par, que FAT y exFAT guardan de 2 s en 2 s sin redondear",
+  (isinstance(llavero.LEEME_HORA, int), llavero.LEEME_HORA % 2), (True, 0))
+c("  y cae dentro de lo que guarda un FAT (de 1980 a 2107) y en el pasado",
+  315532800 <= llavero.LEEME_HORA < 4354819200 and llavero.LEEME_HORA < time.time(), True)
+
+with sandbox() as root:
+    carpeta = root / ".keychain"
+    rc, salida, ordenes = correr(config().pareja_llavero)
+    leeme = carpeta / llavero.LEEME
+    c("el que crea la primera pasada queda con la hora fija",
+      (leeme.read_bytes(), leeme.stat().st_mtime_ns),
+      (llavero.LEEME_TEXTO.encode("utf-8"), HORA_NS))
+
+    ahora = time.time_ns()
+    os.utime(leeme, ns=(ahora, ahora))
+    llavero.preparar(config().pareja_llavero)
+    c("uno que ya existía con el mismo texto y otra hora se corrige (es nuestro y no cambia)",
+      (leeme.read_bytes(), leeme.stat().st_mtime_ns),
+      (llavero.LEEME_TEXTO.encode("utf-8"), HORA_NS))
+
+    cerca = HORA_NS + 1_000_000_000          # a menos de la ventana de rclone (2 s): iguales
+    os.utime(leeme, ns=(cerca, cerca))
+    llavero.preparar(config().pareja_llavero)
+    c("  con una hora que rclone ya da por igual (menos de 2 s), no se reescribe",
+      leeme.stat().st_mtime_ns, cerca)
+
+    leeme.write_text("lo cambió alguien\n", encoding="utf-8")
+    otra = 1_700_000_000_000_000_000
+    os.utime(leeme, ns=(otra, otra))
+    llavero.preparar(config().pareja_llavero)
+    c("con otro texto no se toca, ni el texto ni la hora",
+      (leeme.read_text(encoding="utf-8"), leeme.stat().st_mtime_ns),
+      ("lo cambió alguien\n", otra))
+
+    leeme.unlink()
+    real_utime = os.utime
+
+    def utime_que_falla(*args, **kwargs):
+        raise OSError("sin permiso")
+    os.utime = utime_que_falla
+    try:
+        creado = llavero.asegurar_leeme(carpeta)
+    finally:
+        os.utime = real_utime
+    c("si el sistema de ficheros no deja ponerle la hora, no tumba la pasada y el fichero se crea",
+      (creado, leeme.read_bytes()), (True, llavero.LEEME_TEXTO.encode("utf-8")))
 
 with sandbox():
     out = io.StringIO()

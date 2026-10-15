@@ -162,6 +162,35 @@ EXPLICACION_LLAVERO = (
     "que no falte ninguna en un lado y, si hay copias de conflicto, usa «Combinar» al abrir "
     "el llavero.")
 """Lo que se dice en la consola cuando es el llavero el que ha topado con un freno de borrados."""
+SALIDA_LLAVERO_CAMBIADOS = (
+    "prdrive ya ha repetido la pasada una vez con --force (lo que pisa cada lado queda en "
+    ".prversions/) y ha vuelto a pararse. Lo que guardes en el llavero no sube mientras tanto. "
+    "Desde aquí no se fuerza: `python sync.py keychain --resync` rehace la referencia y se queda "
+    "con la base más nueva, y la otra queda en .prversions/.")
+"""Qué pasa y qué hacer cuando al llavero lo para «han cambiado todos» aun después de repetirlo."""
+EXPLICACION_LLAVERO_CAMBIADOS = (
+    "Han cambiado todos los ficheros de un lado del llavero (suele ser la hora de un dispositivo "
+    f"nuevo o de otra versión) y bisync se ha parado. {SALIDA_LLAVERO_CAMBIADOS}")
+"""Lo que se dice en la consola cuando es el llavero el que ha topado con «han cambiado todos»."""
+
+
+def explicacion_llavero(explicacion: str) -> str:
+    """Devuelve lo que se le dice del llavero en lugar de `explicacion`, la de un freno.
+
+    Las de `EXPLICACIONES` dicen cómo forzar la pasada, y al llavero no se le fuerza desde
+    fuera (`se_puede_forzar()`). Cada freno tiene la suya; el de borrados es la general.
+    """
+    return (EXPLICACION_LLAVERO_CAMBIADOS if explicacion == EXPLICACION_CAMBIADOS
+            else EXPLICACION_LLAVERO)
+
+
+def salida_llavero(tipo: str) -> str:
+    """Devuelve lo que `revision` dice que se haga cuando el freno `tipo` ha parado al llavero.
+
+    Es lo mismo que la consola, sin la frase de qué ha pasado: el hallazgo ya la lleva
+    (`revision._frase_freno()`).
+    """
+    return SALIDA_LLAVERO_CAMBIADOS if tipo == CAMBIADOS else EXPLICACION_LLAVERO
 
 ENTRADAS = [
     (es_borrados_bisync, EXPLICACION_BORRADOS),
