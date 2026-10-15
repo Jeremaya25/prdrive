@@ -733,12 +733,21 @@ with sandbox():
         encargos[1].correr()
         visto["nueva"] = hasta(root, lambda: root.instantanea_lista)
 
+    def parejas_apuntando(parent, config, compartida=None, lanzar=None) -> bool:
+        """«Parejas…» sustituido: apunta con qué lanzar la pasada se abre y guarda algo."""
+        visto["lanzar_de_parejas"] = lanzar
+        return True
+
     real_parejas = tk_pairs.open_dialog
-    tk_pairs.open_dialog = lambda parent, config, compartida=None: True
+    tk_pairs.open_dialog = parejas_apuntando
     try:
         abrir(model.load_config(), dos_lecturas, lanzar=apuntando)
     finally:
         tk_pairs.open_dialog = real_parejas
+    c("«Parejas…» recibe el `lanzar` de la ventana principal, para el «Resincronizar…» de la ficha",
+      (callable(visto["lanzar_de_parejas"]),
+       getattr(visto["lanzar_de_parejas"], "__func__", None) is uitk.VentanaPrincipal.lanzar),
+      (True, True))
     c("volver de «Parejas» con cambios lanza otra lectura, con el mismo sondeo",
       visto["dos"], (2, True, True))
     c("  la que estaba en camino, al acabar, no se aplica", visto["vieja"], False)
@@ -885,7 +894,7 @@ with sandbox():
     reales_agente = (watch.resumen, watch.pedir_servicio, tk_pairs.open_dialog)
     watch.resumen = lambda: watch.Resumen("agente", "daemon", True)
     watch.pedir_servicio = lambda accion: True
-    tk_pairs.open_dialog = lambda parent, config, compartida=None: True
+    tk_pairs.open_dialog = lambda parent, config, compartida=None, lanzar=None: True
     try:
         abrir(model.load_config(), pausar, lanzar=apuntando)
     finally:

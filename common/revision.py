@@ -145,6 +145,24 @@ def aviso_carpeta_programa(carpeta: str) -> str:
             f"remoto: bórrala tú de {carpeta}, que lleva la clave.")
 
 
+def dato_resync(pair: Pair) -> tuple:
+    """Devuelve el `dato` de un hallazgo `resync` de esa pareja.
+
+    Es dónde está en el remoto la copia del programa que subió una pareja de la
+    raíz entera (`carpeta_programa_en_remoto()`), para que la confirmación del
+    resync (`ui/repair.aviso_resync()`) lo diga; va en una tupla porque
+    `Hallazgo` es inmutable. Lo arman con esta misma función el diagnóstico
+    (`_resync()`) y el resync que pide la persona sin que el diagnóstico lo
+    vea (`ui/repair.hallazgo_resync()`), así que el aviso es el mismo vengan de
+    donde vengan.
+
+    Returns:
+        `(carpeta,)`, o `()` si no hay copia que decir.
+    """
+    carpeta = carpeta_programa_en_remoto(pair)
+    return (carpeta,) if carpeta is not None else ()
+
+
 def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     """Devuelve la avería de una pareja que pide `--resync` y nadie lo ha hecho.
 
@@ -152,8 +170,8 @@ def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     (`sync._bisync_preflight()`).
 
     Si es una pareja de la raíz entera que subió la carpeta del programa, el
-    `dato` es dónde está esa copia en el remoto, para que la confirmación del
-    resync (`ui/repair.aviso_resync()`) lo diga; si no, va vacío.
+    `dato` es dónde está esa copia en el remoto (`dato_resync()`); si no, va
+    vacío.
     """
     if pair.llavero:
         return None
@@ -162,12 +180,10 @@ def _resync(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
         return None
     detalle = ("; ".join(razones) + ". Hasta que se haga, esta pareja se salta en "
                "cada pasada: el servicio no resincroniza solo, nunca.")
-    dato: tuple = ()
-    carpeta = carpeta_programa_en_remoto(pair)
-    if carpeta is not None:
+    dato = dato_resync(pair)
+    if dato:
         detalle += (" Hasta ahora subía la carpeta del programa (con su clave y "
                     "rclone.conf) al remoto.")
-        dato = (carpeta,)
     return Hallazgo(
         "resync", f"{nombre_visible(pair.name)} necesita un --resync", detalle,
         pair.name, AVISO, dato)

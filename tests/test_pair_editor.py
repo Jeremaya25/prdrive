@@ -708,4 +708,147 @@ with sandbox():
       desacuerdos, [])
 
 
+# ---------------------------------------------------------------------------
+# «Resincronizar…» desde la ficha de una pareja (#97)
+# ---------------------------------------------------------------------------
+from common import revision  # noqa: E402
+from ui import repair  # noqa: E402
+
+c("la acción solo aparece en una pareja bisync",
+  {modo: pair_editor.admite_resync(modo) for modo in model.MODES},
+  {"bisync": True, "up": False, "down": False, "up-mirror": False, "down-mirror": False})
+c("  y una pareja sin modo es bisync, el de fábrica",
+  pair_editor.admite_resync(model.DEFAULT_MODE), True)
+
+RAIZ = {"name": "todo", "local": ".", "remote_path": "/R/todo", "mode": "bisync"}
+
+
+def apartados(nombre: str) -> list[Path]:
+    """Las carpetas donde ha quedado un baseline apartado de esa pareja."""
+    return sorted(model.STATE_DIR.glob(f"{nombre}.old-*"))
+
+
+def pareja_lista(nombre: str = "notas", pairs=None):
+    """Prepara el config, deja a esa pareja con carpeta local y baseline y la devuelve."""
+    raw = preparar(pairs)
+    cfg = model.load_config()
+    pareja = next(p for p in cfg.pairs if p.name == nombre)
+    pareja.local_abs.mkdir(parents=True, exist_ok=True)
+    dar_baseline(raw, nombre)
+    return raw, cfg, pareja
+
+
+with sandbox():
+    raw, cfg, notas = pareja_lista()
+    plan = pair_editor.plan_resync(cfg, "notas", apartar=True)
+    pedido = repair.hallazgo_resync(notas)
+    base = repair.aviso_resync(pedido)
+    c("el plan es el de «Reparación»: su título, todas sus consecuencias y sus avisos",
+      (plan.titulo, all(x in plan.consequences for x in base.consequences), plan.warnings),
+      (base.titulo, True, base.warnings))
+    c("  y la orden que se lanza es la suya", plan.args, repair.args_resync(pedido))
+    c.contains("  con la casilla puesta, dice adónde va la referencia",
+               " ".join(plan.consequences), "state/notas.old-")
+    c("  pensarlo no mueve nada", (notas.workdir.is_dir(), apartados("notas")), (True, []))
+    c("  ni mirarlo dos veces", (pair_editor.plan_resync(cfg, "notas", True) is not None,
+                                notas.workdir.is_dir(), apartados("notas")), (True, True, []))
+    hechos = plan.execute()
+    c("ejecutarlo aparta la referencia con fecha, sin borrarla",
+      (notas.workdir.is_dir(), len(apartados("notas"))), (False, 1))
+    c("  y dice dónde ha quedado", any(apartados("notas")[0].name in h for h in hechos), True)
+    c("  la pareja queda sin referencia, como pide el resync",
+      bisync.pair_state(notas).status, "fresh")
+
+with sandbox():
+    raw, cfg, notas = pareja_lista()
+    plan = pair_editor.plan_resync(cfg, "notas", apartar=False)
+    c.contains("sin la casilla, el plan dice que la referencia no se aparta",
+               " ".join(plan.consequences), "no se aparta")
+    c("  y tampoco lo hace al ejecutarse", (plan.execute(), notas.workdir.is_dir(), apartados("notas")),
+      ([], True, []))
+    c("  la orden es la misma",
+      plan.args, pair_editor.plan_resync(cfg, "notas", apartar=True).args)
+
+with sandbox():
+    preparar()
+    cfg = model.load_config()
+    notas = next(p for p in cfg.pairs if p.name == "notas")
+    plan = pair_editor.plan_resync(cfg, "notas", apartar=True)
+    c("una pareja que nunca se ha sincronizado no tiene referencia que apartar",
+      ("state/notas.old-" in " ".join(plan.consequences), plan.execute(), apartados("notas")),
+      (False, [], []))
+    c("  y la carpeta local que aún no está no lo impide (la pasada la crea, sin baseline)",
+      notas.local_abs.exists(), False)
+
+with sandbox():
+    raw, cfg, notas = pareja_lista()
+    plan = pair_editor.plan_resync(cfg, "notas", apartar=True)
+    bisync.shelve_baseline("notas")                      # lo aparta otra pantalla antes del «sí»
+    try:
+        plan.execute()
+        c("si la referencia ya se apartó entre el plan y el sí, no se aparta otra vez",
+          "se ha ejecutado", "excepción")
+    except repair.ReparacionImposible as e:
+        c.contains("si la referencia ya se apartó entre el plan y el sí, se dice",
+                   str(e), "ya no tiene baseline")
+    c("  y no queda un segundo baseline apartado", len(apartados("notas")), 1)
+
+with sandbox():
+    raw, cfg, notas = pareja_lista()
+    for nombre, motivo in (("subida", "bisync"), ("fantasma", "no se usa")):
+        try:
+            pair_editor.plan_resync(cfg, nombre, apartar=True)
+            c(f"{nombre}: no se planea", "plan", "excepción")
+        except ConfigError as e:
+            c.contains(f"{nombre}: se niega diciendo por qué", str(e), motivo)
+    c("  y no toca la referencia de nadie", (notas.workdir.is_dir(), apartados("notas")),
+      (True, []))
+
+with sandbox():
+    # Sin carpeta local y con baseline, `sync.py` aborta (`_bisync_preflight()`): apartar el
+    # baseline antes quitaría justo esa defensa, y la pasada crearía la carpeta vacía.
+    raw = preparar()
+    cfg = model.load_config()
+    notas = next(p for p in cfg.pairs if p.name == "notas")
+    dar_baseline(raw, "notas")
+    c("(la carpeta local falta y hay baseline)", (notas.local_abs.exists(), notas.workdir.is_dir()),
+      (False, True))
+    for apartar in (True, False):
+        try:
+            pair_editor.plan_resync(cfg, "notas", apartar=apartar)
+            c(f"apartar={apartar}: no se ofrece", "plan", "excepción")
+        except repair.ReparacionImposible as e:
+            c.contains(f"apartar={apartar}: se niega y dice que la carpeta no existe",
+                       str(e), "no existe")
+    c("  y no toca la referencia", (notas.workdir.is_dir(), apartados("notas")), (True, []))
+
+with sandbox():
+    # Una pareja de la raíz entera que subió el programa: el aviso sale ANTES del resync,
+    # porque el listado nuevo ya no enseñaría la copia.
+    raw, cfg, todo = pareja_lista("todo", BASE + [RAIZ])
+    (todo.workdir / (bisync.expected_prefix(todo) + bisync.PATH2_SUFFIX)).write_text(
+        f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n',
+        encoding="utf-8")
+    carpeta = revision.carpeta_programa_en_remoto(todo)
+    c("(la raíz tiene la copia del programa en el remoto)", carpeta is not None, True)
+    plan = pair_editor.plan_resync(cfg, "todo", apartar=True)
+    c("el plan lo avisa con la frase de siempre",
+      revision.aviso_carpeta_programa(carpeta) in plan.warnings, True)
+    c("una pareja de una carpeta no lleva ese aviso",
+      any("bórrala tú" in a for a in pair_editor.plan_resync(cfg, "notas", True).warnings), False)
+
+with sandbox():
+    # La pareja del llavero no sale en «Parejas» (`rows()` solo lista las del usuario): su
+    # resync no es de aquí, y se resincroniza sola en su pasada (`sync._bisync_preflight()`).
+    cfg = model.parse_config({"defaults": {"remote": "nas"}, "pair": [dict(BASE[0])],
+                              "keychain": {"base": "personal.kdbx", "fichero_llave": True,
+                                           "nombre_llave": "personal.keyx"}})
+    c("(el config tiene la pareja del llavero)", model.LLAVERO in [p.name for p in cfg.pairs], True)
+    try:
+        pair_editor.plan_resync(cfg, model.LLAVERO, apartar=True)
+        c("la pareja del llavero no se resincroniza desde «Parejas»", "plan", "excepción")
+    except ConfigError as e:
+        c.contains("la pareja del llavero no se resincroniza desde «Parejas»", str(e), "no se usa")
+
+
 sys.exit(c.report())

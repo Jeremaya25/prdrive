@@ -235,7 +235,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 - **Riesgo:** Borra o reescribe
 - **Modos donde sirve:** bisync
 - **Lo que pone prdrive:** Lo pone el programa cuando toca, no la pareja; no se escribe.
-- **En su lugar:** No se escribe. Se pide desde la ventana cuando una pareja lo necesita.
+- **En su lugar:** No se escribe. Se pide desde la ventana: «Reparación» cuando una pareja lo necesita, o «Resincronizar…» en el «Avanzado» de la pareja cuando tú quieras.
 
 ### `--backup-dir`
 

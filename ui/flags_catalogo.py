@@ -250,7 +250,8 @@ ENTRADAS: tuple[Entrada, ...] = (
        "Reescribe lo que sea distinto: gana un lado (por defecto el dispositivo). Lo "
        "pone prdrive solo cuando tú lo pides y te pregunta antes; escribirlo aquí lo "
        "forzaría en cada pasada.",
-       en_su_lugar="No se escribe. Se pide desde la ventana cuando una pareja lo necesita.",
+       en_su_lugar="No se escribe. Se pide desde la ventana: «Reparación» cuando una pareja lo "
+                   "necesita, o «Resincronizar…» en el «Avanzado» de la pareja cuando tú quieras.",
        modos=BISYNC,
        buscar="resincronizar rehacer referencia empezar de cero reescribir"),
     _e("backup-dir", TEMA_PRDRIVE, RIESGO_NOMBRES,

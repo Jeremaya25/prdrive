@@ -281,4 +281,73 @@ with sandbox():
     c("  ni queda un segundo baseline apartado",
       len(list(model.STATE_DIR.glob("notas.old-*"))), 1)
 
+
+# el resync que pide la persona desde «Parejas» (#97) sale de las mismas funciones que el
+# de «Reparación»: el plan y la orden no se escriben dos veces
+c("los botones se llaman igual en las dos pantallas",
+  (repair.ETIQUETA_RESYNC, repair.ETIQUETA_FORZAR), ("Resincronizar…", "Forzar sincronización…"))
+
+with sandbox():
+    cfg = mkcfg([], pairs=[{"name": "todo", "local": ".", "remote_path": "R/todo"},
+                           {"name": "notas", "local": "sync-data/notas", "remote_path": "R/notas"}])
+    todo, notas = cfg.pairs
+    for pareja in cfg.pairs:            # filtros de antes: las dos piden resync
+        viejo = model.FILTERS_DIR / f"{pareja.name}.txt"
+        viejo.parent.mkdir(parents=True, exist_ok=True)
+        listados(pareja)
+        viejo.write_text("# de antes\n", encoding="utf-8", newline="\n")
+        Path(str(viejo) + ".md5").write_text(hashlib.md5(viejo.read_bytes()).hexdigest())
+    (todo.workdir / (bisync.expected_prefix(todo) + bisync.PATH2_SUFFIX)).write_text(
+        f'- 10 - - 2026-01-01T00:00:00.000000000+0000 "{model.APP_DIR.name}/rclone.conf"\n',
+        encoding="utf-8")
+    vistos = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "resync"}
+    c("(el diagnóstico ve el resync de las dos)", sorted(vistos), ["notas", "todo"])
+    for pareja in cfg.pairs:
+        pedido = repair.hallazgo_resync(pareja)
+        visto = vistos[pareja.name]
+        c(f"{pareja.name}: el hallazgo a petición es un resync de esa pareja",
+          (pedido.clave, pedido.pareja), ("resync", pareja.name))
+        c(f"  lleva lo mismo que el que ve el diagnóstico (la copia del programa, si hay)",
+          pedido.dato, visto.dato)
+        c("  el mismo plan, hasta la última línea",
+          (repair.aviso_resync(pedido).titulo, repair.aviso_resync(pedido).consequences,
+           repair.aviso_resync(pedido).warnings),
+          (repair.aviso_resync(visto).titulo, repair.aviso_resync(visto).consequences,
+           repair.aviso_resync(visto).warnings))
+        c("  y la misma orden", repair.args_resync(pedido), repair.args_resync(visto))
+    c("la raíz que subió el programa avisa de dónde está la copia, también a petición",
+      any("bórrala tú" in a for a in repair.aviso_resync(repair.hallazgo_resync(todo)).warnings),
+      True)
+    c("  y la de una carpeta no",
+      any("bórrala tú" in a for a in repair.aviso_resync(repair.hallazgo_resync(notas)).warnings),
+      False)
+
+with sandbox():
+    cfg = mkcfg(["notas"])
+    notas = cfg.pairs[0]
+    notas.local_abs.mkdir(parents=True, exist_ok=True)
+    listados(notas)
+    c("una pareja con el baseline sano: el diagnóstico no ve motivo para un resync",
+      [h for h in revision.revisar(cfg) if h.clave == "resync"], [])
+    pedido = repair.hallazgo_resync(notas)
+    c("  pero la persona puede pedirlo: hallazgo, orden y plan",
+      (pedido.pareja, repair.args_resync(pedido), bool(repair.aviso_resync(pedido).consequences)),
+      ("notas", ["notas", "--resync", "--yes"], True))
+    c("  sin copia del programa que decir", pedido.dato, ())
+
+# el título nombra la pareja como todos los títulos: el llavero por su nombre visible
+c("el plan de un resync nombra la pareja entre comillas",
+  repair.aviso_resync(revision.Hallazgo("resync", "t", "d", "notas")).titulo,
+  "Resincronizar «notas»")
+c("  y el del llavero, «El llavero»",
+  repair.aviso_resync(revision.Hallazgo("resync", "t", "d", model.LLAVERO)).titulo,
+  "Resincronizar El llavero")
+
+# no es «Forzar sincronización…»: aquel salta el freno de borrados de UNA pasada; este
+# rehace la referencia y nada más
+textos = " ".join(repair.aviso_resync(revision.Hallazgo("resync", "t", "d", "notas")).consequences)
+c.contains("el plan del resync dice que no salta ningún freno", textos, "no salta ningún freno")
+c.contains("  y nombra la acción que sí salta el de borrados", textos,
+           f"«{repair.ETIQUETA_FORZAR}», que salta el freno de borrados")
+
 sys.exit(c.report())
