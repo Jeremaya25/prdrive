@@ -1303,10 +1303,12 @@ def flags_escritos(texto, extra="", boton="Aceptar"):
 datos, filas, _ = flags_escritos('transfers = 8\nchecksum = true', "--bwlimit\n8M")
 c("lo escrito vuelve ya parseado", datos["flags"], {"transfers": 8, "checksum": True})
 c("y los extra tal cual", datos["extra_flags"], ["--bwlimit", "8M"])
-c("la tabla enseña de dónde sale cada flag",
-  ["--max-delete 25", "modo bisync"] in [list(f) for f in filas], True)
+c("la tabla enseña cada flag con su valor y de dónde sale",
+  ["--max-delete", "25", "modo bisync"] in [list(f) for f in filas], True)
+c("  y lo propio, como propio",
+  ["--transfers", "8", "esta pareja"] in [list(f) for f in filas], True)
 c("y los argumentos extra también salen",
-  ["--bwlimit", "extra"] in [list(f) for f in filas], True)
+  ["--bwlimit", "", "extra"] in [list(f) for f in filas], True)
 
 datos, _, quejas = flags_escritos("--transfers 8")
 c("la sintaxis de la línea de comandos no sale del diálogo", datos, None)
@@ -1329,7 +1331,7 @@ UNOS_DIEZ = {"transfers": 4, "checksum": True, "fast-list": True, "checkers": 8,
              "buffer-size": "32M", "stats": "10s"}
 
 
-def contar_flags(propios: dict, textos=()):
+def contar_flags(propios: dict, textos=(), **kwargs):
     """Abre el editor con esos flags, escribe cada texto pulsando «Ver el efecto» y cuenta.
 
     Returns:
@@ -1375,7 +1377,7 @@ def contar_flags(propios: dict, textos=()):
 
     tk.Toplevel.wait_window = _wait
     tk_pairs.flags_form(raiz, "Flags", "de prueba", propios, [], mode_name="bisync",
-                        defaults_flags=None)
+                        defaults_flags=None, **kwargs)
     return cuentas, conjuntos, recuadros
 
 
@@ -1383,7 +1385,7 @@ abiertas = {n: contar_flags(dict(list(UNOS_DIEZ.items())[:n]))[0][0] for n in (0
 print(f"  (cuenta) widgets del editor de flags con 0, 3 y 10 flags: {abiertas}")
 c("el editor de flags tiene los mismos widgets con 0, 3 y 10 flags",
   len(set(abiertas.values())), 1)
-c("  y son 34 o menos, tabla incluida", max(abiertas.values()) <= 34, True)
+c("  y son 31 o menos, tabla y botones incluidos", max(abiertas.values()) <= 31, True)
 cuentas, conjuntos, recuadros = contar_flags(
     dict(list(UNOS_DIEZ.items())[:3]),
     ["--transfers 8", 'workdir = "otro"', "transfers = 8", "--transfers 8"])
@@ -1392,7 +1394,7 @@ c("el recuadro rojo se hace la primera vez que lo escrito no vale",
   ([len(r) for r in recuadros], cuentas[0] < cuentas[1]), ([1, 1, 1, 1], True))
 c("  y desde entonces no se crea ni se destruye ningún widget, valga o no lo escrito",
   conjuntos[1] == conjuntos[2] == conjuntos[3] and conjuntos[0] <= conjuntos[1], True)
-c("  con el recuadro, el editor sigue en 34 widgets o menos", max(cuentas) <= 34, True)
+c("  con el recuadro, el editor sigue en 36 widgets o menos", max(cuentas) <= 36, True)
 c("  se ve mientras no vale y se quita cuando vale",
   [r[0][0] for r in recuadros], [True, True, False, True])
 c("  y cambia su título y su motivo, no el recuadro",
@@ -1404,10 +1406,239 @@ c("  y cambia su título y su motivo, no el recuadro",
   (True, True, True, True))
 
 
+# sobrescribir un flag heredado, volver a heredarlo y la orden que saldría
+#
+# Lo que decide qué se puede hacer con cada fila (`flags_editor.acciones()`) y lo
+# que sale de cada operación (`sobrescribir()`, `heredar()`) se prueba sin
+# ventana en test_flags_editor.py. Aquí se prueba el cableado: que elegir una
+# fila encienda el botón que toca, que pulsarlo cambie el cuadro y la tabla, y que
+# lo que sale del diálogo sea lo que está escrito.
+
+from ui import pair_editor  # noqa: E402
+
+
+def orden_de(entrada):
+    """Lo que el formulario de la pareja le da al diálogo para enseñar la orden."""
+    return lambda flags, extra: pair_editor.orden_previa(
+        BASE, {**entrada, "flags": flags, "extra_flags": extra})
+
+
+def sesion_flags(guion, propios, extra=(), boton="Aceptar", mode_name="bisync",
+                 defaults_flags=None, **kwargs):
+    """Abre el editor de flags, ejecuta `guion(dlg, caja, botones)` y pulsa un botón.
+
+    Returns:
+        `(datos, anotado)`: lo que devuelve el diálogo y lo que el guion apuntó.
+    """
+    anotado: dict = {}
+
+    def _wait(self, *_a, **_k):
+        """Recorre la ventana, deja actuar al guion y pulsa el botón final."""
+        cajas, botones, pila = {}, {}, [self]
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, tk.Text):
+                cajas[int(w.grid_info()["row"])] = w
+            elif isinstance(w, ttk.Button):
+                botones[w.cget("text")] = w
+        caja = cajas[min(cajas)]
+        guion(self, caja, botones, anotado)
+        botones[boton].invoke()
+
+    tk.Toplevel.wait_window = _wait
+    datos = tk_pairs.flags_form(raiz, "Flags", "de prueba", propios, list(extra),
+                                mode_name=mode_name, defaults_flags=defaults_flags, **kwargs)
+    return datos, anotado
+
+
+def apagado(boton):
+    """Si el botón está apagado."""
+    return boton.instate(["disabled"])
+
+
+def fila_de(dlg, nombre):
+    """El texto de las celdas de la fila de ese flag en la tabla de efectivos."""
+    return list(dlg.tabla.filas[nombre])
+
+
+def guion_sobrescribir(dlg, caja, botones, anotado):
+    """Sin nada elegido no hay botones; se elige uno heredado y se sobrescribe."""
+    anotado["sin_elegir"] = (apagado(botones["Sobrescribir"]),
+                             apagado(botones["Volver a heredar"]))
+    dlg.tabla.elegir("max-delete")
+    anotado["heredado"] = (apagado(botones["Sobrescribir"]), apagado(botones["Volver a heredar"]))
+    botones["Sobrescribir"].invoke()
+    anotado["cuadro"] = caja.get("1.0", "end").strip()
+    anotado["fila"] = fila_de(dlg, "max-delete")
+    anotado["propio"] = (apagado(botones["Sobrescribir"]), apagado(botones["Volver a heredar"]))
+
+
+datos, visto = sesion_flags(guion_sobrescribir, {"transfers": 4})
+c("sin nada elegido, ni sobrescribir ni volver a heredar", visto["sin_elegir"], (True, True))
+c("elegir uno heredado ofrece sobrescribirlo, no quitarlo", visto["heredado"], (False, True))
+c("sobrescribirlo lo pone en el cuadro, con su valor", visto["cuadro"],
+  "max-delete = 25\ntransfers = 4")
+c("y la tabla lo da ya por de la pareja", visto["fila"], ["--max-delete", "25", "esta pareja"])
+c("entonces se ofrece quitarlo, no sobrescribirlo", visto["propio"], (True, False))
+c("y lo que sale del diálogo lo lleva", datos["flags"], {"transfers": 4, "max-delete": 25})
+
+
+def guion_heredar(dlg, caja, botones, anotado):
+    """Se elige uno propio y se vuelve a heredar."""
+    dlg.tabla.elegir("max-delete")
+    anotado["propio"] = (apagado(botones["Sobrescribir"]), apagado(botones["Volver a heredar"]))
+    anotado["nota"] = [str(w.cget("text")) for w in todos_los(dlg, ttk.Label)
+                       if "Si lo quitas" in str(w.cget("text"))]
+    botones["Volver a heredar"].invoke()
+    anotado["cuadro"] = caja.get("1.0", "end").strip()
+    anotado["fila"] = fila_de(dlg, "max-delete")
+
+
+def todos_los(dlg, clase):
+    """Todos los widgets de esa clase dentro de la ventana."""
+    pila, salida = [dlg], []
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, clase):
+            salida.append(w)
+    return salida
+
+
+datos, visto = sesion_flags(guion_heredar, {"transfers": 4, "max-delete": 5})
+c("uno propio se ofrece para quitarlo", visto["propio"], (True, False))
+c("y la fila dice a qué vuelve", visto["nota"], ["Si lo quitas, vuelve a valer 25 (modo bisync)."])
+c("volver a heredar lo quita del cuadro", visto["cuadro"], "transfers = 4")
+c("y la tabla vuelve a darlo por del modo", visto["fila"], ["--max-delete", "25", "modo bisync"])
+c("y lo que sale del diálogo ya no lo lleva", datos["flags"], {"transfers": 4})
+
+
+def guion_cuadro_roto(dlg, caja, botones, anotado):
+    """Con lo escrito sin sentido, los botones no hacen nada y el diálogo se queja."""
+    dlg.tabla.elegir("max-delete")
+    caja.delete("1.0", "end")
+    caja.insert("1.0", "--transfers 8")
+    botones["Sobrescribir"].invoke()
+    anotado["cuadro"] = caja.get("1.0", "end").strip()
+    anotado["quejas"] = [str(w.cget("text")) for w in todos_los(dlg, ttk.Label)]
+
+
+datos, visto = sesion_flags(guion_cuadro_roto, {}, boton="Cancelar")
+c("con el cuadro roto, sobrescribir no lo toca", visto["cuadro"], "--transfers 8")
+c("y se dice por qué, como siempre", any("guiones" in q for q in visto["quejas"]), True)
+
+
+def guion_reservado(dlg, caja, botones, anotado):
+    """Lo que la tabla no puede ofrecer, tampoco lo ofrece el botón."""
+    anotado["filas"] = list(dlg.tabla.orden)
+
+
+datos, visto = sesion_flags(guion_reservado, {"transfers": 4}, boton="Cancelar")
+c("la tabla nunca lleva un flag reservado",
+  [n for n in visto["filas"] if model.problema_flag(n)], [])
+
+
+# [defaults] edita su propia capa: lo suyo se llama [defaults]
+
+def guion_defaults(dlg, caja, botones, anotado):
+    """En [defaults] no hay modo, ni orden de rclone: solo la base y lo común."""
+    anotado["filas"] = {n: fila_de(dlg, n) for n in dlg.tabla.orden}
+    dlg.tabla.elegir("transfers")
+    anotado["quitar"] = (apagado(botones["Sobrescribir"]), apagado(botones["Volver a heredar"]))
+    anotado["con_orden"] = hasattr(dlg, "vista_orden")
+
+
+datos, visto = sesion_flags(guion_defaults, {"transfers": 4}, boton="Cancelar", mode_name=None,
+                            capa=model.ORIGEN_DEFAULTS)
+c("en [defaults], lo común se llama [defaults]", visto["filas"]["transfers"],
+  ["--transfers", "4", "[defaults]"])
+c("  y lo de siempre, siempre", visto["filas"]["verbose"], ["--verbose", "activado", "siempre"])
+c("  y se puede quitar", visto["quitar"], (True, False))
+c("  y no enseña ninguna orden: no hay pareja", visto["con_orden"], False)
+
+
+# la orden que saldría
+
+NOTAS = BASE["pair"][0]
+
+
+def orden_escrita(dlg):
+    """`(orden entera, lo sombreado)`: el texto de la vista previa y los trozos que pone prdrive."""
+    vista = dlg.vista_orden
+    rangos = vista.tag_ranges("prdrive")
+    sombreado = [vista.get(rangos[i], rangos[i + 1]) for i in range(0, len(rangos), 2)]
+    return vista.get("1.0", "end").strip(), sombreado
+
+
+def guion_orden(dlg, caja, botones, anotado):
+    """Lee la orden que enseña el diálogo y, tras cambiar los flags, la de después."""
+    anotado["antes"] = orden_escrita(dlg)
+    caja.delete("1.0", "end")
+    caja.insert("1.0", "transfers = 3")
+    botones["Ver el efecto"].invoke()
+    anotado["despues"] = orden_escrita(dlg)
+    anotado["estado"] = str(dlg.vista_orden.cget("state"))
+
+
+datos, visto = sesion_flags(guion_orden, {}, boton="Cancelar", orden=orden_de(NOTAS))
+entera, sombreado = visto["antes"]
+c("la orden empieza por la de rclone", entera.startswith("rclone bisync "), True)
+c("  y lleva lo de las capas, con sus valores", "--max-lock 2m" in entera, True)
+c("lo que pone prdrive va sombreado: la orden y su fichero de filtros",
+  sombreado[0].startswith("rclone bisync ") and "--filters-file" in sombreado[0], True)
+c("  y --config, --log-file y --workdir",
+  [t for t in sombreado[1].split() if t.startswith("--")], ["--config", "--log-file", "--workdir"])
+c("  y lo que es de las capas, no", any("--max-lock" in t for t in sombreado), False)
+c("la orden sigue lo que se escribe, sin guardar",
+  ("--transfers 3" in visto["despues"][0], "--transfers 3" in entera), (True, False))
+c("la vista previa no se puede escribir encima", visto["estado"], "disabled")
+
+
+def guion_sin_orden(dlg, caja, botones, anotado):
+    """Una pareja a medio rellenar no tiene orden: la vista dice por qué, y no se rompe nada."""
+    anotado["orden"] = orden_escrita(dlg)
+
+
+datos, visto = sesion_flags(guion_sin_orden, {}, boton="Cancelar",
+                            orden=orden_de({"name": "nueva", "mode": "bisync"}))
+c("sin ruta local no hay orden, y se dice qué falta",
+  ("Todavía no se puede componer la orden" in visto["orden"][0],
+   "local" in visto["orden"][0]), (True, True))
+c("  y nada va sombreado", visto["orden"][1], [])
+c("y el editor sigue valiendo para escribir flags", datos, None)
+
+
+# La vista previa es un widget de texto y una etiqueta más, siempre los mismos:
+# no crece con los flags, y escribir algo que no vale no crea ni destruye nada.
+con_orden = {n: contar_flags(dict(list(UNOS_DIEZ.items())[:n]), orden=orden_de(NOTAS))[0][0]
+             for n in (0, 3, 10)}
+print(f"  (cuenta) widgets del editor de flags con la vista previa: {con_orden}")
+c("con la vista previa, los mismos widgets con 0, 3 y 10 flags",
+  len(set(con_orden.values())), 1)
+c("  y son tres más: el rótulo, el texto y la leyenda",
+  con_orden[0] - abiertas[0], 3)
+cuentas, conjuntos, _ = contar_flags(dict(list(UNOS_DIEZ.items())[:3]),
+                                     ["--transfers 8", "transfers = 8", "--transfers 8"],
+                                     orden=orden_de(NOTAS))
+c("  y escribir algo que no vale, y arreglarlo, no crea ni destruye ninguno",
+  (conjuntos[0] <= conjuntos[1], conjuntos[1] == conjuntos[2]), (True, True))
+
+
 # y el formulario de la pareja recoge lo que diga ese diálogo
 
-tk_pairs.flags_form = lambda *a, **k: {"flags": {"transfers": 8},
-                                       "extra_flags": ["--stats", "10s"]}
+pedidos: list[dict] = []
+
+
+def flags_form_falso(*a, **k):
+    """Sustituye al diálogo de flags: apunta cómo se le pide y devuelve unos flags."""
+    pedidos.append(k)
+    if k.get("orden") is not None:        # el diálogo la usa con el formulario aún abierto
+        pedidos[-1]["lineas"] = k["orden"]({"transfers": 5}, ["--bwlimit", "8M"])
+    return {"flags": {"transfers": 8}, "extra_flags": ["--stats", "10s"]}
+
+
+tk_pairs.flags_form = flags_form_falso
 
 
 def _abrir_y_guardar(self, *_a, **_k):
@@ -1427,6 +1658,62 @@ tk.Toplevel.wait_window = _abrir_y_guardar
 datos = FORMULARIO(raiz, BASE, "notas", dict(BASE["pair"][0]))
 c("el formulario devuelve los flags del diálogo", datos["flags"], {"transfers": 8})
 c("y sus argumentos extra", datos["extra_flags"], ["--stats", "10s"])
+c("el diálogo de flags de una pareja edita [pair.flags]",
+  pedidos[0].get("capa", model.ORIGEN_PAREJA), model.ORIGEN_PAREJA)
+c("el formulario del catálogo no enseña orden: es una plantilla, no una orden de nadie",
+  pedidos[0].get("orden"), None)
+
+# La orden solo se enseña donde sync.py la montaría: en la ventana de una pareja de
+# este dispositivo. La del catálogo no lleva `device_remote` ni la raíz de nadie.
+with sandbox():
+    model.CONFIG_FILE.write_text(config_file.dumps(BASE), encoding="utf-8")
+    catalog.load = falso_catalogo
+    for del_catalogo in (False, True):
+        pedidos.clear()
+        parejas = tk_pairs.PantallaParejas(raiz)
+        parejas.cat, parejas.aviso = catalog.load()
+        try:
+            ventana = tk_pairs.VentanaPareja(parejas, "notas", del_catalogo)
+            ventana.editor.editar_flags()
+        finally:
+            parejas.dlg.destroy()
+        donde = "del catálogo" if del_catalogo else "de este dispositivo"
+        if del_catalogo:
+            c(f"la pareja {donde} no enseña la orden de rclone", pedidos[0].get("orden"), None)
+        else:
+            lineas = pedidos[0]["lineas"]
+            c(f"la pareja {donde} enseña la orden con los flags que se escriben",
+              [l.texto for l in lineas if l.texto.startswith(("--transfers", "--bwlimit", "8M"))],
+              ["--transfers 5", "--bwlimit", "8M"])
+            c("  empezando por la pareja de la ventana",
+              lineas[0].texto.startswith("rclone bisync ") and lineas[0].texto.endswith(":/R/notas"),
+              True)
+            c("  y con la capa de la pareja mandando",
+              {l.args[0]: l.etiqueta for l in lineas}["--transfers"], "esta pareja")
+
+
+# [defaults] abre el mismo diálogo con su propia capa y sin orden: no hay pareja
+
+def _editar_flags_comunes(self, *_a, **_k):
+    """Abre el editor de flags comunes y cancela."""
+    botones = {}
+    pila = [self]
+    while pila:
+        w = pila.pop()
+        pila += list(w.winfo_children())
+        if isinstance(w, ttk.Button):
+            botones[w.cget("text")] = w
+    botones["Editar flags…"].invoke()
+    botones["Cancelar"].invoke()
+
+
+pedidos.clear()
+tk.Toplevel.wait_window = _editar_flags_comunes
+tk_pairs.defaults_form(raiz, {"remote": "nas", "flags": {"transfers": 4}}, None,
+                       "[defaults]", "de prueba")
+c("[defaults] edita su capa", pedidos[0].get("capa"), model.ORIGEN_DEFAULTS)
+c("  y no enseña orden de rclone: es de todas las parejas", pedidos[0].get("orden"), None)
+
 
 # el formulario de la pareja: «Vigilar» sigue al modo, como «Versiones»
 #

@@ -104,9 +104,21 @@ la pareja y lo cuenta en una línea (`progreso: 2,1 MB de 3,4 MB · 61 % ·
 informativo: si no sale nada del log —porque una pareja cambia esos flags, por
 ejemplo con `stats = "0"`—, no hay progreso y la pasada va igual.
 
-El editor de flags de la ventana enseña **las cuatro capas resueltas**, con la
-etiqueta de dónde viene cada valor, y avisa cuando un cambio sube el
-`--max-delete` efectivo aunque no hayas tocado ese flag.
+El editor de flags de la ventana enseña **las cuatro capas resueltas**: cada
+flag con su valor y la etiqueta de dónde viene (`siempre`, `modo bisync`,
+`[defaults]` o `esta pareja`), y avisa cuando un cambio sube el `--max-delete`
+efectivo aunque no hayas tocado ese flag. Eligiendo una fila:
+
+- **Sobrescribir** copia al cuadro de la izquierda un flag heredado, con el valor
+  que ya tenía, para que lo cambies solo en esta pareja.
+- **Volver a heredar** quita del cuadro un flag de la pareja: pasa a valer lo que
+  diga la capa de debajo (la fila dice cuál, o que rclone dejará de recibirlo).
+
+Nada se guarda hasta «Guardar», que enseña antes lo que va a pasar. Debajo, **la
+orden de rclone** que saldría de una pasada normal con esos flags, sin
+ejecutarla: es la misma que monta `sync.py`, y lo que pone prdrive en cada pasada
+(`--config`, `--log-file`, `--workdir`…) sale sombreado, porque no se puede
+cambiar desde aquí.
 
 ## `device_remote`
 

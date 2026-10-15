@@ -678,6 +678,32 @@ def ruta_local_relativa(elegida: Path | str) -> str:
     return local
 
 
+def orden_previa(raw: Mapping[str, Any], edited: Mapping[str, Any]) -> list[flags_editor.Linea]:
+    """Devuelve la orden de rclone que montaría `sync.py` para esta pareja, sin ejecutarla.
+
+    La pareja se lee como la leería `sync.py`: los campos del formulario se
+    limpian como al guardar (`clean_form()`), se resuelven con
+    `model.parse_config()` junto con los `[defaults]` (y `[keychain]`, que añade
+    reglas a las parejas de la raíz) y la orden la monta la misma pieza que usa
+    `sync.build_command()` (`flags_editor.lineas_de_la_orden()`). No escribe
+    nada: ni el fichero de filtros.
+
+    Args:
+        raw: El config donde va la pareja.
+        edited: Los campos del formulario, con los flags que se están
+            escribiendo.
+
+    Raises:
+        ConfigError: Si la pareja todavía no se puede resolver (le falta la ruta
+            local, por ejemplo); el mensaje dice qué.
+    """
+    entrada = clean_form(edited)
+    contexto = {k: raw[k] for k in ("defaults", "keychain") if k in raw}
+    config = model.parse_config({**contexto, "pair": [entrada]}, equipo=model.es_equipo())
+    pair = config.pairs[0]
+    return flags_editor.lineas_de_la_orden(pair, bisync.ruta_filtros(pair))
+
+
 def simular_args(raw: Mapping[str, Any], name: str) -> list[str]:
     """Devuelve los argumentos de `sync.py` para ver qué haría una pareja sin hacerlo.
 

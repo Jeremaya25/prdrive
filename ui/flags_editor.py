@@ -13,7 +13,7 @@ Hay dos decisiones que conviene no deshacer:
   guardando algo distinto de lo que se lee en pantalla.
 - **No se admite cualquier flag.** `sync.py` pone los suyos en cada ejecución
   (`--config`, `--log-file`, `--dry-run`, `--workdir`, `--resync`) y los de
-  filtrado salen de los patrones incluir/excluir (`filter_args`). Repetirlos
+  filtrado salen de los patrones incluir/excluir (`orden.filter_args`). Repetirlos
   aquí no los sustituye: rclone recibiría el flag dos veces y, en el caso de
   `--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no
   es el suyo. Por eso `RESERVED` (`model.FLAGS_RESERVADOS`) se rechaza al
@@ -27,6 +27,13 @@ Hay dos decisiones que conviene no deshacer:
 Lo demás se admite sin lista blanca: quién sabe qué flags existen es rclone, y
 la regla del proyecto es que un flag nuevo se añade escribiéndolo, no tocando
 código.
+
+Además del texto, el editor enseña los flags EFECTIVOS de la pareja, cada uno
+con la capa de la que sale (`effective()`), deja sobrescribir uno heredado o
+volver a heredarlo (`sobrescribir()`, `heredar()`: dan el `[pair.flags]` nuevo)
+y enseña la orden de rclone que saldría (`lineas_de_la_orden()`). Las tres
+cosas salen de `model.flags_efectivos()` y de `orden.tramos()`, las mismas
+piezas con las que `sync.py` monta cada pasada: nada de esto es una copia.
 """
 
 from __future__ import annotations
@@ -35,8 +42,8 @@ import re
 import tomllib
 from typing import Any, Mapping, NamedTuple
 
-from common import config_file, model
-from common.model import ConfigError
+from common import config_file, model, orden
+from common.model import ConfigError, FlagEfectivo
 
 
 class FlagReservado(ConfigError):
@@ -77,15 +84,67 @@ FRENOS = ("max-delete", "max-delete-size")
 """Flags cuyo valor es un freno de mano y no una preferencia: cambiarlos se avisa."""
 
 
+ETIQUETA_PRDRIVE = "lo pone prdrive"
+"""Lo que se lee en un trozo de la orden que añade el programa y no se configura."""
+
+LOG_PREVIO = "<log de la pasada>"
+"""Lo que la vista previa pone donde `sync.py` pone el log temporal de cada pasada."""
+
+SELLO_PREVIO = "<marca de la pasada>"
+"""Lo que la vista previa pone donde `sync.py` pone el sufijo de las versiones."""
+
+LEYENDA_ORDEN = ("Sombreado, lo que pone prdrive en cada pasada (--config, --log-file, "
+                 "--workdir…): los pone prdrive y no se cambian desde aquí. Es la orden de "
+                 "una pasada normal; un --resync o una simulación añaden lo suyo.")
+"""Lo que explica la vista previa de la orden, bajo ella."""
+
+
 class Row(NamedTuple):
     """Una línea de la tabla de flags efectivos.
 
     Args:
-        flag: El flag tal cual se le pasa a rclone (`--transfers 4`).
-        origen: La capa que ha ganado.
+        nombre: El flag sin guiones y con `-` (`max-delete`).
+        flag: El flag tal cual se le pasa a rclone (`--transfers 4`); si está
+            apagado y por eso no llega, solo `--nombre`.
+        valor: Su valor para leerlo (`4`, `activado`, `desactivado`, `a, b`).
+        crudo: Su valor con el tipo del TOML, el que se copia al sobrescribirlo.
+        origen: La capa que ha ganado (`model.ORIGEN_*`).
+        etiqueta: Esa capa, para la persona (`etiqueta()`).
+        propio: Si sale de la capa que se está editando: es lo que se puede
+            quitar. Lo demás se puede sobrescribir.
+        activo: Si llega a rclone; un flag a `false` se enseña pero no llega.
+        nota: Qué pasa si se toca esta fila (`acciones()`).
     """
+    nombre: str
     flag: str
+    valor: str
+    crudo: Any
     origen: str
+    etiqueta: str
+    propio: bool
+    activo: bool
+    nota: str
+
+
+class Linea(NamedTuple):
+    """Un trozo de la orden de rclone de la vista previa.
+
+    Args:
+        args: Los argumentos del trozo, tal como van a la línea de comandos.
+        origen: Quién lo pone (`model.ORIGEN_*`).
+        etiqueta: Ese origen, para la persona.
+        lo_pone_prdrive: Si lo añade el programa en cada pasada (`--config`,
+            `--log-file`, `--workdir`…): no se configura y no se puede cambiar.
+    """
+    args: tuple[str, ...]
+    origen: str
+    etiqueta: str
+    lo_pone_prdrive: bool
+
+    @property
+    def texto(self) -> str:
+        """Devuelve el trozo como se escribiría en la línea de comandos."""
+        return " ".join(self.args)
 
 
 normalize = model.normalizar_flag
@@ -181,38 +240,194 @@ def merge(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
     El orden es base < modo < `[defaults.flags]` < `[pair.flags]`.
     """
     modo = model.MODES.get(mode_name or "")
-    return {**model.BASE_FLAGS,
-            **(modo.flags if modo else {}),
-            **dict(defaults_flags or {}),
-            **dict(pair_flags or {})}
+    return {f.nombre: f.valor
+            for f in model.flags_efectivos(modo, defaults_flags, pair_flags)}
+
+
+def etiqueta(origen: str, mode_name: str | None = None) -> str:
+    """Devuelve cómo se lee una capa de flags (`model.ORIGEN_*`).
+
+    Args:
+        origen: La capa.
+        mode_name: El modo de la pareja, para nombrar la capa del modo.
+    """
+    return {model.ORIGEN_BASE: "siempre",
+            model.ORIGEN_MODO: f"modo {mode_name}",
+            model.ORIGEN_DEFAULTS: "[defaults]",
+            model.ORIGEN_PAREJA: "esta pareja",
+            model.ORIGEN_PRDRIVE: ETIQUETA_PRDRIVE,
+            model.ORIGEN_PATRONES: "incluir/excluir",
+            model.ORIGEN_EXTRA: "extra"}[origen]
+
+
+def cascada(capa: str = model.ORIGEN_PAREJA) -> str:
+    """Devuelve la frase que dice en qué orden se funden las capas de flags.
+
+    Args:
+        capa: La capa que se edita; en `[defaults]` no hay modo ni pareja.
+    """
+    if capa == model.ORIGEN_DEFAULTS:
+        return "Se funden en este orden: siempre → [defaults]."
+    return "Se funden en este orden: siempre → modo → [defaults] → esta pareja."
+
+
+def sin_orden(error: ConfigError) -> str:
+    """Devuelve lo que se dice en lugar de la orden cuando la pareja aún no se puede resolver."""
+    return f"Todavía no se puede componer la orden: {error}"
+
+
+def valor_texto(valor: Any) -> str:
+    """Devuelve el valor de un flag para leerlo: `activado`, `desactivado`, o el valor."""
+    if valor is True:
+        return "activado"
+    if valor is False or valor is None:
+        return "desactivado"
+    if isinstance(valor, (list, tuple)):
+        return ", ".join(str(v) for v in valor) or "desactivado"
+    return str(valor)
+
+
+def _por_nombre(efectivos: list[FlagEfectivo]) -> dict[str, FlagEfectivo]:
+    """Junta los flags por el nombre que ve rclone: de dos grafías gana la última."""
+    return {normalize(f.nombre): f for f in efectivos}
 
 
 def effective(mode_name: str | None, defaults_flags: Mapping[str, Any] | None,
-              pair_flags: Mapping[str, Any] | None) -> list[Row]:
+              pair_flags: Mapping[str, Any] | None,
+              capa: str = model.ORIGEN_PAREJA) -> list[Row]:
     """Devuelve los flags que recibiría rclone y de qué capa sale cada uno.
 
     Es el sentido de todo esto: se escriben en cuatro sitios y hasta ahora solo
     se veían juntos en la línea de comandos, o sea cuando ya se está
-    ejecutando.
+    ejecutando. Sale de `model.flags_efectivos()`, la misma cascada de la que
+    sale `Pair.flags`.
+
+    Args:
+        mode_name: El modo de la pareja.
+        defaults_flags: `[defaults.flags]`.
+        pair_flags: Lo que se está editando: `[pair.flags]`, o `[defaults.flags]`
+            si `capa` es `model.ORIGEN_DEFAULTS`.
+        capa: La capa que se edita. Con `ORIGEN_DEFAULTS` no hay modo ni nada
+            por encima de la base: `pair_flags` son los comunes y los de
+            `defaults_flags` y `mode_name` no cuentan.
+
+    Returns:
+        Una fila por flag, ordenadas por nombre.
     """
-    modo = model.MODES.get(mode_name or "")
-    capas = [(model.BASE_FLAGS, "siempre"),
-             (modo.flags if modo else {}, f"modo {mode_name}"),
-             (dict(defaults_flags or {}), "[defaults]"),
-             (dict(pair_flags or {}), "esta pareja")]
+    if capa == model.ORIGEN_DEFAULTS:
+        mode_name, modo = None, None
+        ganadores = model.flags_efectivos(None, pair_flags, None)
+        debajo = model.flags_efectivos(None, None, None)
+    else:
+        modo = model.MODES.get(mode_name or "")
+        ganadores = model.flags_efectivos(modo, defaults_flags, pair_flags)
+        debajo = model.flags_efectivos(modo, defaults_flags, None)
+    de_debajo = _por_nombre(debajo)
 
-    origen: dict[str, str] = {}
-    for tabla, nombre in capas:
-        for key in tabla:
-            origen[normalize(key)] = nombre
+    filas = []
+    for nombre, f in _por_nombre(ganadores).items():
+        args = model.flags_to_args({f.nombre: f.valor})
+        propio = f.origen == capa
+        if propio:
+            antes = de_debajo.get(nombre)
+            nota = ("Si lo quitas, rclone deja de recibirlo." if antes is None else
+                    f"Si lo quitas, vuelve a valer {valor_texto(antes.valor)} "
+                    f"({etiqueta(antes.origen, mode_name)}).")
+        else:
+            nota = (f"Viene de {etiqueta(f.origen, mode_name)}. Sobrescribirlo lo copia a "
+                    f"lo que escribes, para que lo cambies.")
+        filas.append(Row(nombre=nombre, flag=" ".join(args) if args else f"--{nombre}",
+                         valor=valor_texto(f.valor) if args else "desactivado",
+                         crudo=f.valor, origen=f.origen,
+                         etiqueta=etiqueta(f.origen, mode_name), propio=propio,
+                         activo=bool(args), nota=nota))
+    return sorted(filas, key=lambda fila: fila.nombre)
 
-    salida = []
-    for key, value in merge(mode_name, defaults_flags, pair_flags).items():
-        args = model.flags_to_args({key: value})
-        if not args:                       # false o None: no llega a rclone
-            args = [f"(--{normalize(key)}: desactivado)"]
-        salida.append(Row(" ".join(args), origen.get(normalize(key), "?")))
-    return sorted(salida)
+
+def sobrescribir(propios: Mapping[str, Any] | None, nombre: str, valor: Any) -> dict:
+    """Devuelve la tabla de flags de la pareja con ese flag puesto a ese valor.
+
+    Es sobrescribir uno heredado (se pone con el valor que heredaba, y vale lo
+    mismo hasta que se cambie) o cambiar uno propio. Pasa por la misma puerta
+    que lo escrito en el cuadro (`_validar()`), así que un flag que `sync.py`
+    pone por su cuenta o que lanza un programa de este equipo se rechaza aquí
+    igual que allí.
+
+    Args:
+        propios: `[pair.flags]` de ahora; no se toca.
+        nombre: El flag, con `-` o con `_`.
+        valor: Su valor, con el tipo del TOML.
+
+    Raises:
+        FlagReservado: Si el flag no se admite (`model.problema_flag()`).
+        ConfigError: Si el flag o su valor no valen.
+    """
+    clave = normalize(nombre)
+    _validar(clave, valor)
+    nuevos = {k: v for k, v in dict(propios or {}).items() if normalize(k) != clave}
+    nuevos[clave] = valor
+    return nuevos
+
+
+def heredar(propios: Mapping[str, Any] | None, nombre: str) -> dict:
+    """Devuelve la tabla de flags de la pareja sin ese flag: vuelve a valer lo heredado.
+
+    Quita el flag con cualquiera de sus grafías (`max-delete`, `max_delete`).
+    Si no era de la pareja, no cambia nada.
+
+    Args:
+        propios: `[pair.flags]` de ahora; no se toca.
+        nombre: El flag.
+    """
+    clave = normalize(nombre)
+    return {k: v for k, v in dict(propios or {}).items() if normalize(k) != clave}
+
+
+def acciones(fila: Row | None) -> tuple[bool, bool]:
+    """Dice qué se puede hacer con una fila de la tabla.
+
+    Returns:
+        `(sobrescribir, volver a heredar)`: lo heredado se sobrescribe y lo
+        propio se quita; sin fila elegida, ninguna de las dos.
+    """
+    if fila is None:
+        return (False, False)
+    return (not fila.propio, fila.propio)
+
+
+def trozos(lineas: list[Linea]) -> list[tuple[str, bool]]:
+    """Junta las líneas seguidas que pone la misma mano, para dibujar la orden de corrido.
+
+    Returns:
+        `(texto, lo_pone_prdrive)` por cada racha: lo que pone el programa
+        queda en bloques (`rclone bisync <extremos> --filters-file …`,
+        `--config … --log-file … --workdir …`) y lo demás, en los suyos.
+    """
+    rachas: list[tuple[list[str], bool]] = []
+    for linea in lineas:
+        if rachas and rachas[-1][1] == linea.lo_pone_prdrive:
+            rachas[-1][0].append(linea.texto)
+        else:
+            rachas.append(([linea.texto], linea.lo_pone_prdrive))
+    return [(" ".join(textos), puesto) for textos, puesto in rachas]
+
+
+def lineas_de_la_orden(pair: model.Pair, filtros=None) -> list[Linea]:
+    """Devuelve la orden de rclone de una pasada normal de la pareja, sin ejecutarla.
+
+    La monta `orden.tramos()`, lo mismo que `sync.build_command()`. Donde la
+    orden lleva algo que solo existe al ejecutar (el log de la pasada, el sufijo
+    de las versiones) se pone `LOG_PREVIO` o `SELLO_PREVIO`, y el rclone se
+    llama `rclone`. Lo que añade el programa va marcado (`Linea.lo_pone_prdrive`).
+
+    Args:
+        pair: La pareja, ya resuelta (`model.parse_config()`).
+        filtros: Su fichero de filtros (`bisync.ruta_filtros()`), o `None`.
+    """
+    tramos = orden.tramos(pair, binario="rclone", filtros=filtros, config=model.RCLONE_CONF,
+                          logfile=LOG_PREVIO, sello=SELLO_PREVIO)
+    return [Linea(t.args, t.origen, etiqueta(t.origen, pair.mode.name),
+                  t.origen == model.ORIGEN_PRDRIVE) for t in tramos]
 
 
 def summary(flags: Mapping[str, Any] | None, extra: Any = None) -> str:

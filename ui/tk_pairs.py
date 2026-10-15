@@ -231,14 +231,19 @@ class EditorPareja:
         al_crecer: Lo que se llama, sin argumentos, cuando el editor puede pedir
             más sitio del que tenía: al desplegar «Avanzado» y al cambiar el
             aviso del modo. Es de quien lo tiene en su ventana, que la agranda.
+        con_orden: Si «Editar flags…» enseña la orden de rclone que saldría.
+            Solo vale para una pareja de este dispositivo, que es donde
+            `sync.py` la monta: la del catálogo es una plantilla y lo local de
+            su orden (`device_remote`, la raíz) lo pone cada dispositivo.
     """
 
     def __init__(self, parent, dlg, sup: str = "", dos_columnas: bool = True,
-                 plegable: bool = True, al_crecer=None):
+                 plegable: bool = True, al_crecer=None, con_orden: bool = False):
         import tkinter as tk
         from tkinter import ttk
         self.dlg, self.sup = dlg, sup
         self.al_crecer = al_crecer
+        self.con_orden = con_orden
         self.raw: dict = {}
         self.actual: dict = {}
         self.catalogo: dict | None = None
@@ -632,6 +637,18 @@ class EditorPareja:
         if elegida is not None:
             self.campos["remote_path"].set(elegida)
 
+    def _orden_previa(self, flags: dict, extra: list) -> list:
+        """Devuelve la orden de rclone de esta pareja con esos flags, para la vista previa.
+
+        Es lo que el editor de flags le pide al formulario: la pareja tal como
+        está escrita ahora, con los flags que se están escribiendo allí.
+
+        Raises:
+            ConfigError: Si la pareja todavía no se puede resolver.
+        """
+        return pair_editor.orden_previa(
+            self.raw, {**self.datos(), "flags": flags, "extra_flags": extra})
+
     def editar_flags(self) -> None:
         """Abre el editor de flags y se queda con lo que devuelva."""
         perf_empezar("open-flags")
@@ -642,7 +659,8 @@ class EditorPareja:
                            mode_name=self.modo.get(),
                            defaults_flags=(self.raw.get("defaults") or {}).get("flags"),
                            catalogo_flags=(self.catalogo or {}).get("flags")
-                           if self.catalogo else None)
+                           if self.catalogo else None,
+                           orden=self._orden_previa if self.con_orden else None)
         if datos is None:
             return
         self.avanzado.update(datos)
@@ -763,7 +781,8 @@ class VentanaPareja:
                   style="Pista.TLabel", wraplength=theme.medida(640), justify="left").grid(
             row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
-        self.editor = EditorPareja(marco, dlg, al_crecer=self.crecer)
+        self.editor = EditorPareja(marco, dlg, al_crecer=self.crecer,
+                                   con_orden=not del_catalogo)
         self.editor.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
 
         ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
@@ -2140,7 +2159,8 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
                            avanzado["flags"], avanzado["extra_flags"],
                            mode_name=None,
                            defaults_flags=None,
-                           catalogo_flags=(catalogo or {}).get("flags") if catalogo else None)
+                           catalogo_flags=(catalogo or {}).get("flags") if catalogo else None,
+                           capa=model.ORIGEN_DEFAULTS)
         if datos is None:
             return
         avanzado.update(datos)
@@ -2197,9 +2217,33 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
     return resultado["datos"]
 
 
+COLUMNAS_FLAGS = [("Flag", 190, True), ("Valor", 100, False), ("Sale de", 120, False)]
+"""Las columnas de la tabla de flags efectivos: `(titulo, ancho, estira)`."""
+
+
+def fila_de_flag(fila: flags_editor.Row) -> FilaTabla:
+    """Devuelve la fila de la tabla de flags para un flag efectivo.
+
+    Lo de la capa que se edita va teñido con el acento y con su chip de lápiz:
+    es lo que se puede quitar.
+    """
+    return FilaTabla(fila.nombre, (
+        CeldaTexto(f"--{fila.nombre}", "Mono."),
+        CeldaTexto(fila.valor, "Mono."),
+        CeldaChip(fila.etiqueta, "Acento." if fila.propio else "",
+                  "edit" if fila.propio else None)), "propio" if fila.propio else "")
+
+
+def fila_de_extra(i: int, argumento: str) -> FilaTabla:
+    """Devuelve la fila de la tabla de flags para un argumento extra."""
+    return FilaTabla(f"extra{i}", (CeldaTexto(argumento, "Mono."), CeldaTexto(""),
+                                   CeldaChip("extra")))
+
+
 def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
                mode_name: str | None, defaults_flags: dict | None,
-               catalogo_flags: dict | None = None) -> dict | None:
+               catalogo_flags: dict | None = None, orden=None,
+               capa: str = model.ORIGEN_PAREJA) -> dict | None:
     """Abre el editor de flags y devuelve lo editado, o `None` si se cancela.
 
     Es `{"flags", "extra_flags"}`. Se edita como texto TOML y no con una fila
@@ -2207,13 +2251,34 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     versión y ninguna lista que pusiéramos aquí estaría al día. Lo que sí se
     puede dar es lo que no se ve escribiéndolos en el TOML (qué queda valiendo
     al fundir base, modo, `[defaults]` y pareja) y eso es la tabla de la
-    derecha.
+    derecha: cada flag con su valor y la capa de la que sale. Elegir una fila
+    enciende lo que se puede hacer con ella: sobrescribir un flag heredado
+    (lo copia al cuadro, para que se cambie) o volver a heredar uno propio
+    (lo quita del cuadro). Todo eso lo deciden `flags_editor.acciones()`,
+    `sobrescribir()` y `heredar()`; aquí solo se dibuja.
 
     El diálogo NO se cierra si lo escrito no vale y el motivo se enseña DENTRO,
     en un recuadro rojo bajo el texto y no en un `messagebox`: el aviso tiene
     que poder leerse mientras se corrige lo escrito. Cerrar y perderlo, o peor,
     guardar solo lo que se entendió, es exactamente lo que no puede pasar con
     un fichero que gobierna borrados.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        titulo: El título del diálogo.
+        subtitulo: Lo que dice bajo el título.
+        flags: Los flags de la capa que se edita.
+        extra: Los argumentos extra.
+        mode_name: El modo de la pareja.
+        defaults_flags: `[defaults.flags]`, la capa de encima de la pareja.
+        catalogo_flags: Lo que dice el catálogo, si se compara con él.
+        orden: Qué orden de rclone saldría con esos flags y esos argumentos
+            extra: una función `(flags, extra) -> list[flags_editor.Linea]`
+            (`pair_editor.orden_previa()` con la pareja del formulario) que
+            lanza `ConfigError` si la pareja aún no se puede resolver. Sin ella,
+            no hay vista previa.
+        capa: Qué capa se edita: `model.ORIGEN_PAREJA` (`[pair.flags]`) o
+            `model.ORIGEN_DEFAULTS` (`[defaults.flags]`).
     """
     from tkinter import ttk
 
@@ -2221,6 +2286,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(1, weight=1)
     resultado: dict = {"datos": None}
+    estado: dict = {"filas": {}}          # las filas de la tabla, por flag
 
     ttk.Label(marco, text=titulo, style="Dialogo.TLabel").grid(
         row=0, column=0, columnspan=2, sticky="w")
@@ -2262,26 +2328,36 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
                       "\n", "  ·  ") or "ninguno")).grid(row=7, column=0,
                                                          sticky="w", pady=(theme.E2, 0))
 
-    # Lo que acabaría recibiendo rclone.
+    # Lo que acabaría recibiendo rclone, y lo que se puede hacer con cada flag.
     derecha = ttk.Frame(marco)
     derecha.grid(row=2, column=1, sticky="nsew", pady=(theme.E4, 0), padx=(theme.E4, 0))
-    derecha.columnconfigure(0, weight=1)
+    derecha.columnconfigure(1, weight=1)
     derecha.rowconfigure(1, weight=1)
 
     titulo_tabla = ttk.Frame(derecha)
-    titulo_tabla.grid(row=0, column=0, sticky="ew", pady=(0, theme.E2))
+    titulo_tabla.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, theme.E2))
     titulo_tabla.columnconfigure(0, weight=1)
     ttk.Label(titulo_tabla, text=theme.rotulo("Lo que acabaría recibiendo rclone"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w")
 
-    tabla = Tabla(derecha, [("Flag", 260, True), ("Sale de", 120, False)], alto_fila=30,
+    tabla = Tabla(derecha, COLUMNAS_FLAGS, al_elegir=lambda: habilitar(), alto_fila=30,
                   vacio="Cuando lo escrito valga, aquí se verá el efecto.")
-    tabla.grid(row=1, column=0, sticky="new")
+    tabla.grid(row=1, column=0, columnspan=2, sticky="new")
     dlg.tabla = tabla                                  # los tests la miran
 
-    ttk.Label(derecha, style="Pista.TLabel", wraplength=theme.medida(380), justify="left",
-              text="Se funden en este orden: siempre → modo → [defaults] → esta "
-                   "pareja.").grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
+    nota = ttk.Label(derecha, style="Pista.TLabel", wraplength=theme.medida(400),
+                     justify="left", text=flags_editor.cascada(capa))
+    nota.grid(row=2, column=0, columnspan=2, sticky="w", pady=(theme.E2, 0))
+
+    boton_sobrescribir = ttk.Button(
+        derecha, text="Sobrescribir",
+        command=lambda: aplicar(lambda flags_, f: flags_editor.sobrescribir(
+            flags_, f.nombre, f.crudo)))
+    boton_sobrescribir.grid(row=3, column=0, sticky="w", pady=(theme.E3, 0))
+    boton_heredar = ttk.Button(
+        derecha, text="Volver a heredar",
+        command=lambda: aplicar(lambda flags_, f: flags_editor.heredar(flags_, f.nombre)))
+    boton_heredar.grid(row=3, column=1, sticky="w", padx=(theme.E2, 0), pady=(theme.E3, 0))
 
     recuadro: dict = {}          # el aviso rojo: se hace la primera vez que hace falta
 
@@ -2318,25 +2394,67 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
         avisar(None)
         return datos
 
+    def habilitar() -> None:
+        """Enciende los botones que valen para la fila elegida y dice qué pasaría."""
+        fila = estado["filas"].get(tabla.elegida) if tabla.elegida else None
+        sobrescribible, quitable = flags_editor.acciones(fila)
+        boton_sobrescribir.state(["!disabled" if sobrescribible else "disabled"])
+        boton_heredar.state(["!disabled" if quitable else "disabled"])
+        nota.configure(text=fila.nota if fila else flags_editor.cascada(capa))
+
+    def aplicar(hacer) -> None:
+        """Pone en el cuadro lo que da `hacer` y repinta; si no se puede, lo dice.
+
+        `hacer` recibe lo escrito, ya validado, y la fila elegida, y devuelve el
+        `[pair.flags]` nuevo (`flags_editor.sobrescribir()`, `heredar()`). El
+        cuadro es la única fuente de lo que se guarda: aquí no se toca otra cosa.
+        Con lo escrito sin sentido no se hace nada, y ya se ha dicho por qué.
+        """
+        fila = estado["filas"].get(tabla.elegida) if tabla.elegida else None
+        datos = leer()
+        if fila is None or datos is None:
+            return
+        try:
+            nuevos = hacer(datos["flags"], fila)
+        except ConfigError as e:
+            avisar(e)
+            return
+        caja.delete("1.0", "end")
+        caja.insert("1.0", flags_editor.dump(nuevos))
+        repasar()
+
+    def pintar_orden(datos: dict) -> None:
+        """Escribe en la vista previa la orden de rclone, con lo del programa sombreado."""
+        lineas, motivo = [], None
+        try:
+            lineas = orden(datos["flags"], datos["extra_flags"])
+        except ConfigError as e:
+            motivo = flags_editor.sin_orden(e)
+        vista.configure(state="normal")
+        vista.delete("1.0", "end")
+        if motivo is not None:
+            vista.insert("1.0", motivo)
+        for i, (texto, puesto_por_prdrive) in enumerate(flags_editor.trozos(lineas)):
+            if i:
+                vista.insert("end", " ")
+            vista.insert("end", texto, ("prdrive",) if puesto_por_prdrive else ())
+        vista.configure(state="disabled")
+
     def repasar():
-        """Repinta la tabla con lo que acabaría recibiendo rclone."""
+        """Repinta la tabla con lo que acabaría recibiendo rclone, y la orden."""
         datos = leer()
         if datos is None:
             if not tabla.orden:
                 tabla.poner([])               # al abrir: que no quede una tabla muda
             return
-        filas = []
-        for i, fila in enumerate(flags_editor.effective(mode_name, defaults_flags,
-                                                        datos["flags"])):
-            propio = fila.origen == "esta pareja"
-            filas.append(FilaTabla(str(i), (
-                CeldaTexto(fila.flag, "Mono."),
-                CeldaChip(fila.origen, "Acento." if propio else "",
-                          "edit" if propio else None)), "propio" if propio else ""))
-        for j, arg in enumerate(datos["extra_flags"]):
-            filas.append(FilaTabla(f"extra{j}", (CeldaTexto(arg, "Mono."),
-                                                 CeldaChip("extra"))))
+        efectivos = flags_editor.effective(mode_name, defaults_flags, datos["flags"], capa)
+        estado["filas"] = {f.nombre: f for f in efectivos}
+        filas = [fila_de_flag(fila) for fila in efectivos]
+        filas += [fila_de_extra(j, arg) for j, arg in enumerate(datos["extra_flags"])]
         tabla.poner(filas)
+        if orden is not None:
+            pintar_orden(datos)
+        habilitar()
 
     def aceptar():
         """Valida lo escrito y cierra; si no vale, el diálogo se queda abierto."""
@@ -2351,10 +2469,27 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     theme.boton_icono(ver, "eye", theme.ACENTO, theme.PAPEL, 14)
     ver.grid(row=0, column=1, sticky="e")
 
-    ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, columnspan=2,
+    # La orden entera, tal como la montaría `sync.py`: lo que pone el programa en
+    # cada pasada va sombreado, y no se puede cambiar desde aquí.
+    fila_pie = 3
+    if orden is not None:
+        ttk.Label(marco, text=theme.rotulo("La orden de rclone de una pasada"),
+                  style="Rotulo.TLabel").grid(row=3, column=0, columnspan=2, sticky="w",
+                                              pady=(theme.E4, theme.E2))
+        vista = theme.caja_texto(marco, width=60, height=6, wrap="word")
+        vista.tag_configure("prdrive", background=theme.LINEA, foreground=theme.TINTA2)
+        vista.configure(state="disabled")
+        vista.grid(row=4, column=0, columnspan=2, sticky="ew")
+        dlg.vista_orden = vista                        # los tests la miran
+        ttk.Label(marco, style="Pista.TLabel", wraplength=theme.medida(620), justify="left",
+                  text=flags_editor.LEYENDA_ORDEN).grid(row=5, column=0, columnspan=2,
+                                                        sticky="w", pady=(theme.E2, 0))
+        fila_pie = 6
+
+    ttk.Separator(marco, orient="horizontal").grid(row=fila_pie, column=0, columnspan=2,
                                                    sticky="ew", pady=(theme.E4, 0))
     pie = ttk.Frame(marco)
-    pie.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(theme.E4, 0))
+    pie.grid(row=fila_pie + 1, column=0, columnspan=2, sticky="ew", pady=(theme.E4, 0))
     pie.columnconfigure(0, weight=1)
     ttk.Label(pie, text="Si algo no vale, el diálogo no se cierra: lo escrito se "
                         "queda.", style="Pista.TLabel").grid(row=0, column=0,

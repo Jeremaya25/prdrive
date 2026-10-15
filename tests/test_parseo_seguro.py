@@ -23,7 +23,7 @@ from pathlib import Path
 from _harness import Checks, sandbox
 
 import sync
-from common import bisync, model
+from common import bisync, model, orden
 from common.model import ConfigError
 from ui import flags_editor
 
@@ -379,7 +379,7 @@ c("  y con versiones, detrás de .prversions",
   bisync.filters_content(replace(raiz, versions=True)).splitlines()[2:4],
   [f"- {model.VERSIONS_DIR}/**", model.REGLA_SIN_PROGRAMA])
 espejo = model.parse_config(una(local=".", mode="up-mirror")).pairs[0]
-c("fuera de bisync va como --exclude", sync.filter_args(espejo, None)[:2],
+c("fuera de bisync va como --exclude", orden.filter_args(espejo, None)[:2],
   ["--exclude", f"/{model.APP_DIR.name}/**"])
 c("una pareja de carpeta no lleva reglas", model.parse_config(una()).pairs[0].reglas, ())
 con_llavero = model.parse_config(

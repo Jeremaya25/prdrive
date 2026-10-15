@@ -52,7 +52,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
-│   model (TOML → frozen `Mode`/`Pair`/`Config`) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
+│   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
 │   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
 │   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive)
