@@ -1211,6 +1211,8 @@ class Conexion:
         lanzada: Modo `ui`: su ventana ya se ha abierto.
         pausa: La última vez que se vio una ventana o un stop.
         lock: El `daemon.lock.json` que tenemos escrito.
+        intento_lock: Cuándo se intentó reescribir `lock` tras un fallo, o `None`
+            (`_al_dia_el_lock()`).
         soltando: Soltado, pero su fichero sigue sin borrar.
         servicio: Lo que sincroniza su servicio.
         error: Por qué no hay servicio que atender.
@@ -1261,6 +1263,7 @@ class Conexion:
     lanzada: bool = False
     pausa: float | None = None
     lock: dict | None = None
+    intento_lock: float | None = None
     soltando: bool = False
     servicio: Servicio | None = None
     error: str | None = None
@@ -1617,6 +1620,15 @@ class Agente:
             enchufadas y bloqueadas con BitLocker, con su raíz, por id.
         desbloqueos_bitlocker: La ventana de desbloqueo de Windows pedida para
             cada una de esas (su proceso), por id.
+        con_vestibulo: Los ids de las unidades cuya marca de vestíbulo vio el
+            último recorrido, con el contenedor cerrado o abierto: son las de
+            VeraCrypt (`_cifrado_de()`).
+        bitlocker_presentes: Las unidades de la lista con BitLocker cuyo
+            volumen está enchufado según el último recorrido, bloqueadas o no.
+        bitlocker_tratadas: Las unidades con BitLocker que ya tuvieron su
+            decisión de «Pedir la contraseña al conectarla» en esta conexión
+            (`_pedir_bitlocker()`): salga la ventana o no, no se vuelve a
+            decidir hasta que se desenchufen.
         recorridos: Los recorridos hechos desde que arrancó.
         sin_rclone_avisado: Si ya se dijo que el agente no tiene rclone.
         peticiones: Lo que pide la bandeja, que corre en otro hilo: los mismos
@@ -1691,6 +1703,9 @@ class Agente:
     fantasmas: set[str] = field(default_factory=set)
     bitlocker: dict[str, Path] = field(default_factory=dict)
     desbloqueos_bitlocker: dict[str, Any] = field(default_factory=dict)
+    con_vestibulo: set[str] = field(default_factory=set)
+    bitlocker_presentes: set[str] = field(default_factory=set)
+    bitlocker_tratadas: set[str] = field(default_factory=set)
     recorridos: int = 0
     sin_rclone_avisado: bool = False
     peticiones: Any = field(default_factory=queue.SimpleQueue)
@@ -1807,6 +1822,7 @@ class Agente:
             except OSError:
                 resto.append(raiz)  # un volumen bloqueado contesta con error: ahora no
         self._fantasmas(abiertas)
+        self.con_vestibulo = set(cerradas)
 
         for uid in list(self.vistas):
             if uid not in abiertas:
@@ -1828,6 +1844,7 @@ class Agente:
         self._vestibulos(cerradas, ahora)
         self._raices_ausentes(abiertas)
         self._mirar_bitlocker(resto)
+        self._pedir_bitlocker(ahora)
         # Con lo que se acaba de ver: una unidad bloqueada con BitLocker lo acorta.
         self.proximo_recorrido = ahora + self.cada_recorrido()
         self.recorridos += 1
@@ -1850,12 +1867,17 @@ class Agente:
                      if u.volumen and not u.es_raiz and u.modo != equipo.NADA
                      and uid not in self.conexiones}
         vistas: dict[str, Path] = {}
+        presentes: set[str] = set()
         for raiz in resto if conocidas else ():
             uid = conocidas.get(bitlocker.volumen_de(raiz))
-            if uid is None or uid in vistas:
+            if uid is None:
+                continue
+            presentes.add(uid)
+            if uid in vistas:
                 continue
             if cifrada.bitlocker_de(raiz).locked:
                 vistas[uid] = raiz
+        self.bitlocker_presentes = presentes
         for uid, raiz in vistas.items():
             if uid not in self.bitlocker:
                 diario(f"{self.ajustes.unidades[uid].nombre or uid[:8]}: bloqueada con "
@@ -1866,6 +1888,59 @@ class Agente:
             if uid not in vistas:
                 del self.desbloqueos_bitlocker[uid]
         self.bitlocker = vistas
+
+    def _cifrado_de(self, uid: str) -> str:
+        """Devuelve cómo va cifrada una unidad de la lista, o una cadena vacía.
+
+        VeraCrypt si su marca de vestíbulo está a la vista (el contenedor,
+        abierto o cerrado, vive en una unidad que se ve); BitLocker si lleva
+        el volumen apuntado (`Unidad.volumen`). Es lo que decide si tiene
+        sentido enseñar su «Pedir la contraseña al conectarla». Una raíz del
+        equipo no lleva ese ajuste (el suyo es `pedir_al_iniciar`).
+
+        Returns:
+            `equipo.CIFRADO_VERACRYPT`, `equipo.CIFRADO_BITLOCKER` o `""`.
+        """
+        unidad = self.ajustes.unidades.get(uid)
+        if unidad is None or unidad.es_raiz:
+            return ""
+        if uid in self.con_vestibulo:
+            return equipo.CIFRADO_VERACRYPT
+        return equipo.CIFRADO_BITLOCKER if unidad.volumen else ""
+
+    def _pide_al_conectar(self, uid: str) -> bool:
+        """Indica si el agente pide la contraseña de esa unidad al conectarla (el valor de verdad)."""
+        unidad = self.ajustes.unidades.get(uid)
+        return unidad is not None and unidad.pide_al_conectar(self._cifrado_de(uid))
+
+    def _pedir_bitlocker(self, ahora: float) -> None:
+        """Pide la ventana de Windows de las unidades con BitLocker que lo piden al conectarlas.
+
+        Es el «Pedir la contraseña al conectarla» de una unidad con BitLocker
+        (`Unidad.pide_al_conectar()`, que sin decir nada es que no). La
+        decisión se toma una sola vez por conexión, con el valor del primer
+        recorrido que la ve enchufada y bloqueada (también al iniciar sesión,
+        porque el agente arranca sin nada visto): salga la ventana o no, no se
+        vuelve a decidir hasta que se desenchufe, así que si se cancela no se
+        insiste, y encenderlo con ella ya vista vale desde la siguiente
+        conexión. Una unidad que se conectó y vuelve bloqueada con la unidad
+        puesta (`_desconectar()`) cuenta como la misma conexión. Es una ventana
+        del sistema y no un aviso: no depende de la moderación.
+
+        Args:
+            ahora: La hora del reloj del agente.
+        """
+        self.bitlocker_tratadas &= (set(self.bitlocker) | self.bitlocker_presentes
+                                    | set(self.conexiones))
+        for uid in sorted(self.bitlocker):
+            if uid in self.bitlocker_tratadas:
+                continue
+            self.bitlocker_tratadas.add(uid)
+            unidad = self.ajustes.unidades.get(uid)
+            if unidad is None or not unidad.pide_al_conectar(equipo.CIFRADO_BITLOCKER):
+                continue
+            diario(f"{unidad.nombre or uid[:8]}: su ajuste pide la contraseña al conectarla")
+            self._desbloquear_bitlocker(uid, ahora)
 
     def _bloqueada_bitlocker(self, uid: str) -> Path | None:
         """Devuelve la raíz donde esa unidad se ve bloqueada con BitLocker, o `None`.
@@ -2132,6 +2207,10 @@ class Agente:
             # El hijo sigue solo y fallará; al volver, la huella dirá si la tocó.
             diario(f"{con.nombre}: se ha ido mientras se actualizaba")
         unidad = self.ajustes.unidades.get(uid)
+        if unidad is not None and unidad.volumen:
+            # Con BitLocker puede volver bloqueada con la unidad puesta: es la
+            # misma conexión, y su ventana ya no se decide otra vez.
+            self.bitlocker_tratadas.add(uid)
         diario(f"{con.nombre} " + ("bloqueada: su contenedor se ha cerrado"
                                    if unidad is not None and unidad.cifrada else
                                    "ya no está en su carpeta"
@@ -2191,7 +2270,9 @@ class Agente:
 
         Se le pide a VeraCrypt una vez por conexión, como hace penwatch. Una
         que no está en la lista, nunca: no se ejecuta nada de una unidad que no
-        se ha aceptado.
+        se ha aceptado. Tampoco una a la que se le ha quitado el «Pedir la
+        contraseña al conectarla» (`Unidad.pide_al_conectar()`): se apunta como
+        tratada igual, para no contarla ni decirlo otra vez en esa conexión.
         """
         for uid in list(self.vestibulos):
             if uid not in cerradas:
@@ -2212,7 +2293,12 @@ class Agente:
                 continue
             del self.cerradas[uid]
             self.vestibulos[uid] = str(raiz)
-            diario(f"{unidad.nombre or uid[:8]}: cifrada y cerrada en {raiz}")
+            nombre = unidad.nombre or uid[:8]
+            if not unidad.pide_al_conectar(equipo.CIFRADO_VERACRYPT):
+                diario(f"{nombre}: cifrada y cerrada en {raiz}; no se abre sola (su "
+                       f"«Pedir la contraseña al conectarla» está apagado)")
+                continue
+            diario(f"{nombre}: cifrada y cerrada en {raiz}")
             abrir_contenedor(raiz)
 
     def _preguntar(self, con: Conexion, ahora: float) -> None:
@@ -2604,6 +2690,8 @@ class Agente:
                 self._tomar(con)
             elif not self._lock_es_nuestro(con, de_memoria=True):
                 con.lock = None             # lo borró runsync al cansarse de esperar
+            else:
+                self._al_dia_el_lock(con)   # la config pudo cambiar desde la última vuelta
             return
         if not ocupada:
             self._soltar(con)
@@ -3553,6 +3641,49 @@ class Agente:
             return f"Abre la ventana de {APP_NAME} en este equipo para ver qué ha pasado."
         return f"Abre {APP_NAME} desde la unidad para ver qué ha pasado."
 
+    def _al_dia_el_lock(self, con: Conexion) -> None:
+        """Pone en el lock de la raíz las parejas y el intervalo que el agente atiende ahora.
+
+        El lock lo escribe el agente al tomar la raíz y tras cada pasada. Si la
+        config cambia mientras la atiende (la ventana añade el llavero, quita
+        una pareja, cambia el intervalo), se quedaba con lo de antes, y
+        `llavero.atiende_el_servicio()` daba por no atendido el llavero. Lo
+        llama `_contrato()` en cada vuelta que sirve la raíz con su lock, y sin
+        nada que cambiar no toca el disco: compara con `con.lock`, que solo
+        cambia cuando la escritura ha salido. Si la escritura falla (fichero en
+        uso, unidad de solo lectura), se reintenta cada `RELEER_REGISTROS`, sin
+        esperar a una pasada ni a un cambio de config.
+
+        Args:
+            con: La conexión, con el servicio que atiende ahora.
+        """
+        if con.lock is None or con.servicio is None:
+            return
+        parejas = [p.nombre for p in con.servicio.parejas]
+        if con.lock.get("pairs") == parejas \
+                and con.lock.get("interval_min") == con.servicio.minutos:
+            return
+        ahora = self.reloj()
+        if con.intento_lock is not None and ahora - con.intento_lock < RELEER_REGISTROS:
+            return
+        if not self._lock_es_nuestro(con, de_memoria=True):
+            return
+        con.intento_lock = ahora
+        nuevo = {**con.lock, "pairs": parejas, "interval_min": con.servicio.minutos}
+        if self._escribir_lock(con, nuevo):
+            con.lock = nuevo
+            con.intento_lock = None
+
+    def _escribir_lock(self, con: Conexion, datos: dict) -> bool:
+        """Escribe `datos` en el `daemon.lock.json` de la raíz, si sigue dentro de ella.
+
+        Returns:
+            `True` si se ha escrito; `False` si la ruta sale de la raíz o el
+            fichero no se deja escribir (`store.write_json()`).
+        """
+        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
+        return destino is not None and store.write_json(destino, datos)
+
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
                          segundos: float) -> None:
         """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo."""
@@ -3563,9 +3694,7 @@ class Agente:
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
         con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
-        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
-        if destino is not None:
-            store.write_json(destino, con.lock)
+        self._escribir_lock(con, con.lock)
 
     def _cifrada(self, uid: str) -> equipo.Unidad | None:
         """Devuelve la raíz cifrada de ese id, o la única que haya si no se dice."""
@@ -4474,6 +4603,8 @@ class Agente:
             crudo[clave] = valor
             self._guardar(equipo.desde_dict(crudo))
             diario(f"ajuste {clave} = {getattr(self.ajustes, clave)}")
+        elif que == equipo.PIDE_AJUSTE_UNIDAD:
+            self._ajuste_de_unidad(uid, p.get("clave"), p.get("valor"))
         elif que == equipo.PIDE_PASADA:
             con = self.conexiones.get(uid)
             if con is None or con.servicio is None:
@@ -4502,6 +4633,33 @@ class Agente:
                 return
             self.terminar = True
             diario("parada pedida: termina en cuanto acabe lo que esté en marcha")
+
+    def _ajuste_de_unidad(self, uid: str, clave: Any, valor: Any) -> None:
+        """Cambia un ajuste de UNA unidad de la lista (`equipo.AJUSTES_DE_UNIDAD`).
+
+        Lo que no vale se deja en el diario y no toca nada: otra clave, una
+        unidad que no está en la lista, una raíz de este equipo (su ajuste es
+        el global `pedir_al_iniciar`) o un valor que no es verdadero, falso ni
+        `None` («lo de siempre»).
+
+        Args:
+            uid: El id de la unidad.
+            clave: El campo de `Unidad` que se cambia.
+            valor: Su valor nuevo.
+        """
+        if clave not in equipo.AJUSTES_DE_UNIDAD:
+            diario(f"ajuste de unidad desconocido: {clave!r}")
+            return
+        unidad = self.ajustes.unidades.get(uid)
+        if unidad is None or unidad.es_raiz:
+            diario(f"ajuste {clave} de {uid[:8]!r}: no es una unidad de la lista")
+            return
+        nombre = unidad.nombre or uid[:8]
+        if valor is not None and not isinstance(valor, bool):
+            diario(f"{nombre}: ajuste {clave} = {valor!r}: no es sí, no ni lo de siempre")
+            return
+        self._guardar(self.ajustes.con_unidad(replace(unidad, **{clave: valor})))
+        diario(f"{nombre}: ajuste {clave} = {valor}")
 
     def _abrir(self, uid: str, ahora: float, explorador: bool = False,
                llavero: bool = False) -> None:
@@ -4727,6 +4885,8 @@ class Agente:
                              "vigila_abandonada": abandonadas,
                              "vigila_recorre": recorre,
                              "emblema": self._emblema(con),
+                             "cifrado": self._cifrado_de(con.id),
+                             "pedir_al_conectar": self._pide_al_conectar(con.id),
                              "version": self._version_de(con),
                              "llavero": self._llavero_de(con),
                              "llavero_abierto": con.id in self.keepassxc,
@@ -4762,7 +4922,9 @@ class Agente:
                 "bitlocker": sorted(
                     ({"id": uid, "nombre": self.ajustes.unidades[uid].nombre or uid[:8],
                       "raiz": str(raiz),
-                      "desbloqueando": self._desbloqueando_bitlocker(uid)}
+                      "desbloqueando": self._desbloqueando_bitlocker(uid),
+                      "pedir_al_conectar": self.ajustes.unidades[uid].pide_al_conectar(
+                          equipo.CIFRADO_BITLOCKER)}
                      for uid, raiz in self.bitlocker.items()
                      if self._bloqueada_bitlocker(uid) is not None),
                     key=lambda b: (b["nombre"], b["id"])),
@@ -5285,7 +5447,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print("Unidades en la lista:" if unidades else "Unidades en la lista: ninguna")
     for u in unidades:
         print(f"  {u.nombre or '(sin nombre)':<20} {u.id[:12]}…  {u.modo}: "
-              f"{equipo.TEXTO_MODO[u.modo]}" + (pausa if u.pausada else ""))
+              f"{equipo.TEXTO_MODO[u.modo]}" + (pausa if u.pausada else "")
+              + ("" if u.pedir_al_conectar is None else
+                 " · al conectarla " + ("se pide" if u.pedir_al_conectar else "no se pide")
+                 + " la contraseña"))
     estado = equipo.leer_estado() if vivo else {}
     if estado.get("retenido"):
         print(f"No se lanza nada: {estado['retenido']}")
@@ -5301,6 +5466,10 @@ def cmd_status(_args: argparse.Namespace) -> int:
         gastado = consumo.del_dia(str(u.get("id") or ""))
         if gastado.pasadas:
             print(f"  Hoy: {consumo.texto(gastado)}")
+        if u.get("cifrado") and isinstance(u.get("pedir_al_conectar"), bool):
+            como = "VeraCrypt" if u["cifrado"] == equipo.CIFRADO_VERACRYPT else "BitLocker"
+            print(f"  Cifrada con {como}: al conectarla "
+                  + ("se pide" if u["pedir_al_conectar"] else "no se pide") + " la contraseña")
         if u.get("estiradas"):
             print("  Sin nada que hacer desde hace rato, se pasan menos: "
                   + ", ".join(f"{n} cada {m:g} min" for n, m in sorted(u["estiradas"].items())))

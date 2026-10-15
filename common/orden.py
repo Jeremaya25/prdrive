@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""La orden de rclone de una pareja, en trozos que dicen quién pone cada uno.
+
+`sync.build_command()` monta con esto la orden que ejecuta, y la vista previa
+del editor de flags la monta con esto mismo: no hay una copia que pueda
+desviarse. Vive en `common/` y no en `sync.py` por lo mismo que
+`model.flags_to_args()`: la UI tiene que poder enseñar la orden sin importar el
+motor, y no puede construirla por su cuenta.
+
+Un trozo (`Tramo`) es un flag con su valor, una regla de filtrado, un argumento
+extra o el comienzo de la orden, y lleva la capa de la que sale. Los de las
+cuatro capas de flags vienen de `model.flags_efectivos()`; lo que añade el
+programa en cada pasada y no se configura (`--config`, `--log-file`,
+`--workdir`, `--resync`, el versionado…) sale como `model.ORIGEN_PRDRIVE`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import NamedTuple
+
+from . import model
+from .model import FlagEfectivo, Pair
+
+
+class Tramo(NamedTuple):
+    """Un trozo de la orden de rclone y quién lo pone.
+
+    Args:
+        args: Los argumentos que aporta, tal como van a la línea de comandos.
+        origen: Quién lo pone (`model.ORIGEN_*`).
+        nombre: El flag, sin guiones y como está escrito, si el trozo es uno de
+            la cascada o de los que pone el programa; `None` en el resto.
+    """
+    args: tuple[str, ...]
+    origen: str
+    nombre: str | None = None
+
+
+def tramos_de_filtrado(pair: Pair, ffile: Path | None) -> list[Tramo]:
+    """Devuelve los trozos de filtrado de la pareja.
+
+    Con fichero de filtros no se emiten `--include` ni `--exclude`: se
+    duplicarían las reglas y bisync dejaría de poder detectar cambios de
+    filtrado. Las reglas del código (`Pair.reglas`) las pone el programa; los
+    patrones de la pareja son suyos.
+
+    Args:
+        pair: La pareja.
+        ffile: Su fichero de filtros, o `None` si no lo usa.
+    """
+    if ffile is not None:
+        return [Tramo(("--filters-file", str(ffile)), model.ORIGEN_PRDRIVE)]
+    tramos: list[Tramo] = []
+    # Las reglas del código (`Pair.reglas`) salen como `--include`/`--exclude`.
+    # Aquí no pueden ir delante de las de la pareja: rclone añade siempre los
+    # `--include` antes que los `--exclude` (`fs/filter/filter.go`, `NewFilter`).
+    for regla in pair.reglas:
+        signo, _, patron = regla.partition(" ")
+        tramos.append(Tramo(("--include" if signo == "+" else "--exclude", patron),
+                            model.ORIGEN_PRDRIVE))
+    for pattern in pair.includes:
+        tramos.append(Tramo(("--include", pattern), model.ORIGEN_PATRONES))
+    for pattern in pair.excludes:
+        tramos.append(Tramo(("--exclude", pattern), model.ORIGEN_PATRONES))
+    return tramos
+
+
+def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
+    """Devuelve los argumentos de filtrado de la pareja (`tramos_de_filtrado()`, aplanados)."""
+    return [a for t in tramos_de_filtrado(pair, ffile) for a in t.args]
+
+
+def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
+                       simulacro: bool = False, resync: bool = False,
+                       sello: str = "") -> list[FlagEfectivo]:
+    """Devuelve los flags de una pasada: los de la pareja y los que añade el programa.
+
+    Los de la pareja llegan ya fundidos (`Pair.flags`, con su capa en
+    `Pair.origen_flags`); aquí se añaden los que dependen de ESTA ejecución y
+    por eso no se configuran en el TOML. Para añadir un flag nuevo no se toca
+    esta función: se escribe en el TOML.
+
+    Args:
+        pair: La pareja.
+        config: El `rclone.conf` del dispositivo.
+        logfile: Dónde escribe rclone esta pasada.
+        simulacro: Si es un `--dry-run`.
+        resync: Si la pasada es un `--resync`.
+        sello: El sufijo de las versiones que guarda la pasada (`--suffix`).
+    """
+    flags = {nombre: FlagEfectivo(nombre, valor,
+                                  pair.origen_flags.get(nombre, model.ORIGEN_PAREJA))
+             for nombre, valor in pair.flags.items()}
+
+    def pone(nombre: str, valor) -> None:
+        """Pone un flag que es del programa; si ya estaba, le quita el sitio a la pareja."""
+        flags[nombre] = FlagEfectivo(nombre, valor, model.ORIGEN_PRDRIVE)
+
+    pone("config", str(config))
+    pone("log-file", str(logfile))
+    if simulacro:
+        pone("dry-run", True)
+    if pair.is_bisync:
+        pone("workdir", str(pair.workdir))
+        if resync:
+            pone("resync", True)
+        else:
+            # `--resync-mode` implica `--resync` (`setResyncDefaults()`,
+            # `cmd/bisync/resync.go`: «either flag is sufficient without the
+            # other»): dicho en una pasada normal, la convierte en un resync,
+            # que no deja conflictos ni propaga borrados. Solo vale cuando
+            # sync.py decide resincronizar.
+            flags.pop("resync-mode", None)
+
+    if pair.versions:
+        # El parseo ya garantiza que es bisync. El sello depende de la pasada,
+        # por eso no va en el TOML.
+        pone("backup-dir1", pair.versions_path1)
+        pone("backup-dir2", pair.versions_path2)
+        pone("suffix", sello)
+        pone("suffix-keep-extension", True)
+        # Con `delete`, el perdedor de un conflicto sale por el backup-dir
+        # (`.prversions/`) en vez de quedarse como `<nombre>.conflicto-remoto1`
+        # y viajar al otro lado. Un `[pair.flags]` sigue mandando.
+        flags.setdefault("conflict-loser",
+                         FlagEfectivo("conflict-loser", "delete", model.ORIGEN_PRDRIVE))
+    return list(flags.values())
+
+
+def tramos(pair: Pair, *, binario: str, filtros: Path | None, config: str | Path,
+           logfile: str | Path, simulacro: bool = False, resync: bool = False,
+           sello: str = "") -> list[Tramo]:
+    """Devuelve la orden de rclone de la pareja en trozos, cada uno con su origen.
+
+    Es el orden exacto de la línea de comandos: el subcomando con los dos
+    extremos, el filtrado, los flags (los que se apagan con `false` no llegan a
+    rclone y no salen) y los argumentos extra.
+
+    Args:
+        pair: La pareja.
+        binario: El rclone.
+        filtros: Su fichero de filtros, o `None` si no lo usa.
+        config: El `rclone.conf` del dispositivo.
+        logfile: Dónde escribe rclone esta pasada.
+        simulacro: Si es un `--dry-run`.
+        resync: Si la pasada es un `--resync`.
+        sello: El sufijo de las versiones que guarda la pasada.
+    """
+    salida = [Tramo((binario, pair.mode.verb, pair.source, pair.dest), model.ORIGEN_PRDRIVE)]
+    salida += tramos_de_filtrado(pair, filtros)
+    for flag in flags_de_la_pasada(pair, config=config, logfile=logfile, simulacro=simulacro,
+                                   resync=resync, sello=sello):
+        args = model.flags_to_args({flag.nombre: flag.valor})
+        if args:
+            salida.append(Tramo(tuple(args), flag.origen, flag.nombre))
+    salida += [Tramo((arg,), model.ORIGEN_EXTRA) for arg in pair.extra_flags]
+    return salida
+
+
+def orden_rclone(pair: Pair, **kwargs) -> list[str]:
+    """Devuelve la orden de rclone de la pareja, lista para ejecutar.
+
+    Acepta lo mismo que `tramos()`.
+    """
+    return [a for t in tramos(pair, **kwargs) for a in t.args]

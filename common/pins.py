@@ -69,7 +69,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-RCLONE_VERSION = "v1.75.1"
+RCLONE_VERSION = "v1.75.2"
 """Versión de rclone que se descarga para cada plataforma elegida.
 
 Es fija: «la última» puede ser una que nadie ha probado.
@@ -328,20 +328,21 @@ PLATAFORMAS: tuple[Plataforma, ...] = (
     Plataforma("windows-x64", "Windows x64", "windows", "x64", "amd64",
                "x86_64-pc-windows-msvc", 82, 43),
     Plataforma("windows-arm64", "Windows ARM64", "windows", "arm", "arm64",
-               "aarch64-pc-windows-msvc", 77, 44),
+               "aarch64-pc-windows-msvc", 75, 44),
     Plataforma("linux-x64", "Linux x64", "linux", "x64", "amd64",
                "x86_64-unknown-linux-gnu", 82, 55),
     Plataforma("linux-arm64", "Linux ARM64", "linux", "arm", "arm64",
-               "aarch64-unknown-linux-gnu", 77, 45),
+               "aarch64-unknown-linux-gnu", 76, 45),
 )
 """Las plataformas que el dispositivo puede llevar.
 
-Los tamaños están medidos con las versiones de arriba: el `rclone.exe` 1.75.1
-de amd64 son 81 MB descomprimido y los runtimes son lo que deja
-`runtime_bin.extract()` ya podado, en MiB redondeados hacia arriba. Con la
-20261001 y Python 3.14.8, el 08/10/2026: Windows x64 42,47 MiB, Windows ARM64
-43,27, Linux x64 54,08 y Linux ARM64 44,73 (los de Linux, con el Tk con Xft de
-`TK_XFT_TAG`, que son 1,6 MiB).
+Los tamaños están medidos con las versiones de arriba: el `rclone` 1.75.2 de
+cada plataforma, descomprimido (el zip oficial, comprobado contra su
+SHA256SUMS), en MiB redondeados hacia arriba: Windows x64 81,54, Windows ARM64
+74,71, Linux x64 81,69 y Linux ARM64 75,00015 (de ahí 76). Los runtimes son lo
+que deja `runtime_bin.extract()` ya podado. Con la 20261001 y Python 3.14.8, el
+08/10/2026: Windows x64 42,47 MiB, Windows ARM64 43,27, Linux x64 54,08 y Linux
+ARM64 44,73 (los de Linux, con el Tk con Xft de `TK_XFT_TAG`, que son 1,6 MiB).
 """
 
 

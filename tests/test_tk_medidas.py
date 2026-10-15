@@ -53,7 +53,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
-from ui import (catalog_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
+from ui import (catalog_editor, pair_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
                 tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
                 tk_volumen, tk_watch, versions_editor, volumen, watch)
 
@@ -716,7 +716,16 @@ try:
                                                      dict(BASE["pair"][0]))),
                         ("el editor de flags",
                          lambda: tk_pairs.flags_form(raiz, "Flags", "pareja0", {},
-                                                     [], "bisync", {}))):
+                                                     [], "bisync", {})),
+                        # El de una pareja de este dispositivo: con la orden de
+                        # rclone debajo, que es lo que más lo hace crecer.
+                        ("el editor de flags con la orden de rclone",
+                         lambda: tk_pairs.flags_form(
+                             raiz, "Flags", "pareja0", {"max-delete": 10}, ["--bwlimit", "8M"],
+                             "bisync", {"transfers": 4},
+                             orden=lambda f, e: pair_editor.orden_previa(
+                                 BASE, {**BASE["pair"][0], "versions": True, "flags": f,
+                                        "extra_flags": e})))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
@@ -944,6 +953,20 @@ try:
                     watch.pedir_al_iniciar = previo_pedir
                 c(f"{nombre}: «Configuración» cabe", entra, True)
                 c(f"{nombre}: «Configuración» no queda recortada", corta, False)
+
+                # ... y la de una unidad cifrada (#123): la casilla de «Pedir la
+                # contraseña al conectarla», con la ayuda más larga (BitLocker).
+                previo_conectar = watch.pedir_al_conectar
+                watch.pedir_al_conectar = lambda: watch.AlConectar("bitlocker", True)
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_configuracion.open_dialog(raiz, cfg),
+                        ancho, alto, escala, modulo=tk_configuracion)
+                finally:
+                    watch.pedir_al_conectar = previo_conectar
+                c(f"{nombre}: «Configuración» de una unidad cifrada cabe", entra, True)
+                c(f"{nombre}: «Configuración» de una unidad cifrada no queda recortada",
+                  corta, False)
 
                 # «Qué hace el agente»: los cuatro modos de una unidad, y el
                 # aviso de que el agente no está en marcha.

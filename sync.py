@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Mapping
 
 from common import (bisync, cifrada, conflicts, fleet, historial, llavero, model, moderacion,
-                    parte, progress, results, revision, store)
+                    orden, parte, progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
@@ -357,29 +357,6 @@ def ask_yes_no(question: str, default: bool = False) -> bool:
     return answer in {"s", "si", "sí", "y", "yes"}
 
 
-def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
-    """Devuelve los argumentos de filtrado de la pareja.
-
-    Con fichero de filtros no se emiten `--include` ni `--exclude`: se
-    duplicarían las reglas y bisync dejaría de poder detectar cambios de
-    filtrado.
-    """
-    if ffile is not None:
-        return ["--filters-file", str(ffile)]
-    args: list[str] = []
-    # Las reglas del código (`Pair.reglas`) salen como `--include`/`--exclude`.
-    # Aquí no pueden ir delante de las de la pareja: rclone añade siempre los
-    # `--include` antes que los `--exclude` (`fs/filter/filter.go`, `NewFilter`).
-    for regla in pair.reglas:
-        signo, _, patron = regla.partition(" ")
-        args += ["--include" if signo == "+" else "--exclude", patron]
-    for pattern in pair.includes:
-        args += ["--include", pattern]
-    for pattern in pair.excludes:
-        args += ["--exclude", pattern]
-    return args
-
-
 @dataclass(frozen=True)
 class RunContext:
     """Lo que no cambia de una pareja a otra dentro de una misma ejecución.
@@ -416,47 +393,16 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
                   need_resync: bool) -> tuple[list[str], Path]:
     """Devuelve la orden de rclone de la pareja y su log temporal.
 
-    Los flags de la pareja llegan ya fusionados desde `model.Pair`; aquí solo
-    se añaden los que dependen de ESTA ejecución y por eso no se configuran en
-    el TOML. Para añadir un flag nuevo no se toca esta función: se escribe en
-    el TOML.
+    La orden la monta `orden.orden_rclone()`, la misma pieza con la que el
+    editor de flags enseña la vista previa: los flags de la pareja llegan ya
+    fundidos desde `model.Pair` y solo se añaden los que dependen de ESTA
+    ejecución y por eso no se configuran en el TOML. Para añadir un flag nuevo
+    no se toca esta función: se escribe en el TOML.
     """
     logfile = temp_log(pair.name)
-
-    flags = dict(pair.flags)
-    flags["config"] = str(model.RCLONE_CONF)
-    flags["log-file"] = str(logfile)
-    if ctx.dry_run:
-        flags["dry-run"] = True
-    if pair.is_bisync:
-        flags["workdir"] = str(pair.workdir)
-        if need_resync:
-            flags["resync"] = True
-        else:
-            # `--resync-mode` implica `--resync` (`setResyncDefaults()`,
-            # `cmd/bisync/resync.go`: «either flag is sufficient without the
-            # other»): dicho en una pasada normal, la convierte en un resync,
-            # que no deja conflictos ni propaga borrados. Solo vale cuando
-            # sync.py decide resincronizar.
-            flags.pop("resync-mode", None)
-
-    if pair.versions:
-        # El parseo ya garantiza que es bisync. El sello depende de la pasada,
-        # por eso no va en el TOML.
-        flags["backup-dir1"] = pair.versions_path1
-        flags["backup-dir2"] = pair.versions_path2
-        flags["suffix"] = ctx.sello
-        flags["suffix-keep-extension"] = True
-        # Con `delete`, el perdedor de un conflicto sale por el backup-dir
-        # (`.prversions/`) en vez de quedarse como `<nombre>.conflicto-remoto1`
-        # y viajar al otro lado. `setdefault`: un `[pair.flags]` sigue
-        # mandando.
-        flags.setdefault("conflict-loser", "delete")
-
-    cmd = [ctx.binary, pair.mode.verb, pair.source, pair.dest]
-    cmd += filter_args(pair, ffile)
-    cmd += model.flags_to_args(flags)
-    cmd += list(pair.extra_flags)
+    cmd = orden.orden_rclone(pair, binario=ctx.binary, filtros=ffile,
+                             config=model.RCLONE_CONF, logfile=logfile,
+                             simulacro=ctx.dry_run, resync=need_resync, sello=ctx.sello)
     return cmd, logfile
 
 

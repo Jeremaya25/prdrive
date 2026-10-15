@@ -513,6 +513,29 @@ def _pedir_al_iniciar(resumen: Mapping[str, Any], varias: bool) -> Entrada:
                                 valor=not pedir), marcada=pedir)
 
 
+def _pedir_al_conectar(u: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve, tras un separador, la casilla «Pedir la contraseña al conectarla» de una unidad.
+
+    Es un ajuste de esa unidad en este equipo (`Unidad.pedir_al_conectar`), no
+    del agente entero, así que va en su desplegable. Solo la lleva una unidad
+    cifrada: el agente dice en su fila cómo (`cifrado`) y cuánto vale de
+    verdad el ajuste (`pedir_al_conectar`, que sin decir nada es que sí para
+    VeraCrypt y que no para BitLocker). Una fila a la que le falte alguno de
+    los dos datos no la lleva: la bandeja dibuja lo que el agente ha dicho. La
+    casilla pide lo contrario de lo que hay.
+
+    Args:
+        u: La fila de la unidad en el resumen.
+    """
+    pedir = u.get("pedir_al_conectar")
+    if not u.get("cifrado") or not isinstance(pedir, bool):
+        return []
+    return [SEPARADOR, Entrada("Pedir la contraseña al conectarla",
+                               _pide(equipo.PIDE_AJUSTE_UNIDAD, id=u.get("id", ""),
+                                     clave="pedir_al_conectar", valor=not pedir),
+                               marcada=pedir)]
+
+
 def _cerrojo(uid: str, est: str | None) -> Entrada:
     """Devuelve la entrada de bloquear o desbloquear una raíz cifrada, según su estado."""
     if est == BLOQUEADA:
@@ -589,7 +612,8 @@ def _unidades(resumen: Mapping[str, Any]) -> list[Entrada]:
                 hijos=(*_acciones(uid, abrir=not (u.get("actualizando") or u.get("expulsando")),
                                   cerrada=False, sincronizar=bool(u.get("atendida")),
                                   llavero=_con_llavero(resumen, u)),
-                       *_poner_al_dia(u, version), *_expulsar(u), *_version(u)),
+                       *_poner_al_dia(u, version), *_pedir_al_conectar(u),
+                       *_expulsar(u), *_version(u)),
                 emblema=_emblema(u)))
         elif u.get("ahora_no") or u.get("preguntando"):
             # Con otro código que el aceptado (`agente.huella()`), se dice: el
@@ -620,8 +644,9 @@ def _bitlocker(resumen: Mapping[str, Any]) -> list[Entrada]:
             cerrojo = Entrada("Desbloquear…",
                               _pide(equipo.PIDE_DESBLOQUEAR, id=b.get("id", "")),
                               defecto=True, icono=I_DESBLOQUEAR)
+        casilla = _pedir_al_conectar({**b, "cifrado": equipo.CIFRADO_BITLOCKER})
         entradas.append(Entrada(f"{b.get('nombre') or APP_NAME} ({ESTADO_DE_RAIZ[BLOQUEADA]})",
-                                hijos=(cerrojo,), emblema=MARCA))
+                                hijos=(cerrojo, *casilla), emblema=MARCA))
     return entradas
 
 

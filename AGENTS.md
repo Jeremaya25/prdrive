@@ -52,7 +52,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
-│   model (TOML → frozen `Mode`/`Pair`/`Config`) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
+│   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
 │   revision (the ONE diagnosis) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
 │   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive)
@@ -114,7 +114,7 @@ The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installe
 - If a bisync baseline exists but the local path does **not**, `_bisync_preflight()` aborts with rc 2 instead of creating the folder (an empty local side reads as "everything was deleted"). Only pairs **without** a baseline get their local dir created.
 - `max-delete` defaults: 25 bisync / 50 mirror, and they are **not the same unit**. bisync's is a **global** rclone flag it intercepts and reinterprets: `Options.applyContext()` (`cmd/bisync/cmd.go`) reads `--max-delete`, clamps it to 0..100 and sets `ci.MaxDelete = -1` so `fs/operations` never treats it as a count; `excessDeletes()` (`cmd/bisync/deltas.go`) then aborts when `deleted / oldCount` exceeds that **percentage** of the previous listing. `*-mirror`'s 50 is the ordinary `sync` flag: a plain **count** of files. Don't "fix" either number by comparing it to the other.
 - Any `*-mirror` pair deletes on the far side: never exercise one without `--dry-run` first. No pair mirrors the whole device.
-- Anything entering `bisync.expected_prefix()` (`local`, `remote`, `remote_path`, `mode`, `device_remote`, `RAIZ_UPSTREAM`) names the baseline: a change **shelves** it (`state/<pair>.old-<date>/`, then an explicit `--resync`), never renames it, and there is no listing rename (`engine.md`, `catalogue.md`).
+- Anything entering `bisync.expected_prefix()` (`local`, `remote`, `remote_path`, `mode`, `device_remote`, `RAIZ_UPSTREAM`, and the target of an `alias` remote in `rclone.conf`) names the baseline: a change **shelves** it (`state/<pair>.old-<date>/`, then an explicit `--resync`), never renames it, and there is no listing rename (`engine.md`, `catalogue.md`).
 - Anything that deletes or rewrites user data returns an `EditPlan` (`consequences`/`warnings`/`execute()`) shown through `tk_pairs.confirmar_plan()` before it runs; nothing repairs itself.
 
 ## Conventions

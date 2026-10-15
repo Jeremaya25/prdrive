@@ -62,9 +62,9 @@ jobs:
       PRUEBAS: ${{ inputs.pruebas || 'todas' }}
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -85,9 +85,9 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -99,7 +99,7 @@ jobs:
         id: pins
         run: python tests/_runtime_ci.py clave
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/prdrive-cache
           key: runtime-linux-x64-${{ steps.pins.outputs.clave }}
@@ -112,7 +112,7 @@ jobs:
           F21_ARBOL: ${{ runner.temp }}/f21-arbol
         run: python tests/maquina/correr.py F21 --de-verdad
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: f21-arbol
           path: ${{ runner.temp }}/f21-arbol
@@ -128,9 +128,9 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -138,7 +138,7 @@ jobs:
         id: pins
         run: python tests/_runtime_ci.py clave
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/prdrive-cache
           key: runtime-windows-x64-${{ steps.pins.outputs.clave }}
@@ -147,7 +147,7 @@ jobs:
         shell: bash
         run: python tests/_runtime_ci.py runtime windows-x64 "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/prdrive-cache"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: f21-arbol
           path: ${{ runner.temp }}/f21-arbol

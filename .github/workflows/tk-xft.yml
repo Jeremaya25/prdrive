@@ -99,7 +99,7 @@ jobs:
           sha256sum "$nombre"
           ls -l "$nombre"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tk-xft-${{ matrix.arch }}
           path: tk-xft-*.tar.gz
@@ -111,7 +111,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: tk-xft-*
           merge-multiple: true

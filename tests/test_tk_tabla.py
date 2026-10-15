@@ -699,21 +699,13 @@ FLOTA_T = [dispositivo("yo", "este"),
 COLUMNAS_FLOTA = [(titulo, ancho, clave in ("nombre", "estado"))
                   for clave, titulo, ancho in tk_fleet.COLUMNAS]
 FILAS_FLOTA = [tk_fleet.fila(d, "yo") for d in FLOTA_T]
-COLUMNAS_FLAGS = [("Flag", 260, True), ("Sale de", 120, False)]
+COLUMNAS_FLAGS = tk_pairs.COLUMNAS_FLAGS
 
 
 def filas_de_flags(propios: dict, extra=()) -> list[FilaTabla]:
     """Las filas del editor de flags para esos flags de la pareja y esos argumentos extra."""
-    filas = []
-    for i, fila_ in enumerate(flags_editor.effective("bisync", None, propios)):
-        propio = fila_.origen == "esta pareja"
-        filas.append(FilaTabla(str(i), (
-            CeldaTexto(fila_.flag, "Mono."),
-            CeldaChip(fila_.origen, "Acento." if propio else "", "edit" if propio else None)),
-            "propio" if propio else ""))
-    for j, arg in enumerate(extra):
-        filas.append(FilaTabla(f"extra{j}", (CeldaTexto(arg, "Mono."), CeldaChip("extra"))))
-    return filas
+    filas = [tk_pairs.fila_de_flag(f) for f in flags_editor.effective("bisync", None, propios)]
+    return filas + [tk_pairs.fila_de_extra(j, arg) for j, arg in enumerate(extra)]
 
 
 FILAS_FLAGS = filas_de_flags({"transfers": 8, "checksum": True}, ["--bwlimit", "8M"])

@@ -91,9 +91,16 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
 
 
 def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
-    """Devuelve la avería de un baseline guardado con el prefijo de OTRO destino."""
+    """Devuelve la avería de un baseline guardado con el prefijo de OTRO destino.
+
+    Si el prefijo esperado no es de fiar (un alias que no se puede resolver,
+    `bisync.prefijo_comprobable()`) no dice nada: acusar de grave a un baseline
+    que quizá es bueno, y ofrecer apartarlo, es peor que callar.
+    """
     esperado = bisync.expected_prefix(pair)
     if not estado.prefix or estado.prefix == esperado:
+        return None
+    if not bisync.prefijo_comprobable(pair):
         return None
     return Hallazgo(
         "prefijo", f"{nombre_visible(pair.name)}: el baseline no es de esta pareja",
@@ -417,8 +424,10 @@ def _informe_pareja(pair: Pair) -> list[str]:
         return lineas + [""]
 
     estado = bisync.pair_state(pair)
+    sin_fiar = ("" if bisync.prefijo_comprobable(pair) else
+                " (no se puede comprobar: un alias del rclone.conf no se puede resolver)")
     lineas += [f"  estado: {estado.status} — {estado.detail}",
-               f"  prefijo esperado: {bisync.expected_prefix(pair)}"]
+               f"  prefijo esperado: {bisync.expected_prefix(pair)}{sin_fiar}"]
     if bisync.referencia_vacia(pair, estado):
         lineas.append("  referencia: vacía — la próxima pasada la rehace con --resync "
                       "(no hay nada que proteger)")

@@ -302,6 +302,25 @@ with sandbox():
       "prefijo" in claves(revision.revisar(cfg, fisica=None)), True)
 
 
+# --- un prefijo que no se puede comprobar no prueba que el baseline sea de esta pareja ---
+
+with sandbox():
+    # Un alias que no se puede seguir (aquí, un ciclo): `expected_prefix()` es una
+    # estimación, y que un baseline lleve ese mismo nombre no dice nada.
+    model.RCLONE_CONF.write_text(
+        "[ciclo_a]\ntype = alias\nremote = ciclo_b:x\n\n"
+        "[ciclo_b]\ntype = alias\nremote = ciclo_a:x\n", encoding="utf-8")
+    par = model.parse_config({"defaults": {**DEF, "remote": "ciclo_a"}, "pair": [BI]}).pairs[0]
+    par.local_abs.mkdir(parents=True, exist_ok=True)
+    baseline(par)
+    c("el prefijo de un alias sin resolver no se puede comprobar",
+      bisync.prefijo_comprobable(par), False)
+    c("un baseline vacío con ese mismo nombre no se rehace sola",
+      bisync.referencia_vacia(par), False)
+    rc, salida, ordenes, _ = pasar(par)
+    c("y la pasada va como siempre, sin --resync", (rc, con_resync(ordenes)), (0, False))
+
+
 # --- sin carpeta local, la pasada no la rehace: --doctor no puede decir que sí ---------
 
 with sandbox():
