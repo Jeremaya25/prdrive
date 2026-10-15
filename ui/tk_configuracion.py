@@ -9,6 +9,10 @@ Solo dibuja. Dos cosas, y la segunda no siempre:
 - «Pedir la contraseña al iniciar sesión», solo en la raíz cifrada de un
   equipo. Es un ajuste del agente y no de la raíz, así que no se escribe aquí:
   se le pide por su buzón (`watch.pedir_al_iniciar`, `watch.pedir_ajuste`).
+- «Pedir la contraseña al conectarla», solo en una unidad cifrada (VeraCrypt o
+  BitLocker) que el agente atiende. También es del agente y se le pide por su
+  buzón (`watch.pedir_al_conectar`, `watch.pedir_ajuste_unidad`). Nunca sale
+  junto al anterior: uno es de la raíz del equipo y el otro de una unidad.
 
 Nada se guarda hasta «Guardar», y lo que no ha cambiado no se escribe. Se
 dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
@@ -43,6 +47,7 @@ def construir(panel: Panel, config: Config) -> None:
 
     _parejas, actual, _nota = prefs.startup_defaults(config)
     pedir = watch.pedir_al_iniciar()
+    conectar = watch.pedir_al_conectar()
     dlg, marco = panel.ventana, panel.marco
 
     que = "esta carpeta" if model.es_equipo() else "este dispositivo"
@@ -99,6 +104,24 @@ def construir(panel: Panel, config: Config) -> None:
                        "de este equipo, no la carpeta.").grid(
             row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
+    # Una unidad cifrada: si el agente le pide la contraseña al conectarla. También
+    # es de este equipo y no de la unidad, y se le pide al agente por su buzón.
+    conectada = None
+    if conectar is not None:
+        cifrada = ttk.Frame(marco, style="Card.TFrame", padding=(theme.E4, theme.E3, theme.E4, theme.E3))
+        cifrada.grid(row=2, column=0, sticky="ew", pady=(theme.E3, 0))
+        cifrada.columnconfigure(0, weight=1)
+        conectada = tk.BooleanVar(marco, value=conectar.valor)
+        ttk.Checkbutton(cifrada, text="Pedir la contraseña al conectarla",
+                        variable=conectada,
+                        style="Card.Fuerte.TCheckbutton").grid(row=0, column=0,
+                                                              sticky="w")
+        ttk.Label(cifrada, style="Card.Pista.TLabel", justify="left",
+                  wraplength=theme.medida(520),
+                  text=watch.ayuda_al_conectar(conectar.cifrado)
+                  + " Lo guarda el agente de este equipo, no la unidad.").grid(
+            row=1, column=0, sticky="w", pady=(theme.E1, 0))
+
     def guardar() -> None:
         """Guarda lo que ha cambiado y cierra; si algo no se puede, lo dice y se queda."""
         try:
@@ -106,8 +129,9 @@ def construir(panel: Panel, config: Config) -> None:
         except ValueError as e:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             return
+        cambia_conectar = conectada is not None and bool(conectada.get()) != conectar.valor
         algo = minutos != actual or (marcada is not None
-                                     and bool(marcada.get()) != pedir)
+                                     and bool(marcada.get()) != pedir) or cambia_conectar
         if minutos != actual:
             if not prefs.guardar_intervalo(config, minutos):
                 messagebox.showerror(TITLE, f"No he podido guardar el intervalo en "
@@ -116,6 +140,12 @@ def construir(panel: Panel, config: Config) -> None:
             panel.devolver(True)
         if marcada is not None and bool(marcada.get()) != pedir:
             if not watch.pedir_ajuste("pedir_al_iniciar", bool(marcada.get())):
+                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
+                                            "agente.", parent=dlg)
+                return
+            panel.devolver(True)
+        if cambia_conectar:
+            if not watch.pedir_ajuste_unidad("pedir_al_conectar", bool(conectada.get())):
                 messagebox.showerror(TITLE, "No he podido dejarle la petición al "
                                             "agente.", parent=dlg)
                 return

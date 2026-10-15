@@ -164,6 +164,12 @@ def dir_veracrypt() -> Path:
     return DIR / "veracrypt"
 
 
+CIFRADO_VERACRYPT = "veracrypt"
+"""La unidad vive en un contenedor VeraCrypt (el vestíbulo: `common/vestibulo.py`)."""
+CIFRADO_BITLOCKER = "bitlocker"
+"""La unidad lleva BitLocker (Windows): `Unidad.volumen` la reconoce bloqueada."""
+
+
 @dataclass(frozen=True)
 class Unidad:
     r"""Una raíz de la lista del agente.
@@ -200,6 +206,12 @@ class Unidad:
             él el agente la reconoce enchufada y bloqueada, cuando no puede
             leer su fichero de control. Vacío sin BitLocker, fuera de Windows
             y en las raíces del equipo.
+        pedir_al_conectar: Si el agente pide la contraseña de la unidad al
+            conectarla (VeraCrypt) o al verla enchufada y bloqueada (BitLocker),
+            una vez por conexión. `None` es «lo de siempre según el tipo»
+            (`pide_al_conectar()`): así los equipos que ya existen no cambian.
+            Es un ajuste de este equipo, no de la unidad. Las raíces del equipo
+            no lo llevan: su ajuste es `Ajustes.pedir_al_iniciar`.
     """
     id: str
     modo: str = MODO_AL_ATENDER
@@ -209,6 +221,21 @@ class Unidad:
     codigo: str = ""
     pausada: bool = False
     volumen: str = ""
+    pedir_al_conectar: bool | None = None
+
+    def pide_al_conectar(self, cifrado: str) -> bool:
+        """Indica si el agente pide la contraseña de esta unidad al conectarla.
+
+        Args:
+            cifrado: Cómo va cifrada (`CIFRADO_VERACRYPT`, `CIFRADO_BITLOCKER`).
+
+        Returns:
+            Lo que se haya dicho; sin decir nada, lo de siempre: una unidad de
+            VeraCrypt se abre sola al conectarla y una de BitLocker no.
+        """
+        if self.pedir_al_conectar is not None:
+            return self.pedir_al_conectar
+        return cifrado == CIFRADO_VERACRYPT
 
     @property
     def es_raiz(self) -> bool:
@@ -316,10 +343,12 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
             volumen = u["volumen"].strip().lower() if isinstance(u.get("volumen"), str) else ""
             if ruta.strip() or not FORMA_VOLUMEN.fullmatch(volumen):
                 volumen = ""
+            pedir = u["pedir_al_conectar"] \
+                if isinstance(u.get("pedir_al_conectar"), bool) and not ruta.strip() else None
             unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
                                            hc.strip() if ruta.strip() else "",
                                            codigo.strip(), u.get("pausada") is True,
-                                           volumen)
+                                           volumen, pedir)
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     estirar = datos["estirar_intervalo"] \
@@ -358,7 +387,9 @@ def a_dict(aj: Ajustes) -> dict:
                             **({"contenedor": u.contenedor} if u.contenedor else {}),
                             **({"codigo": u.codigo} if u.codigo else {}),
                             **({"pausada": True} if u.pausada else {}),
-                            **({"volumen": u.volumen} if u.volumen else {})}
+                            **({"volumen": u.volumen} if u.volumen else {}),
+                            **({"pedir_al_conectar": u.pedir_al_conectar}
+                               if u.pedir_al_conectar is not None else {})}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -514,6 +545,7 @@ def leer_estado() -> dict:
 PIDE_ATENDER = "atender"        # id: una unidad conectada a la que se dijo «Ahora no»
 PIDE_MODO = "modo"              # id, modo
 PIDE_AJUSTE = "ajuste"          # clave, valor
+PIDE_AJUSTE_UNIDAD = "ajuste_unidad"    # id, clave, valor: un ajuste de ESA unidad de la lista
 PIDE_PASADA = "pasada"          # id, parejas (vacío: todas): «Sincronizar ahora»
 PIDE_PAUSA = "pausa"
 PIDE_SIGUE = "sigue"
@@ -536,6 +568,11 @@ PIDE_REANUDAR = "reanudar"      # (buzón de la raíz) «Reanudar»: sin pausa p
 PIDE_PAUSAR_RAIZ = "pausar_raiz"    # (buzón de la raíz) «Pausar»: no sincronizarla hasta «Reanudar»
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo",
                     "avisos_veracrypt")
+AJUSTES_DE_UNIDAD = ("pedir_al_conectar",)
+"""Los campos de `Unidad` que se piden con `PIDE_AJUSTE_UNIDAD`.
+
+Su valor es un booleano, o `None` para volver a «lo de siempre».
+"""
 
 BUZON_SERVICIO = "servicio.pide"
 """Nombre del buzón de UNA raíz, dentro de su `state/`.

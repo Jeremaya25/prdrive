@@ -154,12 +154,23 @@ agente»**. El diseño completo está en
   cada 5 segundos: en Linux se despierta cuando cambian los montajes, y en
   Windows con el aviso de dispositivo que recibe la ventana oculta de la bandeja. Las
   unidades VeraCrypt de su lista se abren como con penwatch: VeraCrypt pide la
-  contraseña en su ventana, una vez por conexión.
+  contraseña en su ventana, una vez por conexión. Si en un equipo no quieres que
+  se abran solas, desmarca **Pedir la contraseña al conectarla** en el
+  desplegable de esa unidad en la bandeja, o en «Ajustes → Configuración» con
+  la unidad abierta: se queda cerrada hasta que uses «Abrir PRDRIVE» en la
+  propia unidad. El ajuste es de este equipo, no de la unidad, y vale para esa
+  unidad solamente.
 - **Una unidad de su lista bloqueada con BitLocker** (Windows) sale en el menú
   del icono como «(bloqueada)», con **Desbloquear…**, que abre la ventana de
-  BitLocker de Windows: la contraseña la pide Windows, no prdrive, y el agente
-  nunca la pide por su cuenta. En cuanto la desbloqueas se atiende como
-  siempre. La reconoce por el volumen donde la atendió la última vez, así que
+  BitLocker de Windows: la contraseña la pide Windows, no prdrive, y de
+  fábrica el agente no la pide por su cuenta. Si prefieres que lo haga, marca
+  **Pedir la contraseña al conectarla** en el desplegable de esa unidad (o en
+  «Ajustes → Configuración» con la unidad abierta): al enchufarla bloqueada, y
+  también al iniciar sesión con ella puesta, sale sola la ventana de Windows, una
+  vez por conexión. Si la cancelas no insiste: la tendrás en **Desbloquear…**, o
+  la vuelves a recibir al quitarla y enchufarla otra vez. En cuanto la
+  desbloqueas se atiende como siempre. La reconoce por el volumen donde la
+  atendió la última vez, así que
   **la primera vez en un equipo** (o si le pones BitLocker más tarde en otro)
   tienes que desbloquearla tú desde el Explorador; después ya la conoce. De un
   disco con BitLocker que no es de prdrive no dice nada.

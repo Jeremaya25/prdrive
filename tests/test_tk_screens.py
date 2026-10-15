@@ -1132,6 +1132,74 @@ with sandbox():
     errores.clear()
 prefs.PREFS = REAL_PREFS
 
+# «Ajustes → Configuración» de una unidad cifrada: la casilla de «Pedir la contraseña al
+# conectarla», que se pide al agente al «Guardar» y solo si ha cambiado (#123).
+unidad_pedida: list = []
+watch.pedir_ajuste_unidad = lambda clave, valor: unidad_pedida.append((clave, valor)) or True
+visto_conectar: dict = {}
+
+
+def al_conectar_y(boton, alternar: bool):
+    """Devuelve un `wait_window` que apunta la casilla de conectarla, la alterna y pulsa `boton`."""
+    def _wait(self, *_a, **_k):
+        """Apunta qué casillas y qué ayuda hay, alterna la de conectarla y pulsa el botón."""
+        pila, casillas, ayuda = [self], [], []
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Checkbutton):
+                casillas.append((str(w.cget("text")), w))
+            elif isinstance(w, ttk.Label):
+                ayuda.append(str(w.cget("text")))
+        suyas = [w for texto, w in casillas if texto == "Pedir la contraseña al conectarla"]
+        visto_conectar.update(
+            casillas=len(suyas),
+            marcada=bool(suyas and suyas[0].instate(["selected"])),
+            ayuda=[t for t in ayuda if "una vez por conexión" in t])
+        if alternar and suyas:
+            suyas[0].invoke()
+        pulsar(boton)(self)
+        if self.winfo_exists():
+            pulsar("Cancelar")(self)
+    return _wait
+
+
+with sandbox():
+    cfg = preparar()
+    prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+    watch.pedir_al_conectar = lambda: None
+    tk.Toplevel.wait_window = al_conectar_y("Cancelar", False)
+    tk_configuracion.open_dialog(raiz, cfg)
+    c("«Configuración» de una unidad sin contraseña que pedir: no hay casilla",
+      visto_conectar["casillas"], 0)
+    watch.pedir_al_conectar = lambda: watch.AlConectar("veracrypt", True)
+    c("  de una de VeraCrypt: casilla marcada, con lo que hace el agente",
+      (tk_configuracion.open_dialog(raiz, cfg), visto_conectar["casillas"],
+       visto_conectar["marcada"], len(visto_conectar["ayuda"]),
+       "VeraCrypt" in "".join(visto_conectar["ayuda"])), (False, 1, True, 1, True))
+    c("  «Cancelar» no pide nada", unidad_pedida, [])
+    tk.Toplevel.wait_window = al_conectar_y("Guardar", False)
+    c("  «Guardar» sin tocar la casilla no pide nada (y no cuenta como cambio)",
+      (tk_configuracion.open_dialog(raiz, cfg), unidad_pedida), (False, []))
+    tk.Toplevel.wait_window = al_conectar_y("Guardar", True)
+    c("  «Guardar» con la casilla cambiada se lo pide al agente",
+      (tk_configuracion.open_dialog(raiz, cfg), unidad_pedida),
+      (True, [("pedir_al_conectar", False)]))
+    c("  y no escribe el intervalo, que no ha cambiado", prefs.PREFS.exists(), False)
+    watch.pedir_al_conectar = lambda: watch.AlConectar("bitlocker", False)
+    unidad_pedida.clear()
+    c("  de una de BitLocker: desmarcada, con la ayuda de Windows, y al marcarla pide que sí",
+      (tk_configuracion.open_dialog(raiz, cfg), visto_conectar["marcada"],
+       "Windows" in "".join(visto_conectar["ayuda"]), unidad_pedida),
+      (True, False, True, [("pedir_al_conectar", True)]))
+    errores.clear()
+    watch.pedir_ajuste_unidad = lambda clave, valor: False
+    c("  si no se puede dejar la petición, se dice y no se cierra como guardado",
+      (tk_configuracion.open_dialog(raiz, cfg), errores),
+      (False, ["No he podido dejarle la petición al agente."]))
+    errores.clear()
+prefs.PREFS = REAL_PREFS
+
 # El formulario de instalación ya no pregunta parejas ni intervalo: son los del
 # servicio, que viven en el dispositivo. Lo que queda es del equipo: qué hacer al
 # enchufar —tres opciones a la vista, no un desplegable—, el sondeo y las raíces.
