@@ -469,9 +469,8 @@ with sandbox():
     real_pedir = watch.pedir_a_la_raiz
     watch.pedir_a_la_raiz = lambda peticion: False
     errores_pie: list = []
-    import tkinter.messagebox as mb  # noqa: E402
-    real_showerror = mb.showerror
-    mb.showerror = lambda titulo, texto=None, **k: errores_pie.append(texto)
+    real_avisar = uitk.avisar
+    uitk.avisar = lambda parent, titulo, texto, tono="Azul.": errores_pie.append(texto)
     try:
         def pausar_sin_buzon(root) -> None:
             """Pulsa «Pausar» sin poder escribir el buzón."""
@@ -480,7 +479,7 @@ with sandbox():
 
         ventana(CUATRO, pausar_sin_buzon, resumen=watch.Resumen("agente", "daemon", True))
     finally:
-        watch.pedir_a_la_raiz, mb.showerror = real_pedir, real_showerror
+        watch.pedir_a_la_raiz, uitk.avisar = real_pedir, real_avisar
     c("sin poder dejar la petición, lo dice y el botón no cambia",
       (errores_pie, visto["sigue"]), (["No he podido dejarle la petición al agente."],
                                       True))
@@ -535,12 +534,11 @@ with sandbox():
 
         # «Expulsar» sin VeraCrypt: sale con llavero, lo cierra antes y dice que
         # ya se puede quitar. Si KeePassXC sigue abierto, no se cierra nada.
-        from tkinter import messagebox
-        reales_mb = (messagebox.askokcancel, messagebox.showinfo)
+        reales_mb = (uitk.preguntar, uitk.avisar)
         dichos: list = []
         cerrados: list = []
-        messagebox.askokcancel = lambda *a, **k: True
-        messagebox.showinfo = lambda titulo, texto=None, **k: dichos.append(texto)
+        uitk.preguntar = lambda *a, **k: True
+        uitk.avisar = lambda parent, titulo, texto, tono="Azul.": dichos.append(texto)
         estado["boton"] = True
         try:
             for listo in (False, True):
@@ -556,18 +554,18 @@ with sandbox():
             c("  y solo si quedó libre dice que ya se puede quitar", dichos,
               [f"Ya puedes quitarla {uitk.QUITAR_UNIDAD}."])
         finally:
-            messagebox.askokcancel, messagebox.showinfo = reales_mb
+            uitk.preguntar, uitk.avisar = reales_mb
             tk_llavero.cerrar = REAL_CERRAR
 
         # En una raíz de este equipo no se quita nada: sin «Expulsar». Y si es
         # cifrada, «Bloquear» cierra antes el llavero; si KeePassXC sigue
         # abierto, no se le pide nada al agente.
         reales_eq = (model.es_equipo, cifrado.bloqueo, cifrado.pedir_bloqueo,
-                     messagebox.askokcancel)
+                     uitk.preguntar)
         pedidos: list = []
         cerrados.clear()
         model.es_equipo = lambda app_dir=None: True
-        messagebox.askokcancel = lambda *a, **k: True
+        uitk.preguntar = lambda *a, **k: True
         try:
             ventana(CON_LLAVERO, lambda root: visto.update(
                 expulsar="Expulsar" in botones(root), bloquear="Bloquear" in botones(root)))
@@ -584,7 +582,7 @@ with sandbox():
             c("  y solo con KeePassXC cerrado se lo pide al agente", pedidos, ["e" * 32])
         finally:
             (model.es_equipo, cifrado.bloqueo, cifrado.pedir_bloqueo,
-             messagebox.askokcancel) = reales_eq
+             uitk.preguntar) = reales_eq
             tk_llavero.cerrar = REAL_CERRAR
 
         # «Ajustes → Llavero…»: al activarlo, la principal relee el config y

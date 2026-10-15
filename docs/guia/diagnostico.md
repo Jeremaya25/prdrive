@@ -109,13 +109,21 @@ arrancar programas desde una unidad extraíble en Windows 7, pero el Explorador
 sigue leyendo de ahí el nombre y el icono. Si ya había uno, solo se cambian esas
 dos líneas; lo demás se queda como estaba. Según cómo esté protegida la unidad:
 
-- **Con BitLocker**, Windows no puede leerlo mientras la unidad está bloqueada.
+- **Con BitLocker**, Windows no puede leerlo mientras la unidad está bloqueada,
+  y desbloqueada enseña el nombre pero deja el candado de BitLocker como icono.
 - **Con VeraCrypt**, cambia el volumen que aparece al abrir el contenedor, no el
-  pendrive que se enchufa: ese conserva su nombre y su icono.
+  pendrive que se enchufa: ese conserva su nombre y su icono. En Windows, el
+  Explorador no lee ese fichero dentro de un contenedor de VeraCrypt, así que
+  prdrive le dice el nombre y el icono de esa letra mientras el contenedor esté
+  abierto (en tu registro de usuario, sin pedir administrador), y lo quita al
+  expulsarlo. Lo hace prdrive al arrancar desde la unidad («Abrir PRDRIVE», su
+  ventana o el agente de este equipo): si abres el contenedor solo con
+  VeraCrypt, sale con el icono de siempre.
 
 Además:
 
-- **Se ve al volver a conectar la unidad** (con VeraCrypt, al volver a abrirla),
-  no al guardar: el Explorador lee el fichero cuando llega el volumen.
+- **Se ve al volver a conectar la unidad**, no al guardar: el Explorador lee el
+  fichero cuando llega el volumen. Con VeraCrypt en Windows se ve enseguida en
+  «Este equipo» (en una ventana que ya estaba abierta, al pulsar F5).
 - **La etiqueta del sistema de ficheros no cambia.** En Linux, y en la ruta donde
   se monta, la unidad se sigue llamando como antes.

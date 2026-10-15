@@ -256,9 +256,16 @@ def extraer_falso(appimage: Path, donde: Path) -> int:
     return 0
 
 
+PIN_REAL = pins.KEEPASSXC_EJECUTABLES
+
+
 def poner_appimage(app: Path, datos: bytes, version: str = pins.KEEPASSXC_VERSION,
-                   sha: str | None = None) -> None:
-    """Deja el AppImage en la unidad con su sello (el SHA-256 de `datos`, o `sha`)."""
+                   sha: str | None = None, fijado_en: str | None = None) -> None:
+    """Deja el AppImage en la unidad con su sello y lo fija en la tabla de `pins`.
+
+    Lo fijado es el SHA-256 de `datos`, o `sha`, en la versión `fijado_en` (por
+    defecto, la del sello): es lo que prdrive da por oficial.
+    """
     carpeta = components.keepassxc_dir(app, "linux-x64")
     carpeta.mkdir(parents=True, exist_ok=True)
     (carpeta / components.KEEPASSXC_APPIMAGE).write_bytes(datos)
@@ -266,6 +273,8 @@ def poner_appimage(app: Path, datos: bytes, version: str = pins.KEEPASSXC_VERSIO
     (carpeta / components.KEEPASSXC_STAMP).write_text(components.keepassxc_stamp_text(
         version, pins.KEEPASSXC["linux-x64"][0], sha, {components.KEEPASSXC_APPIMAGE: sha}),
         encoding="utf-8")
+    pins.KEEPASSXC_EJECUTABLES = {fijado_en or version: {
+        "linux-x64": {components.KEEPASSXC_APPIMAGE: sha}}}
 
 
 reales_extraer = (keepassxc.cache_equipo, keepassxc.extraer_appimage, store.procesos_desde)
@@ -312,13 +321,40 @@ try:
     poner_appimage(app, b"\x7fELF estropeado", sha=SHA)
     try:
         keepassxc.preparar_appimage("linux-x64", app)
-        c("una copia que no es la del sello no se extrae", "no lanzó", "OSError")
-    except OSError as e:
-        c.contains("una copia que no es la del sello no se extrae", str(e),
-                   "no es la de la unidad")
+        c("una copia que no es el AppImage oficial no se extrae", "no lanzó", "OSError")
+    except keepassxc.NoOficial as e:
+        c.contains("una copia que no es el AppImage oficial no se extrae", str(e),
+                   "no es el oficial")
     c("  ni toca lo que había", (len(extracciones),
                                  (hecho / "usr" / "bin" / "keepassxc").read_bytes()),
       (2, b"ELF " + OTRO))
+    c("  y apunta en state/ que el paquete no cuadra, para que la ventana ofrezca «Actualizar…»",
+      components.keepassxc_alterado(app, "linux-x64"),
+      {"version": pins.KEEPASSXC_VERSION, "fichero": components.KEEPASSXC_APPIMAGE})
+    components.keepassxc_olvidar_alterado(app, "linux-x64")
+    poner_appimage(app, APPIMAGE, version="2.7.99", fijado_en=pins.KEEPASSXC_VERSION)
+    try:
+        keepassxc.preparar_appimage("linux-x64", app)
+        c("una versión que no está en la tabla no se extrae", "no lanzó", "OSError")
+    except keepassxc.NoOficial as e:
+        c.contains("una versión que no está en la tabla no se extrae", str(e), "2.7.99")
+    c("  ni deja carpeta de esa versión en la caché",
+      (len(extracciones), (cache / "2.7.99").exists()), (2, False))
+    c("  ni lo apunta como un fichero que no cuadra: el sello ya dice que toca «Actualizar…»",
+      components.keepassxc_alterado(app, "linux-x64"), {})
+    poner_appimage(app, b"\x7fELF sin sello")
+    (components.keepassxc_dir(app, "linux-x64") / components.KEEPASSXC_STAMP).unlink()
+    try:
+        keepassxc.preparar_appimage("linux-x64", app)
+        c("sin sello, la versión no consta y no se extrae", "no lanzó", "OSError")
+    except keepassxc.NoOficial as e:
+        c.contains("sin sello, la versión no consta y no se extrae", str(e), "no tiene sello")
+    # lo ya extraído salió del AppImage oficial: da igual lo que haya ahora en la unidad
+    poner_appimage(app, OTRO)
+    keepassxc.preparar_appimage("linux-x64", app)
+    poner_appimage(app, b"\x7fELF el de otro", sha=hashlib.sha256(OTRO).hexdigest())
+    c("con lo extraído del oficial, un AppImage cambiado en la unidad ni se lee ni se extrae",
+      (keepassxc.preparar_appimage("linux-x64", app), len(extracciones)), (hecho, 2))
     poner_appimage(app, APPIMAGE)
     falla_extraer["codigo"] = 1
     try:
@@ -333,6 +369,7 @@ try:
     falla_extraer["codigo"] = 0
 finally:
     keepassxc.cache_equipo, keepassxc.extraer_appimage, store.procesos_desde = reales_extraer
+    pins.KEEPASSXC_EJECUTABLES = PIN_REAL
 
 
 # --- el navegador: los manifiestos

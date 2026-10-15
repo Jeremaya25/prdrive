@@ -73,6 +73,16 @@ RCLONE_VERSION = "v1.75.2"
 """Versión de rclone que se descarga para cada plataforma elegida.
 
 Es fija: «la última» puede ser una que nadie ha probado.
+
+**Al moverla hay que regenerar `common/flags_rclone.json`** con
+`python generar_flags_rclone.py` (baja la rclone fijada, comprobada, y vuelca sus
+flags): es lo que el editor de flags de una pareja ofrece y comprueba sin red
+(`ui/flags_ayuda.py`), y un flag nuevo o cambiado de rclone no aparece en él
+hasta entonces. `tests/test_flags_ayuda.py` falla si el fichero es de otra versión.
+Después, `git diff` dice qué flags han llegado, han cambiado de tipo o se han ido;
+las tablas a mano de `ui/flags_ayuda.py` (borrado, choques, solo-sincroniza) se
+cruzan con el fichero en ese mismo test, y falla si rclone quita o renombra un
+flag que citan.
 """
 
 PYTHON_RELEASE = "20261001"          # el tag de la release en GitHub
@@ -241,6 +251,43 @@ el ZIP tal cual: ya trae `.portable` (H-3) y no trae el runtime de Visual C++
 nombre fijo (`components.KEEPASSXC_APPIMAGE`); no se ejecuta desde la unidad,
 sino extraído una vez en cada equipo (`common/keepassxc.py`, §11 de la
 especificación).
+"""
+KEEPASSXC_EJECUTABLES: dict[str, dict[str, dict[str, str]]] = {
+    "2.7.12": {
+        "windows-x64": {
+            "KeePassXC.exe": "1debd4f24e12bd400a6eedac20b22ca1fd97d17b1b16487a45a3e81fc61c7858",
+            "keepassxc-cli.exe":
+                "ff4feb13d6f9a0a910480073dcbad500718d63f107d58cd9184d0153dd30f1b0",
+            "keepassxc-proxy.exe":
+                "037bb594287671876f0f3f662cfafdb8219e51d4f0f33766f9aba2d609bcac44",
+        },
+        "linux-x64": {"KeePassXC.AppImage": KEEPASSXC["linux-x64"][1]},
+    },
+}
+"""El SHA-256 de cada ejecutable de KeePassXC que prdrive lanza o registra desde la unidad.
+
+`{versión: {paquete: {nombre del fichero en la carpeta del paquete: sha256}}}`.
+La versión es la que dice el sello de la unidad (`PRDRIVE-KEEPASSXC`), y
+`common/keepassxc.py` compara cada fichero con su suma justo antes de
+lanzarlo: sin suma, o con otra, no se lanza (`keepassxc.comprobar()`). Es lo
+que permite que `.prdrive/keepassxc/` no entre en la huella del agente
+(`agente.huella()`). Este fichero sí entra: quien cambie una suma cambia «el
+código» y el agente vuelve a preguntar.
+
+Windows: los tres ejecutables del ZIP oficial (`KeePassXC.exe`, la línea de
+órdenes y el proxy del navegador), resumidos tal cual salen del ZIP de
+`KEEPASSXC["windows-x64"]` una vez comprobado contra su SHA-256 (el 15/10/2026,
+sobre la 2.7.12). No se comprueban las DLL ni el resto de ficheros que van al
+lado: es lo que se aceptó al dejar la carpeta fuera de la huella. Linux: el
+AppImage, que no se repite aquí, porque su suma es la del paquete
+(`KEEPASSXC["linux-x64"]`). Linux ARM64 no tiene paquete: usa el KeePassXC del
+equipo, que no es de la unidad y no se comprueba.
+
+Al subir `KEEPASSXC_VERSION` se añade la entrada de la versión nueva y la vieja
+se QUEDA: un dispositivo cuyo código ya se actualizó y cuyo KeePassXC todavía
+no sigue abriendo el suyo mientras su versión esté aquí. Como la entrada de
+Linux de la versión que se deja usa la suma de `KEEPASSXC`, que pasa a ser la
+nueva, antes de cambiarla se escribe esa suma en la entrada vieja, tal cual.
 """
 KEEPASSXC_URL = ("https://github.com/keepassxreboot/keepassxc/releases/download/"
                  "{version}/{nombre}")

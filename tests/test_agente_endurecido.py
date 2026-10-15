@@ -676,6 +676,46 @@ c("  sí con un .py nuevo junto al programa (se importaría antes que el de verd
 c("  y con rclone.conf (la opción ssh de sftp es una orden)", agente.huella(RH) != base, True)
 (app_h / "rclone.conf").unlink()
 
+# keepassxc/ no entra: su configuración cambia con el uso y leer el programa cuesta
+# segundos; los ejecutables se comprueban contra su pin antes de lanzarlos
+kp = app_h / "keepassxc"
+for carpeta in (kp / "windows-x64" / "config", kp / "linux-x64", kp / "config" / "windows"):
+    carpeta.mkdir(parents=True)
+(kp / "windows-x64" / "KeePassXC.exe").write_bytes(b"MZ el programa")
+(kp / "windows-x64" / "PRDRIVE-KEEPASSXC").write_text("keepassxc = 2.7.12\n", encoding="utf-8")
+(kp / "linux-x64" / "KeePassXC.AppImage").write_bytes(b"\x7fELF el AppImage")
+(kp / "config" / "windows" / "keepassxc_local.ini").write_text("[General]\nLastDir=F:/\n",
+                                                               encoding="utf-8")
+(kp / "config" / "windows" / "raiz.txt").write_text("F:\n", encoding="utf-8")
+(kp / "windows-x64" / "config" / "org.keepassxc.keepassxc_browser_chrome.json").write_text(
+    '{"path": "F:\\\\.prdrive\\\\keepassxc\\\\windows-x64\\\\keepassxc-proxy.exe"}',
+    encoding="utf-8")
+c("la huella no cambia con nada de keepassxc/: ni el programa, ni su configuración, "
+  "ni los JSON del navegador", agente.huella(RH), base)
+(kp / "config" / "windows" / "keepassxc_local.ini").write_text("[General]\nLastDir=G:/\n",
+                                                               encoding="utf-8")
+(kp / "config" / "windows" / "raiz.txt").write_text("G:\n", encoding="utf-8")
+(kp / "windows-x64" / "KeePassXC.exe").write_bytes(b"MZ otro programa")
+(kp / "otro-paquete").mkdir()
+c("  tampoco al usarlo, ni al cambiarlo de letra o de versión", agente.huella(RH), base)
+(app_h / "common" / "keepassxc").mkdir(parents=True)
+(app_h / "common" / "keepassxc" / "x.py").write_text("# suelto\n", encoding="utf-8")
+c("  pero una carpeta que se llame así más adentro sí cuenta", agente.huella(RH) != base, True)
+(app_h / "common" / "keepassxc" / "x.py").unlink()
+(app_h / "common" / "keepassxc").rmdir()
+(app_h / "common" / "pins.py").write_text("KEEPASSXC_EJECUTABLES = {'2.7.12': {}}\n",
+                                          encoding="utf-8")
+con_pins = agente.huella(RH)
+c("  y sí con common/pins.py, donde están las sumas de sus ejecutables", con_pins != base, True)
+(app_h / "common" / "pins.py").write_text("KEEPASSXC_EJECUTABLES = {'2.7.12': {'x': 'y'}}\n",
+                                          encoding="utf-8")
+c("  también al cambiar una suma", agente.huella(RH) not in (base, con_pins), True)
+(app_h / "common" / "pins.py").unlink()
+(app_h / "common" / "keepassxc.py").write_text("# la comprobación\n", encoding="utf-8")
+c("  y con common/keepassxc.py, que las comprueba", agente.huella(RH) != base, True)
+(app_h / "common" / "keepassxc.py").unlink()
+c("  quitado lo suyo, la huella vuelve a ser la de antes", agente.huella(RH), base)
+
 F.RAICES[:] = []
 ag, RH2 = servida(H.replace("3", "2"), parejas=("docs",))
 H2 = "2" * 32

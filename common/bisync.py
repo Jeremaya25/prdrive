@@ -573,6 +573,75 @@ def programa_en_listado(pair: Pair) -> bool:
     return False
 
 
+def _sin_entradas(lst: Path) -> bool:
+    """Indica si un listado de bisync no trae ni un fichero ni una carpeta.
+
+    Es `fileList.empty()` de rclone (`cmd/bisync/listing.go`, igual en v1.75.1
+    y v1.75.2) sobre lo que `loadListing()` deja en la lista: no cuentan las líneas en blanco ni las
+    que empiezan por `#` (la cabecera `# bisync listing v1 from …`), y sí cuenta
+    cualquier otra, sea fichero (`-`) o carpeta (`d`, con
+    `create-empty-src-dirs`). Una línea que rclone descartaría por rota
+    (`lineRegex`) cuenta aquí como contenido, a propósito: decir «vacío» de
+    más rehace una referencia que sí tenía algo que proteger, y decirlo de
+    menos solo deja el fallo de siempre. Un listado que no se puede leer no
+    está vacío.
+    """
+    try:
+        with lst.open(encoding="utf-8", errors="replace") as f:
+            for linea in f:
+                linea = linea.rstrip("\n")
+                if linea and not linea.startswith("#"):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
+    """Indica si la pasada va a rehacer sola el baseline de la pareja, por estar vacío.
+
+    Un baseline vacío es lo que deja un `--resync` sobre dos lados vacíos, y
+    rclone aborta con él toda pasada que no sea otro `--resync`
+    (`checkListing()`, «Empty prior Path1 listing», código 7) porque no sabe
+    distinguir una carpeta vacía de una sin montar. Con la referencia vacía no
+    queda nada que proteger, y la rehace sola `sync._bisync_preflight()`. Esa
+    decisión es esta función, y `--doctor` dice lo mismo porque la usa también.
+    Tiene que cumplirse todo:
+
+    - El baseline es de ESTA pareja: su prefijo es el esperado
+      (`expected_prefix()`) y ese prefijo se puede comprobar
+      (`prefijo_comprobable()`). Si un extremo cambió sin apartarlo (el TOML a
+      mano, el destino de un `alias`), rclone no lo encontraría, y rehacer sin
+      preguntar contra los extremos nuevos es decisión de una persona
+      («Reparación», hallazgo `prefijo`). Si el prefijo es una estimación (un
+      alias que no se puede seguir), que el baseline lleve ese nombre no prueba
+      nada, y no se decide por él.
+    - La carpeta local existe. Sin ella, con baseline, la pasada aborta con 2
+      y no crea nada: un lado vacío se lee como «han borrado todo».
+    - Los DOS listados están vacíos. Si solo lo está uno, un lado se ha vaciado
+      desde la última pasada buena y rclone debe pararla.
+
+    Args:
+        state: El estado ya calculado, para no recorrer otra vez el workdir.
+
+    Returns:
+        `True` si se cumple todo lo anterior; `False` si no, si falta un
+        listado o no se puede leer, y fuera de bisync.
+    """
+    if not pair.is_bisync:
+        return False
+    if state is None:
+        state = pair_state(pair)
+    if not state.has_baseline or not prefijo_comprobable(pair):
+        return False
+    if state.prefix != expected_prefix(pair):
+        return False
+    if not pair.local_abs.exists():
+        return False
+    return all(_sin_entradas(pair.workdir / (state.prefix + sufijo))
+               for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX))
+
+
 def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
     """Devuelve por qué esta pareja necesita `--resync`.
 
