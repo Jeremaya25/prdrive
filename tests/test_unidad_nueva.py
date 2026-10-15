@@ -216,6 +216,10 @@ try:
 finally:
     tk_agente.main = tk_agente_main
 
+c("el título de la ventana distingue una unidad nueva de una cuyo código ha cambiado",
+  (tk_agente.titulo_ventana(False), tk_agente.titulo_ventana(True)),
+  ("prdrive — unidad nueva", "prdrive — código cambiado"))
+
 c("la cuenta atrás en minutos y segundos", tk_agente.cuenta(105),
   "Si no contestas, en 1:45 se cierra sola y cuenta como «Ahora no».")
 c("  sin números negativos", tk_agente.cuenta(-3).startswith("Si no contestas, en 0:00"),
