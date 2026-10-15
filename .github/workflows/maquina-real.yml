@@ -14,7 +14,9 @@ name: Máquina real
 #
 # F3 (la hora de lo que baja del remoto, #114) lanza el rclone fijado de verdad: el
 # paso «El rclone fijado» lo baja (una vez, con caché) y deja su ruta en
-# `PRDRIVE_RCLONE_CI`; sin él, F3 sale «saltada».
+# `PRDRIVE_RCLONE_CI`. Solo se baja si se pide F3 o «todas», y si la descarga
+# falla el paso avisa y sigue (`continue-on-error`): ninguna otra fila lo
+# necesita, y F3 sale «saltada» en vez de tumbar la matriz.
 #
 # F21 (`.pyc` entre sistemas) corre en dos trabajos propios, fuera de la matriz
 # (sus pasos no se pueden pasar un árbol entre ellos): `pyc-linux` precompila el
@@ -86,6 +88,8 @@ jobs:
           key: rclone-${{ matrix.plat }}-${{ steps.pins.outputs.clave }}
 
       - name: El rclone fijado
+        if: contains(env.PRUEBAS, 'F3') || contains(env.PRUEBAS, 'todas')
+        continue-on-error: true
         run: python tests/_runtime_ci.py rclone ${{ matrix.plat }} "${{ runner.temp }}/prdrive-cache"
 
       - name: Pruebas (Linux, como root)
