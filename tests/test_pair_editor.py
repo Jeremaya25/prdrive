@@ -8,6 +8,7 @@ borrados todos los ficheros que solo estaban en el anterior.
 """
 
 import hashlib
+import shutil
 import sys
 from pathlib import Path
 
@@ -821,6 +822,25 @@ with sandbox():
             c.contains(f"apartar={apartar}: se niega y dice que la carpeta no existe",
                        str(e), "no existe")
     c("  y no toca la referencia", (notas.workdir.is_dir(), apartados("notas")), (True, []))
+
+with sandbox():
+    # La confirmación puede tardar minutos: si la carpeta local desaparece mientras tanto
+    # (un volumen que se desmonta), el «sí» no aparta la referencia ni deja lanzar nada. El
+    # plan se mira otra vez al ejecutarse, como el resto de los planes que apartan.
+    for apartar in (True, False):
+        raw, cfg, notas = pareja_lista()
+        plan = pair_editor.plan_resync(cfg, "notas", apartar=apartar)
+        shutil.rmtree(notas.local_abs)                   # el volumen se desmonta con el plan abierto
+        try:
+            plan.execute()
+            c(f"apartar={apartar}: con la carpeta local ausente al ejecutar, se niega", "ejecutó",
+              "excepción")
+        except repair.ReparacionImposible as e:
+            c.contains(f"apartar={apartar}: con la carpeta local ausente al ejecutar, se niega",
+                       str(e), "no existe")
+        c("  y la referencia sigue donde estaba", (notas.workdir.is_dir(), apartados("notas")),
+          (True, []))
+        shutil.rmtree(notas.workdir)
 
 with sandbox():
     # Una pareja de la raíz entera que subió el programa: el aviso sale ANTES del resync,

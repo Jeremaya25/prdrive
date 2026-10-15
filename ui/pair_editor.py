@@ -744,6 +744,24 @@ class PlanResync(repair.RepairPlan):
     args: list[str] = field(default_factory=list)
 
 
+def _exigir_carpeta_local(pareja: model.Pair) -> None:
+    """Se niega si falta la carpeta local de una pareja que tiene baseline.
+
+    `sync._bisync_preflight()` aborta en ese caso y no crea la carpeta vacía (un lado
+    local vacío se lee como «se ha borrado todo»). Con el baseline apartado ya no habría
+    aborto: la pasada la crearía vacía y la llenaría desde el remoto.
+
+    Raises:
+        repair.ReparacionImposible: Si la carpeta no existe.
+    """
+    if not pareja.local_abs.exists():
+        raise repair.ReparacionImposible(
+            f"La carpeta local de «{pareja.name}» ({pareja.local_endpoint}) no existe, y la "
+            "pareja tiene baseline: la pasada se para antes que crearla vacía, que se leería "
+            "como «se ha borrado todo». Comprueba que el volumen esté montado donde toca y "
+            "que la carpeta no se haya movido.")
+
+
 def plan_resync(config: Config, nombre: str, apartar: bool = True) -> PlanResync:
     """Devuelve el plan de rehacer la referencia de una pareja a petición de la persona.
 
@@ -754,8 +772,9 @@ def plan_resync(config: Config, nombre: str, apartar: bool = True) -> PlanResync
     por si hay que volver atrás a mano; sin ella no se toca, y el plan dice que
     el resync la sustituye. Pensar el plan no toca nada.
 
-    Se niega con la carpeta local ausente y un baseline: `sync._bisync_preflight()`
-    aborta en ese caso, y sin baseline (apartado ya) crearía la carpeta vacía.
+    Se niega con la carpeta local ausente y un baseline (`_exigir_carpeta_local()`), al
+    pensar el plan y otra vez al ejecutarlo: la confirmación puede tardar minutos y el
+    volumen se puede desmontar mientras tanto.
 
     Args:
         config: La configuración del dispositivo.
@@ -765,7 +784,8 @@ def plan_resync(config: Config, nombre: str, apartar: bool = True) -> PlanResync
 
     Raises:
         ConfigError: Si la pareja no se usa aquí o no es bisync.
-        repair.ReparacionImposible: Si falta la carpeta local de una pareja con baseline.
+        repair.ReparacionImposible: Si falta la carpeta local de una pareja con baseline
+            (también al ejecutar el plan).
     """
     pareja = next((p for p in config.del_usuario if p.name == nombre), None)
     if pareja is None:
@@ -775,23 +795,28 @@ def plan_resync(config: Config, nombre: str, apartar: bool = True) -> PlanResync
         raise ConfigError(f"'{nombre}' no es bisync (es {pareja.mode.name}): el resync "
                           f"rehace la referencia que solo guarda bisync.")
     estado = bisync.pair_state(pareja)
-    if estado.has_baseline and not pareja.local_abs.exists():
-        raise repair.ReparacionImposible(
-            f"La carpeta local de «{nombre}» ({pareja.local_endpoint}) no existe, y la pareja "
-            "tiene baseline: la pasada se para antes que crearla vacía, que se leería como "
-            "«se ha borrado todo». Comprueba que el volumen esté montado donde toca y que la "
-            "carpeta no se haya movido.")
+    if estado.has_baseline:
+        _exigir_carpeta_local(pareja)
     hallazgo = repair.hallazgo_resync(pareja)
     base = repair.aviso_resync(hallazgo)
     consecuencias, hacer = list(base.consequences), None
-    if estado.has_baseline and apartar:
+    if estado.has_baseline:
+        apartado = repair.plan_apartar(config, hallazgo) if apartar else None
         consecuencias.insert(
             0, f"Antes se aparta la referencia actual: state/{nombre}/ pasa a "
-               f"state/{nombre}.old-<fecha>/ (no se borra), por si quieres volver atrás a mano")
-        hacer = repair.plan_apartar(config, hallazgo).execute
-    elif estado.has_baseline:
-        consecuencias.insert(
-            0, "La referencia actual no se aparta: el resync la sustituye por la nueva")
+               f"state/{nombre}.old-<fecha>/ (no se borra), por si quieres volver atrás a mano"
+            if apartar else
+            "La referencia actual no se aparta: el resync la sustituye por la nueva")
+
+        def hacer() -> list[str]:
+            """Vuelve a mirar la carpeta local y, si se pidió, aparta la referencia.
+
+            Es lo único que toca el disco antes de lanzar la pasada: si el volumen se ha
+            desmontado con la confirmación abierta, no se aparta nada.
+            """
+            if bisync.pair_state(pareja).has_baseline:
+                _exigir_carpeta_local(pareja)
+            return apartado.execute() if apartado is not None else []
     return PlanResync(base.titulo, consecuencias, base.warnings, hacer,
                       repair.args_resync(hallazgo))
 

@@ -85,6 +85,9 @@ CASILLA_APARTAR = "Apartar la referencia actual antes"
 AVISO_CAMBIADO = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
                   "leer. Revisa y vuelve a guardar.")
 """Lo que dice el pie cuando el config se ha editado por fuera y no se ha hecho lo pedido."""
+AVISO_CAMBIADO_RESYNC = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
+                         f"leer. Revisa la pareja y vuelve a pulsar «{repair.ETIQUETA_RESYNC}».")
+"""Lo mismo cuando lo pedido era un resync: no hay nada que guardar."""
 CAMPOS_DEL_EDITOR = ("actual", "editable")
 """Lo que, al cambiar, obliga a recargar los campos de la ventana de una pareja.
 
@@ -1058,8 +1061,9 @@ class PantallaParejas:
         cat: El catálogo que se enseña (`catalog.Catalogo`), o `None`.
         aviso: Por qué el catálogo es la copia local, o `None`.
         leyendo: Si se está leyendo el catálogo del remoto.
-        cambiado: Si se ha cambiado el config de este dispositivo: lo que
-            devuelve `abrir()`.
+        cambiado: Si la ventana principal tiene algo que releer (se ha cambiado el
+            config de este dispositivo, o un resync apartó la referencia y `lanzar`
+            falló): lo que devuelve `abrir()`.
         ventana: La `VentanaPareja` abierta, o `None`.
         lanzar: El `lanzar(titulo, args)` de la ventana principal, o `None`.
         compartida: La lectura compartida si aún no se ha usado, o `None`.
@@ -1076,7 +1080,7 @@ class PantallaParejas:
         botones: Los botones de acción, por su texto (o su clave).
     """
 
-    def __init__(self, parent, lanzar=None, compartida=None) -> None:
+    def __init__(self, parent, *, lanzar=None, compartida=None) -> None:
         """Construye la pantalla retirada, con la vista de este dispositivo."""
         import tkinter as tk
         from tkinter import ttk
@@ -1526,12 +1530,15 @@ class PantallaParejas:
             messagebox.showinfo(TITLE, "Elige antes una pareja de la lista.", parent=self.dlg)
         return fila
 
-    def releer_config_cambiado(self) -> bool:
+    def releer_config_cambiado(self, aviso: str = AVISO_CAMBIADO) -> bool:
         """Dice si el config se ha cambiado por fuera desde que la pantalla lo enseñó.
 
         Si es así lo vuelve a leer, lo dice en el pie y la pantalla se queda
         como el config: quien llama no sigue con lo que iba a hacer. Si ya no
         se puede ni leer (desapareció, o ya no es TOML), lo dice y para igual.
+
+        Args:
+            aviso: Lo que dice el pie si ha cambiado.
         """
         from tkinter import messagebox
 
@@ -1542,7 +1549,7 @@ class PantallaParejas:
             return True
         if not self.lector.cambio:
             return False
-        self.refrescar(AVISO_CAMBIADO)
+        self.refrescar(aviso)
         return True
 
     def aplicar_plan(self, plan, en_catalogo: bool = False, titulo: str = "", base=None) -> None:
@@ -1670,11 +1677,16 @@ class PantallaParejas:
         El plan y la orden son los de «Reparación» (`pair_editor.plan_resync()`):
         esta pantalla no escribe ni el texto ni el comando. Nada se aparta ni se
         lanza hasta que la persona confirma. Con el sí, la referencia se aparta
-        si se pidió, la pantalla se cierra (dos modales no pueden tener la
-        captura a la vez, y la ventana de salida lo es) y la pasada se lanza con
-        el `lanzar` de la ventana principal, que vuelve a leer el estado al
-        cerrarse la ventana de salida. Si el config se ha editado fuera mientras
-        tanto, o la pareja ya no se puede resincronizar, no se hace nada.
+        si se pidió, la pantalla se cierra (es modal: con su captura delante no
+        se podría usar la ventana de salida, que cuelga de la principal, como
+        pasa en «Reparación») y la pasada se lanza con el `lanzar` de la ventana
+        principal, que vuelve a leer el estado al cerrarse la ventana de salida.
+
+        La confirmación puede tardar minutos, así que antes de ejecutar se mira
+        otra vez el config, como en `aplicar_plan()`: si se ha editado fuera, o
+        la pareja ya no se puede resincronizar, no se hace nada. Tampoco marca
+        `cambiado` salvo que `lanzar` falle: `sync.py` es quien reescribe `state/`
+        y una lectura de la principal mientras tanto vería la referencia a medias.
 
         Args:
             nombre: La pareja, tal como está guardada en este dispositivo.
@@ -1682,15 +1694,23 @@ class PantallaParejas:
         """
         from tkinter import messagebox
 
-        if self.lanzar is None or self.releer_config_cambiado():
+        if self.lanzar is None or self.releer_config_cambiado(AVISO_CAMBIADO_RESYNC):
             return
-        dlg = self.delante()
+        base, dlg = self.raw, self.delante()
         try:
             plan = pair_editor.plan_resync(self.config, nombre, apartar)
         except (ConfigError, repair.ReparacionImposible) as e:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             return
         if not confirmar_plan(dlg, plan, plan.titulo, NOTA_RESYNC):
+            return
+        try:
+            actual, _ = self.lector.leer()
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return
+        if actual is not base:
+            self.refrescar(AVISO_CAMBIADO_RESYNC)
             return
         try:
             plan.execute()
@@ -1700,10 +1720,13 @@ class PantallaParejas:
             self.estados_de, self.compartida = None, None
             self.refrescar()
             return
-        self.cambiado = True
         self.cerrar_ventana()
         self.dlg.destroy()
-        self.lanzar(plan.titulo, plan.args)
+        try:
+            self.lanzar(plan.titulo, plan.args)
+        except BaseException:
+            self.cambiado = True        # la referencia ya está apartada: que la principal relea
+            raise
 
     def volver_al_catalogo(self) -> None:
         """Devuelve la pareja elegida a lo que dice el catálogo."""
@@ -1772,7 +1795,7 @@ class PantallaParejas:
         tk_fleet.open_dialog(self.dlg, self.config, self.raw)
 
 
-def open_dialog(parent, config, lanzar=None, compartida=None) -> bool:
+def open_dialog(parent, config, *, lanzar=None, compartida=None) -> bool:
     """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo.
 
     Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
@@ -1804,7 +1827,7 @@ def open_dialog(parent, config, lanzar=None, compartida=None) -> bool:
             cada pareja; si no, se leen del disco una vez y se guardan mientras
             la pantalla viva.
     """
-    return PantallaParejas(parent, lanzar, compartida).abrir()
+    return PantallaParejas(parent, lanzar=lanzar, compartida=compartida).abrir()
 
 
 def _resumen_defaults(raw, difiere) -> str:
