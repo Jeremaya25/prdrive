@@ -39,7 +39,9 @@ dos contestan con un objeto `Request` y su señal `Response` llega después: la
 de `BindShortcuts`, cuando el usuario ha confirmado en la ventana del
 escritorio, que puede cambiar la tecla o cancelar. Lo que no venga en la
 respuesta se da por rechazado. Cada atajo pulsado es la señal `Activated` con
-su id. Para cambiar los atajos se cierra la sesión y se abre otra. Antes de
+su id. Para cambiar los atajos se cierra la sesión y se abre otra. Lo que se
+pide mientras se espera una respuesta no se queda detrás de ella, que puede no
+llegar nunca: la petición que espera se cierra (`Request.Close`). Antes de
 nada se registra como `prdrive` (`org.freedesktop.host.portal.Registry`, que
 solo existe en portales recientes: sin él sigue igual), el nombre del acceso
 del menú que pone el instalador, que es con el que el escritorio los guarda.
@@ -287,10 +289,13 @@ class _Hilo:
         self._hilo: threading.Thread | None = None
         self._listo = threading.Event()
         self._abierto = False
+        self._acabado = False           # el hilo ha salido de `_correr()`
+        self._huerfano = False          # `cerrar()` se cansó de esperarlo: el pipe lo cierra él
+        self._pipe_cerrado = False
 
     def arrancar(self) -> bool:
         """Conecta en su hilo y devuelve si se pueden poner atajos."""
-        self._hilo = threading.Thread(target=self._correr, name=f"atajos-{self.nombre}",
+        self._hilo = threading.Thread(target=self._vivir, name=f"atajos-{self.nombre}",
                                       daemon=True)
         self._hilo.start()
         self._listo.wait(ESPERA_ARRANQUE)
@@ -308,18 +313,41 @@ class _Hilo:
     def cerrar(self) -> None:
         """Pide al hilo que suelte los atajos y acabe, y espera a que se vaya.
 
-        Ido el hilo, cierra el pipe que lo despertaba.
+        Ido el hilo, cierra el pipe que lo despertaba. Si no se va a tiempo
+        (una llamada al bus que tarda, al entrar en la sesión), lo cierra el
+        hilo al acabar: el agente vuelve a intentarlo más tarde con otro, y
+        cada intento no puede dejar un pipe abierto.
         """
         self._salir = True
         self._despertar()
         if self._hilo is not None and self._hilo is not threading.current_thread():
             self._hilo.join(ESPERA_ARRANQUE)
-        if self._hilo is None or not self._hilo.is_alive():
-            for fd in self._pipe:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
+        with self._cerrojo:
+            if self._hilo is None or self._acabado:
+                self._cerrar_pipe()
+            else:
+                self._huerfano = True
+
+    def _vivir(self) -> None:
+        """Es el hilo: `_correr()` y, si `cerrar()` ya no lo esperaba, cierra el pipe."""
+        try:
+            self._correr()
+        finally:
+            with self._cerrojo:
+                self._acabado = True
+                if self._huerfano:
+                    self._cerrar_pipe()
+
+    def _cerrar_pipe(self) -> None:
+        """Cierra el pipe, una sola vez (con `_cerrojo` tomado)."""
+        if self._pipe_cerrado:
+            return
+        self._pipe_cerrado = True
+        for fd in self._pipe:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     def _despertar(self) -> None:
         """Despierta al hilo por el pipe."""
@@ -527,6 +555,9 @@ class Portal(_Hilo):
     def _turno(self) -> bool:
         """Atiende las señales que ya han llegado y lo pedido, sin esperar.
 
+        Lo pedido entra aunque se esté esperando la respuesta a lo anterior
+        (`_abandonar()`): esa respuesta puede no llegar nunca.
+
         Returns:
             Si ha hecho algo. Una llamada al portal puede traer con su
             respuesta la señal que la sigue, y esa ya no despierta al `select`:
@@ -536,12 +567,31 @@ class Portal(_Hilo):
         for s in self.bus.atender(0):
             self._senal(s)
             hecho = True
-        if self._espera is None:
-            pendiente = self._tomar()
-            if pendiente is not None:
-                self._poner(pendiente)
-                hecho = True
+        pendiente = self._tomar()
+        if pendiente is not None:
+            self._abandonar()
+            self._poner(pendiente)
+            hecho = True
         return hecho
+
+    def _abandonar(self) -> None:
+        """Deja la petición al portal que espera su respuesta, si hay una.
+
+        Su `Response` puede no llegar nunca (la ventana del escritorio se quedó
+        abierta, el portal se reinició), y lo que se pide después no puede
+        esperarla: se cierra (`Request.Close`, que quita su ventana y hace que
+        no se mande la respuesta) y, si llegara, ya no es de nadie. No se le
+        contesta al agente: lo pidió hace más de su plazo, porque pide una
+        cosa a la vez, y lo nuevo puede ser lo mismo.
+        """
+        if self._espera is None:
+            return
+        _paso, ruta, _combos = self._espera
+        self._espera = None
+        try:
+            self.bus.llamar(PORTAL_DESTINO, ruta, PETICION, "Close")
+        except (dbus.Error, OSError):
+            pass
 
     def _bucle(self) -> None:
         """Atiende el bus y lo pedido hasta que se cierra o se va el bus."""

@@ -282,6 +282,14 @@ ESPERA_ATAJOS = 180.0
 usuario confirma en la ventana del escritorio. Pasado el plazo se dan por no
 puestos («el sistema no ha contestado»).
 """
+REINTENTO_ATAJOS = 30.0
+"""Segundos hasta volver a intentar poner los atajos si no se ha podido; se dobla en cada fallo.
+
+Al entrar en la sesión, el bus, el portal (que se arranca al pedirlo) o la
+bandeja pueden tardar más que lo que espera un intento.
+"""
+REINTENTO_ATAJOS_MAX = 900.0
+"""Segundos, como mucho, entre dos intentos de poner los atajos."""
 MIRAR_EMBLEMA = 60.0
 """Segundos entre lecturas de lo que una raíz enseña en la bandeja.
 
@@ -1750,8 +1758,12 @@ class Agente:
             (`poner_atajos()`), o `None` sin bandeja ni vigía (los tests).
         atajos_motor: Lo que pone los atajos (`poner(combos)`, `cerrar()`,
             `nombre`, `suspende`), una vez creado; `None` si no se puede.
-        atajos_probado: Si ya se ha intentado crear: se hace la primera vez que
-            hace falta, no al arrancar, así que sin atajos no se conecta a nada.
+        atajos_reintento: Cuándo (`reloj`) se puede volver a intentar crearlo
+            tras no haber podido; `None` mientras no se haya intentado, e
+            infinito si no hay remedio (sin escritorio). Se intenta la primera
+            vez que hace falta, no al arrancar, así que sin atajos no se
+            conecta a nada.
+        atajos_fallos: Los intentos seguidos que han fallado.
         atajos_motivo: Por qué no hay atajos en este equipo, si no los hay.
         atajos_hechos: Lo que contesta el motor desde su hilo, `(combos,
             rechazados)`: se recoge en cada vuelta.
@@ -1763,7 +1775,7 @@ class Agente:
         atajos_prueba: Un «Guardar» que se está probando con el sistema:
             `(vez, combos, rechazados al validarlos)`.
         atajos_respuesta: Lo último contestado a un «Guardar» (`vez`,
-            `rechazados`), para la ventana que espera.
+            `rechazados`, `guardados`), para la ventana que espera.
         ventana_atajos: La ventana que graba los atajos, mientras está abierta.
         usadas: Cuándo se usó por última vez cada raíz, por id: su ventana se
             abrió, o se pidió algo de ella desde la bandeja, su ventana o un
@@ -1834,7 +1846,8 @@ class Agente:
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
     poner_motor: Any = None
     atajos_motor: Any = None
-    atajos_probado: bool = False
+    atajos_reintento: float | None = None
+    atajos_fallos: int = 0
     atajos_motivo: str = ""
     atajos_hechos: Any = field(default_factory=queue.SimpleQueue)
     atajos_pedidos: dict[str, str] | None = None
@@ -4819,32 +4832,66 @@ class Agente:
 
     # Los atajos de teclado globales (`ui/atajos.py`).
 
-    def _motor_de_atajos(self) -> Any:
-        """Devuelve lo que pone los atajos, creándolo la primera vez que hace falta.
+    def _motor_de_atajos(self, ya: bool = False) -> Any:
+        """Devuelve lo que pone los atajos, creándolo cuando hace falta.
 
         Hace falta con algún atajo guardado o al abrir la ventana que los
         graba: un equipo sin ninguno no se conecta a X ni al portal. Si no se
-        puede, `atajos_motivo` dice por qué y se queda así hasta que el agente
-        se reinicie.
+        puede, `atajos_motivo` dice por qué y se vuelve a intentar más tarde,
+        cada vez más espaciado (`REINTENTO_ATAJOS`, hasta
+        `REINTENTO_ATAJOS_MAX`). Sin escritorio no: eso no cambia sin
+        reiniciar el agente.
+
+        Args:
+            ya: Intentarlo aunque no toque todavía: lo pide el usuario al abrir
+                la ventana que los graba.
         """
-        if not self.atajos_probado:
-            self.atajos_probado = True
-            if self.poner_motor is None:
-                self.atajos_motivo = atajos.SIN_BANDEJA
-            else:
-                try:
-                    self.atajos_motor, self.atajos_motivo = self.poner_motor()
-                except Exception as e:                  # noqa: BLE001
-                    self.atajos_motor, self.atajos_motivo = None, f"no se pueden poner: {e}"
-            if self.atajos_motor is not None:
-                diario(f"atajos de teclado: con {self.atajos_motor.nombre}")
-            else:
-                diario(f"atajos de teclado: no se pueden poner aquí ({self.atajos_motivo})")
-        return self.atajos_motor
+        if self.atajos_motor is not None or self.atajos_reintento == math.inf:
+            return self.atajos_motor
+        ahora = self.reloj()
+        if self.atajos_reintento is not None and ahora < self.atajos_reintento and not ya:
+            return None
+        if self.poner_motor is None:
+            motor, motivo = None, atajos.SIN_BANDEJA
+        else:
+            try:
+                motor, motivo = self.poner_motor()
+            except Exception as e:                      # noqa: BLE001
+                motor, motivo = None, f"no se pueden poner: {e}"
+        if motor is not None:
+            self.atajos_motor, self.atajos_motivo = motor, ""
+            self.atajos_reintento, self.atajos_fallos = None, 0
+            diario(f"atajos de teclado: con {motor.nombre}")
+            return motor
+        self.atajos_fallos += 1
+        if self.poner_motor is None or motivo == atajos.SIN_ESCRITORIO:
+            self.atajos_reintento = math.inf
+            luego = ""
+        else:
+            espera = min(REINTENTO_ATAJOS_MAX, REINTENTO_ATAJOS * 2 ** (self.atajos_fallos - 1))
+            self.atajos_reintento = ahora + espera
+            luego = f"; lo vuelvo a intentar en {espera:g} s"
+        if motivo != self.atajos_motivo:
+            diario(f"atajos de teclado: no se pueden poner aquí ({motivo}){luego}")
+        self.atajos_motivo = motivo
+        return None
 
     def _grabando_atajos(self) -> bool:
         """Indica si la ventana que graba los atajos está abierta."""
         return self.ventana_atajos is not None and self.ventana_atajos.poll() is None
+
+    def _atajos_guardados(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Separa los atajos de `agente.json` en los que valen y los que no (`atajos.validar()`).
+
+        Lo que se guarda desde la ventana ya vale, pero `agente.json` se puede
+        haber escrito a mano o con otra versión: una combinación sin Ctrl, Alt
+        ni el logotipo, Ctrl+Alt con una letra en Windows (AltGr) o la misma en
+        dos acciones no se pone nunca.
+
+        Returns:
+            `(validos, rechazados)`, los dos por acción.
+        """
+        return atajos.validar(self.ajustes.atajos, IS_WIN)
 
     def _atajos_deseados(self) -> dict[str, str]:
         """Devuelve los atajos que tiene que haber puestos ahora mismo, por acción.
@@ -4852,13 +4899,13 @@ class Agente:
         Los de un «Guardar» mientras se prueban; ninguno mientras la ventana
         que los graba está abierta, para que la combinación que se pulse le
         llegue a ella y no dispare su acción (salvo con el portal, que no los
-        suelta: `suspende`); si no, los guardados.
+        suelta: `suspende`); si no, los guardados que valen.
         """
         if self.atajos_prueba is not None:
             return dict(self.atajos_prueba[1])
         if self._grabando_atajos() and getattr(self.atajos_motor, "suspende", True):
             return {}
-        return dict(self.ajustes.atajos)
+        return self._atajos_guardados()[0]
 
     def _atajos(self, ahora: float) -> None:
         """Pone al día los atajos de teclado con el sistema.
@@ -4871,6 +4918,12 @@ class Agente:
         if self.ventana_atajos is not None and self.ventana_atajos.poll() is not None:
             self.ventana_atajos = None
             diario("se ha cerrado la ventana de los atajos de teclado")
+        for accion, motivo in self._atajos_guardados()[1].items():
+            combo = self.ajustes.atajos.get(accion, "")
+            if (accion, combo) not in self.atajos_avisados:
+                self.atajos_avisados.add((accion, combo))
+                diario(f"atajo guardado que no vale: {accion} {combo!r} ({motivo})")
+                avisar(*atajos.aviso_de_rechazo(accion, combo, motivo, IS_WIN))
         while True:
             try:
                 combos, rechazados = self.atajos_hechos.get_nowait()
@@ -4902,10 +4955,13 @@ class Agente:
 
         Si era un «Guardar» que se probaba, se guardan solo los que ha dejado
         (los demás quedan sin asignar) y se contesta a la ventana que espera; si
-        ya no está abierta, un aviso dice cuáles no. Si eran los guardados de
-        siempre (al arrancar, al cerrarse la ventana), los que no ha dejado
-        siguen guardados (quien los tenía puede soltarlos) y se avisa una vez
-        de cada uno.
+        ya no está abierta, un aviso dice cuáles no. Si nadie ha decidido (se
+        canceló en la ventana del escritorio, el sistema no contestó:
+        `atajos.SIN_DECIDIR`), no se guarda nada y siguen los de antes, que la
+        vuelta siguiente vuelve a poner. Si eran los guardados de siempre (al
+        arrancar, al cerrarse la ventana), los que no ha dejado siguen
+        guardados (quien los tenía puede soltarlos) y se avisa una vez de cada
+        uno.
 
         Args:
             combos: Lo que se pidió, por acción.
@@ -4915,19 +4971,27 @@ class Agente:
             vez, pedidos, previos = self.atajos_prueba
             self.atajos_prueba = None
             todos = {**previos, **rechazados}
-            self._guardar(replace(self.ajustes, atajos={a: c for a, c in pedidos.items()
-                                                         if a not in rechazados}))
-            self.atajos_errores = dict(todos)
-            self.atajos_respuesta = {"vez": vez, "rechazados": todos}
-            diario("atajos de teclado guardados: " + (", ".join(
-                f"{a} {atajos.texto(c, IS_WIN)}" for a, c in self.ajustes.atajos.items())
-                or "ninguno") + "".join(f"; {a} no: {m}" for a, m in todos.items()))
+            nadie = atajos.sin_decidir(rechazados)
+            if nadie:
+                diario(f"atajos de teclado: no se ha guardado nada ({nadie}); siguen los de antes")
+            else:
+                self._guardar(replace(self.ajustes, atajos={a: c for a, c in pedidos.items()
+                                                             if a not in rechazados}))
+                self.atajos_errores = dict(todos)
+                diario("atajos de teclado guardados: " + (", ".join(
+                    f"{a} {atajos.texto(c, IS_WIN)}" for a, c in self.ajustes.atajos.items())
+                    or "ninguno") + "".join(f"; {a} no: {m}" for a, m in todos.items()))
+            self.atajos_respuesta = {"vez": vez, "rechazados": todos,
+                                     "guardados": dict(self.ajustes.atajos)}
             if not self._grabando_atajos():
+                if nadie:
+                    avisar(*atajos.aviso_sin_guardar(nadie))
+                    return
                 for accion, motivo in todos.items():
                     avisar(*atajos.aviso_de_rechazo(accion, pedidos.get(accion, ""), motivo,
                                                     IS_WIN))
             return
-        if combos != dict(self.ajustes.atajos):
+        if combos != self._atajos_guardados()[0]:
             return                      # la suspensión mientras se graba: nada que decir
         self.atajos_errores = dict(rechazados)
         for accion, motivo in rechazados.items():
@@ -4972,18 +5036,19 @@ class Agente:
             pedidos: Los atajos de la ventana, por acción.
             vez: Lo que identifica este «Guardar» en la respuesta.
         """
-        validos, rechazados = atajos.validar(pedidos)
+        validos, rechazados = atajos.validar(pedidos, IS_WIN)
         vez = vez if isinstance(vez, str) else ""
         if not validos:
             self._guardar(replace(self.ajustes, atajos={}))
             self.atajos_errores = dict(rechazados)
-            self.atajos_respuesta = {"vez": vez, "rechazados": dict(rechazados)}
+            self.atajos_respuesta = {"vez": vez, "rechazados": dict(rechazados), "guardados": {}}
             diario("atajos de teclado guardados: ninguno")
             return
         if self._motor_de_atajos() is None:
             todos = {**rechazados, **{a: self.atajos_motivo for a in validos}}
             self.atajos_errores = dict(todos)
-            self.atajos_respuesta = {"vez": vez, "rechazados": todos}
+            self.atajos_respuesta = {"vez": vez, "rechazados": todos,
+                                     "guardados": dict(self.ajustes.atajos)}
             diario(f"atajos de teclado: no se pueden guardar ({self.atajos_motivo})")
             return
         self.atajos_prueba = (vez, validos, rechazados)
@@ -5000,7 +5065,7 @@ class Agente:
         if not hay_pantalla():
             diario("sin entorno gráfico; no hay dónde abrir la ventana de los atajos")
             return
-        motor = self._motor_de_atajos()
+        motor = self._motor_de_atajos(ya=True)
         try:
             self.ventana_atajos = lanzar(orden_atajos("" if motor is not None
                                                       else self.atajos_motivo),
@@ -5015,7 +5080,8 @@ class Agente:
         mecanismo, motivo = atajos.mecanismo(IS_WIN, os.environ)
         if self.atajos_motivo:
             mecanismo, motivo = None, self.atajos_motivo
-        return atajos.resumen_de(mecanismo, motivo, self.ajustes.atajos, self.atajos_errores,
+        errores = {**self.atajos_errores, **self._atajos_guardados()[1]}
+        return atajos.resumen_de(mecanismo, motivo, self.ajustes.atajos, errores,
                                  self._grabando_atajos(), self.atajos_respuesta)
 
     def _abrir(self, uid: str, ahora: float, explorador: bool = False,

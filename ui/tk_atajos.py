@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """«Atajos de teclado»: la ventana del agente que graba las combinaciones.
 
-Solo dibuja. Qué dice cada fila, qué vale y qué se pide al guardar lo decide
-`ui/atajos.py` (`Edicion`, `Teclas`); quién los pone es el agente. La lanza el
+Solo dibuja. Qué dice cada fila, qué vale, qué se pide al guardar y cómo se le
+pide al agente lo decide `ui/atajos.py` (`Edicion`, `Teclas`, `guardar()`,
+`respuesta()`); quién los pone es el agente. La lanza el
 agente como proceso hijo (`pregunta.py --atajos`), desde «Atajos de teclado…»
 de la bandeja o con `agente.py atajos`, para no cargar Tk en su proceso; y
 mientras está abierta suelta los atajos (salvo con el portal), así que la
@@ -16,7 +17,11 @@ combinación que se pulsa llega aquí y no dispara su acción.
 - «Guardar» deja la petición en el buzón del agente (`PIDE_ATAJOS`, con una
   `vez` propia) y espera su respuesta en `estado.json`: el agente los pone de
   verdad y guarda solo los que el sistema deja. Si alguno no, su fila dice por
-  qué y la ventana sigue abierta para elegir otra; si todos, se cierra.
+  qué y la ventana sigue abierta para elegir otra; si todos, se cierra. Si se
+  cancela en la ventana del escritorio, no se guarda nada y la ventana sigue
+  con lo suyo. Si el agente tarda (`atajos.ESPERA`), lo dice y sigue
+  esperando: la petición ya está en su buzón y la hará igual, y si la ventana
+  ya no está, avisa él.
 - Con `motivo` (en este equipo no se pueden poner) solo dice por qué.
 
 Sale con 0, o con `SIN_VENTANA` (2) si no se ha podido abrir.
@@ -26,9 +31,6 @@ from __future__ import annotations
 
 import os
 import time
-import uuid
-
-from common import equipo
 
 from . import atajos, icons, theme
 
@@ -37,10 +39,8 @@ SIN_VENTANA = 2
 IS_WIN = os.name == "nt"
 CADA_MS = 200
 """Cada cuánto se mira, tras «Guardar», si el agente ha contestado."""
-ESPERA = 15.0
-"""Segundos que se espera la respuesta del agente a un «Guardar»."""
-ESPERA_PORTAL = 200.0
-"""Lo mismo con el portal: contesta cuando se confirma en la ventana del escritorio."""
+CADA_MS_TARDE = 1000
+"""Lo mismo cuando ya se ha dicho que tarda."""
 ANCHO = 460
 """El ancho del texto, en medidas del diseño."""
 PISTA = ("Funcionan con cualquier programa delante y actúan sobre la última unidad que "
@@ -48,23 +48,6 @@ PISTA = ("Funcionan con cualquier programa delante y actúan sobre la última un
          "la última que conectaste.")
 PISTA_PORTAL = ("Al guardar, el escritorio te pedirá confirmarlos en su propia ventana, "
                 "y puede dejarte elegir otra combinación.")
-
-
-def leer_estado() -> dict:
-    """Devuelve lo que cuenta el agente de los atajos (`estado.json`).
-
-    Punto de indirección: los tests lo sustituyen.
-    """
-    datos = equipo.leer_estado().get("atajos")
-    return datos if isinstance(datos, dict) else {}
-
-
-def pedir(peticion: dict) -> bool:
-    """Deja una petición en el buzón del agente.
-
-    Punto de indirección: los tests lo sustituyen.
-    """
-    return equipo.pedir(peticion)
 
 
 def construir(root, edicion: atajos.Edicion, motivo: str, portal: bool,
@@ -188,11 +171,11 @@ def abrir(motivo: str = "") -> int:
 
     from . import tk as tkui
 
-    estado = leer_estado()
+    estado = atajos.leer_estado()
     portal = estado.get("mecanismo") == atajos.PORTAL
     teclas = atajos.Teclas(windows=IS_WIN)
     actual = [atajos.Edicion.desde(estado, windows=IS_WIN)]
-    espera: dict = {"vez": "", "hasta": 0.0}
+    espera: dict = {"guardado": None, "tarde": False}
 
     theme.nitidez()
     root = tk.Tk()
@@ -248,40 +231,37 @@ def abrir(motivo: str = "") -> int:
             return "break" if actual[0].grabando else None
 
         def mirar() -> None:
-            """Mira si el agente ha contestado al «Guardar», hasta el plazo."""
-            respuesta = leer_estado().get("respuesta")
-            if isinstance(respuesta, dict) and respuesta.get("vez") == espera["vez"]:
-                rechazados = respuesta.get("rechazados")
-                rechazados = rechazados if isinstance(rechazados, dict) else {}
-                poner(actual[0].veredicto(rechazados))
-                if not rechazados:
+            """Mira si el agente ha contestado al «Guardar»; mientras no, sigue mirando."""
+            respuesta = atajos.respuesta(espera["guardado"])
+            if respuesta is not None:
+                espera.update(guardado=None, tarde=False)
+                piezas["cerrar"].configure(text="Cancelar")
+                poner(actual[0].veredicto(respuesta))
+                dicho = atajos.tras_guardar(respuesta)
+                if dicho is None:
                     root.destroy()
                     return
-                decir("No se han podido poner todos\nLos que el sistema no deja se quedan "
-                      "sin atajo: elige otra combinación y vuelve a guardar.", "aviso")
+                decir(*dicho)
                 return
-            if time.monotonic() >= espera["hasta"]:
-                poner(actual[0])
-                decir("El agente no ha contestado\nPuede que no esté en marcha. No se ha "
-                      "cambiado nada que se sepa: vuelve a intentarlo.", "aviso")
-                return
-            root.after(CADA_MS, mirar)
+            if not espera["tarde"] and time.monotonic() >= espera["guardado"].tarda:
+                # La petición ya está en su buzón: cerrar no la deshace.
+                espera["tarde"] = True
+                piezas["cerrar"].configure(text="Cerrar")
+                decir(atajos.TARDA, "aviso")
+            root.after(CADA_MS_TARDE if espera["tarde"] else CADA_MS, mirar)
 
         def guardar() -> None:
             """Le pide al agente los atajos de la ventana y espera su respuesta."""
             if not actual[0].cambiada:
                 root.destroy()
                 return
-            espera["vez"] = uuid.uuid4().hex
-            if not pedir({"pide": equipo.PIDE_ATAJOS, "vez": espera["vez"],
-                          "atajos": actual[0].pedido()}):
-                decir("No he podido dejarle el encargo al agente\nVuelve a intentarlo.",
-                      "peligro")
+            guardado = atajos.guardar(actual[0], portal, time.monotonic())
+            if guardado is None:
+                decir(atajos.SIN_ENCARGO, "peligro")
                 return
-            espera["hasta"] = time.monotonic() + (ESPERA_PORTAL if portal else ESPERA)
+            espera.update(guardado=guardado, tarde=False)
             poner(actual[0], ocupada=True)
-            decir("Confirma los atajos en la ventana del escritorio…" if portal
-                  else "Comprobando con el sistema…")
+            decir(atajos.CONFIRMA if portal else atajos.COMPROBANDO)
             root.after(CADA_MS, mirar)
 
         piezas = construir(root, actual[0], motivo, portal,

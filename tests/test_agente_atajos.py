@@ -24,6 +24,7 @@ que en un sistema de verdad es `RegisterHotKey`, `XGrabKey` o el portal):
 
 import contextlib
 import io
+import os
 import sys
 
 from _harness import Checks
@@ -47,6 +48,10 @@ class Motor:
         rechazar: Las combinaciones que «tiene otro programa».
         suspende: Si se sueltan mientras se graba (todos menos el portal).
         contesta: Si contesta; sin contestar, el agente se cansa de esperar.
+
+    Attributes:
+        respuestas: Lo que contestan las llamadas siguientes, una cada una, antes
+            que lo de siempre: los rechazados por acción, o `None` para no contestar.
     """
     nombre = "MotorFalso"
 
@@ -54,11 +59,17 @@ class Motor:
         """Prepara el motor."""
         self.ag, self.rechazar, self.suspende, self.contesta = ag, set(rechazar), suspende, contesta
         self.pedidos: list[dict] = []
+        self.respuestas: list = []
         self.cerrado = False
 
     def poner(self, combos):
         """Apunta lo pedido y contesta lo que el «sistema» deja."""
         self.pedidos.append(dict(combos))
+        if self.respuestas:
+            hecho = self.respuestas.pop(0)
+            if hecho is not None:
+                self.ag.atajos_hechos.put((dict(combos), hecho(combos)))
+            return
         if self.contesta:
             self.ag.atajos_hechos.put((dict(combos), {a: atajos.YA_LA_USA
                                                       for a, k in combos.items()
@@ -129,21 +140,21 @@ c("  y sin atajos nada de ellos le quita el reposo al agente",
 # --- con atajos guardados, se ponen al arrancar
 equipo.guardar_ajustes(equipo.leer_ajustes().__class__(**{
     **equipo.leer_ajustes().__dict__,
-    "atajos": {atajos.SINCRONIZAR: "ctrl+alt+s", atajos.VENTANA: "ctrl+alt+v"}}))
+    "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s", atajos.VENTANA: "ctrl+shift+v"}}))
 ag = F.nuevo()
-motor = Motor(ag, rechazar={"ctrl+alt+v"})
+motor = Motor(ag, rechazar={"ctrl+shift+v"})
 creados = con_motor(ag, motor)
 F.AVISOS.clear()
 F.vueltas(ag, 3)
 c("con atajos guardados, el motor se crea y los pone", (len(creados), motor.pedidos[:1]),
-  (1, [{atajos.SINCRONIZAR: "ctrl+alt+s", atajos.VENTANA: "ctrl+alt+v"}]))
+  (1, [{atajos.SINCRONIZAR: "ctrl+shift+s", atajos.VENTANA: "ctrl+shift+v"}]))
 c("  y no los vuelve a pedir en cada vuelta", len(motor.pedidos), 1)
 c("  el que el sistema no deja se avisa, una vez",
-  len(avisos("No he podido poner el atajo Ctrl+Alt+V")), 1)
+  len(avisos("No he podido poner el atajo Ctrl+Mayús+V")), 1)
 c("  sigue guardado (quien lo tiene puede soltarlo) y el resumen dice por qué",
   (equipo.leer_ajustes().atajos.get(atajos.VENTANA),
    ag.resumen()["atajos"]["acciones"][atajos.VENTANA]),
-  ("ctrl+alt+v", {"combo": "ctrl+alt+v", "error": atajos.YA_LA_USA}))
+  ("ctrl+shift+v", {"combo": "ctrl+shift+v", "error": atajos.YA_LA_USA}))
 
 # --- pulsar: la última unidad usada
 F.AVISOS.clear()
@@ -239,15 +250,15 @@ pulsar(ag, atajos.VENTANA)
 c("  un atajo que llegue (el portal no los suelta) no hace nada",
   len(F.LANZADOS), antes)
 F.AVISOS.clear()
-motor.rechazar = {"ctrl+alt+p"}
+motor.rechazar = {"ctrl+shift+p"}
 equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "v1",
-              "atajos": {atajos.SINCRONIZAR: "Ctrl+Alt+S", atajos.PAUSAR: "ctrl+alt+p",
+              "atajos": {atajos.SINCRONIZAR: "Ctrl+Mayús+S", atajos.PAUSAR: "ctrl+shift+p",
                          atajos.CARPETA: "shift+c"}})
 F.vueltas(ag, 2)
 c("«Guardar»: se prueban de verdad con el sistema",
-  {atajos.SINCRONIZAR: "ctrl+alt+s", atajos.PAUSAR: "ctrl+alt+p"} in motor.pedidos, True)
+  {atajos.SINCRONIZAR: "ctrl+shift+s", atajos.PAUSAR: "ctrl+shift+p"} in motor.pedidos, True)
 c("  se guarda lo que el sistema deja; el resto queda sin asignar",
-  dict(equipo.leer_ajustes().atajos), {atajos.SINCRONIZAR: "ctrl+alt+s"})
+  dict(equipo.leer_ajustes().atajos), {atajos.SINCRONIZAR: "ctrl+shift+s"})
 respuesta = ag.resumen()["atajos"]["respuesta"]
 c("  la ventana lee la respuesta a su «Guardar», con el motivo de cada rechazo",
   (respuesta["vez"], sorted(respuesta["rechazados"]),
@@ -258,20 +269,20 @@ c("  y se vuelven a soltar mientras siga abierta", motor.pedidos[-1], {})
 ventanas_de_atajos()[0].rc = 0
 F.vueltas(ag, 2)
 c("al cerrarse la ventana vuelven los guardados",
-  motor.pedidos[-1], {atajos.SINCRONIZAR: "ctrl+alt+s"})
+  motor.pedidos[-1], {atajos.SINCRONIZAR: "ctrl+shift+s"})
 c("  y la bandeja vuelve a ofrecerla",
   next(e for e in bandeja.vista(ag.resumen()).menu
        if e.texto.startswith("Atajos")).activa, True)
 equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "v2",
-              "atajos": {atajos.SINCRONIZAR: "ctrl+alt+s", atajos.PAUSAR: "ctrl+alt+p"}})
+              "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s", atajos.PAUSAR: "ctrl+shift+p"}})
 F.vueltas(ag, 2)
 c("un «Guardar» con la ventana ya cerrada dice con un aviso lo que no se ha podido",
-  [t for t, _x in avisos("Ctrl+Alt+P")], ["No he podido poner el atajo Ctrl+Alt+P"])
+  [t for t, _x in avisos("Ctrl+Mayús+P")], ["No he podido poner el atajo Ctrl+Mayús+P"])
 equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "v3", "atajos": {}})
 F.vueltas(ag, 2)
 c("guardar ninguno los quita todos", (dict(equipo.leer_ajustes().atajos), motor.pedidos[-1],
                                       ag.resumen()["atajos"]["respuesta"]),
-  ({}, {}, {"vez": "v3", "rechazados": {}}))
+  ({}, {}, {"vez": "v3", "rechazados": {}, "guardados": {}}))
 c("  y agente.json vuelve a no llevarlos",
   "atajos" in agente.store.read_json(equipo.ajustes_json()), False)
 
@@ -297,7 +308,8 @@ F.vueltas(ag3, 1)
 c("  un «Guardar» se rechaza con ese motivo y no guarda nada",
   (ag3.resumen()["atajos"]["respuesta"],
    dict(equipo.leer_ajustes().atajos)),
-  ({"vez": "w", "rechazados": {atajos.SINCRONIZAR: atajos.SIN_PORTAL}}, {}))
+  ({"vez": "w", "rechazados": {atajos.SINCRONIZAR: atajos.SIN_PORTAL}, "guardados": {}},
+   {}))
 ventanas_de_atajos()[-1].rc = 0
 
 # --- un sistema que no contesta
@@ -312,7 +324,127 @@ F.vueltas(ag4, 1, cada=agente.ESPERA_ATAJOS)
 F.vueltas(ag4, 1)
 c("  y pasado el plazo se da por no puesto",
   ag4.resumen()["atajos"]["respuesta"], {"vez": "m", "rechazados": {
-      atajos.CARPETA: atajos.SIN_RESPUESTA}})
+      atajos.CARPETA: atajos.SIN_RESPUESTA}, "guardados": {}})
+
+# --- un «Guardar» que nadie decide no cambia nada
+def guardados(**atajos_):
+    """Guarda esos atajos en agente.json, como si vinieran de antes."""
+    equipo.guardar_ajustes(equipo.leer_ajustes().__class__(**{
+        **equipo.leer_ajustes().__dict__, "atajos": atajos_}))
+
+
+guardados(sincronizar="ctrl+shift+s")
+ag6 = F.nuevo()
+motor6 = Motor(ag6, suspende=False)
+con_motor(ag6, motor6)
+F.vueltas(ag6, 2)
+motor6.respuestas = [lambda combos: {a: atajos.CANCELADA_PORTAL for a in combos}]
+F.AVISOS.clear()
+equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "c",
+              "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s", atajos.CARPETA: "super+f9"}})
+F.vueltas(ag6, 3)
+c("cancelado en la ventana del escritorio: agente.json no cambia",
+  dict(equipo.leer_ajustes().atajos), {atajos.SINCRONIZAR: "ctrl+shift+s"})
+c("  la ventana lee que nadie ha decidido, y lo que sigue guardado",
+  ag6.resumen()["atajos"]["respuesta"],
+  {"vez": "c", "rechazados": {atajos.SINCRONIZAR: atajos.CANCELADA_PORTAL,
+                              atajos.CARPETA: atajos.CANCELADA_PORTAL},
+   "guardados": {atajos.SINCRONIZAR: "ctrl+shift+s"}})
+c("  y se vuelven a poner los de antes", motor6.pedidos[-1], {atajos.SINCRONIZAR: "ctrl+shift+s"})
+c("  sin la ventana, un aviso dice que siguen los de antes, y no que se quedan sin atajo",
+  ([t for t, _x in F.AVISOS], avisos("Se queda sin atajo")),
+  (["No he cambiado los atajos de teclado"], []))
+c("  sin errores de los guardados por ello",
+  ag6.resumen()["atajos"]["acciones"][atajos.SINCRONIZAR]["error"], "")
+motor6.respuestas = [None]
+equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "t",
+              "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s", atajos.CARPETA: "super+f9"}})
+F.vueltas(ag6, 2)
+F.vueltas(ag6, 1, cada=agente.ESPERA_ATAJOS)
+F.vueltas(ag6, 2)
+c("el sistema no contesta en el plazo: tampoco cambia nada, y vuelven los de antes",
+  (dict(equipo.leer_ajustes().atajos), ag6.resumen()["atajos"]["respuesta"]["guardados"],
+   motor6.pedidos[-1]),
+  ({atajos.SINCRONIZAR: "ctrl+shift+s"}, {atajos.SINCRONIZAR: "ctrl+shift+s"},
+   {atajos.SINCRONIZAR: "ctrl+shift+s"}))
+
+# --- los guardados que no valen (agente.json escrito a mano o por otra versión)
+guardados(sincronizar="shift+a", carpeta="ctrl+shift+c", ventana="ctrl+shift+c")
+ag7 = F.nuevo()
+motor7 = Motor(ag7)
+con_motor(ag7, motor7)
+F.AVISOS.clear()
+F.vueltas(ag7, 3)
+c("un atajo guardado que no vale no se pone, ni el repetido en otra acción",
+  motor7.pedidos, [{atajos.CARPETA: "ctrl+shift+c"}])
+acciones7 = ag7.resumen()["atajos"]["acciones"]
+c("  el resumen dice por qué (la ventana y `status` lo enseñan)",
+  ("Ctrl, Alt" in acciones7[atajos.SINCRONIZAR]["error"],
+   "«Abrir su carpeta»" in acciones7[atajos.VENTANA]["error"],
+   acciones7[atajos.CARPETA]["error"]), (True, True, ""))
+c("  y se avisa una vez de cada uno", sorted(t for t, _x in F.AVISOS),
+  ["No he podido poner el atajo Ctrl+Mayús+C", "No he podido poner el atajo Mayús+A"])
+F.vueltas(ag7, 3)
+c("  una vez", len(F.AVISOS), 2)
+try:
+    agente.IS_WIN = True
+    guardados(sincronizar="ctrl+alt+s", carpeta="ctrl+alt+f5")
+    ag7.ajustes = equipo.leer_ajustes()
+    c("en Windows, Ctrl+Alt con una letra guardado no se pone (es AltGr)",
+      ag7._atajos_guardados(), ({atajos.CARPETA: "ctrl+alt+f5"},
+                                {atajos.SINCRONIZAR: atajos.ALTGR.rstrip(".")}))
+    agente.IS_WIN = False
+    c("  en Linux sí", ag7._atajos_guardados(),
+      ({atajos.SINCRONIZAR: "ctrl+alt+s", atajos.CARPETA: "ctrl+alt+f5"}, {}))
+finally:
+    agente.IS_WIN = os.name == "nt"
+guardados()
+
+# --- un motor que no se ha podido crear se vuelve a intentar
+guardados(sincronizar="ctrl+shift+s")
+ag8 = F.nuevo()
+motor8 = Motor(ag8)
+intentos: list = []
+
+
+def tarda_en_llegar():
+    """El portal (o la bandeja) de un escritorio que acaba de arrancar: no está a la primera."""
+    intentos.append(ag8.reloj())
+    if len(intentos) < 3:
+        return None, "no hay bus de sesión (no contesta)"
+    return motor8, ""
+
+
+ag8.poner_motor = tarda_en_llegar
+F.vueltas(ag8, 3)
+c("no se ha podido crear: se dice por qué y no se reintenta en cada vuelta",
+  (len(intentos), ag8.resumen()["atajos"]["motivo"]), (1, "no hay bus de sesión (no contesta)"))
+F.vueltas(ag8, 1, cada=agente.REINTENTO_ATAJOS)
+F.vueltas(ag8, 1)
+c("  pasado el plazo se reintenta, y el plazo siguiente es el doble",
+  (len(intentos), ag8.atajos_reintento - intentos[-1]), (2, 2 * agente.REINTENTO_ATAJOS))
+F.vueltas(ag8, 1, cada=2 * agente.REINTENTO_ATAJOS)
+F.vueltas(ag8, 1)
+c("  cuando ya se puede, los pone y deja de decir por qué",
+  (len(intentos), motor8.pedidos, ag8.atajos_motivo),
+  (3, [{atajos.SINCRONIZAR: "ctrl+shift+s"}], ""))
+ag9 = F.nuevo()
+intentos9: list = []
+ag9.poner_motor = lambda: intentos9.append(1) or (None, "no hay bus de sesión (no contesta)")
+F.vueltas(ag9, 1)
+ag9.pedir({"pide": equipo.PIDE_GRABAR_ATAJOS})
+F.vueltas(ag9, 1)
+c("  abrir la ventana lo intenta en el acto, aunque no toque", len(intentos9), 2)
+ventanas_de_atajos()[-1].rc = 0
+F.vueltas(ag9, 1)
+ag10 = F.nuevo()
+intentos10: list = []
+ag10.poner_motor = lambda: intentos10.append(1) or (None, atajos.SIN_ESCRITORIO)
+F.vueltas(ag10, 1)
+F.vueltas(ag10, 3, cada=agente.REINTENTO_ATAJOS_MAX)
+c("sin escritorio no se reintenta: no cambia sin reiniciar el agente", len(intentos10), 1)
+F.vueltas(ag10, 1)
+guardados()
 
 # --- poner_atajos(): qué motor hay en cada sistema
 class Vigia:
@@ -323,8 +455,6 @@ class Vigia:
         """Lo apunta."""
         Vigia.despertado += 1
 
-
-import os  # noqa: E402
 
 from ui import atajos_linux  # noqa: E402
 
@@ -376,10 +506,10 @@ try:
     c("Windows con bandeja: la bandeja es el motor", (type(motor5).__name__, motivo5,
                                                       motor5.suspende), ("MotorDeBandeja", "",
                                                                          True))
-    motor5.poner({atajos.SINCRONIZAR: "ctrl+alt+s"})
+    motor5.poner({atajos.SINCRONIZAR: "ctrl+shift+s"})
     c("  si no se le puede pedir, lo pedido vuelve como no puesto, y despierta al agente",
       (ag5.atajos_hechos.get_nowait(), Vigia.despertado),
-      (({atajos.SINCRONIZAR: "ctrl+alt+s"}, {atajos.SINCRONIZAR: atajos.SIN_BANDEJA}), 1))
+      (({atajos.SINCRONIZAR: "ctrl+shift+s"}, {atajos.SINCRONIZAR: atajos.SIN_BANDEJA}), 1))
 finally:
     agente.IS_WIN = os.name == "nt"
     os.environ.clear()
@@ -394,11 +524,11 @@ c("`agente.py atajo ACCION` y `agente.py atajos` dejan su petición en el buzón
   [{k: v for k, v in p.items() if k in ("pide", "accion")} for p in equipo.recoger()],
   [{"pide": equipo.PIDE_ATAJO, "accion": atajos.PAUSAR}, {"pide": equipo.PIDE_GRABAR_ATAJOS}])
 equipo.guardar_ajustes(equipo.leer_ajustes().__class__(**{
-    **equipo.leer_ajustes().__dict__, "atajos": {atajos.SINCRONIZAR: "ctrl+alt+s"}}))
+    **equipo.leer_ajustes().__dict__, "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s"}}))
 salida = io.StringIO()
 with contextlib.redirect_stdout(salida):
     agente.cmd_status(None)
 c("`status` enseña los atajos guardados",
-  "Sincronizar ahora" in salida.getvalue() and "Alt+S" in salida.getvalue(), True)
+  "Sincronizar ahora" in salida.getvalue() and "Mayús+S" in salida.getvalue(), True)
 
 sys.exit(c.report())

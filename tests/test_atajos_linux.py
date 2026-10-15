@@ -173,7 +173,8 @@ c("sin X no arranca, y dice por qué", (x.arrancar(), "':9'" in x.motivo), (Fals
 SESION = "/org/freedesktop/portal/desktop/session/1_42/s1"
 PETICIONES: list = []
 RESPUESTAS = {"bind": (0, None)}
-"""Lo que contesta el portal a `BindShortcuts`: `(código, ids atados o None = todos)`."""
+"""Lo que contesta el portal a `BindShortcuts`: `(código, ids atados o None = todos)`, `"error"`
+o `"mudo"` (no manda nunca su `Response`)."""
 CON_PORTAL = [True]
 
 
@@ -201,6 +202,9 @@ def responder(m):
             return ("error", "org.freedesktop.portal.Error.Failed", "no")
         ruta = f"/org/freedesktop/portal/desktop/request/1_42/{m.cuerpo[3]['handle_token']}"
         PETICIONES.append(("BindShortcuts", m.cuerpo[0], m.cuerpo[1]))
+        if RESPUESTAS["bind"] == "mudo":             # su ventana se queda abierta
+            PETICIONES.append(("Request", ruta))
+            return ("ok", "o", [ruta])
         codigo, atados = RESPUESTAS["bind"]
         lista = [(i, {"description": dbus.Variante("s", "x"),
                       "trigger_description": dbus.Variante("s", "Ctrl+Alt+S")})
@@ -260,12 +264,49 @@ c("un error del portal en vez de su Request: no puesto en el acto, y el hilo sig
   (esperar(lambda: len(PUESTOS) == 4), PUESTOS[-1][1] if len(PUESTOS) == 4 else None,
    p._hilo.is_alive()),
   (True, {atajos.CARPETA: atajos.RECHAZADA_PORTAL}, True))
+RESPUESTAS["bind"] = "mudo"
+p.poner({atajos.CARPETA: "ctrl+alt+c"})
+esperar(lambda: any(x[0] == "Request" for x in PETICIONES))
+time.sleep(0.2)
+colgada = next((x[1] for x in PETICIONES if x[0] == "Request"), "")
+c("un portal que no contesta (su ventana se queda abierta): se espera, sin contestar",
+  (bool(colgada), len(PUESTOS)), (True, 4))
+RESPUESTAS["bind"] = (0, None)
+p.poner({atajos.VENTANA: "super+shift+v"})
+c("  lo siguiente que se pide no se queda detrás: cierra esa petición y se atiende",
+  (esperar(lambda: len(PUESTOS) == 5), ("Close", colgada) in PETICIONES,
+   PUESTOS[-1] if len(PUESTOS) == 5 else None),
+  (True, True, ({atajos.VENTANA: "super+shift+v"}, {})))
+c("  y a lo que se dejó no se le contesta nunca", (time.sleep(0.2), len(PUESTOS))[1], 5)
 p.cerrar()
 CONEXION, BUS = _bus_falso.conectar(responder)
 CON_PORTAL[0] = False
 p = al.Portal(PULSADOS.append, lambda *a: None, conectar=lambda: CONEXION)
 c("sin el portal no hay atajos, y se dice por qué", (p.arrancar(), p.motivo),
   (False, atajos.SIN_PORTAL))
+c("  y cerrar() cierra su pipe", (p.cerrar(), p._pipe_cerrado)[1], True)
+SUELTA = threading.Event()
+
+
+def bus_que_tarda():
+    """Un bus de sesión que, al entrar en la sesión, tarda más de lo que se espera."""
+    SUELTA.wait(5.0)
+    raise OSError("el bus no contesta")
+
+
+antes = al.ESPERA_ARRANQUE
+al.ESPERA_ARRANQUE = 0.1
+try:
+    p = al.Portal(PULSADOS.append, lambda *a: None, conectar=bus_que_tarda)
+    arranca = p.arrancar()
+    p.cerrar()
+    c("un hilo que no acaba a tiempo: no arranca, y cerrar() no le cierra el pipe aún",
+      (arranca, p._pipe_cerrado), (False, False))
+    SUELTA.set()
+    c("  lo cierra el hilo al acabar (si no, cada reintento del agente dejaría uno abierto)",
+      (esperar(lambda: not p._hilo.is_alive()), p._pipe_cerrado), (True, True))
+finally:
+    al.ESPERA_ARRANQUE = antes
 
 
 # --- X de verdad, en un Xvfb propio

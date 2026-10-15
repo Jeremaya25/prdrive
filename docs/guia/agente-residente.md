@@ -214,7 +214,10 @@ agente»**. El diseño completo está en
   donde grabas una combinación para cuatro cosas: **Sincronizar ahora**,
   **Abrir su carpeta**, **Pausar o reanudar** y **Abrir su ventana**. Pulsa
   «Grabar» en la fila, luego la combinación (con Ctrl, Alt o la tecla de Windows
-  o Súper; Esc lo deja como estaba), y «Guardar». Funcionan con cualquier
+  o Súper; Esc lo deja como estaba), y «Guardar». En Windows no vale Ctrl+Alt
+  con una letra, un número o el espacio: Windows trata AltGr como Ctrl+Alt, y
+  el atajo te quitaría caracteres como «@» o «€»; añade la tecla de Windows, o
+  usa una tecla F (Ctrl+Alt+F9) u otra combinación (Ctrl+Mayús+S). Funcionan con cualquier
   programa delante y actúan sobre **la última unidad que has usado**: la última
   cuya ventana abriste o que elegiste en la bandeja; si no has usado ninguna,
   la última que conectaste. Sincronizar y pausar lo cuentan con un aviso con el
@@ -222,7 +225,10 @@ agente»**. El diseño completo está en
   de esa unidad, la misma que el «Pausar» de su ventana: el atajo la pone y la
   quita. Se guardan en este equipo, no en la unidad, y de fábrica no hay
   ninguno. Si una combinación la tiene ya otro programa o el propio sistema, se
-  dice al guardar y esa acción se queda sin atajo: elige otra. En Windows y en
+  dice al guardar y esa acción se queda sin atajo: elige otra. Si cancelas la
+  ventana de confirmación del escritorio (Wayland), no se guarda nada y siguen
+  los de antes. Si el agente tarda en contestar, la ventana lo dice: ya tiene
+  el encargo y lo hará en cuanto pueda, aunque la cierres. En Windows y en
   Linux con X11 funcionan siempre; en Linux con Wayland, solo si el escritorio
   ofrece el portal de atajos (Plasma 6, GNOME 48 o posterior…), que te pedirá
   confirmarlos en su propia ventana; si no lo ofrece, la ventana te lo dice. Ahí

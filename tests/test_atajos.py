@@ -58,16 +58,26 @@ for funcion in (a.windows, a.x11, a.portal):
         c(f"{funcion.__name__}: lo ilegible lanza ValueError", True, True)
 
 # --- qué vale
-c("vale con Ctrl, con Alt o con el logotipo",
-  [a.problema(a.leer(x)) for x in ("ctrl+s", "alt+1", "super+f3", "ctrl+shift+s")],
-  [None, None, None, None])
-c("  sin ninguno de los tres no: dejaría de escribirse esa tecla",
-  "Ctrl, Alt o la tecla del logotipo" in (a.problema(a.leer("shift+s")) or ""), True)
-c("  ni una tecla sola", a.problema(a.Combinacion(frozenset(), "f5")) is not None, True)
-c("  sin tecla, que falta", "Falta la tecla" in a.problema(a.Combinacion(frozenset({a.CTRL}))),
-  True)
-c("  una tecla que no está en la tabla, que no vale",
-  "no vale" in a.problema(a.Combinacion(frozenset({a.CTRL}), "?exclam")), True)
+for win in (False, True):
+    c(f"vale con Ctrl, con Alt o con el logotipo (windows={win})",
+      [a.problema(a.leer(x), win) for x in ("ctrl+s", "alt+1", "super+f3", "ctrl+shift+s")],
+      [None, None, None, None])
+    c("  sin ninguno de los tres no: dejaría de escribirse esa tecla",
+      "Ctrl, Alt o la tecla del logotipo" in (a.problema(a.leer("shift+s"), win) or ""), True)
+    c("  ni una tecla sola", a.problema(a.Combinacion(frozenset(), "f5"), win) is not None, True)
+    c("  sin tecla, que falta",
+      "Falta la tecla" in a.problema(a.Combinacion(frozenset({a.CTRL})), win), True)
+    c("  una tecla que no está en la tabla, que no vale",
+      "no vale" in a.problema(a.Combinacion(frozenset({a.CTRL}), "?exclam"), win), True)
+ALTGR = ("ctrl+alt+2", "ctrl+alt+e", "ctrl+alt+s", "ctrl+alt+space", "ctrl+alt+shift+a")
+c("Windows: Ctrl+Alt con una tecla que escribe es AltGr («@», «€», y con Mayús «Ą»), no vale",
+  {a.problema(a.leer(x), True) for x in ALTGR}, {a.ALTGR})
+c("  con la tecla Win sí, y con una tecla F, una flecha o sin uno de los dos también",
+  [a.problema(a.leer(x), True) for x in ("ctrl+alt+super+s", "ctrl+alt+f5", "ctrl+alt+up",
+                                          "ctrl+alt+delete", "alt+shift+s", "ctrl+shift+2")],
+  [None] * 6)
+c("  en X11 y Wayland AltGr es otra tecla: valen",
+  {a.problema(a.leer(x), False) for x in ALTGR}, {None})
 
 # --- lo que dice el sistema
 c("Windows: ERROR_HOTKEY_ALREADY_REGISTERED es que otro la usa", a.motivo_windows(1409),
@@ -165,7 +175,7 @@ c("Windows: la tecla se lee de su tecla virtual y Win por su KeyPress",
 c("  Alt es 0x20000 y el 0x8 (bloqueo numérico) no cuenta",
   str(a.Teclas(windows=True).pulsa("F12", 0x7B, 0x20000 | 0x8)), "alt+f12")
 c("  una tecla que no vale sale como tal, y problema() lo dice",
-  a.problema(a.Teclas(windows=False).pulsa("exclam", 10, 0x4)) is not None, True)
+  a.problema(a.Teclas(windows=False).pulsa("exclam", 10, 0x4), False) is not None, True)
 
 # --- grabar: la ventana
 estado = {"acciones": {a.SINCRONIZAR: {"combo": "ctrl+alt+s", "error": ""},
@@ -182,6 +192,9 @@ c("grabando, la fila lo dice", e.filas()[1].combinacion, "Pulsa la combinación�
 e2 = e.pulsada(a.leer("shift+c"))
 c("  lo que no vale se dice y sigue grabando",
   (e2.grabando, "Ctrl, Alt" in e2.notas[a.CARPETA]), (a.CARPETA, True))
+ew = a.Edicion(windows=True).grabar(a.CARPETA).pulsada(a.leer("ctrl+alt+2"))
+c("  en Windows, Ctrl+Alt+2 (AltGr+2, «@») se dice y sigue grabando",
+  (ew.grabando, ew.notas.get(a.CARPETA), ew.atajos), (a.CARPETA, a.ALTGR, {}))
 e = e2.pulsada(a.leer("ctrl+alt+c"))
 c("  lo que vale se pone, deja de grabar y hay algo que guardar",
   (e.atajos[a.CARPETA], e.grabando, e.cambiada, a.CARPETA in e.notas),
@@ -193,19 +206,61 @@ c("la combinación de otra acción pasa a esta, y la otra lo dice",
 e = e.borrar(a.CARPETA)
 c("borrar la quita", (a.CARPETA in e.atajos, e.filas()[1].borrable), (False, False))
 c("lo que se pide al guardar", e.pedido(), {a.VENTANA: "ctrl+alt+s"})
-e = e.veredicto({a.VENTANA: a.YA_LA_USA})
+antes = e
+e = e.veredicto({"rechazados": {a.VENTANA: a.YA_LA_USA}, "guardados": {}})
 c("un rechazo al guardar la deja sin atajo y su fila dice por qué",
   (e.atajos, e.guardados, a.YA_LA_USA in e.notas[a.VENTANA]), ({}, {}, True))
 c("  y después ya no hay nada que guardar", e.cambiada, False)
+c("  sin `guardados` (un agente de antes), lo guardado es lo que queda",
+  antes.veredicto({"rechazados": {a.VENTANA: a.YA_LA_USA}}).guardados, {})
+e = antes.veredicto({"rechazados": {a.VENTANA: a.CANCELADA_PORTAL},
+                     "guardados": {a.SINCRONIZAR: "ctrl+alt+s"}})
+c("cancelado en el escritorio: la ventana se queda con lo suyo para volver a guardarlo",
+  (e.atajos, e.guardados, e.cambiada, a.VENTANA in e.notas),
+  ({a.VENTANA: "ctrl+alt+s"}, {a.SINCRONIZAR: "ctrl+alt+s"}, True, False))
+c("qué se dice tras guardar: todo puesto, nada (se cierra)",
+  a.tras_guardar({"vez": "x", "rechazados": {}}), None)
+c("  alguno rechazado", a.tras_guardar({"rechazados": {a.VENTANA: a.YA_LA_USA}}),
+  (a.NO_TODOS, "aviso"))
+dicho = a.tras_guardar({"rechazados": {a.VENTANA: a.SIN_RESPUESTA}})
+c("  nadie ha decidido: que no se ha guardado nada y siguen los de antes",
+  ("No se ha guardado nada" in dicho[0], "siguen los atajos de antes" in dicho[0]),
+  (True, True))
+c("sin_decidir: solo cancelar o no contestar",
+  [a.sin_decidir({a.VENTANA: m}) for m in (a.CANCELADA_PORTAL, a.SIN_RESPUESTA, a.YA_LA_USA)],
+  [a.CANCELADA_PORTAL, a.SIN_RESPUESTA, ""])
+c("  y su aviso lo dice", "siguen los de antes" in a.aviso_sin_guardar(a.CANCELADA_PORTAL)[1],
+  True)
+
+# --- la ventana y el agente: el encargo y su respuesta
+PEDIDAS: list = []
+ESTADO: dict = {}
+a.pedir = lambda p: PEDIDAS.append(p) or True
+a.leer_estado = lambda: ESTADO
+g = a.guardar(a.Edicion(False, atajos={a.CARPETA: "ctrl+alt+c"}), portal=False, ahora=100.0)
+c("guardar deja el encargo con su vez, y dice cuándo contar que el agente tarda",
+  (PEDIDAS[-1]["pide"], PEDIDAS[-1]["vez"] == g.vez, PEDIDAS[-1]["atajos"], g.tarda),
+  (equipo.PIDE_ATAJOS, True, {a.CARPETA: "ctrl+alt+c"}, 100.0 + a.ESPERA))
+c("  con el portal, más tarde: hay que confirmarlos en su ventana",
+  a.guardar(a.Edicion(False), portal=True, ahora=0.0).tarda, a.ESPERA_PORTAL)
+ESTADO["respuesta"] = {"vez": "otra", "rechazados": {}}
+c("  la respuesta a otro «Guardar» no es la suya", a.respuesta(g), None)
+ESTADO["respuesta"] = {"vez": g.vez, "rechazados": {}}
+c("  la suya sí", a.respuesta(g), {"vez": g.vez, "rechazados": {}})
+a.pedir = lambda p: False
+c("  sin buzón, nada que esperar", a.guardar(a.Edicion(False), portal=False, ahora=0.0), None)
 
 # --- el «Guardar» que llega al agente
 validos, rechazados = a.validar({a.SINCRONIZAR: "Ctrl+Alt+S", a.CARPETA: "ctrl+alt+s",
-                                 a.PAUSAR: "shift+p", a.VENTANA: "", "otra": "ctrl+o"})
+                                 a.PAUSAR: "shift+p", a.VENTANA: "", "otra": "ctrl+o"}, False)
 c("validar: lo que vale, en su forma de dentro", validos, {a.SINCRONIZAR: "ctrl+alt+s"})
 c("  la repetida y la que no vale, rechazadas con su motivo",
   (sorted(rechazados), "«Sincronizar ahora»" in rechazados[a.CARPETA]),
   ([a.CARPETA, a.PAUSAR], True))
-c("  algo que no es un diccionario no pide nada", a.validar(["ctrl+s"]), ({}, {}))
+c("  algo que no es un diccionario no pide nada", a.validar(["ctrl+s"], False), ({}, {}))
+validos, rechazados = a.validar({a.SINCRONIZAR: "ctrl+alt+s", a.CARPETA: "ctrl+alt+f5"}, True)
+c("  en Windows, Ctrl+Alt+S se rechaza por AltGr; Ctrl+Alt+F5 vale",
+  (validos, rechazados), ({a.CARPETA: "ctrl+alt+f5"}, {a.SINCRONIZAR: a.ALTGR.rstrip(".")}))
 res = a.resumen_de(a.X11, "", {a.SINCRONIZAR: "ctrl+alt+s"}, {a.VENTANA: a.YA_LA_USA}, False,
                    {"vez": "x", "rechazados": {}})
 c("lo que cuenta el agente: solo las acciones con algo que decir",

@@ -26,9 +26,14 @@ Lo que se decide aquí:
   especificación «shortcuts» de freedesktop).
 - **Qué combinación vale** (`problema()`): una tecla que se sepa nombrar en los
   tres sistemas, con Ctrl, Alt o la tecla del logotipo. Sin ninguno de los
-  tres, la tecla dejaría de escribirse en los demás programas.
+  tres, la tecla dejaría de escribirse en los demás programas; por lo mismo,
+  en Windows no vale Ctrl+Alt con una tecla que escribe, porque es AltGr.
+  `validar()` lo aplica también a lo que hay en `agente.json`.
 - **Grabar** (`Teclas`, `Edicion`): las teclas que llegan a la ventana mientras
   se graba, y lo que dice cada fila antes y después de guardar.
+- **Guardar** (`guardar()`, `respuesta()`, `tras_guardar()`): la petición que
+  deja la ventana en el buzón del agente y su respuesta en `estado.json`
+  (`leer_estado()` y `pedir()`, sustituibles). La ventana solo los llama.
 - **Con qué se ponen en este equipo** (`mecanismo()`), y qué se dice si no se
   puede.
 
@@ -38,6 +43,7 @@ registra nada.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
@@ -165,8 +171,28 @@ def texto(combo: Any, windows: bool) -> str:
                     + [TECLAS[c.tecla][2]])
 
 
-def problema(c: Combinacion) -> str | None:
+_ESCRIBEN = frozenset([chr(c) for c in range(ord("a"), ord("z") + 1)]
+                      + [str(d) for d in range(10)] + ["space"])
+"""Las teclas que escriben algo con AltGr en algún teclado."""
+
+ALTGR = ("En Windows, Ctrl+Alt es AltGr: con una letra, un número o el espacio, el atajo le "
+         "quitaría a los demás programas caracteres como «@», «#» o «€». Añade la tecla Win, "
+         "quita Ctrl o Alt, o usa una tecla F.")
+
+
+def problema(c: Combinacion, windows: bool) -> str | None:
     """Dice por qué una combinación no vale para un atajo de todo el sistema.
+
+    En Windows, además, no vale Ctrl+Alt con una tecla que escribe: Windows
+    da AltGr como Ctrl+Alt, así que `RegisterHotKey` se quedaría AltGr+2 («@»
+    en un teclado español) y ese carácter no llegaría a ningún programa. Con
+    Mayús tampoco (AltGr+Mayús escribe en algunos teclados: «Ą» en el polaco);
+    con la tecla Win, sí, porque nadie la pulsa para escribir. En X11 AltGr es
+    otra tecla (`ISO_Level3_Shift`) y en Wayland decide el escritorio.
+
+    Args:
+        c: La combinación.
+        windows: Si es para Windows.
 
     Returns:
         El motivo, o `None` si vale.
@@ -178,6 +204,9 @@ def problema(c: Combinacion) -> str | None:
     if not c.modificadores & {CTRL, ALT, LOGO}:
         return ("Un atajo de todo el sistema necesita Ctrl, Alt o la tecla del logotipo: "
                 "sin ellos, esa tecla dejaría de escribirse en los demás programas.")
+    if windows and {CTRL, ALT} <= c.modificadores and LOGO not in c.modificadores \
+            and c.tecla in _ESCRIBEN:
+        return ALTGR
     return None
 
 
@@ -271,6 +300,19 @@ SIN_ESA_TECLA = "este teclado no tiene esa tecla"
 RECHAZADA_PORTAL = "el escritorio no la ha aceptado"
 CANCELADA_PORTAL = "se ha cancelado en la ventana del escritorio"
 SIN_RESPUESTA = "el sistema no ha contestado"
+SIN_DECIDIR = (CANCELADA_PORTAL, SIN_RESPUESTA)
+"""Los motivos que no son un no del sistema, sino que nadie ha decidido.
+
+Un «Guardar» que acaba así no ha pasado: siguen los atajos de antes, en
+`agente.json` y puestos (el agente los vuelve a poner). Llegan siempre para
+todas las combinaciones a la vez: el portal cancela la petición entera y el
+plazo del agente vence para todas.
+"""
+
+
+def sin_decidir(rechazados: Mapping[str, str]) -> str:
+    """Devuelve el motivo si nadie ha decidido sobre lo pedido (`SIN_DECIDIR`), o `""`."""
+    return next((m for m in rechazados.values() if m in SIN_DECIDIR), "")
 
 
 def motivo_windows(error: int) -> str:
@@ -293,6 +335,17 @@ def aviso_de_rechazo(accion: str, combo: str, motivo: str, en_windows: bool) -> 
     return (f"No he podido poner el atajo {texto(combo, en_windows) or combo}",
             f"Para «{NOMBRES.get(accion, accion)}»: {motivo}. Se queda sin atajo; elige otra "
             f"combinación en «Atajos de teclado…» del icono de {APP_NAME}.")
+
+
+def aviso_sin_guardar(motivo: str) -> tuple[str, str]:
+    """Devuelve el aviso de un «Guardar» que no ha pasado (`SIN_DECIDIR`).
+
+    Returns:
+        `(título, texto)`.
+    """
+    return ("No he cambiado los atajos de teclado",
+            f"{motivo[:1].upper()}{motivo[1:]}: siguen los de antes. Para cambiarlos, vuelve "
+            f"a «Atajos de teclado…» del icono de {APP_NAME}.")
 
 
 # --- Con qué se ponen en este equipo
@@ -625,7 +678,7 @@ class Edicion:
         """
         if not self.grabando:
             return self
-        porque = problema(c)
+        porque = problema(c, self.windows)
         if porque is not None:
             return replace(self, notas={**self.notas, self.grabando: porque})
         combo = str(c)
@@ -643,20 +696,127 @@ class Edicion:
         """Devuelve los atajos que se piden al guardar, por acción (sin las vacías)."""
         return {a: c for a, c in self.atajos.items() if c and a in ACCIONES}
 
-    def veredicto(self, rechazados: Mapping[str, str]) -> "Edicion":
-        """Pone lo que ha dicho el agente al guardar.
+    def veredicto(self, respuesta_: Mapping[str, Any]) -> "Edicion":
+        """Pone lo que ha contestado el agente a un «Guardar» (`rechazados`, `guardados`).
 
-        Los rechazados se quedan sin atajo y su fila dice por qué; los demás ya
-        son los guardados.
+        Los que el sistema no ha dejado poner se quedan sin atajo y su fila dice
+        por qué. Si nadie ha decidido (`SIN_DECIDIR`: se canceló en la ventana
+        del escritorio, el sistema no contestó), no se ha guardado nada: la
+        ventana se queda con lo que tenía, para volver a guardarlo. Lo guardado
+        es lo que dice el agente (`guardados`).
         """
+        rechazados = _rechazados(respuesta_)
         notas = dict(self.notas)
         atajos = dict(self.atajos)
         for accion, motivo in rechazados.items():
-            if accion in ACCIONES:
+            if accion in ACCIONES and motivo not in SIN_DECIDIR:
                 combo = atajos.pop(accion, "")
                 notas[accion] = (f"{texto(combo, self.windows) or 'Esa combinación'} no se ha "
                                  f"podido poner: {motivo}.")
-        return replace(self, atajos=atajos, guardados=dict(atajos), notas=notas, grabando="")
+        guardados = respuesta_.get("guardados")
+        if isinstance(guardados, Mapping):
+            guardados = {a: normal(c) for a, c in guardados.items()
+                         if a in ACCIONES and normal(c)}
+        else:
+            guardados = dict(self.guardados) if sin_decidir(rechazados) else dict(atajos)
+        return replace(self, atajos=atajos, guardados=guardados, notas=notas, grabando="")
+
+
+def _rechazados(respuesta_: Mapping[str, Any]) -> dict[str, str]:
+    """Devuelve los rechazados de una respuesta del agente, por acción."""
+    rechazados = respuesta_.get("rechazados")
+    if not isinstance(rechazados, Mapping):
+        return {}
+    return {str(a): str(m) for a, m in rechazados.items()}
+
+
+# --- La ventana que graba y el agente
+
+ESPERA = 15.0
+"""Segundos tras un «Guardar» a partir de los que la ventana dice que el agente tarda."""
+ESPERA_PORTAL = 200.0
+"""Lo mismo con el portal: contesta cuando se confirma en la ventana del escritorio."""
+
+COMPROBANDO = "Comprobando con el sistema…"
+CONFIRMA = "Confirma los atajos en la ventana del escritorio…"
+TARDA = ("El agente todavía no ha contestado\nPuede estar ocupado con una unidad, o no estar en "
+         "marcha. Ya tiene el encargo y lo hará en cuanto pueda; si alguno no se puede poner, "
+         "te avisará. Puedes esperar aquí o cerrar la ventana.")
+SIN_ENCARGO = "No he podido dejarle el encargo al agente\nVuelve a intentarlo."
+NO_TODOS = ("No se han podido poner todos\nLos que el sistema no deja se quedan sin atajo: "
+            "elige otra combinación y vuelve a guardar.")
+
+
+def leer_estado() -> dict:
+    """Devuelve lo que cuenta el agente de los atajos (`resumen()["atajos"]`, en `estado.json`).
+
+    Punto de indirección: los tests lo sustituyen.
+    """
+    datos = equipo.leer_estado().get("atajos")
+    return datos if isinstance(datos, dict) else {}
+
+
+def pedir(peticion: dict) -> bool:
+    """Deja una petición en el buzón del agente (`equipo.pedir()`).
+
+    Punto de indirección: los tests lo sustituyen.
+    """
+    return equipo.pedir(peticion)
+
+
+@dataclass(frozen=True)
+class Guardado:
+    """Un «Guardar» de la ventana, que espera la respuesta del agente.
+
+    No caduca: la petición se queda en el buzón del agente (que la atiende
+    aunque se reinicie), así que lo que pide puede pasar en cualquier momento.
+
+    Args:
+        vez: Lo que lo identifica en la respuesta.
+        tarda: Cuándo (`time.monotonic()`) se dice que el agente tarda.
+    """
+    vez: str
+    tarda: float
+
+
+def guardar(edicion: Edicion, portal: bool, ahora: float) -> Guardado | None:
+    """Deja en el buzón del agente lo que pide `edicion` (`PIDE_ATAJOS`, con una `vez` propia).
+
+    Args:
+        edicion: Los atajos de la ventana.
+        portal: Si se ponen con el portal, que contesta cuando se confirman.
+        ahora: La hora de `time.monotonic()`.
+
+    Returns:
+        Lo que hay que esperar, o `None` si no se ha podido dejar.
+    """
+    vez = uuid.uuid4().hex
+    if not pedir({"pide": equipo.PIDE_ATAJOS, "vez": vez, "atajos": edicion.pedido()}):
+        return None
+    return Guardado(vez, ahora + (ESPERA_PORTAL if portal else ESPERA))
+
+
+def respuesta(guardado: Guardado) -> dict | None:
+    """Devuelve lo que ha contestado el agente a ese «Guardar», o `None` si todavía nada."""
+    r = leer_estado().get("respuesta")
+    return r if isinstance(r, dict) and r.get("vez") == guardado.vez else None
+
+
+def tras_guardar(respuesta_: Mapping[str, Any]) -> tuple[str, str] | None:
+    """Dice qué contar con la respuesta del agente a un «Guardar».
+
+    Returns:
+        `None` si se ha guardado todo (la ventana se cierra); si no, el texto
+        para el resultado y su tono.
+    """
+    rechazados = _rechazados(respuesta_)
+    if not rechazados:
+        return None
+    motivo = sin_decidir(rechazados)
+    if motivo:
+        return (f"No se ha guardado nada\n{motivo[:1].upper()}{motivo[1:]}: siguen los atajos "
+                f"de antes. Vuelve a guardar para intentarlo otra vez.", "aviso")
+    return NO_TODOS, "aviso"
 
 
 # --- Lo que el agente cuenta de los atajos
@@ -672,7 +832,8 @@ def resumen_de(mecanismo_: str | None, motivo: str, puestos: Mapping[str, str],
         puestos: Los atajos guardados, por acción.
         errores: Por qué el sistema no ha dejado poner los que no, por acción.
         grabando: Si la ventana de grabarlos está abierta.
-        respuesta: Lo último contestado a un «Guardar» (`vez`, `rechazados`).
+        respuesta: Lo último contestado a un «Guardar» (`vez`, `rechazados`,
+            `guardados`).
     """
     return {"mecanismo": mecanismo_ or "", "motivo": motivo,
             "acciones": {a: {"combo": puestos.get(a, ""), "error": errores.get(a, "")}
@@ -680,11 +841,17 @@ def resumen_de(mecanismo_: str | None, motivo: str, puestos: Mapping[str, str],
             "grabando": grabando, "respuesta": dict(respuesta) if respuesta else None}
 
 
-def validar(pedidos: Any) -> tuple[dict[str, str], dict[str, str]]:
-    """Separa lo que pide un «Guardar» en lo que vale y lo que no.
+def validar(pedidos: Any, windows: bool) -> tuple[dict[str, str], dict[str, str]]:
+    """Separa unos atajos en los que valen y los que no.
 
-    Una acción desconocida se ignora; una combinación ilegible o que no vale
-    (`problema()`), o repetida en otra acción, se rechaza con su motivo.
+    Es para lo que pide un «Guardar» y para lo que hay en `agente.json`, que se
+    puede haber escrito a mano o con otra versión. Una acción desconocida se
+    ignora; una combinación ilegible o que no vale (`problema()`), o repetida
+    en otra acción, se rechaza con su motivo.
+
+    Args:
+        pedidos: Los atajos, por acción.
+        windows: Si es para Windows (`problema()`).
 
     Returns:
         `(validos, rechazados)`, los dos por acción.
@@ -699,7 +866,7 @@ def validar(pedidos: Any) -> tuple[dict[str, str], dict[str, str]]:
         if crudo in (None, ""):
             continue
         c = leer(crudo)
-        porque = "no se entiende" if c is None else problema(c)
+        porque = "no se entiende" if c is None else problema(c, windows)
         if porque is not None:
             rechazados[accion] = porque.rstrip(".")
             continue
