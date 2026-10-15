@@ -158,18 +158,11 @@ def _lock_mio(info: dict | None) -> bool:
 def dlog(msg: str) -> None:
     """Añade una línea con la hora al diario del servicio.
 
-    Abre y cierra el fichero en cada línea para no mantener ningún descriptor
-    abierto sobre el dispositivo: bloquearía su extracción segura. Antes de
-    añadir, `store.recortar_diario()` lo deja en sus últimas líneas si ha
-    pasado de `store.DIARIO_TOPE`.
+    Es `store.apuntar_diario()` sobre `DLOG`: abre y cierra el fichero en cada
+    línea y, antes de añadir, lo deja en sus últimas líneas si ha pasado de
+    `store.DIARIO_TOPE`.
     """
-    line = f"{store.stamp()} {msg}\n"
-    try:
-        store.recortar_diario(DLOG)
-        with DLOG.open("a", encoding="utf-8") as f:
-            f.write(line)
-    except OSError:
-        pass  # dispositivo ausente o de solo lectura: el diario no es vital
+    store.apuntar_diario(DLOG, msg)
 
 
 ESPERA_REGISTRO = 1.0

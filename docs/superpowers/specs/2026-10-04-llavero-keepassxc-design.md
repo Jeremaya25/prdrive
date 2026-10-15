@@ -350,6 +350,13 @@ nombre_llave = "personal.keyx"   # solo una pista para la persona: ni ruta ni hu
   además la semilla de la cabecera (`MasterSeed`, unos cientos de bytes del
   principio), que KeePassXC cambia en cada guardado. Las reglas son las de
   `planificador.PoliticaCambios`: calma 20 s, separación 120 s.
+  - **Corregido el 15/10/2026 (#114, #119):** el tic de reloj de exFAT no es de
+    10 ms en Windows. Medido en Windows 11 con un pendrive (12/10) y con un
+    disco virtual (nube, F3), exFAT guarda la hora en saltos de **2 s
+    redondeados hacia arriba**, igual que FAT32 (+1,457 s medidos). Los 10 ms
+    son los de exFAT en Linux (−3,21 ms medidos). Con un tic de 2 s, dos
+    guardados del mismo tamaño dentro del mismo tic son más probables de lo que
+    suponía este texto, y la semilla pesa más de lo que parecía.
   - Al salir 20 s después de la ráfaga, la pasada choca menos con un guardado
     (S2) que una periódica.
   - El servicio del dispositivo **gana esta vigilancia solo para el llavero**. La
@@ -772,8 +779,10 @@ respecto a lo decidido:
   encargado, y el vigilante se queda.
 - **No están**: desbloquear una raíz cifrada para abrir su llavero desde la
   bandeja, y la semilla de la cabecera en la foto del agente (§5b: dos
-  guardados del mismo tamaño en el mismo tic de exFAT, de 10 ms). Linux, en la
-  fase 2 (§18).
+  guardados del mismo tamaño en el mismo tic de exFAT; corregido el 15/10/2026
+  con la medida de #114: en Windows el tic es de **2 s, redondeado hacia
+  arriba**, como el de FAT32, y no de 10 ms, que son los de exFAT en Linux).
+  Linux, en la fase 2 (§18).
 
 ## 18. Cómo quedó la fase 2
 

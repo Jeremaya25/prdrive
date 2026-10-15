@@ -57,9 +57,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path, PurePosixPath
-from typing import Callable, Mapping, NamedTuple
+from typing import Callable, Iterable, Mapping, NamedTuple
 
-from . import (APP_NAME, cifrada, components, conflicts, llavero, model, pins, registro,
+from . import (APP_NAME, cifrada, components, conflicts, equipo, llavero, model, pins, registro,
                results, store)
 
 CONFIG_SUBDIR = Path("config") / "windows"
@@ -817,9 +817,67 @@ def ajustar_config(raiz: Path | None = None, paquete: str | None = None,
 
 # --- el navegador (HKCU\Software\…\NativeMessagingHosts)
 
+def clave_hosts(base: str) -> str:
+    """Devuelve la `NativeMessagingHosts` de un navegador, donde cuelgan los anfitriones nativos."""
+    return f"{base}\\NativeMessagingHosts"
+
+
 def clave_nativa(base: str) -> str:
     """Devuelve la clave de KeePassXC-Browser bajo la de un navegador."""
-    return f"{base}\\NativeMessagingHosts\\{HOST_NATIVO}"
+    return f"{clave_hosts(base)}\\{HOST_NATIVO}"
+
+
+NOTAS_NAVEGADOR = "llavero-navegador.json"
+"""En `equipo.DIR`: las `NativeMessagingHosts` que creó prdrive, `{"creadas": [clave, …]}`.
+
+Es del equipo y no de la unidad: las claves son del registro de este equipo, y
+las miran la ventana de cualquier unidad al expulsar y el agente al barrer las
+de una que se fue. Al cerrar solo se borra una `NativeMessagingHosts` vacía si
+está aquí: dejarla es inofensivo, y borrar una que ya estaba antes del llavero
+no lo es. Sin la nota (un llavero abierto con una versión anterior, o una que
+no se ha podido leer) no se borra ninguna.
+"""
+
+
+def notas_navegador() -> Path:
+    """Devuelve el fichero de `NOTAS_NAVEGADOR` de este equipo."""
+    return equipo.DIR / NOTAS_NAVEGADOR
+
+
+def creadas_por_prdrive() -> set[str]:
+    """Devuelve las `NativeMessagingHosts` que prdrive creó en este equipo, en minúsculas.
+
+    Un fichero que falta o que no se entiende da el conjunto vacío: lo que no
+    se sabe no se borra.
+    """
+    claves = store.read_json(notas_navegador()).get("creadas")
+    return {str(k).lower() for k in claves} if isinstance(claves, list) else set()
+
+
+def anotar_creadas(poner: Iterable[str] = (), quitar: Iterable[str] = ()) -> None:
+    """Apunta qué `NativeMessagingHosts` ha creado prdrive, y cuáles dejan de ser cosa suya.
+
+    Crea la carpeta del equipo si falta (sin agente instalado no está) y borra
+    la nota cuando ya no queda nada que recordar. No lanza: si no se puede
+    escribir, al cerrar no se sabrá cuáles creó y no se borrará ninguna.
+
+    Args:
+        poner: Las `NativeMessagingHosts` (`clave_hosts()`) que se acaban de crear.
+        quitar: Las que ya se han tratado al cerrar.
+    """
+    poner, quitar = {k.lower() for k in poner}, {k.lower() for k in quitar}
+    if not poner and not quitar:
+        return
+    ruta = notas_navegador()
+    creadas = (creadas_por_prdrive() | poner) - quitar
+    try:
+        if creadas:
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            store.write_json(ruta, {"creadas": sorted(creadas)})
+        else:
+            ruta.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def json_nativo(carpeta: Path, navegador: str) -> Path:
@@ -835,7 +893,9 @@ def abrir_navegador(exe: Path, paquete: str | None = None) -> list[str]:
     rehace el JSON y la clave de todo lo «habilitado». Es lo que configura un
     equipo nuevo sin pasos (B2, B3); KeePassXC se las quedaría igualmente (B5).
     Lo que se registra es el proxy que lanza el navegador, y no se escribe
-    nada si no es el oficial (`comprobar()`).
+    nada si no es el oficial (`comprobar()`). Antes de escribir se mira si la
+    `NativeMessagingHosts` de cada navegador estaba, y la que no estaba se
+    apunta (`NOTAS_NAVEGADOR`) para que al cerrar se borre solo esa.
 
     Args:
         exe: El `KeePassXC.exe` de la unidad; el proxy es el que tiene al lado.
@@ -850,11 +910,17 @@ def abrir_navegador(exe: Path, paquete: str | None = None) -> list[str]:
     comprobar(exe.with_name(PROXY), paquete_del_equipo() if paquete is None else paquete)
     carpeta = exe.parent / "config"
     fallos = []
+    creadas = []
     for base, nombres in NAVEGADORES:
+        existia = registro.vacia(clave_hosts(base)) is not None
         try:
             registro.escribir(clave_nativa(base), str(json_nativo(carpeta, nombres[0])))
         except OSError as e:
             fallos.append(f"{clave_nativa(base)}: {e}")
+            continue
+        if not existia:
+            creadas.append(clave_hosts(base))
+    anotar_creadas(creadas)
     return fallos
 
 
@@ -942,26 +1008,34 @@ def cerrar_navegador(raiz: Path | None = None, carpeta_app: str | None = None,
     """Deja las claves del navegador como estaban antes del llavero (§7 de la especificación).
 
     Además de lo de `plan_cerrar_navegador()` (con sus mismos argumentos), la
-    `NativeMessagingHosts` de un navegador se borra si se queda vacía. En
-    Linux, los manifiestos de prdrive (`cerrar_navegador_linux()`). Nunca
-    lanza: se hace al expulsar, y un fallo aquí no puede impedir quitar la
-    unidad.
+    `NativeMessagingHosts` de un navegador se borra si se queda vacía **y la
+    creó prdrive** (`NOTAS_NAVEGADOR`): una que ya estaba, o de la que no hay
+    nota, se deja. Tratada una clave, deja de recordarse. En Linux, los
+    manifiestos de prdrive (`cerrar_navegador_linux()`). Nunca lanza: se hace
+    al expulsar, y un fallo aquí no puede impedir quitar la unidad.
 
     Returns:
         Lo que no se ha podido hacer; vacío si todo bien.
     """
     fallos = cerrar_navegador_linux(muertas) if MANIFIESTOS else []
+    creadas: set[str] | None = None
+    tratadas = []
     for cambio in plan_cerrar_navegador(raiz, carpeta_app, muertas):
+        padre = cambio.clave.rsplit("\\", 1)[0]
         try:
             if cambio.valor is not None:
                 registro.escribir(cambio.clave, cambio.valor)
+                tratadas.append(padre)
                 continue
             registro.borrar(cambio.clave)
-            padre = cambio.clave.rsplit("\\", 1)[0]
-            if registro.vacia(padre):
+            tratadas.append(padre)
+            if creadas is None:
+                creadas = creadas_por_prdrive()
+            if padre.lower() in creadas and registro.vacia(padre):
                 registro.borrar(padre)
         except OSError as e:
             fallos.append(f"{cambio.clave}: {e}")
+    anotar_creadas(quitar=tratadas)
     return fallos
 
 
@@ -1783,7 +1857,13 @@ ESPERA_CIERRE = 180.0  # segundos
 TOPE_PASADA = 60.0  # segundos
 """Lo más que dura la pasada de lo pendiente al expulsar."""
 ESPERA_VIGILANTE = 90.0  # segundos
-"""Lo que se espera a que el vigilante se vaya: si está en una pasada, la acaba."""
+"""Lo que se espera a que el vigilante se vaya tras pedírselo; pasado, se le termina.
+
+Mira la parada solo entre pasadas, y una pasada del llavero no tiene tope: en
+un remoto lento (SFTP por el móvil, un Drive limitado) puede pasar de medio
+minuto, y terminarla a medias la habría de rehacer la de lo pendiente. Por eso
+se le deja el margen de siempre y solo se actúa con uno que de verdad no se va.
+"""
 
 
 def procesos_de_la_unidad() -> tuple[list[int], list[int]]:
@@ -1888,7 +1968,11 @@ def cerrar_llavero(config: model.Config) -> Cierre:
        que salga (si tiene algo sin guardar, pregunta él). Quien llama ya ha
        preguntado si se cierra.
     2. Termina su proxy, que vive lo que el navegador.
-    3. Para el vigilante del llavero y espera a que se vaya.
+    3. Para el vigilante del llavero y espera a que se vaya; si pasa
+       `ESPERA_VIGILANTE` sin irse, lo termina con lo que cuelga de él
+       (`llavero.terminar_vigilante()`), quita el bloqueo de bisync que deje
+       su rclone muerto (`llavero.quitar_candados_muertos()`: si no, la pasada
+       del paso 4 se negaría dos minutos) y lo deja en el diario.
     4. Si queda algo sin subir, una pasada con un tope de `TOPE_PASADA`.
     5. Deja las claves del navegador como estaban (`cerrar_navegador()`).
 
@@ -1917,6 +2001,8 @@ def cerrar_llavero(config: model.Config) -> Cierre:
         limite = reloj() + ESPERA_VIGILANTE
         while llavero.vigilante_vivo() and reloj() < limite:
             llavero.dormir(0.5)
+        if llavero.vigilante_vivo() and llavero.terminar_vigilante():
+            llavero.quitar_candados_muertos(pareja)
     if llavero.pendiente(pareja):
         rc, _ = llavero.pasada(tope=TOPE_PASADA)
         if rc != 0:
