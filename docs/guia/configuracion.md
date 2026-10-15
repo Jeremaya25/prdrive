@@ -69,7 +69,8 @@ leerlo si trae:
   pisarían los del dispositivo. Lo mismo `force = true`: dejaría
   saltado para siempre el freno de borrados. Se pide en cada pasada, con la ventana o
   `sync.py PAREJA --force` ([Diagnóstico](diagnostico.md#cuando-salta-el-freno-de-borrados)).
-  `max-delete = -1` (sin tope) sí se admite: es tu decisión y rclone lo entiende.
+  `max-delete = -1` sí se admite, porque es tu decisión: en un espejo quita el tope y
+  en bisync no lo quita, vuelve al 50 % de fábrica de bisync.
 - **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
   letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
   o comillas, rclone lo leería como una conexión con sus propias opciones

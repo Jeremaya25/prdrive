@@ -296,9 +296,10 @@ for donde, trozos in (
 c.contains("  y el mensaje dice cuál y qué hacer", motivo(con(pair={"flags": {"force": True}})),
            "Quítalo del config")
 
-# Decisión: `max-delete = -1` SIGUE valiendo. Es el valor «sin tope» del propio rclone, está
-# en el editor de flags como lo que es (el freno de la pareja) y devices en uso pueden
-# llevarlo; un 1000000 haría lo mismo y rechazar solo el -1 sería rechazar una cifra.
+# Decisión: `max-delete = -1` SIGUE valiendo. En un espejo es el «sin tope» de rclone y en bisync
+# vuelve al 50 % de fábrica (`applyContext()` solo atiende un valor >= 0): una elección
+# permanente de quien lo escribe, como lo sería un 1000000, y un dispositivo en uso puede
+# llevarlo. Rechazar solo el -1 sería rechazar una cifra y romper la lectura de ese config.
 espejo_sin_tope = con(pair={"mode": "up-mirror", "flags": {"max-delete": -1}})
 c("max-delete = -1 en el TOML se admite: es la decisión de quien lo escribe, fija",
   motivo(espejo_sin_tope), None)
