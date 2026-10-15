@@ -33,7 +33,7 @@ def main() -> int:
     checks = Checks("maquina-real.yml: el artefacto de F21 falla donde se rompe")
     lineas = ARCHIVO.read_text(encoding="utf-8").splitlines()
     subidas = [p for p in pasos(lineas)
-               if "- uses: actions/upload-artifact@v4" in p and f"name: {ARTEFACTO}" in p]
+               if "- uses: actions/upload-artifact@v7" in p and f"name: {ARTEFACTO}" in p]
     checks(f"el artefacto {ARTEFACTO} lo sube un paso upload-artifact", len(subidas), 1)
     if subidas:
         checks("ese paso falla si no encuentra ficheros (y no solo avisa)",
