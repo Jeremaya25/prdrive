@@ -567,8 +567,17 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, int | None]:
     print(f"  estado: {state.status} — {state.detail}")
 
     reasons = bisync.resync_reasons(pair, state)
-    need_resync = ctx.force_resync or bool(reasons)
-    if need_resync and pair.llavero and reasons:
+    # Con los dos listados vacíos no queda nada que proteger, y rclone se niega
+    # a pasar con ellos (`checkListing()`): se rehacen, sin pedirlo. Sin carpeta
+    # local no entra: ahí manda el aborto de más abajo.
+    vacia = pair.local_abs.exists() and bisync.referencia_vacia(pair, state)
+    need_resync = ctx.force_resync or bool(reasons) or vacia
+    if vacia:
+        for reason in reasons:
+            print(f"  requiere --resync -> {reason}")
+        print("  la referencia está vacía: se rehace con --resync, sin pedirlo (no hay "
+              "nada que proteger, y un --resync no borra nada).")
+    elif need_resync and pair.llavero and reasons:
         # El llavero no espera a que nadie lo apruebe: con `resync-mode =
         # newer` gana la versión más nueva y la otra queda en `.prversions/`
         # (el backup-dir también vale en un --resync). Saltarlo lo dejaría sin
@@ -721,7 +730,10 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
 
     ffile = bisync.filters_file_for(pair)
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
-    medida.resync = bool(need_resync)
+    # Un resync que parte de una referencia vacía solo mueve algo si trae
+    # ficheros: lo dirá la comparación de los listados (`parte.Medida.acabar()`),
+    # no el simple hecho de ser un resync.
+    medida.resync = bool(need_resync) and not bisync.referencia_vacia(pair)
     rc = execute(ctx, cmd, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)

@@ -401,6 +401,58 @@ def programa_en_listado(pair: Pair) -> bool:
     return False
 
 
+def _sin_entradas(lst: Path) -> bool:
+    """Indica si un listado de bisync no trae ni un fichero ni una carpeta.
+
+    Es `fileList.empty()` de rclone (`cmd/bisync/listing.go`, v1.75.1) sobre lo
+    que `loadListing()` deja en la lista: no cuentan las líneas en blanco ni las
+    que empiezan por `#` (la cabecera `# bisync listing v1 from …`), y sí cuenta
+    cualquier otra, sea fichero (`-`) o carpeta (`d`, con
+    `create-empty-src-dirs`). Una línea que rclone descartaría por rota
+    (`lineRegex`) cuenta aquí como contenido, a propósito: decir «vacío» de
+    más rehace una referencia que sí tenía algo que proteger, y decirlo de
+    menos solo deja el fallo de siempre. Un listado que no se puede leer no
+    está vacío.
+    """
+    try:
+        with lst.open(encoding="utf-8", errors="replace") as f:
+            for linea in f:
+                linea = linea.rstrip("\n")
+                if linea and not linea.startswith("#"):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
+    """Indica si el baseline de la pareja no tiene ni un fichero ni una carpeta.
+
+    Es lo que deja un `--resync` sobre dos lados vacíos, y rclone aborta con
+    ello toda pasada que no sea otro `--resync` (`checkListing()`, «Empty prior
+    Path1 listing», código 7) porque no sabe distinguir una carpeta vacía de
+    una sin montar. Tienen que estar vacíos los DOS listados: si solo lo está
+    uno, un lado se ha vaciado desde la última pasada buena y rclone debe
+    pararla. Con una referencia vacía no queda nada que proteger, y la rehace
+    sola `sync._bisync_preflight()`.
+
+    Args:
+        state: El estado ya calculado, para no recorrer otra vez el workdir.
+
+    Returns:
+        `True` si hay baseline y sus dos listados están vacíos; `False` si no
+        lo hay, si falta uno o no se puede leer, y fuera de bisync.
+    """
+    if not pair.is_bisync:
+        return False
+    if state is None:
+        state = pair_state(pair)
+    if not state.has_baseline:
+        return False
+    return all(_sin_entradas(pair.workdir / (state.prefix + sufijo))
+               for sufijo in (PATH1_SUFFIX, PATH2_SUFFIX))
+
+
 def resync_reasons(pair: Pair, state: PairState | None = None) -> list[str]:
     """Devuelve por qué esta pareja necesita `--resync`.
 
