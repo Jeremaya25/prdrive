@@ -1211,6 +1211,8 @@ class Conexion:
         lanzada: Modo `ui`: su ventana ya se ha abierto.
         pausa: La última vez que se vio una ventana o un stop.
         lock: El `daemon.lock.json` que tenemos escrito.
+        intento_lock: Cuándo se intentó reescribir `lock` tras un fallo, o `None`
+            (`_al_dia_el_lock()`).
         soltando: Soltado, pero su fichero sigue sin borrar.
         servicio: Lo que sincroniza su servicio.
         error: Por qué no hay servicio que atender.
@@ -1261,6 +1263,7 @@ class Conexion:
     lanzada: bool = False
     pausa: float | None = None
     lock: dict | None = None
+    intento_lock: float | None = None
     soltando: bool = False
     servicio: Servicio | None = None
     error: str | None = None
@@ -2687,6 +2690,8 @@ class Agente:
                 self._tomar(con)
             elif not self._lock_es_nuestro(con, de_memoria=True):
                 con.lock = None             # lo borró runsync al cansarse de esperar
+            else:
+                self._al_dia_el_lock(con)   # la config pudo cambiar desde la última vuelta
             return
         if not ocupada:
             self._soltar(con)
@@ -3636,6 +3641,49 @@ class Agente:
             return f"Abre la ventana de {APP_NAME} en este equipo para ver qué ha pasado."
         return f"Abre {APP_NAME} desde la unidad para ver qué ha pasado."
 
+    def _al_dia_el_lock(self, con: Conexion) -> None:
+        """Pone en el lock de la raíz las parejas y el intervalo que el agente atiende ahora.
+
+        El lock lo escribe el agente al tomar la raíz y tras cada pasada. Si la
+        config cambia mientras la atiende (la ventana añade el llavero, quita
+        una pareja, cambia el intervalo), se quedaba con lo de antes, y
+        `llavero.atiende_el_servicio()` daba por no atendido el llavero. Lo
+        llama `_contrato()` en cada vuelta que sirve la raíz con su lock, y sin
+        nada que cambiar no toca el disco: compara con `con.lock`, que solo
+        cambia cuando la escritura ha salido. Si la escritura falla (fichero en
+        uso, unidad de solo lectura), se reintenta cada `RELEER_REGISTROS`, sin
+        esperar a una pasada ni a un cambio de config.
+
+        Args:
+            con: La conexión, con el servicio que atiende ahora.
+        """
+        if con.lock is None or con.servicio is None:
+            return
+        parejas = [p.nombre for p in con.servicio.parejas]
+        if con.lock.get("pairs") == parejas \
+                and con.lock.get("interval_min") == con.servicio.minutos:
+            return
+        ahora = self.reloj()
+        if con.intento_lock is not None and ahora - con.intento_lock < RELEER_REGISTROS:
+            return
+        if not self._lock_es_nuestro(con, de_memoria=True):
+            return
+        con.intento_lock = ahora
+        nuevo = {**con.lock, "pairs": parejas, "interval_min": con.servicio.minutos}
+        if self._escribir_lock(con, nuevo):
+            con.lock = nuevo
+            con.intento_lock = None
+
+    def _escribir_lock(self, con: Conexion, datos: dict) -> bool:
+        """Escribe `datos` en el `daemon.lock.json` de la raíz, si sigue dentro de ella.
+
+        Returns:
+            `True` si se ha escrito; `False` si la ruta sale de la raíz o el
+            fichero no se deja escribir (`store.write_json()`).
+        """
+        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
+        return destino is not None and store.write_json(destino, datos)
+
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
                          segundos: float) -> None:
         """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo."""
@@ -3646,9 +3694,7 @@ class Agente:
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
         con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
-        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
-        if destino is not None:
-            store.write_json(destino, con.lock)
+        self._escribir_lock(con, con.lock)
 
     def _cifrada(self, uid: str) -> equipo.Unidad | None:
         """Devuelve la raíz cifrada de ese id, o la única que haya si no se dice."""
