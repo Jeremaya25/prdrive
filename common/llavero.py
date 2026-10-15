@@ -241,13 +241,25 @@ def listado_local(pair: model.Pair) -> dict[str, tuple[int, int]] | None:
     return salida
 
 
+TOLERANCIA_HORA = model.VENTANA_HORA * 1_000_000_000  # nanosegundos
+"""Lo que pueden diferir dos horas de la misma base para que `pendiente()` las dé por iguales.
+
+Es la ventana de rclone (`model.VENTANA_HORA`, `modify-window`): en exFAT y FAT32
+Windows redondea la hora hacia arriba hasta 2 s, así que la base que acaba de
+bajar un `rclone` no tiene la hora de su línea del listado. Como en
+`timeDiffers()` (`cmd/bisync/compare.go`), «igual» es MENOS que la ventana, en
+los dos sentidos.
+"""
+
+
 def pendiente(pair: model.Pair) -> bool:
     """Indica si hay algo del llavero sin subir.
 
-    Es que alguna base no coincide, en tamaño y en `mtime`, con su línea del
-    listado `path1` de la última pasada buena (`state/keychain/`). No hace falta
-    otro registro, y pilla también lo que se guardó DURANTE una pasada. Sin
-    listado (no ha habido pasada buena) cualquier base está pendiente.
+    Es que alguna base no coincide con su línea del listado `path1` de la última
+    pasada buena (`state/keychain/`): otro tamaño, o una hora que difiere en
+    `TOLERANCIA_HORA` o más. No hace falta otro registro, y pilla también lo que
+    se guardó DURANTE una pasada. Sin listado (no ha habido pasada buena)
+    cualquier base está pendiente.
     """
     donde = pair.local_abs
     lista = bases(donde)
@@ -261,7 +273,9 @@ def pendiente(pair: model.Pair) -> bool:
             st = ruta.stat()
         except OSError:
             return True
-        if listado.get(ruta.relative_to(donde).as_posix()) != (st.st_size, st.st_mtime_ns):
+        visto = listado.get(ruta.relative_to(donde).as_posix())
+        if (visto is None or visto[0] != st.st_size
+                or abs(st.st_mtime_ns - visto[1]) >= TOLERANCIA_HORA):
             return True
     return False
 

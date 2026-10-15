@@ -56,6 +56,13 @@ def texto(cambiada: bool) -> tuple[str, str]:
             "se cambia después en sus ajustes.")
 
 
+def titulo_ventana(cambiada: bool) -> str:
+    """Devuelve el título de la ventana: «unidad nueva» o «código cambiado»."""
+    from . import tk as tkui
+
+    return f"{tkui.TITLE} — {'código cambiado' if cambiada else 'unidad nueva'}"
+
+
 def construir(root, nombre: str, segundos: int, responder,
               cambiada: bool = False) -> dict:
     """Pinta la pregunta dentro de `root` y devuelve sus piezas vivas.
@@ -135,7 +142,7 @@ def preguntar(nombre: str, segundos: int, cambiada: bool = False) -> int:
     try:
         theme.apply(root)
         icons.poner_icono(root)
-        root.title(f"{tkui.TITLE} — unidad nueva")
+        root.title(titulo_ventana(cambiada))
         root.configure(background=theme.PAPEL)
         root.resizable(False, False)
         root.withdraw()

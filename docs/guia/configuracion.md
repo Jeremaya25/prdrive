@@ -108,6 +108,17 @@ la pareja y lo cuenta en una línea (`progreso: 2,1 MB de 3,4 MB · 61 % ·
 informativo: si no sale nada del log —porque una pareja cambia esos flags, por
 ejemplo con `stats = "0"`—, no hay progreso y la pasada va igual.
 
+También lleva `--modify-window 2s`, la **ventana de hora**: rclone da por iguales
+dos horas de modificación que difieren menos de 2 segundos. exFAT y FAT32 —los
+sistemas de ficheros de casi todos los pendrives— guardan la hora en saltos de
+2 s y Windows la redondea hacia arriba, también la que pone un programa. Sin la
+ventana, todo lo que bajaba del remoto se daba por cambiado en la pasada
+siguiente, sin que nadie lo hubiera tocado: una pasada de más y, con un remoto
+sin sumas de comprobación, el fichero entero volvía a subir. El precio es que en
+NTFS o ext4 una edición del mismo tamaño hecha a menos de 2 s de la anterior
+puede no verse. No exige ningún `--resync`, y se cambia como cualquier flag
+(`modify-window = "0"` en `[pair.flags]`).
+
 El editor de flags de la ventana enseña **las cuatro capas resueltas**: cada
 flag con su valor y la etiqueta de dónde viene (`siempre`, `modo bisync`,
 `[defaults]` o `esta pareja`), y avisa cuando un cambio sube el `--max-delete`
@@ -152,6 +163,25 @@ cuenta o que no se pueden poner aquí no se ofrecen.
   `--remove-empty-dirs` con el `--create-empty-src-dirs` que ya pone prdrive) y
   *borrado* (borra o reescribe ficheros: pruébalo antes con «Simular», que es
   `--dry-run`, sobre todo en una pareja `*-mirror`).
+
+**La guía de flags explica qué hace cada uno.** Junto al cuadro de flags, **«Guía de
+flags…»** abre una ventana de consulta (no cambia nada de lo que escribes) con, por
+cada flag, para qué sirve, qué hace en la práctica, si **solo lee**, **cambia nombres**
+o **borra o reescribe**, en qué modos sirve, qué valor le pone prdrive y un ejemplo para
+copiar. Se busca por el nombre (`max-delete`), por lo que hace («qué hace con los
+borrados») o por lo que quieres conseguir («cómo ignoro ficheros temporales»), y se puede
+filtrar por riesgo, por modo y por tema. Si la abres con el cursor en la línea de un
+flag, sale ese flag.
+
+- Los flags que prdrive **pone o reserva** están explicados y marcados («Lo pone prdrive,
+  no se puede cambiar»), también los que el config no admite. Lo mismo los de borrado,
+  comparación, filtrado, tiempos y concurrencia.
+- **El resto de los de rclone** sale con su ayuda corta, que **está en inglés** y se
+  marca como tal, y sin explicación propia: sirven para saber que existen y de qué tipo son.
+- No restringe nada: un flag que no sale en la guía se puede escribir igual.
+- No hace falta abrir el programa para leerla: está entera en
+  [Flags de rclone](flags-de-rclone.md), que se genera del mismo catálogo y no puede
+  decir otra cosa.
 
 ## `device_remote`
 

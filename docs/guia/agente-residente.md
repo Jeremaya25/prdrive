@@ -136,8 +136,10 @@ agente»**. El diseño completo está en
   sincronizando, un aviso, en pausa, la raíz cifrada o una unidad bloqueada) y, con clic
   derecho o izquierdo, un menú: **Abrir** la raíz de este equipo o una unidad
   de su lista, **Sincronizar ahora**, **Expulsar** (una unidad extraíble de su
-  lista: la suelta para que puedas quitarla; si algo la tiene abierta, no la
-  fuerza y te lo dice), **Pausar**/**Reanudar**, **Desbloquear**
+  lista: la suelta para que puedas quitarla (en Windows también la retira
+  como «Quitar hardware de forma segura», así que su letra desaparece del
+  Explorador); si algo la tiene abierta, no la fuerza y te dice qué), **Pausar**/**Reanudar**,
+  **Atajos de teclado…**, **Desbloquear**
   y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
   sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
   enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión).
@@ -208,6 +210,30 @@ agente»**. El diseño completo está en
   cambie mientras la pasada corre, y una carpeta que se recorre con más de
   20 000 entradas deja de vigilarse (lo dice el diario) y sigue por su
   intervalo. Detalles en `sync_config.example.toml`.
+- **Atajos de teclado.** En la bandeja, **Atajos de teclado…** abre una ventana
+  donde grabas una combinación para cuatro cosas: **Sincronizar ahora**,
+  **Abrir su carpeta**, **Pausar o reanudar** y **Abrir su ventana**. Pulsa
+  «Grabar» en la fila, luego la combinación (con Ctrl, Alt o la tecla de Windows
+  o Súper; Esc lo deja como estaba), y «Guardar». En Windows no vale Ctrl+Alt
+  con una letra, un número o el espacio: Windows trata AltGr como Ctrl+Alt, y
+  el atajo te quitaría caracteres como «@» o «€»; añade la tecla de Windows, o
+  usa una tecla F (Ctrl+Alt+F9) u otra combinación (Ctrl+Mayús+S). Funcionan con cualquier
+  programa delante y actúan sobre **la última unidad que has usado**: la última
+  cuya ventana abriste o que elegiste en la bandeja; si no has usado ninguna,
+  la última que conectaste. Sincronizar y pausar lo cuentan con un aviso con el
+  nombre de la unidad; abrir su carpeta o su ventana se ve sola. La pausa es la
+  de esa unidad, la misma que el «Pausar» de su ventana: el atajo la pone y la
+  quita. Se guardan en este equipo, no en la unidad, y de fábrica no hay
+  ninguno. Si una combinación la tiene ya otro programa o el propio sistema, se
+  dice al guardar y esa acción se queda sin atajo: elige otra. Si cancelas la
+  ventana de confirmación del escritorio (Wayland), no se guarda nada y siguen
+  los de antes. Si el agente tarda en contestar, la ventana lo dice: ya tiene
+  el encargo y lo hará en cuanto pueda, aunque la cierres. En Windows y en
+  Linux con X11 funcionan siempre; en Linux con Wayland, solo si el escritorio
+  ofrece el portal de atajos (Plasma 6, GNOME 48 o posterior…), que te pedirá
+  confirmarlos en su propia ventana; si no lo ofrece, la ventana te lo dice. Ahí
+  puedes crear el atajo en los ajustes de teclado del escritorio con la orden
+  `python agente.py atajo sincronizar` (o `carpeta`, `pausar`, `ventana`).
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
@@ -224,6 +250,8 @@ python agente.py ajuste pedir_al_iniciar no      # no pedir su contraseña al en
 python agente.py actualizar           # la versión nueva, como «Actualizar» de la bandeja
 python agente.py actualizar <id>      # esa unidad, a la versión del agente
 python agente.py expulsar <id>        # soltar esa unidad extraíble, como «Expulsar» de la bandeja
+python agente.py atajos               # la ventana que graba los atajos de teclado
+python agente.py atajo sincronizar    # lo de ese atajo, como si lo pulsaras (carpeta, pausar, ventana)
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
@@ -231,7 +259,8 @@ agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía e
 Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería y el ahorro de energía,
 la red de uso medido (`INetworkCostManager`), el acceso del menú Inicio
 (`IShellLinkW`) y «Actualizar»; ni en un escritorio Linux de verdad la
-bandeja (StatusNotifierItem y dbusmenu).
+bandeja (StatusNotifierItem y dbusmenu) ni los atajos de teclado (los de X11 y
+Windows se han visto en máquinas de prueba; los del portal de Wayland, en ninguna).
 
 ## La raíz del equipo
 

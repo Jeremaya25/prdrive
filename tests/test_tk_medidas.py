@@ -54,6 +54,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import tk as uitk
 from ui import remote_picker, segundo_plano
+from ui import tk_flags_guia
 from ui import (catalog_editor, pair_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
                 tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
                 tk_volumen, tk_watch, versions_editor, volumen, watch)
@@ -741,6 +742,29 @@ try:
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 
+                # Los cuadros con el tema de la ventana principal (`uitk.preguntar()`
+                # y `uitk.avisar()`), con el peor texto de cada uno: el del resync
+                # con las doce parejas y el aviso de la carpeta del programa, y un
+                # error largo del sistema.
+                for que, fabricar in (
+                        ("la pregunta de «Expulsar»",
+                         lambda: uitk.preguntar(
+                             raiz, "Expulsar", "Se cierra el llavero (KeePassXC, si está abierto) "
+                             f"y esta ventana. Después, quita la unidad {uitk.QUITAR_UNIDAD}.",
+                             "Expulsar")),
+                        ("la pregunta del resync con todas las parejas",
+                         lambda: uitk.preguntar_resync(
+                             raiz, [f"pareja{i}" for i in range(12)],
+                             {"pareja0": "/datos/compartidos/de/toda/la/casa/.prdrive"})),
+                        ("un error largo del sistema",
+                         lambda: uitk.avisar(
+                             raiz, "Expulsar", "No he podido lanzar Expulsar PRDRIVE.bat: "
+                             "[WinError 2] El sistema no puede encontrar el archivo "
+                             "especificado " + "C:\\Usuarios\\alguien\\" * 4, "Rojo."))):
+                    entra, corta = medir_dialogo(fabricar, ancho, alto, escala, modulo=uitk)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortado", corta, False)
+
                 # La ventana de una pareja, como se abre y en su caso más alto:
                 # con «Avanzado» desplegado, el aviso ámbar de un espejo y, bajo
                 # cada campo, lo que dice el catálogo.
@@ -786,6 +810,17 @@ try:
                     ancho, alto, escala, modulo=tk_fleet)
                 c(f"{nombre}: la flota cabe", entra, True)
                 c(f"{nombre}: la flota no queda recortado", corta, False)
+
+                # La guía de flags (#126): una tabla de un lienzo, tres filtros y un texto con
+                # barra. Su caso más alto es el de más filas (sin buscar nada), con la pareja
+                # de un espejo, y el de una búsqueda que deja pocas.
+                for que, consulta in (("la guía de flags", ""),
+                                      ("la guía de flags buscando", "borrados")):
+                    entra, corta = medir_dialogo(
+                        lambda: tk_flags_guia.abrir(raiz, "up-mirror", consulta),
+                        ancho, alto, escala, modulo=tk_flags_guia)
+                    c(f"{nombre}: {que} cabe", entra, True)
+                    c(f"{nombre}: {que} no queda recortada", corta, False)
 
                 # Lo que esas dos pantallas leen en segundo plano (#66), en sus
                 # casos más altos: Parejas leyendo, con la copia local de las doce
@@ -1027,6 +1062,32 @@ try:
                       entra, True)
                     c(f"{nombre}: la ventana del nombre e icono ({que}) no queda "
                       "recortada", corta, False)
+
+                # La ventana de los atajos de teclado (es del agente: su propio
+                # Tk, aquí en una Toplevel), en su peor caso: cada fila con la
+                # nota más larga (la de AltGr), la combinación más larga, la que
+                # graba, la pista del portal y el aviso más largo bajo los atajos
+                # (el agente tarda). Y sin forma de ponerlos, solo el motivo.
+                from ui import atajos as atj
+                from ui import tk_atajos
+                peor = atj.Edicion(windows=False,
+                                   atajos={atj.SINCRONIZAR: atj.normal(atj.MAS_LARGA)},
+                                   notas={a: atj.ALTGR for a in atj.ACCIONES})
+                peor = peor.grabar(atj.CARPETA)
+                for motivo_a, que in (("", "grabando"), (atj.SIN_PORTAL, "sin portal")):
+                    top = tk.Toplevel(raiz)
+                    top.withdraw()
+                    piezas_a = tk_atajos.construir(
+                        top, peor, motivo_a, True,
+                        {"grabar": print, "quitar": print, "guardar": print, "cerrar": print})
+                    if piezas_a["filas"]:
+                        tk_atajos.pintar(piezas_a, peor)
+                        piezas_a["resultado"].poner(atj.TARDA, "aviso")
+                    top.visor.encajar(top)
+                    c(f"{nombre}: la ventana de los atajos ({que}) cabe", cabe(top), True)
+                    c(f"{nombre}: la ventana de los atajos ({que}) no queda recortada",
+                      recortado(top.visor), False)
+                    top.destroy()
 
                 # El código de emparejamiento: el único dibujo de la aplicación
                 # que mide en píxeles y no puede encoger —un módulo por debajo

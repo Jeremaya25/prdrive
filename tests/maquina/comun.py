@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -436,6 +437,141 @@ def quieto(motor, segundos: float = 1.5) -> dict:
     """Espera sin tocar nada y devuelve lo que haya avisado (debería ser nada)."""
     time.sleep(segundos)
     return {k: a.tipo for k, a in motor.recoger().items()}
+
+
+# ---------------------------------------------------------------------------
+# La hora de lo que baja a una unidad, con el rclone fijado (F3)
+# ---------------------------------------------------------------------------
+HORA_PEDIDA = 1_700_000_000_543_210_000
+"""Una hora con fracción (ns desde 1970): cada sistema de ficheros la guarda distinto."""
+_COLORES = re.compile(r"\x1b\[[0-9;]*m")
+_SUCESOS = ("File changed", "File is new", "No changes found", "Updated modification",
+            "Must run", "ERROR", "CRITICAL", "Bisync successful")
+"""Lo que se enseña del log de una pasada de bisync."""
+
+
+def rclone_fijado() -> Path:
+    """El rclone de `common/pins.py`, el que deja `tests/_runtime_ci.py rclone`.
+
+    Raises:
+        Saltada: Si no está (`PRDRIVE_RCLONE_CI` sin poner o sin fichero).
+    """
+    ruta = Path(os.environ.get("PRDRIVE_RCLONE_CI", ""))
+    if not ruta.is_file():
+        raise Saltada("no hay rclone: `python tests/_runtime_ci.py rclone PLATAFORMA CACHE` "
+                      "lo baja y apunta PRDRIVE_RCLONE_CI")
+    return ruta
+
+
+def medir_hora(raiz: Path) -> int:
+    """Devuelve cuánto se aparta (ns) la hora que guarda esa unidad de la que se le pidió.
+
+    Positivo es que la redondea hacia arriba, como exFAT y FAT32 en Windows.
+    """
+    fichero = raiz / "hora.txt"
+    fichero.write_text("x", encoding="utf-8")
+    os.utime(fichero, ns=(HORA_PEDIDA, HORA_PEDIDA))
+    leida = fichero.stat().st_mtime_ns
+    fichero.unlink()
+    return leida - HORA_PEDIDA
+
+
+def flags_bisync(con_ventana: bool = True) -> list[str]:
+    """Los flags de rclone que prdrive pasa a una pareja bisync sin nada propio.
+
+    Salen de la misma cascada que lee `sync.py` (`model.flags_efectivos()`), no
+    de una lista escrita aquí; sin `con_ventana`, los de antes de `modify-window`.
+    """
+    from common import model
+    flags = {f.nombre: f.valor for f in model.flags_efectivos(model.MODES["bisync"], None, None)}
+    if not con_ventana:
+        flags.pop("modify-window", None)
+    return model.flags_to_args(flags)
+
+
+def pasada_bisync(rclone: Path, local: Path, remoto: Path, trabajo: Path, flags: list[str],
+                  resync: bool = False) -> tuple[int, str]:
+    """Lanza una pasada de `rclone bisync` y devuelve su código y su log sin colores."""
+    orden = [str(rclone), "bisync", str(local), str(remoto), "--workdir", str(trabajo),
+             "--config", str(trabajo / "rclone.conf"), *flags] + (["--resync"] if resync else [])
+    r = ejecutar(orden, timeout=300, callado=True)
+    salida = _COLORES.sub("", (r.stdout or "") + (r.stderr or ""))
+    print(f"    $ bisync{' --resync' if resync else ''} -> {r.returncode}", flush=True)
+    for linea in salida.splitlines():
+        if any(k in linea for k in _SUCESOS):
+            print(f"    | {linea.split(': ', 1)[-1].strip()}", flush=True)
+    return r.returncode, salida
+
+
+def repasar_bajada(p: Prueba, etiqueta: str, local: Path, rclone: Path,
+                   con_ventana: bool) -> int:
+    """Baja por bisync un fichero con hora con fracción, dos veces, y repasa las pasadas siguientes.
+
+    El baseline se hace SIEMPRE sin `modify-window`, como el de un dispositivo
+    de antes; las pasadas llevan los flags de ahora (o los de antes, sin
+    `con_ventana`). Cada vez: una pasada que baja el fichero, la siguiente y otra
+    más. Con `con_ventana` esas dos tienen que decir «No changes found», sin
+    ningún «File changed», y la hora del fichero en el remoto no se toca.
+
+    Args:
+        local: La carpeta de la unidad que se sincroniza; se crea.
+
+    Returns:
+        Cuántas pasadas siguientes a una bajada dieron por cambiado el fichero
+        por su hora («File changed: … time …»).
+    """
+    trabajo, remoto = carpeta("bisync-trabajo"), carpeta("bisync-remoto")
+    (trabajo / "rclone.conf").write_text("", encoding="utf-8")
+    local.mkdir(parents=True)
+    (local / "ancla.txt").write_text("ancla", encoding="utf-8")      # bisync no admite un baseline vacío
+    flags = flags_bisync(con_ventana)
+    rc, _ = pasada_bisync(rclone, local, remoto, trabajo, flags_bisync(False), resync=True)
+    p.ver(f"{etiqueta}: el baseline, sin la ventana (el de una versión de antes)", rc, 0)
+    fichero, cambiadas = remoto / "del-remoto.txt", 0
+    for vez, texto in enumerate(("uno", "dos!")):
+        hora = HORA_PEDIDA + vez * 60_000_000_000
+        fichero.write_text(texto, encoding="utf-8")
+        os.utime(fichero, ns=(hora, hora))
+        rc, _ = pasada_bisync(rclone, local, remoto, trabajo, flags)
+        bajado = (local / "del-remoto.txt").read_text(encoding="utf-8") \
+            if (local / "del-remoto.txt").exists() else None
+        if con_ventana:
+            p.ver(f"{etiqueta}: la pasada {vez + 1}.ª baja el fichero", (rc, bajado), (0, texto))
+        for sigue in ("siguiente", "otra más"):
+            rc, salida = pasada_bisync(rclone, local, remoto, trabajo, flags)
+            movio = any("File changed" in lin and "time" in lin for lin in salida.splitlines())
+            cambiadas += movio
+            if con_ventana:
+                p.ver(f"{etiqueta}: la {sigue} a la bajada {vez + 1}.ª no ve cambios",
+                      (rc, "No changes found" in salida, "File changed" in salida),
+                      (0, True, False))
+        remota = fichero.stat().st_mtime_ns
+        if con_ventana:
+            p.ver(f"{etiqueta}: la hora del fichero en el remoto no se toca", remota, hora)
+        elif remota != hora:
+            p.nota(f"{etiqueta}: la hora del remoto acabó {(remota - hora) / 1e9:+.3f} s "
+                   f"de la que tenía")
+    return cambiadas
+
+
+def probar_hora(p: Prueba, tipo: str, raiz: Path) -> None:
+    """Prueba en el volumen `raiz` (de ese `tipo`) que lo que baja del remoto no vuelve a dar cambios.
+
+    Mide cuánto redondea la unidad y repasa la bajada dos veces: sin la ventana
+    (el fallo, si la unidad redondea) y con ella (el arreglo).
+
+    Raises:
+        Saltada: Si no hay rclone (`rclone_fijado()`).
+    """
+    rclone = rclone_fijado()
+    desvio = medir_hora(raiz)
+    p.nota(f"{tipo}: una hora con fracción queda {desvio / 1e9:+.6f} s respecto a la pedida")
+    sin = repasar_bajada(p, f"{tipo} sin la ventana", raiz / "sin-ventana", rclone, False)
+    if abs(desvio) >= 1_000_000:                                  # 1 ms
+        p.ver(f"{tipo}: sin la ventana, lo que baja se da por cambiado (el fallo)", sin > 0, True)
+    else:
+        p.ver(f"{tipo}: no la redondea, y sin la ventana nada sale cambiado", sin, 0)
+    repasar_bajada(p, f"{tipo} con la ventana", raiz / "con-ventana", rclone, True)
 
 
 # ---------------------------------------------------------------------------

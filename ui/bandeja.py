@@ -36,7 +36,8 @@ Lo que ofrece el menú (sección 5 del diseño, «Una unidad nueva» de la 3 y e
   va detrás de las conectadas, «(bloqueada)», con una sola entrada:
   «Desbloquear…», que le pide a Windows su ventana.
 - Fuera, lo del agente entero: **Sincronizar todo ahora** (solo con dos o más
-  dispositivos que sincronizar), **Pausar** / **Reanudar**, **Actualizar**
+  dispositivos que sincronizar), **Pausar** / **Reanudar**, **Atajos de
+  teclado…** (la ventana que los graba, `ui/atajos.py`), **Actualizar**
   (o **Buscar actualizaciones**, si no se sabe de ninguna) y **Cerrar el
   agente**; y la última línea, apagada, la versión del agente.
 
@@ -85,9 +86,10 @@ I_AVISO = "warn"
 I_REINTENTAR = "reload"
 I_LLAVERO = "llave"
 I_EXPULSAR = "expulsar"
+I_ATAJOS = "teclado"
 ICONOS = (I_CONFIGURAR, I_EXPLORAR, I_SINCRONIZAR, I_PAUSAR, I_REANUDAR, I_BLOQUEAR,
           I_DESBLOQUEAR, I_ATENDER, I_ACTUALIZAR, I_CERRAR, I_AVISO, I_REINTENTAR,
-          I_LLAVERO, I_EXPULSAR)
+          I_LLAVERO, I_EXPULSAR, I_ATAJOS)
 """Todos los iconos que puede llevar una entrada."""
 
 
@@ -660,9 +662,10 @@ def _del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
     entradas: list[Entrada] = []
     atendidas = [u for u in resumen.get("unidades") or [] if u.get("atendida")]
     if len(atendidas) >= 2:
+        # `todas`: no es usar una unidad, para lo que decide un atajo de teclado.
         entradas.append(Entrada("Sincronizar todo ahora", tuple(
             p for u in atendidas
-            for p in _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[])),
+            for p in _pide(equipo.PIDE_PASADA, id=u.get("id"), parejas=[], todas=True)),
             icono=I_SINCRONIZAR))
     if resumen.get("pausado"):
         entradas.append(Entrada("Reanudar", _pide(equipo.PIDE_SIGUE), icono=I_REANUDAR))
@@ -670,7 +673,25 @@ def _del_agente(resumen: Mapping[str, Any]) -> list[Entrada]:
         entradas.append(Entrada("Pausar", _pide(equipo.PIDE_PAUSA), icono=I_PAUSAR))
     if sum(bool(r.get("cifrada")) for r in resumen.get("equipo") or []) > 1:
         entradas.append(_pedir_al_iniciar(resumen, varias=True))
+    entradas += _atajos(resumen)
     return entradas
+
+
+def _atajos(resumen: Mapping[str, Any]) -> list[Entrada]:
+    """Devuelve «Atajos de teclado…», que abre la ventana que los graba.
+
+    Es del agente entero: un atajo actúa sobre la última unidad usada, no
+    sobre una. Mientras esa ventana está abierta, se dice y no se elige. Un
+    agente que no cuenta nada de atajos no la lleva. Donde no se pueden poner,
+    la entrada sigue: la ventana dice por qué.
+    """
+    dato = resumen.get("atajos")
+    if not isinstance(dato, Mapping):
+        return []
+    if dato.get("grabando"):
+        return [Entrada("Atajos de teclado: la ventana está abierta", activa=False,
+                        icono=I_ATAJOS)]
+    return [Entrada("Atajos de teclado…", _pide(equipo.PIDE_GRABAR_ATAJOS), icono=I_ATAJOS)]
 
 
 def _actualizar(resumen: Mapping[str, Any]) -> list[Entrada]:

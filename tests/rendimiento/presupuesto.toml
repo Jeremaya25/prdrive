@@ -71,8 +71,11 @@
 # y la orden de rclone que saldría (un rótulo, el texto y su leyenda: 3). Son fijos, no crecen con
 # los flags ni con lo que se escribe, y la medida es la del editor de la primera pareja, que es de
 # este dispositivo y por eso lleva la orden (la de una pareja del catálogo no la lleva).
+# Sube de 31 a 32 con #126 (15/10/2026): el botón «Guía de flags…» (1 TButton) junto al cuadro
+# donde se escribe. Es fijo, como los anteriores: no crece con los flags ni con lo que se escribe,
+# y la guía en sí es otra ventana que no se construye hasta pulsarlo, así que no cuenta aquí.
 "widgets.dispositivos" = 44
-"widgets.flags" = 31
+"widgets.flags" = 32
 "tema.abrir.dispositivos" = 0
 "tema.abrir.flags" = 0
 "estilos.dispositivos" = 0
@@ -111,13 +114,13 @@
 # vuelta (entrega 3), unas 5 000.
 [techo.linux]
 "consumo.servida.toques_unidad" = 5183
-"modulos.main" = 171
+"modulos.main" = 169
 "modulos.agente" = 157
 "modulos.wizard" = 234
 
 [techo.windows]
 "consumo.servida.toques_unidad" = 5003
-"modulos.main" = 171
+"modulos.main" = 169
 "modulos.agente" = 158
 "modulos.wizard" = 235
 

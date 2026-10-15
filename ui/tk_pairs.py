@@ -2318,6 +2318,23 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     ttk.Label(izquierda, text=theme.rotulo("Lo que escribes"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w", pady=(0, theme.E2))
     caja = theme.caja_texto(izquierda, width=40, height=8)
+
+    def abrir_guia() -> None:
+        """Abre la guía de flags, buscando el de la línea del cursor o el de la fila elegida.
+
+        Es de consulta: no toca lo escrito. El módulo de la guía se importa aquí, al pedirla,
+        para que abrir el editor no pague por ella.
+        """
+        from . import flags_guia, tk_flags_guia
+        consulta = (flags_guia.flag_de_la_linea(caja.get("1.0", "end-1c"),
+                                                len(caja.get("1.0", "insert")))
+                    or (tabla.elegida if tabla.elegida in estado["filas"] else ""))
+        tk_flags_guia.abrir(dlg, None if capa == model.ORIGEN_DEFAULTS else mode_name, consulta)
+
+    boton_guia = ttk.Button(izquierda, text="Guía de flags…", style="Quiet.TButton",
+                            command=abrir_guia)
+    theme.boton_icono(boton_guia, "flag", theme.ACENTO, theme.PAPEL, 14)
+    boton_guia.grid(row=0, column=0, sticky="e", pady=(0, theme.E2))
     caja.tag_configure("ojo", background=theme.AVISO_FONDO)      # la línea de un flag con aviso
     caja.insert("1.0", flags_editor.dump(flags))
     caja.grid(row=1, column=0, sticky="ew")

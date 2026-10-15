@@ -24,6 +24,11 @@ Se usa como `python agente.py ORDEN`:
 - `actualizar ID`: pone en esa raíz el código de la versión del agente.
 - `expulsar ID`: suelta esa unidad extraíble para poder quitarla (el «Expulsar» de
   la bandeja).
+- `atajos`: abre la ventana que graba los atajos de teclado (lo que hace la
+  bandeja con «Atajos de teclado…»).
+- `atajo ACCION`: hace lo de ese atajo (`sincronizar`, `carpeta`, `pausar`,
+  `ventana`) como si se hubiera pulsado: sirve para dárselo a un atajo del
+  propio escritorio.
 
 Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
 el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
@@ -115,6 +120,14 @@ solo se lee en las raíces de la lista. Una raíz pausada desde su ventana se
 queda así en `agente.json` (`Unidad.pausada`) hasta «Reanudar», aunque el
 agente se reinicie; la pausa de todo (`pausa`, la bandeja) no se guarda.
 
+Los **atajos de teclado globales** (`ui/atajos.py`) los pone el agente con el
+mecanismo del sistema: `RegisterHotKey` en el hilo de la bandeja en Windows,
+`XGrabKey` en X11 y el portal GlobalShortcuts en Wayland (`ui/atajos_linux.py`).
+Un atajo pulsado entra como una petición más (`atajo`), por el mismo camino
+que el menú de la bandeja, y se convierte en las peticiones de siempre sobre la
+última unidad usada. De fábrica no hay ninguno, y sin ninguno no se conecta a
+nada para ponerlos.
+
 Cuando hay una versión nueva lo dice una vez; «Actualizar» (`agente.py
 actualizar`) baja el código de la release y ejecuta SU instalador, que pone el
 agente nuevo al lado de este, lo para y arranca el nuevo.
@@ -147,7 +160,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from typing import Any, Iterable, Mapping, NamedTuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -156,10 +169,11 @@ if str(SCRIPT_DIR) not in sys.path:
 import penwatch  # noqa: E402
 from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
                     cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
-                    llavero, model, moderacion, parte, prioridad, store, update, vestibulo)
+                    llavero, model, moderacion, nombres, parte, prioridad, store, update,
+                    vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
-from ui import bandeja, prefs, volumen  # noqa: E402
+from ui import atajos, bandeja, prefs, volumen  # noqa: E402
 
 try:
     import tomllib
@@ -261,6 +275,21 @@ SALIDA_DE_LOTE = 16 * 1024 * 1024
 """Bytes que se leen de la salida de un `sync.py` que pasó varias parejas: hacen falta todos sus partes."""
 MIRAR_VERSION = 6 * 3600.0
 """Segundos entre comprobaciones de versión nueva (`update.check` guarda 24 h)."""
+ESPERA_ATAJOS = 180.0
+"""Segundos que se espera a que el sistema diga si ha puesto los atajos pedidos.
+
+`RegisterHotKey` y `XGrabKey` contestan en el acto; el portal, cuando el
+usuario confirma en la ventana del escritorio. Pasado el plazo se dan por no
+puestos («el sistema no ha contestado»).
+"""
+REINTENTO_ATAJOS = 30.0
+"""Segundos hasta volver a intentar poner los atajos si no se ha podido; se dobla en cada fallo.
+
+Al entrar en la sesión, el bus, el portal (que se arranca al pedirlo) o la
+bandeja pueden tardar más que lo que espera un intento.
+"""
+REINTENTO_ATAJOS_MAX = 900.0
+"""Segundos, como mucho, entre dos intentos de poner los atajos."""
 MIRAR_EMBLEMA = 60.0
 """Segundos entre lecturas de lo que una raíz enseña en la bandeja.
 
@@ -727,13 +756,34 @@ def orden_pregunta(nombre: str, espera: float, cambiada: bool) -> list[str]:
             *(["--cambiada"] if cambiada else [])]
 
 
+def orden_atajos(motivo: str = "") -> list[str]:
+    """Devuelve la orden que abre la ventana que graba los atajos de teclado.
+
+    Es `pregunta.py --atajos`, la entrada pequeña de las ventanitas del agente
+    (`ui/tk_atajos.py`).
+
+    Args:
+        motivo: Por qué en este equipo no se pueden poner: la ventana lo dice
+            y no ofrece grabar. Vacío si se puede.
+    """
+    return [python(ventana=True), str(SCRIPT_DIR / "pregunta.py"), "--atajos",
+            *(["--motivo", motivo] if motivo else [])]
+
+
 def app(raiz: Path) -> Path:
     """Devuelve la carpeta del programa dentro de una raíz."""
     return raiz / APP_SUBDIR
 
 
-HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin"})
-"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se ejecuta."""
+HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", "bin",
+                                 "keepassxc"})
+"""Carpetas que la huella deja fuera: lo que cambia con el uso y no se lee entero.
+
+`keepassxc/` es el programa del llavero y su configuración, que KeePassXC
+reescribe al usarlo. El programa SÍ se ejecuta, pero no por la huella: cada
+ejecutable se comprueba contra su SHA-256 en `common/pins.py` justo antes de
+lanzarlo (`keepassxc.comprobar()`), y esos dos ficheros sí entran en la huella.
+"""
 HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
 """Ficheros que la huella deja fuera: la configuración y el fichero de control."""
 HUELLA_SIN_EXTENSIONES = frozenset({".ico"})
@@ -760,8 +810,12 @@ def huella(raiz: Path) -> str | None:
     carpeta (`PYTHONPYCACHEPREFIX`, `_opciones_hijo()`). `bin/` tampoco: el
     agente no ejecuta el rclone de la unidad, pasa el suyo
     (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
-    lo que tarda en leerse un binario de 60 MB. `rclone.conf` entra: la opción
-    `ssh` de un remoto sftp es una orden.
+    lo que tarda en leerse un binario de 60 MB. `keepassxc/` tampoco (78 MB y
+    una configuración que cambia con el uso): lo que de ahí se lanza se
+    comprueba contra un SHA-256 fijado en `common/pins.py`, que sí entra en la
+    huella, antes de lanzarlo (`keepassxc.comprobar()`); las DLL y los demás
+    ficheros que van al lado del programa no se comprueban. `rclone.conf`
+    entra: la opción `ssh` de un remoto sftp es una orden.
     """
     base = app(raiz)
     rutas: list[Path] = []
@@ -807,16 +861,45 @@ def estado_de(raiz: Path) -> Path:
     return app(raiz) / "state"
 
 
-def nombre_de(raiz: Path, uid: str, recordado: str = "") -> str:
-    """Devuelve el nombre de la unidad en la flota.
+def nombre_guardado(unidad: equipo.Unidad | None, uid: str) -> str:
+    """Devuelve el nombre de una unidad que no se está viendo ahora.
 
-    Sale de su `state/fleet.json` (solo se lee); si no tiene, el que el agente
-    recuerda de ella y, si no, el principio del id.
+    Es el que el agente le conoció (`Unidad.nombre`) y, sin él,
+    `nombres.por_defecto()` con su id: la etiqueta del volumen solo se lee al
+    conectarla.
     """
-    guardado = store.read_json(estado_de(raiz) / "fleet.json").get("nombre")
-    if isinstance(guardado, str) and guardado.strip():
-        return guardado.strip()
-    return recordado or f"{APP_NAME.upper()} {uid[:8]}"
+    return (unidad.nombre if unidad is not None else "") or nombres.por_defecto(uid)
+
+
+def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = (),
+              con_etiqueta: bool = True) -> str:
+    """Devuelve el nombre con que se enseña la unidad conectada en `raiz`.
+
+    Es el de la bandeja, los avisos y el diario. Lo decide `nombres`: el que
+    alguien puso, y sin él la etiqueta del volumen o «prdrive · <id>». Lo que
+    se sabe de la unidad sale de su `state/fleet.json` (solo se lee): su
+    `nombre` y los equipos desde los que ha publicado, que dicen si ese nombre es
+    de verdad suyo o el del ordenador que la aprovisionó.
+
+    Args:
+        raiz: Donde está montada.
+        uid: Su id.
+        recordado: El nombre que el agente le conocía; vale si el fichero no
+            dice ninguno.
+        otros: Los nombres de las demás unidades: con uno igual se añade el
+            equipo (`nombres.distinguir()`).
+        con_etiqueta: Si se lee la etiqueta del volumen; una carpeta del equipo
+            no tiene la suya.
+    """
+    estado = store.read_json(estado_de(raiz) / "fleet.json")
+    guardado = estado.get("nombre")
+    guardado = guardado.strip() if isinstance(guardado, str) else ""
+    publicado = estado.get("publicado")
+    equipos = publicado.get("equipos") if isinstance(publicado, dict) else None
+    equipos = [e for e in equipos if isinstance(e, str)] if isinstance(equipos, list) else []
+    etiqueta = nombres.etiqueta_de(raiz) if con_etiqueta else ""
+    elegido = nombres.elegir(uid, guardado or recordado, etiqueta, equipos)
+    return nombres.distinguir(elegido, uid, otros)
 
 
 @dataclass(frozen=True)
@@ -1252,6 +1335,8 @@ class Conexion:
         compatible: Si es un volumen que se puede expulsar
             (`expulsar.compatible()`), o `None` si todavía no se ha mirado.
         compatible_leido: Cuándo se miró.
+        ventana: Si en la última vuelta tenía su ventana de runsync abierta: al
+            abrirse, la raíz cuenta como usada (`Agente.usadas`).
     """
     id: str
     raiz: Path
@@ -1290,6 +1375,7 @@ class Conexion:
     compatible: bool | None = None
     compatible_leido: float = -math.inf
     vista: dict | None = None
+    ventana: bool = False
     con_partes: bool = False
     leidos: dict = field(default_factory=dict)
     config_visto: int | None = None
@@ -1668,6 +1754,32 @@ class Agente:
         keepassxc_mirado: Cuándo se miró.
         navegador_mirado: Si ya se han mirado, al arrancar, las claves del
             navegador que dejó una unidad quitada sin expulsar.
+        poner_motor: Crea lo que pone los atajos de teclado en este sistema
+            (`poner_atajos()`), o `None` sin bandeja ni vigía (los tests).
+        atajos_motor: Lo que pone los atajos (`poner(combos)`, `cerrar()`,
+            `nombre`, `suspende`), una vez creado; `None` si no se puede.
+        atajos_reintento: Cuándo (`reloj`) se puede volver a intentar crearlo
+            tras no haber podido; `None` mientras no se haya intentado, e
+            infinito si no hay remedio (sin escritorio). Se intenta la primera
+            vez que hace falta, no al arrancar, así que sin atajos no se
+            conecta a nada.
+        atajos_fallos: Los intentos seguidos que han fallado.
+        atajos_motivo: Por qué no hay atajos en este equipo, si no los hay.
+        atajos_hechos: Lo que contesta el motor desde su hilo, `(combos,
+            rechazados)`: se recoge en cada vuelta.
+        atajos_pedidos: Lo último pedido al motor, por acción, o `None` si nada.
+        atajos_en_vuelo: Cuándo se le pidió, mientras no conteste.
+        atajos_errores: Por qué el sistema no ha dejado poner cada atajo, por
+            acción: lo que enseñan la bandeja y la ventana.
+        atajos_avisados: Las `(acción, combinación)` rechazadas ya avisadas.
+        atajos_prueba: Un «Guardar» que se está probando con el sistema:
+            `(vez, combos, rechazados al validarlos)`.
+        atajos_respuesta: Lo último contestado a un «Guardar» (`vez`,
+            `rechazados`, `guardados`), para la ventana que espera.
+        ventana_atajos: La ventana que graba los atajos, mientras está abierta.
+        usadas: Cuándo se usó por última vez cada raíz, por id: su ventana se
+            abrió, o se pidió algo de ella desde la bandeja, su ventana o un
+            atajo. Es lo que decide sobre qué unidad actúa un atajo.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1732,6 +1844,20 @@ class Agente:
     letras: int | None = None
     navegador_mirado: bool = False
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
+    poner_motor: Any = None
+    atajos_motor: Any = None
+    atajos_reintento: float | None = None
+    atajos_fallos: int = 0
+    atajos_motivo: str = ""
+    atajos_hechos: Any = field(default_factory=queue.SimpleQueue)
+    atajos_pedidos: dict[str, str] | None = None
+    atajos_en_vuelo: float | None = None
+    atajos_errores: dict[str, str] = field(default_factory=dict)
+    atajos_avisados: set[tuple[str, str]] = field(default_factory=set)
+    atajos_prueba: tuple[str, dict[str, str], dict[str, str]] | None = None
+    atajos_respuesta: dict | None = None
+    ventana_atajos: Any = None
+    usadas: dict[str, float] = field(default_factory=dict)
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1779,6 +1905,7 @@ class Agente:
         self._mirar_version(ahora)
         self._mirar_keepassxc(ahora)
         self._vigilar(ahora)
+        self._atajos(ahora)
         decision = None
         if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
@@ -1880,7 +2007,7 @@ class Agente:
         self.bitlocker_presentes = presentes
         for uid, raiz in vistas.items():
             if uid not in self.bitlocker:
-                diario(f"{self.ajustes.unidades[uid].nombre or uid[:8]}: bloqueada con "
+                diario(f"{nombre_guardado(self.ajustes.unidades[uid], uid)}: bloqueada con "
                        f"BitLocker en {raiz}")
         # La ventana de Windows de una que ya no está bloqueada (se abrió o se
         # quitó) se olvida, sin cerrarla: es de Windows.
@@ -1939,7 +2066,7 @@ class Agente:
             unidad = self.ajustes.unidades.get(uid)
             if unidad is None or not unidad.pide_al_conectar(equipo.CIFRADO_BITLOCKER):
                 continue
-            diario(f"{unidad.nombre or uid[:8]}: su ajuste pide la contraseña al conectarla")
+            diario(f"{nombre_guardado(unidad, uid)}: su ajuste pide la contraseña al conectarla")
             self._desbloquear_bitlocker(uid, ahora)
 
     def _bloqueada_bitlocker(self, uid: str) -> Path | None:
@@ -1980,7 +2107,7 @@ class Agente:
             uid: El id de una unidad de la lista (`_es_de_bitlocker()`).
             ahora: La hora del reloj del agente.
         """
-        nombre = self.ajustes.unidades[uid].nombre or uid[:8]
+        nombre = nombre_guardado(self.ajustes.unidades[uid], uid)
         raiz = self._bloqueada_bitlocker(uid)
         if raiz is None:
             diario(f"{nombre}: no está bloqueada con BitLocker ahora")
@@ -2045,6 +2172,8 @@ class Agente:
                     or self.cortada is not None or self.urgentes
                     or self.cambio_de_red is not None or self.navegador_tras_cierre
                     or not self.navegador_mirado or not self.peticiones.empty()
+                    or self.ventana_atajos is not None or self.atajos_en_vuelo is not None
+                    or self.atajos_prueba is not None or not self.atajos_hechos.empty()
                     or self.reloj() < self.rafaga_hasta)
 
     def _fantasmas(self, abiertas: dict[str, Path]) -> None:
@@ -2065,7 +2194,7 @@ class Agente:
             del abiertas[uid]
             if uid not in self.fantasmas:
                 self.fantasmas.add(uid)
-                avisar(f"{unidad.nombre or APP_NAME}: el volumen no responde",
+                avisar(f"{nombre_guardado(unidad, uid)}: el volumen no responde",
                        f"{unidad.ruta} sigue ahí, pero su contenedor está cerrado. "
                        f"Bloquéala y vuelve a desbloquearla.", True)
 
@@ -2080,7 +2209,7 @@ class Agente:
             if uid in abiertas:
                 if uid in self.ausentes:
                     self.ausentes.discard(uid)
-                    diario(f"{unidad.nombre or uid[:8]}: la raíz vuelve a estar en "
+                    diario(f"{nombre_guardado(unidad, uid)}: la raíz vuelve a estar en "
                            f"{unidad.ruta}")
                 continue
             if unidad.cifrada:
@@ -2093,20 +2222,27 @@ class Agente:
                 if hay:
                     if uid in self.ausentes:
                         self.ausentes.discard(uid)
-                        diario(f"{unidad.nombre or uid[:8]}: su contenedor vuelve a "
+                        diario(f"{nombre_guardado(unidad, uid)}: su contenedor vuelve a "
                                f"estar en {unidad.contenedor}")
                 elif uid not in self.ausentes:
                     self.ausentes.add(uid)
-                    avisar(f"{unidad.nombre or APP_NAME}: no encuentro su contenedor",
+                    avisar(f"{nombre_guardado(unidad, uid)}: no encuentro su contenedor",
                            f"La raíz cifrada de este equipo tenía que estar en "
                            f"{unidad.contenedor}. Si lo has movido, vuelve a ponerlo "
                            f"ahí o reinstala.", True)
                 continue
             if uid not in self.ausentes:
                 self.ausentes.add(uid)
-                avisar(f"{unidad.nombre or APP_NAME}: no encuentro su carpeta",
+                avisar(f"{nombre_guardado(unidad, uid)}: no encuentro su carpeta",
                        f"La raíz de este equipo tenía que estar en {unidad.ruta}. "
                        f"Si la has movido, vuelve a ponerla ahí o reinstala.", True)
+
+    def _nombres_de_otras(self, uid: str) -> set[str]:
+        """Devuelve los nombres que ya tienen las demás unidades, conectadas o de la lista."""
+        otros = {c.nombre for k, c in self.conexiones.items() if k != uid}
+        otros.update(u.nombre for k, u in self.ajustes.unidades.items()
+                     if k != uid and u.nombre)
+        return otros
 
     def _conectar(self, uid: str, raiz: Path, ahora: float) -> None:
         """Da por conectada una unidad que se ha visto `ESTABLE` veces.
@@ -2116,7 +2252,9 @@ class Agente:
         nada suyo. Si no, se atiende según su modo.
         """
         unidad = self.ajustes.unidades.get(uid)
-        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "")
+        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "",
+                           self._nombres_de_otras(uid),
+                           con_etiqueta=not (unidad is not None and unidad.es_raiz))
         con = Conexion(uid, raiz, nombre, ahora)
         # Un lock con nuestro pid es de la conexión anterior (se desenchufó y
         # no se escribe en una unidad que no está): si no se la vuelve a servir
@@ -2298,7 +2436,7 @@ class Agente:
                 continue
             del self.cerradas[uid]
             self.vestibulos[uid] = str(raiz)
-            nombre = unidad.nombre or uid[:8]
+            nombre = nombre_guardado(unidad, uid)
             if not unidad.pide_al_conectar(equipo.CIFRADO_VERACRYPT):
                 diario(f"{nombre}: cifrada y cerrada en {raiz}; no se abre sola (su "
                        f"«Pedir la contraseña al conectarla» está apagado)")
@@ -2466,6 +2604,7 @@ class Agente:
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    **_opciones_hijo(equipo.DIR, separado=True))
             diario(f"{con.nombre}: ventana abierta")
+            self._usada(con.id, self.reloj())
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir la ventana: {e}")
 
@@ -2670,6 +2809,9 @@ class Agente:
         ventana = store.vivo_en_este_arranque(self._registro(con, NOMBRE_VENTANA), HOST)
         if ventana:
             con.pausa = ahora
+            if not con.ventana:
+                self._usada(con.id, ahora)      # se acaba de abrir su ventana
+        con.ventana = bool(ventana)
         if otro is not None and con.lock is not None:
             con.lock = None                 # el lock ya es de otro
         self._cargar_servicio(con)
@@ -3745,7 +3887,7 @@ class Agente:
         Returns:
             `True` si lanzó VeraCrypt.
         """
-        nombre = unidad.nombre or APP_NAME
+        nombre = nombre_guardado(unidad, unidad.id)
         if unidad.id in self.conexiones or unidad.id in self.vistas:
             diario(f"{nombre}: ya está abierta")
             return False
@@ -3814,7 +3956,7 @@ class Agente:
                     or ahora - d.desde >= ESPERA_ABRIR):
                 del self.desbloqueos[uid]
                 unidad = self.ajustes.unidades.get(uid)
-                diario(f"{(unidad.nombre if unidad else '') or uid[:8]}: no se ha "
+                diario(f"{nombre_guardado(unidad, uid)}: no se ha "
                        f"desbloqueado (¿contraseña cancelada?); sigue bloqueada")
 
     def _bloqueos(self, ahora: float) -> None:
@@ -3830,7 +3972,7 @@ class Agente:
             if unidad is None or not unidad.cifrada:
                 del self.bloqueos[uid]
                 continue
-            nombre = unidad.nombre or APP_NAME
+            nombre = nombre_guardado(unidad, uid)
             con = self.conexiones.get(uid)
             if b.proc is None:
                 if con is None and uid not in self.fantasmas:
@@ -4037,8 +4179,7 @@ class Agente:
         for uid, e in list(self.expulsiones.items()):
             con = self.conexiones.get(uid)
             unidad = self.ajustes.unidades.get(uid)
-            nombre = con.nombre if con is not None else ((unidad.nombre if unidad else "")
-                                                         or uid[:8])
+            nombre = con.nombre if con is not None else nombre_guardado(unidad, uid)
             if e.resultado is not None:
                 if not e.avisada:
                     e.avisada = True
@@ -4411,14 +4552,29 @@ class Agente:
         """
         self.peticiones.put(dict(peticion))
 
+    def _usada(self, uid: Any, ahora: float) -> None:
+        """Apunta que se acaba de usar esa raíz, si es una conectada.
+
+        Es lo que decide sobre qué unidad actúa un atajo (`atajos.objetivo()`).
+        """
+        if isinstance(uid, str) and uid in self.conexiones:
+            self.usadas[uid] = ahora
+
     def _buzon(self, ahora: float) -> None:
-        """Atiende las peticiones del buzón de `agente.pide` y las de la bandeja."""
+        """Atiende las peticiones del buzón de `agente.pide` y las de la bandeja.
+
+        Lo que la bandeja pide de UNA raíz cuenta como usarla; «Sincronizar todo
+        ahora» (`todas`) no.
+        """
         pendientes = equipo.recoger()
         while True:
             try:
-                pendientes.append(self.peticiones.get_nowait())
+                p = self.peticiones.get_nowait()
             except queue.Empty:
                 break
+            if isinstance(p, dict) and not p.get("todas"):
+                self._usada(p.get("id"), ahora)
+            pendientes.append(p)
         for p in pendientes:
             try:
                 self._atender_peticion(p, ahora)
@@ -4444,6 +4600,7 @@ class Agente:
                     diario(f"{con.nombre}: su buzón pide {p.get('pide')!r}, que no es "
                            f"cosa de una raíz; ignorado")
                     continue
+                self._usada(con.id, ahora)
                 try:
                     self._atender_peticion({**p, "id": con.id}, ahora)
                 except Exception as e:                  # noqa: BLE001
@@ -4457,8 +4614,9 @@ class Agente:
         desbloquear o bloquear una raíz cifrada, pedir a Windows que desbloquee
         una unidad con BitLocker, abrir la ventana o la carpeta
         de una raíz, expulsar una unidad extraíble, despertar, sondear, un cambio de red, cambiar un ajuste,
-        una pasada urgente, actualizar el agente o una raíz, pausa, sigue y
-        parar.
+        una pasada urgente, actualizar el agente o una raíz, un atajo de
+        teclado pulsado, guardar los atajos o abrir la ventana que los graba,
+        pausa, sigue y parar.
 
         Args:
             p: La petición.
@@ -4497,7 +4655,7 @@ class Agente:
                 self._guardar(self.ajustes.con_unidad(replace(unidad, pausada=True)))
             self.urgentes = [u for u in self.urgentes if u[0] != uid]
             con = self.conexiones.get(uid)
-            nombre = con.nombre if con is not None else (unidad.nombre or uid[:8])
+            nombre = con.nombre if con is not None else nombre_guardado(unidad, uid)
             if con is not None:
                 con.reanudar = False
                 dlog(con.raiz, "servicio (agente del equipo) en pausa: «Pausar» desde su "
@@ -4535,7 +4693,7 @@ class Agente:
                 con.cambiada = False
                 unidad = replace(unidad, codigo=con.huella or "")
             self._guardar(self.ajustes.con_unidad(unidad))
-            diario(f"{unidad.nombre or nombre or uid[:8]}: modo {modo}")
+            diario(f"{unidad.nombre or nombre}: modo {modo}")
         elif que == equipo.PIDE_RAIZ:
             # Lo que pide el asistente vuelto a pasar con el agente instalado:
             # la raíz que acaba de poner en este equipo.
@@ -4555,7 +4713,7 @@ class Agente:
                         ruta=ruta.strip(), contenedor=hc.strip())))
             self.ausentes.discard(uid)
             self.pedidas.add(uid)           # la acaba de dejar abierta el asistente
-            diario(f"raíz de este equipo añadida: {nombre or uid[:8]} en {ruta}"
+            diario(f"raíz de este equipo añadida: {nombre or nombres.por_defecto(uid)} en {ruta}"
                    + (f" (cifrada, contenedor {hc})" if hc else ""))
         elif que == equipo.PIDE_DESBLOQUEAR and self._es_de_bitlocker(uid):
             self._desbloquear_bitlocker(uid, ahora)
@@ -4625,6 +4783,12 @@ class Agente:
             self._pedir_actualizacion(uid, ahora)
         elif que == equipo.PIDE_BUSCAR_VERSION:
             self._buscar_ahora(ahora)
+        elif que == equipo.PIDE_ATAJO:
+            self._atajo(p.get("accion"), ahora)
+        elif que == equipo.PIDE_ATAJOS:
+            self._guardar_atajos(p.get("atajos"), p.get("vez"))
+        elif que == equipo.PIDE_GRABAR_ATAJOS:
+            self._abrir_atajos()
         elif que == equipo.PIDE_PAUSA:
             self.pausado = True
         elif que == equipo.PIDE_SIGUE:
@@ -4659,12 +4823,266 @@ class Agente:
         if unidad is None or unidad.es_raiz:
             diario(f"ajuste {clave} de {uid[:8]!r}: no es una unidad de la lista")
             return
-        nombre = unidad.nombre or uid[:8]
+        nombre = nombre_guardado(unidad, uid)
         if valor is not None and not isinstance(valor, bool):
             diario(f"{nombre}: ajuste {clave} = {valor!r}: no es sí, no ni lo de siempre")
             return
         self._guardar(self.ajustes.con_unidad(replace(unidad, **{clave: valor})))
         diario(f"{nombre}: ajuste {clave} = {valor}")
+
+    # Los atajos de teclado globales (`ui/atajos.py`).
+
+    def _motor_de_atajos(self, ya: bool = False) -> Any:
+        """Devuelve lo que pone los atajos, creándolo cuando hace falta.
+
+        Hace falta con algún atajo guardado o al abrir la ventana que los
+        graba: un equipo sin ninguno no se conecta a X ni al portal. Si no se
+        puede, `atajos_motivo` dice por qué y se vuelve a intentar más tarde,
+        cada vez más espaciado (`REINTENTO_ATAJOS`, hasta
+        `REINTENTO_ATAJOS_MAX`). Sin escritorio no: eso no cambia sin
+        reiniciar el agente.
+
+        Args:
+            ya: Intentarlo aunque no toque todavía: lo pide el usuario al abrir
+                la ventana que los graba.
+        """
+        if self.atajos_motor is not None or self.atajos_reintento == math.inf:
+            return self.atajos_motor
+        ahora = self.reloj()
+        if self.atajos_reintento is not None and ahora < self.atajos_reintento and not ya:
+            return None
+        if self.poner_motor is None:
+            motor, motivo = None, atajos.SIN_BANDEJA
+        else:
+            try:
+                motor, motivo = self.poner_motor()
+            except Exception as e:                      # noqa: BLE001
+                motor, motivo = None, f"no se pueden poner: {e}"
+        if motor is not None:
+            self.atajos_motor, self.atajos_motivo = motor, ""
+            self.atajos_reintento, self.atajos_fallos = None, 0
+            diario(f"atajos de teclado: con {motor.nombre}")
+            return motor
+        self.atajos_fallos += 1
+        if self.poner_motor is None or motivo == atajos.SIN_ESCRITORIO:
+            self.atajos_reintento = math.inf
+            luego = ""
+        else:
+            espera = min(REINTENTO_ATAJOS_MAX, REINTENTO_ATAJOS * 2 ** (self.atajos_fallos - 1))
+            self.atajos_reintento = ahora + espera
+            luego = f"; lo vuelvo a intentar en {espera:g} s"
+        if motivo != self.atajos_motivo:
+            diario(f"atajos de teclado: no se pueden poner aquí ({motivo}){luego}")
+        self.atajos_motivo = motivo
+        return None
+
+    def _grabando_atajos(self) -> bool:
+        """Indica si la ventana que graba los atajos está abierta."""
+        return self.ventana_atajos is not None and self.ventana_atajos.poll() is None
+
+    def _atajos_guardados(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Separa los atajos de `agente.json` en los que valen y los que no (`atajos.validar()`).
+
+        Lo que se guarda desde la ventana ya vale, pero `agente.json` se puede
+        haber escrito a mano o con otra versión: una combinación sin Ctrl, Alt
+        ni el logotipo, Ctrl+Alt con una letra en Windows (AltGr) o la misma en
+        dos acciones no se pone nunca.
+
+        Returns:
+            `(validos, rechazados)`, los dos por acción.
+        """
+        return atajos.validar(self.ajustes.atajos, IS_WIN)
+
+    def _atajos_deseados(self) -> dict[str, str]:
+        """Devuelve los atajos que tiene que haber puestos ahora mismo, por acción.
+
+        Los de un «Guardar» mientras se prueban; ninguno mientras la ventana
+        que los graba está abierta, para que la combinación que se pulse le
+        llegue a ella y no dispare su acción (salvo con el portal, que no los
+        suelta: `suspende`); si no, los guardados que valen.
+        """
+        if self.atajos_prueba is not None:
+            return dict(self.atajos_prueba[1])
+        if self._grabando_atajos() and getattr(self.atajos_motor, "suspende", True):
+            return {}
+        return self._atajos_guardados()[0]
+
+    def _atajos(self, ahora: float) -> None:
+        """Pone al día los atajos de teclado con el sistema.
+
+        Recoge lo que ha contestado el motor desde su hilo, da por no puesto lo
+        que lleva `ESPERA_ATAJOS` sin respuesta y, si lo que tiene que haber
+        (`_atajos_deseados()`) no es lo último pedido, lo pide. Una petición a
+        la vez: el portal puede tener al usuario delante de su ventana.
+        """
+        if self.ventana_atajos is not None and self.ventana_atajos.poll() is not None:
+            self.ventana_atajos = None
+            diario("se ha cerrado la ventana de los atajos de teclado")
+        for accion, motivo in self._atajos_guardados()[1].items():
+            combo = self.ajustes.atajos.get(accion, "")
+            if (accion, combo) not in self.atajos_avisados:
+                self.atajos_avisados.add((accion, combo))
+                diario(f"atajo guardado que no vale: {accion} {combo!r} ({motivo})")
+                avisar(*atajos.aviso_de_rechazo(accion, combo, motivo, IS_WIN))
+        while True:
+            try:
+                combos, rechazados = self.atajos_hechos.get_nowait()
+            except queue.Empty:
+                break
+            if self.atajos_en_vuelo is not None and combos == self.atajos_pedidos:
+                self.atajos_en_vuelo = None
+                self._atajos_puestos(combos, rechazados)
+        if self.atajos_en_vuelo is not None and ahora - self.atajos_en_vuelo >= ESPERA_ATAJOS:
+            combos = dict(self.atajos_pedidos or {})
+            self.atajos_en_vuelo = None
+            diario(f"atajos de teclado: {self.atajos_motor.nombre} no ha contestado en "
+                   f"{ESPERA_ATAJOS:g} s")
+            self._atajos_puestos(combos, {a: atajos.SIN_RESPUESTA for a in combos})
+        deseados = self._atajos_deseados()
+        if self.atajos_en_vuelo is not None or deseados == self.atajos_pedidos \
+                or not (deseados or self.atajos_pedidos):
+            return
+        motor = self._motor_de_atajos()
+        if motor is None:
+            if self.atajos_prueba is not None:
+                self._atajos_puestos(deseados, {a: self.atajos_motivo for a in deseados})
+            return
+        self.atajos_pedidos, self.atajos_en_vuelo = deseados, ahora
+        motor.poner(deseados)
+
+    def _atajos_puestos(self, combos: dict[str, str], rechazados: Mapping[str, str]) -> None:
+        """Hace lo que toca con lo que el sistema ha dejado poner.
+
+        Si era un «Guardar» que se probaba, se guardan solo los que ha dejado
+        (los demás quedan sin asignar) y se contesta a la ventana que espera; si
+        ya no está abierta, un aviso dice cuáles no. Si nadie ha decidido (se
+        canceló en la ventana del escritorio, el sistema no contestó:
+        `atajos.SIN_DECIDIR`), no se guarda nada y siguen los de antes, que la
+        vuelta siguiente vuelve a poner. Si eran los guardados de siempre (al
+        arrancar, al cerrarse la ventana), los que no ha dejado siguen
+        guardados (quien los tenía puede soltarlos) y se avisa una vez de cada
+        uno.
+
+        Args:
+            combos: Lo que se pidió, por acción.
+            rechazados: Por qué no se ha podido poner cada uno de los que no.
+        """
+        if self.atajos_prueba is not None and combos == self.atajos_prueba[1]:
+            vez, pedidos, previos = self.atajos_prueba
+            self.atajos_prueba = None
+            todos = {**previos, **rechazados}
+            nadie = atajos.sin_decidir(rechazados)
+            if nadie:
+                diario(f"atajos de teclado: no se ha guardado nada ({nadie}); siguen los de antes")
+            else:
+                self._guardar(replace(self.ajustes, atajos={a: c for a, c in pedidos.items()
+                                                             if a not in rechazados}))
+                self.atajos_errores = dict(todos)
+                diario("atajos de teclado guardados: " + (", ".join(
+                    f"{a} {atajos.texto(c, IS_WIN)}" for a, c in self.ajustes.atajos.items())
+                    or "ninguno") + "".join(f"; {a} no: {m}" for a, m in todos.items()))
+            self.atajos_respuesta = {"vez": vez, "rechazados": todos,
+                                     "guardados": dict(self.ajustes.atajos)}
+            if not self._grabando_atajos():
+                if nadie:
+                    avisar(*atajos.aviso_sin_guardar(nadie))
+                    return
+                for accion, motivo in todos.items():
+                    avisar(*atajos.aviso_de_rechazo(accion, pedidos.get(accion, ""), motivo,
+                                                    IS_WIN))
+            return
+        if combos != self._atajos_guardados()[0]:
+            return                      # la suspensión mientras se graba: nada que decir
+        self.atajos_errores = dict(rechazados)
+        for accion, motivo in rechazados.items():
+            if (accion, combos.get(accion, "")) not in self.atajos_avisados:
+                self.atajos_avisados.add((accion, combos.get(accion, "")))
+                avisar(*atajos.aviso_de_rechazo(accion, combos.get(accion, ""), motivo, IS_WIN))
+
+    def _atajo(self, accion: Any, ahora: float) -> None:
+        """Hace lo de un atajo pulsado sobre la última unidad usada (`atajos.pulsado()`).
+
+        Lo que hace son las peticiones de la bandeja de siempre, atendidas aquí
+        mismo; si la acción no se ve sola, un aviso lo dice. Con la ventana que
+        graba los atajos abierta no hace nada: es la combinación que se está
+        grabando.
+        """
+        if accion not in atajos.ACCIONES:
+            diario(f"atajo desconocido: {accion!r}")
+            return
+        if self._grabando_atajos():
+            diario(f"atajo «{atajos.NOMBRES[accion]}» con la ventana de los atajos abierta: "
+                   f"no hago nada")
+            return
+        r = atajos.pulsado(accion, self.resumen(), self.usadas,
+                           {uid: con.desde for uid, con in self.conexiones.items()})
+        con = self.conexiones.get(r.unidad)
+        diario(f"atajo «{atajos.NOMBRES[accion]}»: {con.nombre if con else 'ninguna unidad'}")
+        for p in r.peticiones:
+            self._atender_peticion(dict(p), ahora)
+        self._usada(r.unidad, ahora)
+        if r.aviso is not None:
+            avisar(*r.aviso)
+
+    def _guardar_atajos(self, pedidos: Any, vez: Any) -> None:
+        """Atiende el «Guardar» de la ventana de los atajos: los prueba con el sistema.
+
+        Lo que no vale ni para pedirlo (`atajos.validar()`) se rechaza ya; lo
+        demás se pone de verdad (`atajos_prueba`) y se guarda lo que el sistema
+        deje (`_atajos_puestos()`). Sin ninguno que pedir, se guarda que no hay
+        ninguno.
+
+        Args:
+            pedidos: Los atajos de la ventana, por acción.
+            vez: Lo que identifica este «Guardar» en la respuesta.
+        """
+        validos, rechazados = atajos.validar(pedidos, IS_WIN)
+        vez = vez if isinstance(vez, str) else ""
+        if not validos:
+            self._guardar(replace(self.ajustes, atajos={}))
+            self.atajos_errores = dict(rechazados)
+            self.atajos_respuesta = {"vez": vez, "rechazados": dict(rechazados), "guardados": {}}
+            diario("atajos de teclado guardados: ninguno")
+            return
+        if self._motor_de_atajos() is None:
+            todos = {**rechazados, **{a: self.atajos_motivo for a in validos}}
+            self.atajos_errores = dict(todos)
+            self.atajos_respuesta = {"vez": vez, "rechazados": todos,
+                                     "guardados": dict(self.ajustes.atajos)}
+            diario(f"atajos de teclado: no se pueden guardar ({self.atajos_motivo})")
+            return
+        self.atajos_prueba = (vez, validos, rechazados)
+
+    def _abrir_atajos(self) -> None:
+        """Abre la ventana que graba los atajos de teclado («Atajos de teclado…»).
+
+        Una a la vez. Si en este equipo no se pueden poner, la ventana lo dice
+        y no ofrece grabar nada (`--motivo`).
+        """
+        if self._grabando_atajos():
+            diario("la ventana de los atajos de teclado ya está abierta")
+            return
+        if not hay_pantalla():
+            diario("sin entorno gráfico; no hay dónde abrir la ventana de los atajos")
+            return
+        motor = self._motor_de_atajos(ya=True)
+        try:
+            self.ventana_atajos = lanzar(orden_atajos("" if motor is not None
+                                                      else self.atajos_motivo),
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         **_opciones_hijo(equipo.DIR))
+            diario("ventana de los atajos de teclado abierta")
+        except OSError as e:
+            diario(f"no he podido abrir la ventana de los atajos de teclado: {e}")
+
+    def _resumen_de_atajos(self) -> dict:
+        """Devuelve lo que se cuenta de los atajos en `resumen()` (`atajos.resumen_de()`)."""
+        mecanismo, motivo = atajos.mecanismo(IS_WIN, os.environ)
+        if self.atajos_motivo:
+            mecanismo, motivo = None, self.atajos_motivo
+        errores = {**self.atajos_errores, **self._atajos_guardados()[1]}
+        return atajos.resumen_de(mecanismo, motivo, self.ajustes.atajos, errores,
+                                 self._grabando_atajos(), self.atajos_respuesta)
 
     def _abrir(self, uid: str, ahora: float, explorador: bool = False,
                llavero: bool = False) -> None:
@@ -4703,12 +5121,12 @@ class Agente:
             else:
                 self._lanzar_ventana(con)
         elif llavero:
-            diario(f"{que} {unidad.nombre or uid[:8]}: no está abierta aquí ahora")
+            diario(f"{que} {nombre_guardado(unidad, uid)}: no está abierta aquí ahora")
         elif unidad.cifrada and uid not in self.ausentes:
             self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
                               else "para abrirla", abrir=not explorador, explorar=explorador)
         else:
-            diario(f"{que} {unidad.nombre or uid[:8]}: no está aquí ahora")
+            diario(f"{que} {nombre_guardado(unidad, uid)}: no está aquí ahora")
 
     def _explorar(self, con: Conexion) -> None:
         """Abre esa raíz en el explorador de archivos (`explorar()`)."""
@@ -4898,7 +5316,7 @@ class Agente:
                              "llavero_conflicto": len(con.copias),
                              "expulsable": self._expulsable(con),
                              "expulsando": con.id in self.expulsiones})
-        cerradas = [u.nombre or u.id[:8] for u in self.ajustes.cifradas.values()
+        cerradas = [nombre_guardado(u, u.id) for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
                 "pasada": None if self.pasada is None else {
@@ -4916,16 +5334,16 @@ class Agente:
                                     or self.ajustes.unidades[u].ruta)
                                    for u in self.ausentes if u in self.ajustes.unidades),
                 "bloqueadas": sorted(cerradas),
-                "desbloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                "desbloqueando": sorted(nombre_guardado(self.ajustes.unidades[u], u)
                                         for u in self.desbloqueos
                                         if u in self.ajustes.unidades),
-                "bloqueando": sorted(self.ajustes.unidades[u].nombre or u[:8]
+                "bloqueando": sorted(nombre_guardado(self.ajustes.unidades[u], u)
                                      for u in self.bloqueos if u in self.ajustes.unidades),
                 "fantasmas": sorted(self.ajustes.unidades[u].ruta for u in self.fantasmas
                                     if u in self.ajustes.unidades),
                 # Las unidades de la lista enchufadas y bloqueadas con BitLocker.
                 "bitlocker": sorted(
-                    ({"id": uid, "nombre": self.ajustes.unidades[uid].nombre or uid[:8],
+                    ({"id": uid, "nombre": nombre_guardado(self.ajustes.unidades[uid], uid),
                       "raiz": str(raiz),
                       "desbloqueando": self._desbloqueando_bitlocker(uid),
                       "pedir_al_conectar": self.ajustes.unidades[uid].pide_al_conectar(
@@ -4934,7 +5352,7 @@ class Agente:
                      if self._bloqueada_bitlocker(uid) is not None),
                     key=lambda b: (b["nombre"], b["id"])),
                 # Las raíces de este equipo, con su estado: lo que pinta la bandeja.
-                "equipo": [{"id": uid, "nombre": u.nombre or APP_NAME, "ruta": u.ruta,
+                "equipo": [{"id": uid, "nombre": nombre_guardado(u, uid), "ruta": u.ruta,
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}
                            for uid, u in self.ajustes.raices.items()],
                 "pedir_al_iniciar": self.ajustes.pedir_al_iniciar,
@@ -4943,7 +5361,9 @@ class Agente:
                 "ultima_pasada": self.ultima_buena,
                 "version": self.version, "nueva": self.nueva,
                 "actualizando": self._actualizandose(),
-                "buscando": self.buscando}
+                "buscando": self.buscando,
+                # Los atajos de teclado: lo que enseñan la bandeja y su ventana.
+                "atajos": self._resumen_de_atajos()}
 
     def _escribir_estado(self) -> None:
         """Escribe `estado.json` y le pasa la vista a la bandeja, si cambian."""
@@ -5219,6 +5639,76 @@ def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
     return b
 
 
+class MotorDeBandeja:
+    """Los atajos de teclado de Windows: los pone la bandeja, en su hilo (`RegisterHotKey`).
+
+    Da a la bandeja la forma de los motores de Linux (`ui/atajos_linux.py`):
+    `poner()`, `cerrar()`, `nombre` y `suspende`.
+
+    Args:
+        bandeja_: La bandeja de Windows, ya arrancada.
+    """
+
+    nombre = atajos.NOMBRE_MECANISMO[atajos.WINDOWS]
+    suspende = True
+
+    def __init__(self, bandeja_: Any) -> None:
+        """Guarda la bandeja."""
+        self.bandeja = bandeja_
+
+    def poner(self, combos: dict[str, str]) -> None:
+        """Pide a la bandeja estos atajos; sin ventana, ninguno se ha podido poner."""
+        if not self.bandeja.poner_atajos(combos) and self.bandeja.atajos_puestos is not None:
+            self.bandeja.atajos_puestos(dict(combos),
+                                        {a: atajos.SIN_BANDEJA for a in combos})
+
+    def cerrar(self) -> None:
+        """No hace nada: los atajos se sueltan al cerrarse la ventana de la bandeja."""
+
+
+def poner_atajos(agente: Agente, vigia: Vigia) -> tuple[Any, str]:
+    """Crea lo que pone los atajos de teclado globales en este equipo.
+
+    Punto de indirección: los tests ponen uno de mentira. Lo llama el agente
+    la primera vez que hace falta (`Agente._motor_de_atajos()`), no al
+    arrancar.
+
+    En Windows es la bandeja (`MotorDeBandeja`): sin ella no hay hilo con bucle
+    de mensajes que reciba `WM_HOTKEY`. En Linux, `XGrabKey` en X11 y el portal
+    en Wayland (`ui/atajos_linux.py`), cada uno en su hilo. Cada atajo pulsado
+    es una petición más del agente (`atajo`), y lo que contesta el sistema al
+    ponerlos va a `Agente.atajos_hechos`; las dos cosas despiertan al vigía.
+
+    Returns:
+        `(motor, "")`, o `(None, por qué no se puede)`.
+    """
+    mecanismo, motivo = atajos.mecanismo(IS_WIN, os.environ)
+    if mecanismo is None:
+        return None, motivo
+
+    def pulsado(accion: str) -> None:
+        """Pasa al agente un atajo pulsado y lo despierta."""
+        agente.pedir({"pide": equipo.PIDE_ATAJO, "accion": accion})
+        vigia.despertar()
+
+    def puestos(combos: dict, rechazados: dict) -> None:
+        """Pasa al agente lo que ha dejado poner el sistema y lo despierta."""
+        agente.atajos_hechos.put((combos, rechazados))
+        vigia.despertar()
+
+    if IS_WIN:
+        if agente.bandeja is None or not getattr(agente.bandeja, "hwnd", None):
+            return None, atajos.SIN_BANDEJA
+        agente.bandeja.atajos_puestos = puestos
+        return MotorDeBandeja(agente.bandeja), ""
+    from ui import atajos_linux
+    motor = atajos_linux.poner(mecanismo, pulsado, puestos)
+    if not motor.arrancar():
+        motor.cerrar()
+        return None, motor.motivo or "no se han podido poner"
+    return motor, ""
+
+
 def poner_red(agente: Agente, vigia: Vigia) -> Any:
     """Devuelve lo que oye los cambios de red, o `None` si no se oye ninguno.
 
@@ -5396,6 +5886,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     agente.bandeja = poner_bandeja(agente, vigia)
     agente.avisos_de_red = poner_red(agente, vigia)
     agente.avisos_carpeta = poner_avisos_carpeta(agente, vigia)
+    agente.poner_motor = lambda: poner_atajos(agente, vigia)
     oyente_del_buzon = poner_buzon(agente, vigia)
     # Sin quien avise de los montajes (Windows sin bandeja) se recorre como
     # penwatch; con él, el recorrido de respaldo y las rachas tras cada aviso.
@@ -5421,6 +5912,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
             agente.avisos_carpeta.cerrar()
         if oyente_del_buzon is not None:
             oyente_del_buzon.cerrar()
+        if agente.atajos_motor is not None:
+            agente.atajos_motor.cerrar()
         if agente.bandeja is not None:
             agente.bandeja.cerrar()
         info = store.read_json(equipo.lock_json())
@@ -5517,6 +6010,19 @@ def cmd_status(_args: argparse.Namespace) -> int:
         else:
             print(f"Cambios de red: no los oye; un remoto sin conexión se prueba cada "
                   f"{pl.sondeo(aj.politica, False) / 60:g} min")
+    errores = ((estado.get("atajos") or {}).get("acciones") or {}) if vivo else {}
+    if aj.atajos or errores:
+        print("Atajos de teclado (sobre la última unidad usada):")
+        for accion in atajos.ACCIONES:
+            combo = aj.atajos.get(accion, "")
+            error = (errores.get(accion) or {}).get("error", "")
+            if combo or error:
+                print(f"  {atajos.NOMBRES[accion]:<20} "
+                      f"{atajos.texto(combo, IS_WIN) or 'sin atajo'}"
+                      + (f" · no se ha podido poner: {error}" if error else ""))
+    motivo = (estado.get("atajos") or {}).get("motivo", "") if vivo else ""
+    if motivo:
+        print(f"Atajos de teclado: no se pueden poner aquí ({motivo})")
     return 0
 
 
@@ -5856,6 +6362,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("actualizar-raiz", help=argparse.SUPPRESS)
     p.add_argument("raiz")
     p.set_defaults(func=cmd_actualizar_raiz)
+    sub.add_parser("atajos", help="Abrir la ventana que graba los atajos de teclado.").set_defaults(
+        func=lambda a: _pedir({"pide": equipo.PIDE_GRABAR_ATAJOS}))
+    p = sub.add_parser("atajo", help="Hacer lo de un atajo de teclado, como si se pulsara.")
+    p.add_argument("accion", choices=atajos.ACCIONES)
+    p.set_defaults(func=lambda a: _pedir({"pide": equipo.PIDE_ATAJO, "accion": a.accion}))
     p = sub.add_parser("ajuste", help="Cambiar un ajuste del agente.")
     p.add_argument("clave", choices=equipo.AJUSTES_PEDIBLES)
     p.add_argument("valor")
