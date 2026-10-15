@@ -70,7 +70,7 @@ def enlace(destino: Path, nombre: Path, carpeta: bool = False) -> bool:
 
 
 # nombres de pareja
-for nombre in ("--resync", "-x", "a/b", "a\\b", "..", ".", "c:d", "x\ty"):
+for nombre in ("--resync", "--force", "-x", "a/b", "a\\b", "..", ".", "c:d", "x\ty"):
     c(f"el nombre {nombre!r} no vale", model.problema_nombre(nombre) is not None, True)
 for nombre in ("docs", "Mis fotos", "notas-2024", "ñandú_1"):
     c(f"el nombre {nombre!r} vale", model.problema_nombre(nombre), None)

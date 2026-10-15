@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
+from _logs_frenos import BISYNC_BORRADOS, BISYNC_CAMBIADOS, ESPEJO_UP
 
 from dataclasses import replace
 
@@ -364,6 +365,177 @@ with sandbox():
     c("el resync se lanza como una pasada más", desde_reparacion,
       [("Resincronizar «notas»", ["notas", "--resync", "--yes"])])
     c("y la pantalla se cierra antes de ceder el paso", vivas, [False])
+
+
+# ---- «Forzar sincronización…»: el freno de borrados tiene su fila y su botón -----------------
+#
+# Salta justo el freno que protege de perder datos, así que lo que se comprueba es lo que NO
+# pasa: que no se lance nada al abrir, que cancelar no haga nada, que lo visto en pantalla no
+# valga si el dispositivo ya cambió, y que una vez confirmado sea UNA pasada con `--force`.
+SUBIDA = {"name": "espejo", "mode": "up-mirror", "local": "sync-data/espejo",
+          "remote_path": "/R/espejo"}
+
+
+def con_freno(texto, raw=None, rc=1):
+    """Deja la última pasada de una pareja parada por ese freno; devuelve `(config, pareja)`."""
+    datos = {"defaults": {"remote": "nas"}, "pair": [raw or RAW["pair"][0]]}
+    cfg = model.parse_config(datos)
+    pair = cfg.pairs[0]
+    pair.local_abs.mkdir(parents=True, exist_ok=True)
+    (pair.local_abs / "nota.md").write_text("x\n", encoding="utf-8")
+    if pair.is_bisync:
+        pair.workdir.mkdir(parents=True, exist_ok=True)
+        for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+            (pair.workdir / f"{bisync.expected_prefix(pair)}{sufijo}").write_text(
+                "x", encoding="utf-8")
+        ffile = bisync.filters_file_for(pair)
+        if ffile is not None:
+            Path(str(ffile) + ".md5").write_text(
+                hashlib.md5(ffile.read_bytes()).hexdigest(), encoding="utf-8")
+    log = escribir(model.LOG_DIR / f"{pair.name}_20261015_093535.log", texto)
+    results.apuntar(pair.name, rc, log)
+    return cfg, pair
+
+
+with sandbox():
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    visto = {}
+    desde_reparacion.clear()
+    confirmaciones.clear()
+
+    def mirar(dlg):
+        """Apunta qué botones y qué textos trae la pantalla recién abierta."""
+        visto["botones"] = sorted(botones(dlg))
+        visto["textos"] = " | ".join(textos(dlg))
+
+    reparacion(cfg, mirar)
+    c("un freno de borrados trae sus tres botones: forzar, ver qué borraría y el log",
+      [b for b in visto["botones"] if b in ("Forzar sincronización…", "Ver qué se borraría",
+                                             "Ver el log")],
+      ["Forzar sincronización…", "Ver el log", "Ver qué se borraría"])
+    c.contains("  la fila dice qué ha pasado, con cifras", visto["textos"],
+               "8 de 10 ficheros (80 %) en el dispositivo")
+    c("  y no hay además el fallo genérico de esa pareja",
+      "la última pasada falló" in visto["textos"], False)
+    c("  abrir la pantalla no lanza ni confirma nada: no se repara nada solo",
+      (desde_reparacion, confirmaciones), ([], []))
+
+with sandbox():
+    # Cancelar no hace nada: ni se lanza, ni se cierra la pantalla.
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    vivas = []
+    tk_pairs.confirmar_plan = confirmar(False)
+
+    def cancelar(dlg):
+        """Pulsa «Forzar sincronización…», se cancela, y apunta si la pantalla sigue."""
+        botones(dlg)["Forzar sincronización…"].invoke()
+        vivas.append(bool(dlg.winfo_exists()))
+
+    try:
+        reparacion(cfg, cancelar)
+    finally:
+        tk_pairs.confirmar_plan = confirmar(True)
+    c("forzar se confirma antes, con el título de la pareja",
+      confirmaciones, ["Forzar la sincronización de «notas»"])
+    c("  cancelar no lanza nada y deja la pantalla donde estaba",
+      (desde_reparacion, vivas), ([], [True]))
+
+with sandbox():
+    # Confirmar lanza UNA pasada forzada de esa pareja, con la pantalla ya cerrada.
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    vivas = []
+
+    def forzar(dlg):
+        """Pulsa «Forzar sincronización…», se confirma, y apunta si la pantalla sigue."""
+        botones(dlg)["Forzar sincronización…"].invoke()
+        vivas.append(bool(dlg.winfo_exists()))
+
+    reparacion(cfg, forzar)
+    c("confirmar lanza una única pasada, con --force y sin nada más",
+      desde_reparacion, [("Forzar «notas»", ["notas", "--force"])])
+    c("  y la pantalla se cierra antes de ceder el paso", vivas, [False])
+
+with sandbox():
+    # Ver qué se borraría es la misma pasada en simulacro: no escribe nada, no se confirma.
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    reparacion(cfg, lambda dlg: botones(dlg)["Ver qué se borraría"].invoke())
+    c("la simulación forzada va con el mismo argumento más --dry-run, sin pedir confirmación",
+      (desde_reparacion, confirmaciones),
+      ([("Simulación forzada de «notas»", ["notas", "--force", "--dry-run"])], []))
+
+with sandbox():
+    # Lo que la lista enseña puede ser anterior al clic: si la pasada siguiente ya fue bien,
+    # no hay nada que forzar y no se pregunta ni se lanza.
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    dichos = []
+    real_info, messagebox.showinfo = messagebox.showinfo, lambda *a, **k: dichos.append(a[1])
+
+    def ya_no_esta(dlg):
+        """La pareja se pone al día mientras la pantalla está abierta, y se pulsa forzar."""
+        results.apuntar("notas", 0, None)
+        botones(dlg)["Forzar sincronización…"].invoke()
+
+    try:
+        reparacion(cfg, ya_no_esta)
+    finally:
+        messagebox.showinfo = real_info
+    c("si el freno ya no está, lo dice y no pregunta ni lanza",
+      (desde_reparacion, confirmaciones, any("Esto ya no está" in d for d in dichos)),
+      ([], [], True))
+
+with sandbox():
+    # Sin carpeta local no se ofrece: el plan se niega y la pantalla lo dice.
+    cfg, p = con_freno(BISYNC_BORRADOS)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    errores.clear()
+
+    def sin_carpeta(dlg):
+        """Desaparece la carpeta local con la pantalla abierta, y se pulsa forzar."""
+        import shutil
+        shutil.rmtree(p.local_abs)
+        botones(dlg)["Forzar sincronización…"].invoke()
+
+    reparacion(cfg, sin_carpeta)
+    c("con la carpeta local fuera de su sitio, forzar se niega",
+      (desde_reparacion, confirmaciones, any("carpeta local" in e for e in errores)),
+      ([], [], True))
+
+with sandbox():
+    cfg, p = con_freno(ESPEJO_UP, SUBIDA, rc=7)
+    desde_reparacion.clear()
+    visto = {}
+    reparacion(cfg, lambda dlg: (visto.update(botones=botones(dlg)),
+                                 visto["botones"]["Forzar sincronización…"].invoke()))
+    c("un espejo también: forzar lanza su pasada con --force (el script sabe qué saltar)",
+      desde_reparacion, [("Forzar «espejo»", ["espejo", "--force"])])
+    c("  y también se ofrece ver qué se borraría", "Ver qué se borraría" in visto["botones"], True)
+
+with sandbox():
+    cfg, p = con_freno(BISYNC_CAMBIADOS)
+    visto = {}
+    reparacion(cfg, lambda dlg: visto.update(botones=sorted(botones(dlg))))
+    c("si lo que paró bisync es que cambiaron todos, se puede forzar pero no hay borrados que ver",
+      ("Forzar sincronización…" in visto["botones"], "Ver qué se borraría" in visto["botones"]),
+      (True, False))
+
+with sandbox():
+    # Un fallo cualquiera no cambia: sigue con su «Ver el log» y sin botón de forzar.
+    cfg, p = preparar()
+    results.apuntar("notas", 1, escribir(model.LOG_DIR / "notas_x.log", "falló por otra cosa\n"))
+    visto = {}
+    reparacion(cfg, lambda dlg: visto.update(botones=sorted(botones(dlg))))
+    c("un fallo que no es un freno no ofrece forzar",
+      ("Ver el log" in visto["botones"], "Forzar sincronización…" in visto["botones"]),
+      (True, False))
 
 with sandbox():
     cfg, _p = preparar()

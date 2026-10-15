@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from . import model
+from . import frenos, model
 from .model import FlagEfectivo, Pair
 
 
@@ -73,7 +73,7 @@ def filter_args(pair: Pair, ffile: Path | None) -> list[str]:
 
 def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
                        simulacro: bool = False, resync: bool = False,
-                       sello: str = "") -> list[FlagEfectivo]:
+                       sello: str = "", forzar: bool = False) -> list[FlagEfectivo]:
     """Devuelve los flags de una pasada: los de la pareja y los que añade el programa.
 
     Los de la pareja llegan ya fundidos (`Pair.flags`, con su capa en
@@ -88,6 +88,10 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
         simulacro: Si es un `--dry-run`.
         resync: Si la pasada es un `--resync`.
         sello: El sufijo de las versiones que guarda la pasada (`--suffix`).
+        forzar: Si la pasada salta el freno de borrados: `--force` en bisync (que
+            conserva su `--max-delete`, un %, y lo salta) y `--max-delete -1` en un
+            espejo, en lugar de su tope (una cuenta). En un `copy` no cambia nada.
+            Es de esta pasada y de ninguna otra: no se lee del TOML.
     """
     flags = {nombre: FlagEfectivo(nombre, valor,
                                   pair.origen_flags.get(nombre, model.ORIGEN_PAREJA))
@@ -113,6 +117,12 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
             # sync.py decide resincronizar.
             flags.pop("resync-mode", None)
 
+    if forzar and frenos.tiene_freno(pair):
+        if pair.is_bisync:
+            pone("force", True)
+        else:
+            pone("max-delete", -1)
+
     if pair.versions:
         # El parseo ya garantiza que es bisync. El sello depende de la pasada,
         # por eso no va en el TOML.
@@ -130,7 +140,7 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
 
 def tramos(pair: Pair, *, binario: str, filtros: Path | None, config: str | Path,
            logfile: str | Path, simulacro: bool = False, resync: bool = False,
-           sello: str = "") -> list[Tramo]:
+           sello: str = "", forzar: bool = False) -> list[Tramo]:
     """Devuelve la orden de rclone de la pareja en trozos, cada uno con su origen.
 
     Es el orden exacto de la línea de comandos: el subcomando con los dos
@@ -146,11 +156,12 @@ def tramos(pair: Pair, *, binario: str, filtros: Path | None, config: str | Path
         simulacro: Si es un `--dry-run`.
         resync: Si la pasada es un `--resync`.
         sello: El sufijo de las versiones que guarda la pasada.
+        forzar: Si la pasada salta el freno de borrados (`flags_de_la_pasada()`).
     """
     salida = [Tramo((binario, pair.mode.verb, pair.source, pair.dest), model.ORIGEN_PRDRIVE)]
     salida += tramos_de_filtrado(pair, filtros)
     for flag in flags_de_la_pasada(pair, config=config, logfile=logfile, simulacro=simulacro,
-                                   resync=resync, sello=sello):
+                                   resync=resync, sello=sello, forzar=forzar):
         args = model.flags_to_args({flag.nombre: flag.valor})
         if args:
             salida.append(Tramo(tuple(args), flag.origen, flag.nombre))

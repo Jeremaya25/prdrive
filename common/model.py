@@ -615,6 +615,8 @@ FLAGS_RESERVADOS: Mapping[str, str] = {
     "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
     "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
     "resync": "es --resync de sync.py, que además pregunta antes",
+    "force": "es --force de sync.py: salta el freno de borrados en UNA pasada que pide una "
+             "persona, y no puede quedar fijo en el config",
     "filters-file": "sale de los patrones incluir/excluir de la pareja",
     "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
     "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",

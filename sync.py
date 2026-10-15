@@ -34,6 +34,7 @@ Uso:
     python sync.py --doctor        # diagnostica el estado de bisync y sale
     python sync.py --dry-run       # simula, no toca nada (úsalo SIEMPRE la 1a vez)
     python sync.py --resync        # rehace el baseline de bisync (1a vez o si se rompe)
+    python sync.py notas --force   # salta el freno de borrados SOLO en esta pasada de «notas»
 """
 
 from __future__ import annotations
@@ -52,8 +53,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import (bisync, cifrada, conflicts, fleet, historial, llavero, model, moderacion,
-                    orden, parte, progress, results, revision, store)
+from common import (bisync, cifrada, conflicts, fleet, frenos, historial, llavero, model,
+                    moderacion, orden, parte, progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
@@ -74,6 +75,8 @@ Cuenta como fallo, y la próxima pasada lo vuelve a comprobar.
 """
 CONFLICTS_SHOWN = 5
 """Ficheros en conflicto que se nombran en la salida."""
+SIMULADOS_SHOWN = 20
+"""Ficheros que una simulación forzada nombra; del resto solo se dice cuántos son."""
 PROGRESS_POLL_S = 0.5
 """Cada cuántos segundos se mira si rclone ha escrito más en su log."""
 LOGS_POR_PAREJA = 20
@@ -100,19 +103,13 @@ KNOWN_ERRORS = [
      "Primer uso de este fichero de filtros. Solución: --resync."),
     ("must run --resync",
      "bisync ha invalidado el baseline y exige rehacerlo. Solución: --resync."),
-    # bisync no dice «--max-delete»: `excessDeletes()` (cmd/bisync/deltas.go)
-    # aborta con «too many deletes (>N%, X of Y)», un PORCENTAJE del listado
-    # anterior (ver `MODES["bisync"]` en `common/model.py`). Va antes de la
-    # entrada siguiente para que bisync lea este aviso.
-    ("too many deletes",
-     "Se ha superado el porcentaje de borrados permitido en esta pasada de "
-     "bisync (--max-delete es un % del listado anterior, no una cuenta de "
-     "ficheros). Comprueba que la ruta local NO esté vacía o desmontada antes "
-     "de forzar nada."),
-    ("--max-delete",
-     "Se han superado los borrados permitidos (una cuenta de ficheros, en "
-     "copy/mirror). Comprueba que la ruta local NO esté vacía o desmontada "
-     "antes de forzar nada."),
+    # Los frenos de borrado, que reconoce `common/frenos.py` (lo comparte con el
+    # diagnóstico de «Reparación»). Son dos y no se miden igual: el de bisync es un
+    # PORCENTAJE del listado anterior (`excessDeletes()`, cmd/bisync/deltas.go) y el
+    # de un espejo una CUENTA de ficheros (ver `MODES` en `common/model.py`). Sus
+    # agujas son exactas: la `--max-delete` a secas casaba también con
+    # `--max-delete-size`, que es otro freno.
+    *frenos.ENTRADAS,
     ("Access is denied",
      "Fichero bloqueado por otro proceso (Obsidian, KeePass, antivirus)."),
     # Lo que dice bisync al encontrar el lock de otra pasada
@@ -153,9 +150,8 @@ KNOWN_ERRORS = [
 """Agujas de lo que dice rclone al fallar y su explicación; gana la primera que casa.
 
 Una aguja es un texto o una función del log. Los casos nuevos se añaden aquí,
-nunca en quien llama. Las dos entradas de flags (`--max-delete` y las de
-arranque) van al final: un volcado de ayuda con esos nombres no puede explicar
-un fallo ajeno.
+nunca en quien llama. Las entradas de flags (las de arranque) van al final: un
+volcado de ayuda con esos nombres no puede explicar un fallo ajeno.
 """
 
 
@@ -368,6 +364,10 @@ class RunContext:
         dry_run: Si es un simulacro.
         force_resync: Si se pidió `--resync`.
         resync_approved: Si se aprueban los `--resync` que hagan falta.
+        force: Si se pidió `--force`: las parejas de esta ejecución saltan su freno
+            de borrados (`orden.flags_de_la_pasada()`). Solo viene de la línea de
+            órdenes y de una persona: ni el servicio, ni `--auto`, ni el agente
+            lo pasan, y no es un flag del TOML.
         keep_logs: Si se guarda también el log de las pasadas buenas.
         sello: El sufijo de las versiones guardadas (`--suffix`), en hora local
             como el resto de fechas que ve la persona. Se calcula UNA vez por
@@ -380,6 +380,7 @@ class RunContext:
     dry_run: bool = False
     force_resync: bool = False
     resync_approved: bool = False
+    force: bool = False
     keep_logs: bool = False
     sello: str = ""
 
@@ -402,7 +403,8 @@ def build_command(ctx: RunContext, pair: Pair, ffile: Path | None,
     logfile = temp_log(pair.name)
     cmd = orden.orden_rclone(pair, binario=ctx.binary, filtros=ffile,
                              config=model.RCLONE_CONF, logfile=logfile,
-                             simulacro=ctx.dry_run, resync=need_resync, sello=ctx.sello)
+                             simulacro=ctx.dry_run, resync=need_resync, sello=ctx.sello,
+                             forzar=ctx.force)
     return cmd, logfile
 
 
@@ -634,9 +636,49 @@ def run_pair(ctx: RunContext, pair: Pair) -> int:
     return rc
 
 
+def decir_lo_que_borraria(pair: Pair, logfile: Path) -> None:
+    """Dice, tras una simulación forzada, qué ficheros habría borrado la pasada.
+
+    Es lo que enseña la ventana antes de que nadie fuerce de verdad: la salida de
+    una simulación buena es solo «OK» y su log se tira, así que sin esto no hay
+    forma de ver qué se borraría. Se calla si no se puede leer el log (el
+    dispositivo ha desaparecido): la pasada ya lo dirá por su cuenta.
+
+    Args:
+        pair: La pareja simulada.
+        logfile: El log temporal de la pasada, que `dispose_log()` va a tirar.
+    """
+    try:
+        nombres = frenos.borrarian(frenos.leer(logfile))
+    except OSError:
+        return
+    if not nombres:
+        print("  Simulación forzada: no se borraría ningún fichero. No se ha tocado nada.")
+        return
+    donde = "" if pair.is_bisync else f" en {frenos.nombre_lado(pair.mode.dest)}"
+    print(f"  Simulación forzada: se borrarían {len(nombres)} "
+          f"{'fichero' if len(nombres) == 1 else 'ficheros'}{donde}; no se ha tocado nada:")
+    for nombre in nombres[:SIMULADOS_SHOWN]:
+        print(f"    - {nombre}")
+    if len(nombres) > SIMULADOS_SHOWN:
+        print(f"    … y {len(nombres) - SIMULADOS_SHOWN} más")
+
+
+def avisar_forzada(pair: Pair) -> str:
+    """Devuelve la línea que dice cómo salta el freno una pasada forzada, o que no hay freno."""
+    if not frenos.tiene_freno(pair):
+        return (f"--force no hace nada aquí: el modo {pair.mode.name} no tiene freno de "
+                "borrados. Sigue la pasada normal.")
+    como = "--force" if pair.is_bisync else "--max-delete -1"
+    return (f"PASADA FORZADA ({como}): esta pasada no frena los borrados; la siguiente "
+            "vuelve a llevar el freno.")
+
+
 def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     """Hace la pasada de una pareja (`run_pair()`) y deja en `medida` lo que solo se sabe aquí."""
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
+    if ctx.force:
+        print(f"[{pair.name}] " + avisar_forzada(pair))
     reloj = historial.Reloj()
 
     # Dónde cae de verdad su carpeta, resuelta: lo que el texto del config no
@@ -685,6 +727,8 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     # no el simple hecho de ser un resync.
     medida.resync = bool(need_resync) and not vacia
     rc = execute(ctx, cmd, logfile)
+    if ctx.dry_run and ctx.force and rc == 0 and frenos.tiene_freno(pair):
+        decir_lo_que_borraria(pair, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
     # Antes de `dispose_log()`: si la pasada fue bien, el log se tira y con él
@@ -867,13 +911,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Simula sin modificar nada.")
     parser.add_argument("--resync", action="store_true",
                         help="Rehace el baseline de bisync.")
+    parser.add_argument("--force", action="store_true",
+                        help="Salta el freno de borrados SOLO en esta pasada de las parejas "
+                             "nombradas (bisync: --force; un espejo: --max-delete -1). "
+                             "Simula antes con --dry-run.")
     parser.add_argument("--keep-logs", action="store_true",
                         help="Conserva también el log de las ejecuciones correctas "
                              "(por defecto solo se guarda el de las que fallan).")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Responde 'sí' a todo (p.ej. resincronizar parejas sin "
                              "baseline). Útil para automatizar sin interacción.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.force and not args.pairs:
+        parser.error("--force necesita que nombres la pareja (o las parejas) a la que se "
+                     "aplica: sin nombres saltaría el freno de todas.")
+    if args.force and args.resync:
+        parser.error("--force y --resync no van juntos: uno salta el freno de borrados y el "
+                     "otro rehace el baseline.")
+    return args
 
 
 def preparar_salida() -> None:
@@ -924,6 +979,7 @@ def main() -> int:
         dry_run=args.dry_run,
         force_resync=args.resync,
         resync_approved=approved,
+        force=args.force,
         keep_logs=args.keep_logs or config.keep_logs,
         sello=datetime.now().strftime("~%Y%m%d-%H%M%S"),
     )
