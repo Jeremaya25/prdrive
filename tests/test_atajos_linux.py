@@ -182,6 +182,8 @@ def responder(m):
             [0, {"session_handle": dbus.Variante("s", SESION)}])).start()
         return ("ok", "o", [ruta])
     if m.miembro == "BindShortcuts":
+        if RESPUESTAS["bind"] == "error":
+            return ("error", "org.freedesktop.portal.Error.Failed", "no")
         ruta = f"/org/freedesktop/portal/desktop/request/1_42/{m.cuerpo[3]['handle_token']}"
         PETICIONES.append(("BindShortcuts", m.cuerpo[0], m.cuerpo[1]))
         codigo, atados = RESPUESTAS["bind"]
@@ -237,6 +239,12 @@ c("cambiarlos cierra la sesión de antes; cancelado en el escritorio, se dice",
 p.poner({})
 c("sin ninguno, nada que atar", (esperar(lambda: len(PUESTOS) == 3), PUESTOS[-1]),
   (True, ({}, {})))
+RESPUESTAS["bind"] = "error"
+p.poner({atajos.CARPETA: "ctrl+alt+c"})
+c("un error del portal en vez de su Request: no puesto en el acto, y el hilo sigue",
+  (esperar(lambda: len(PUESTOS) == 4), PUESTOS[-1][1] if len(PUESTOS) == 4 else None,
+   p._hilo.is_alive()),
+  (True, {atajos.CARPETA: atajos.RECHAZADA_PORTAL}, True))
 p.cerrar()
 CONEXION, BUS = _bus_falso.conectar(responder)
 CON_PORTAL[0] = False

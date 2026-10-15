@@ -580,13 +580,21 @@ class Portal(_Hilo):
             self.puestos({}, {})
             return
         ficha = self._ficha()
-        ruta = self.bus.llamar(PORTAL_DESTINO, PORTAL_RUTA, ATAJOS_PORTAL, "CreateSession",
-                               "a{sv}", [{"handle_token": ficha,
-                                          "session_handle_token": ficha}])[0]
+        try:
+            ruta = self.bus.llamar(PORTAL_DESTINO, PORTAL_RUTA, ATAJOS_PORTAL, "CreateSession",
+                                   "a{sv}", [{"handle_token": ficha,
+                                              "session_handle_token": ficha}])[0]
+        except dbus.Error:
+            self.puestos(combos, {a: atajos.RECHAZADA_PORTAL for a in combos})
+            return
         self._espera = ("crear", ruta, combos)
 
     def _atar(self, combos: dict) -> None:
-        """Pide al portal los atajos de la sesión abierta."""
+        """Pide al portal los atajos de la sesión abierta.
+
+        Si el portal da un error en vez de su `Request`, se dan por no puestos
+        en el acto: nadie va a mandar la respuesta.
+        """
         lista = []
         for accion in atajos.ACCIONES:
             if accion not in combos:
@@ -597,9 +605,13 @@ class Portal(_Hilo):
             except ValueError:
                 pass
             lista.append((accion, datos))
-        ruta = self.bus.llamar(PORTAL_DESTINO, PORTAL_RUTA, ATAJOS_PORTAL, "BindShortcuts",
-                               "oa(sa{sv})sa{sv}",
-                               [self._sesion, lista, "", {"handle_token": self._ficha()}])[0]
+        try:
+            ruta = self.bus.llamar(PORTAL_DESTINO, PORTAL_RUTA, ATAJOS_PORTAL, "BindShortcuts",
+                                   "oa(sa{sv})sa{sv}",
+                                   [self._sesion, lista, "", {"handle_token": self._ficha()}])[0]
+        except dbus.Error:
+            self.puestos(combos, {a: atajos.RECHAZADA_PORTAL for a in combos})
+            return
         self._espera = ("atar", ruta, combos)
 
     def _senal(self, s: dbus.Mensaje) -> None:

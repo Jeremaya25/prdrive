@@ -1007,6 +1007,36 @@ try:
                     c(f"{nombre}: la ventana del nombre e icono ({que}) no queda "
                       "recortada", corta, False)
 
+                # La ventana de los atajos de teclado (es del agente: su propio
+                # Tk, aquí en una Toplevel), en su peor caso: cada fila con su
+                # nota (la combinación más larga, la que graba, dos rechazos), la
+                # pista del portal y el aviso de dos líneas bajo los atajos. Y sin
+                # forma de ponerlos, solo el motivo.
+                from ui import atajos as atj
+                from ui import tk_atajos
+                peor = atj.Edicion(windows=False,
+                                   atajos={atj.SINCRONIZAR: atj.normal(atj.MAS_LARGA)},
+                                   notas={a: f"{atj.texto(atj.MAS_LARGA, False)} no se ha podido "
+                                             f"poner: {atj.YA_LA_USA}." for a in atj.ACCIONES})
+                peor = peor.grabar(atj.CARPETA)
+                for motivo_a, que in (("", "grabando"), (atj.SIN_PORTAL, "sin portal")):
+                    top = tk.Toplevel(raiz)
+                    top.withdraw()
+                    piezas_a = tk_atajos.construir(
+                        top, peor, motivo_a, True,
+                        {"grabar": print, "quitar": print, "guardar": print, "cerrar": print})
+                    if piezas_a["filas"]:
+                        tk_atajos.pintar(piezas_a, peor)
+                        piezas_a["resultado"].poner(
+                            "No se han podido poner todos\nLos que el sistema no deja se "
+                            "quedan sin atajo: elige otra combinación y vuelve a guardar.",
+                            "aviso")
+                    top.visor.encajar(top)
+                    c(f"{nombre}: la ventana de los atajos ({que}) cabe", cabe(top), True)
+                    c(f"{nombre}: la ventana de los atajos ({que}) no queda recortada",
+                      recortado(top.visor), False)
+                    top.destroy()
+
                 # El código de emparejamiento: el único dibujo de la aplicación
                 # que mide en píxeles y no puede encoger —un módulo por debajo
                 # de dos píxeles no lo lee ninguna cámara—, así que en una
