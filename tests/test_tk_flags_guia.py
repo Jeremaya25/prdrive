@@ -16,14 +16,10 @@ Las teclas solo llegan a una ventana enseñada, así que cada prueba la enseña 
 xvfb en la CI).
 """
 
-import faulthandler
+import os
 import sys
 
 from _harness import Checks
-
-# TEMPORAL: en Windows (CI) este test se colgó 600 s y `run_all.py` tira la salida de lo que
-# mata por tiempo. Si se vuelve a colgar, que diga en qué línea y acabe a los 40 s.
-faulthandler.dump_traceback_later(40, exit=True)
 
 c = Checks("guía de flags (ventana)")
 
@@ -445,6 +441,16 @@ def pulsar(guia_, keysym: str) -> None:
     guia_.ventana.update()
 
 
+# Alt suelta, generada con `event_generate`, no vuelve nunca en Windows: lo vio `faulthandler`
+# en la CI (un traceback dentro de `event_generate`, con `Left`, `Right`, `Shift_L` y `Control_L`
+# ya devueltas por el mismo manejador, que no mira qué tecla es). No se sabe por qué, pero la
+# guía no entra: por eso ahí no se genera, y en Linux sí.
+TECLAS_QUE_NO_ESCRIBEN = ("Left", "Right", "Shift_L", "Control_L") + (
+    () if os.name == "nt" else ("Alt_L",))
+if os.name == "nt":
+    print("  (saltado) Alt suelta: en Windows, generarla con event_generate no vuelve")
+
+
 def guion_teclas_de_verdad(guia_, anotado):
     """Una tecla de verdad se pulsa Y se suelta: soltarla no puede deshacer lo que hizo."""
     teclear(guia_, "delete")
@@ -462,8 +468,7 @@ def guion_teclas_de_verdad(guia_, anotado):
     anotado["con_mas"] = len(filas(guia_))
     elegida = guia_.tabla.orden[2]
     guia_.tabla.elegir(elegida, True)
-    for tecla in ("Left", "Right", "Shift_L", "Control_L", "Alt_L"):
-        print(f"TEMPORAL pulsando {tecla}", file=sys.stderr, flush=True)
+    for tecla in TECLAS_QUE_NO_ESCRIBEN:
         pulsar(guia_, tecla)
     anotado["tras_modificadoras"] = (len(filas(guia_)), guia_.tabla.elegida == elegida)
     pulsar(guia_, "Down")
@@ -478,8 +483,8 @@ nota = abrir_guia(guion_teclas_de_verdad)
 c("Abajo, pulsada y soltada, pasa a la fila siguiente y se queda en ella",
   (nota["abajo"], nota["abajo2"]), (nota["orden"][1], nota["orden"][2]))
 c("  y Arriba vuelve a la anterior", nota["arriba"], nota["orden"][1])
-c("soltar Mayúsculas, Control, Alt o las flechas laterales no repinta: «Ver más» sigue abierto "
-  "y la fila elegida no se mueve",
+c("soltar Mayúsculas, Control, Alt (donde se puede generar) o las flechas laterales no repinta: "
+  "«Ver más» sigue abierto y la fila elegida no se mueve",
   nota["tras_modificadoras"], (tk_flags_guia.MAX_FILAS + tk_flags_guia.PASO_VER_MAS, True))
 c("  ni tampoco las flechas, que mueven la fila sin cerrar «Ver más»",
   nota["tras_abajo_con_mas"], (tk_flags_guia.MAX_FILAS + tk_flags_guia.PASO_VER_MAS, True))
@@ -513,5 +518,4 @@ c("  y tkinter solo se importa dentro de las funciones",
 c("  ni usa colores a mano: los pone theme.py",
   re.findall(r"#[0-9a-fA-F]{6}\b", modulo), [])
 
-faulthandler.cancel_dump_traceback_later()
 sys.exit(c.report())
