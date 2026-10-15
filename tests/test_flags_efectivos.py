@@ -9,9 +9,9 @@ Lo que hay que sujetar aquí:
 - **Una sola orden.** `sync.build_command()` y la vista previa montan la orden
   con `orden.tramos()`; lo que pone el programa en cada pasada (`--config`,
   `--log-file`, `--workdir`, `--resync`…) sale marcado como suyo.
-- **Nada cambia para quien ya tenía el dispositivo.** Las órdenes de abajo son
-  las que producía `build_command()` antes de partirlo: el reparto no puede
-  mover ni un argumento.
+- **Nada se mueve sin querer.** Las órdenes de abajo fijan `build_command()`
+  argumento por argumento: el reparto en tramos no puede mover ni uno, y lo
+  que entra en la capa base (`modify-window`) sale en todas.
 """
 
 import sys
@@ -92,7 +92,7 @@ CASOS = {
         BISYNC, {}, dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
          FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
-         '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
+         '--stats-one-line', '--modify-window', '2s', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--config', CONF, '--log-file', LOG, '--workdir',
          TRABAJO]),
@@ -101,7 +101,7 @@ CASOS = {
         dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
          FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
-         '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
+         '--stats-one-line', '--modify-window', '2s', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--transfers', '8', '--config', CONF,
          '--log-file', LOG, '--workdir', TRABAJO]),
@@ -109,7 +109,7 @@ CASOS = {
         {**BISYNC, "flags": {"resync-mode": "newer"}}, {}, dict(resync=True),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
          FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
-         '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
+         '--stats-one-line', '--modify-window', '2s', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--resync-mode', 'newer', '--config', CONF,
          '--log-file', LOG, '--workdir', TRABAJO, '--resync']),
@@ -117,7 +117,7 @@ CASOS = {
         {**BISYNC, "versions": True}, {}, dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
          FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
-         '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
+         '--stats-one-line', '--modify-window', '2s', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--config', CONF, '--log-file', LOG, '--workdir',
          TRABAJO, '--backup-dir1', 'disp:sync-data/notas/.prversions', '--backup-dir2',
@@ -128,7 +128,7 @@ CASOS = {
         dict(resync=False),
         ['rclone', 'bisync', 'disp:sync-data/notas', 'nas:/R/notas', '--filters-file',
          FILTROS_TXT, '--verbose', '--create-empty-src-dirs', '--stats', '2s',
-         '--stats-one-line', '--conflict-resolve', 'newer', '--conflict-suffix',
+         '--stats-one-line', '--modify-window', '2s', '--conflict-resolve', 'newer', '--conflict-suffix',
          'conflicto-dispositivo,conflicto-remoto', '--max-delete', '25', '--resilient',
          '--recover', '--max-lock', '2m', '--conflict-loser', 'num', '--config', CONF,
          '--log-file', LOG, '--workdir', TRABAJO, '--backup-dir1',
@@ -141,21 +141,21 @@ CASOS = {
         {"flags": {"transfers": 4}, "exclude": ["*.bak"]}, dict(resync=False),
         ['rclone', 'copy', 'disp:sync-data/subida', 'nas:/R/subida', '--include', '*.md',
          '--exclude', '*.bak', '--exclude', 'tmp/**', '--verbose', '--create-empty-src-dirs',
-         '--stats', '2s', '--stats-one-line', '--transfers', '4', '--config', CONF,
+         '--stats', '2s', '--stats-one-line', '--modify-window', '2s', '--transfers', '4', '--config', CONF,
          '--log-file', LOG, '--bwlimit', '8M']),
     "down-mirror-simulacro": (
         {"name": "espejo", "local": "sync-data/espejo", "remote_path": "/R/espejo",
          "mode": "down-mirror", "flags": {"max_delete": 5, "verbose": False}},
         {"flags": {"transfers": 4}}, dict(resync=False, dry=True),
         ['rclone', 'sync', 'nas:/R/espejo', 'disp:sync-data/espejo',
-         '--create-empty-src-dirs', '--stats', '2s', '--stats-one-line', '--max-delete', '50',
+         '--create-empty-src-dirs', '--stats', '2s', '--stats-one-line', '--modify-window', '2s', '--max-delete', '50',
          '--transfers', '4', '--max-delete', '5', '--config', CONF, '--log-file', LOG,
          '--dry-run']),
     "raiz": (
         {"name": "todo", "local": ".", "remote_path": "/R/todo", "mode": "up-mirror"}, {},
         dict(resync=False),
         ['rclone', 'sync', 'disp:raiz', 'nas:/R/todo', '--exclude', PROGRAMA,
-         '--verbose', '--create-empty-src-dirs', '--stats', '2s', '--stats-one-line',
+         '--verbose', '--create-empty-src-dirs', '--stats', '2s', '--stats-one-line', '--modify-window', '2s',
          '--max-delete', '50', '--config', CONF, '--log-file', LOG]),
 }
 """Por caso: la pareja, sus `[defaults]`, cómo se lanza y la orden de siempre."""
