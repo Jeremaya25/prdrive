@@ -47,6 +47,7 @@ python prdrive-install.py --desinstalar-agente     # and off again (no drive tou
 python prdrive-install.py --update-agente          # the installed agent (and open host roots) to this version
 python prdrive-install.py --autoprueba RUTA        # CI: the built .exe's windowless self-test (JSON; hidden from --help)
 python build_installer.py          # build the .exe (embeds the profile if any); refuses without the pinned PyInstaller and a Python with Tk 9
+python generar_flags_rclone.py [--rclone RUTA]  # regenerate common/flags_rclone.json from the pinned rclone: after moving `pins.RCLONE_VERSION` (`catalogue.md`)
 python -m ui.icons                 # repaint APP_DIR/runsync.ico (headless)
 
 python tests/run_all.py -j N|auto  --display inherit|xvfb  --gui-jobs K  --timeout S  [files]  # all tests; or run one script directly

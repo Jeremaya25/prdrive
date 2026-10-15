@@ -38,6 +38,24 @@ def falla(texto: str) -> str:
         return str(e)
 
 
+def _error_de(texto: str) -> ConfigError:
+    """El error con el que se rechaza ese texto; falla si no se rechaza."""
+    try:
+        fe.parse(texto)
+    except ConfigError as e:
+        return e
+    raise AssertionError(f"{texto!r} no se ha rechazado")
+
+
+def _error_o_nada(hacer):
+    """El mensaje con el que `hacer()` lanza un `ConfigError`, o `''` si no lanza."""
+    try:
+        hacer()
+        return ""
+    except ConfigError as e:
+        return str(e)
+
+
 # texto <-> tabla
 
 c("clave = valor, con su tipo", fe.parse('transfers = 4\nchecksum = true\n'
@@ -424,6 +442,54 @@ with sandbox():
     except ConfigError as e:
         dicho = str(e)
     c("sin ruta local no hay orden, y se dice qué falta", "local" in dicho, True)
+
+
+# el tipo del valor: la misma puerta que lo reservado (ui/flags_ayuda.py)
+
+c("un entero que no lo es se rechaza al escribirlo, antes de guardar",
+  "número entero" in falla('transfers = "cuatro"'), True)
+c("  con el nombre del flag y un ejemplo", "transfers = 4" in falla('transfers = "cuatro"'), True)
+c("  y con el título de un texto que no vale, no con el de un reservado",
+  fe.titulo_error(_error_de('transfers = "cuatro"')), fe.TITULO_NO_VALE)
+c("un sí o no entre comillas llegaría a rclone como un argumento suelto",
+  "sin comillas" in falla('checksum = "true"'), True)
+c("`true` en un flag con valor se comería el argumento siguiente",
+  "necesita un valor" in falla("max-lock = true"), True)
+c("una duración de Go sin unidad", "unidad" in falla("timeout = 30"), True)
+c("  y con ella vale", fe.parse('timeout = "30s"'), {"timeout": "30s"})
+c("un tamaño que no lo es", "tamaño" in falla('max-size = "mucho"'), True)
+c("un valor bueno de cada tipo pasa",
+  fe.parse('transfers = 8\nmax-lock = "2m"\nstats = "0"\nmax-size = "10M"\n'
+           'tpslimit = 0.5\nlog-level = "DEBUG"\nexclude-from = ["a", "b"]\nverbose = true'),
+  {"transfers": 8, "max-lock": "2m", "stats": "0", "max-size": "10M", "tpslimit": 0.5,
+   "log-level": "DEBUG", "exclude-from": ["a", "b"], "verbose": True})
+c("`false` vale en cualquier flag: es quitarlo", fe.parse("transfers = false\nmax-lock = false"),
+  {"transfers": False, "max-lock": False})
+c("un flag que no está en la lista se admite, con el valor que sea (no hay lista blanca)",
+  fe.parse('flag-nuevo-de-rclone = "lo-que-sea"\notro_mas = 3\ns3-region = "eu-west-1"'),
+  {"flag-nuevo-de-rclone": "lo-que-sea", "otro_mas": 3, "s3-region": "eu-west-1"})
+c("un flag cuyo tipo no se comprueba, tampoco: bwlimit lleva horarios",
+  fe.parse('bwlimit = "08:00,1M 18:00,off"'), {"bwlimit": "08:00,1M 18:00,off"})
+
+# Sobrescribir un heredado copia su valor: no puede rechazarse a sí mismo.
+c("todo lo que viene de siempre o del modo se puede sobrescribir tal cual",
+  [(f.nombre, e) for modo in ("bisync", "up", "down", "up-mirror", "down-mirror")
+   for f in fe.effective(modo, None, None)
+   for e in [_error_o_nada(lambda: fe.sobrescribir({}, f.nombre, f.crudo))] if e], [])
+try:
+    fe.sobrescribir({}, "timeout", 30)
+    rechazado = False
+except ConfigError:
+    rechazado = True
+c("sobrescribir pasa por la misma puerta que el cuadro", rechazado, True)
+
+# Lo que prdrive propone en su ejemplo (sync_config.example.toml) vale.
+ejemplo = tomllib.loads(open(model.APP_DIR / "sync_config.example.toml", encoding="utf-8").read())
+propuestos = [ejemplo.get("defaults", {}).get("flags", {})] + [
+    p.get("flags", {}) for p in ejemplo.get("pair", [])]
+c("los flags del ejemplo valen para el editor",
+  [(t, _error_o_nada(lambda t=t: fe.parse(fe.dump(t)))) for t in propuestos
+   if _error_o_nada(lambda t=t: fe.parse(fe.dump(t)))], [])
 
 
 sys.exit(c.report())
