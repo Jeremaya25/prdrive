@@ -22,8 +22,8 @@ import sys
 from _harness import Checks
 
 # TEMPORAL: en Windows (CI) este test se colgó 600 s y `run_all.py` tira la salida de lo que
-# mata por tiempo. Si se vuelve a colgar, que diga en qué línea y acabe a los 120 s.
-faulthandler.dump_traceback_later(120, exit=True)
+# mata por tiempo. Si se vuelve a colgar, que diga en qué línea y acabe a los 40 s.
+faulthandler.dump_traceback_later(40, exit=True)
 
 c = Checks("guía de flags (ventana)")
 
@@ -462,7 +462,8 @@ def guion_teclas_de_verdad(guia_, anotado):
     anotado["con_mas"] = len(filas(guia_))
     elegida = guia_.tabla.orden[2]
     guia_.tabla.elegir(elegida, True)
-    for tecla in ("Shift_L", "Control_L", "Alt_L", "Left", "Right"):
+    for tecla in ("Left", "Right", "Shift_L", "Control_L", "Alt_L"):
+        print(f"TEMPORAL pulsando {tecla}", file=sys.stderr, flush=True)
         pulsar(guia_, tecla)
     anotado["tras_modificadoras"] = (len(filas(guia_)), guia_.tabla.elegida == elegida)
     pulsar(guia_, "Down")
