@@ -5,7 +5,9 @@ Sin procesos de verdad: los de la unidad se dicen, cerrarlos se apunta, y la
 pasada de lo pendiente devuelve el código que se le pida. Lo que se sujeta:
 - KeePassXC se cierra como lo haría la persona (nunca a la fuerza) y se
   espera a que salga; si no sale, no se sigue: la unidad no está libre.
-- El proxy del navegador se termina; el vigilante se para y se le espera.
+- El proxy del navegador se termina; el vigilante se para y se le espera, y si
+  no se va se le termina con lo que cuelga de él (#119) siendo de verdad él:
+  un pid que ya es de otro programa no se toca.
 - Lo pendiente sube con un tope, y solo se dice algo si no ha ido bien.
 - Las claves del navegador vuelven a como estaban.
 - `--cerrar-llavero` pregunta en la consola, y un fallo suyo no impide expulsar.
@@ -43,6 +45,7 @@ class Equipo:
         self.no_sale: set[int] = set()
         self.cerrados: list[int] = []
         self.terminados: list[int] = []
+        self.matados: list[int] = []
         self.pasadas: list = []
         self.rc = 0
         self.pendiente = False
@@ -57,6 +60,10 @@ class Equipo:
         self.terminados.append(pid)
         self.vivos.pop(pid, None)
 
+    def matar_arbol(self, pid):
+        self.matados.append(pid)
+        self.vivos.pop(pid, None)
+
     def pasada(self, tope=None):
         self.pasadas.append(tope)
         return self.rc, ""
@@ -64,6 +71,7 @@ class Equipo:
 
 reales = (store.procesos, store.pid_alive, keepassxc.pedir_cierre, keepassxc.terminar,
           llavero.pasada, llavero.pendiente, llavero.vigilante_vivo, llavero.dormir,
+          llavero.matar_arbol, store.orden_de,
           keepassxc.ESPERA_CIERRE, keepassxc.ESPERA_VIGILANTE,
           registro.leer, registro.escribir, registro.borrar, registro.vacia)
 real_app = model.APP_DIR
@@ -82,6 +90,9 @@ try:
         llavero.pendiente = lambda pareja: eq.pendiente
         llavero.vigilante_vivo = lambda: eq.vigilante
         llavero.dormir = lambda s: None
+        llavero.matar_arbol = eq.matar_arbol
+        ordenes: dict[int, list[str]] = {}
+        store.orden_de = lambda pid: ordenes.get(pid, [])
         keepassxc.ESPERA_CIERRE = keepassxc.ESPERA_VIGILANTE = 0.05
         claves: dict = {}
         registro.leer = claves.get
@@ -111,12 +122,80 @@ try:
         eq.vivos, eq.no_sale = {}, set()
 
         # el vigilante
-        eq.vigilante = True
-        llavero.vigilante_vivo = lambda: eq.vigilante
+        VIGILANTE = 777
+        EN_LA_UNIDAD = str(model.DEVICE_ROOT / ".prdrive" / "runtime" / "pythonw.exe")
+        DEL_EQUIPO = "C:/Python313/python.exe"
+        SUYA = ["python3", "runsync.py", "--vigilar-llavero"]
+        registro_v = llavero.registro_vigilante()
+        diario = model.STATE_DIR / "daemon.log"
+
+        def vigilante_con(exe, orden):
+            """Deja un vigilante vivo (pid, ejecutable y línea de órdenes) con su registro."""
+            store.write_json(registro_v, {"pid": VIGILANTE, "host": llavero.equipo(),
+                                          "started": store.stamp()})
+            eq.vivos[VIGILANTE] = exe
+            ordenes[VIGILANTE] = orden
+            eq.matados.clear()
+
+        def lo_dicho():
+            """Lo que el diario del servicio cuenta del vigilante."""
+            return diario.read_text(encoding="utf-8") if diario.exists() else ""
+
+        llavero.vigilante_vivo = lambda: VIGILANTE in eq.vivos
+        vigilante_con(DEL_EQUIPO, SUYA)
+        llavero.dormir = lambda s: eq.vivos.pop(VIGILANTE, None)     # se va nada más pedírselo
         keepassxc.cerrar_llavero(config())
         c("al vigilante se le pide que pare", llavero.parada_vigilante().exists(), True)
-        eq.vigilante = False
+        c("  y si se va, no se le toca ni se dice nada", (eq.matados, lo_dicho()), ([], ""))
         llavero.parada_vigilante().unlink()
+        llavero.dormir = lambda s: None
+
+        vigilante_con(DEL_EQUIPO, SUYA)
+        cierre = keepassxc.cerrar_llavero(config())
+        c("si no se va tras pedírselo y esperar, se termina con lo que cuelga de él (#119)",
+          eq.matados, [VIGILANTE])
+        c("  se dice en el diario, con su pid", ("vigilante" in lo_dicho(), "777" in lo_dicho()),
+          (True, True))
+        c("  su registro y la petición de parada se van con él",
+          (registro_v.exists(), llavero.parada_vigilante().exists()), (False, False))
+        c("  y no impide quitar la unidad ni asusta con una línea", cierre, keepassxc.Cierre(True))
+        diario.unlink(missing_ok=True)
+
+        # Windows: no se ve su línea de órdenes, pero su ejecutable corre desde la unidad
+        vigilante_con(EN_LA_UNIDAD, [])
+        keepassxc.cerrar_llavero(config())
+        c("  en Windows, sin línea de órdenes, vale que corra desde la unidad", eq.matados,
+          [VIGILANTE])
+        diario.unlink(missing_ok=True)
+
+        # el pid ya es de otro programa (un registro que quedó de un vigilante muerto)
+        for etiqueta, exe, orden in (
+                ("con línea de órdenes que no es la suya", DEL_EQUIPO, ["python3", "otra.py"]),
+                ("sin línea de órdenes y desde fuera de la unidad", "C:/Otro/otro.exe", [])):
+            vigilante_con(exe, orden)
+            cierre = keepassxc.cerrar_llavero(config())
+            c(f"un pid que ya es de otro programa, {etiqueta}, no se termina",
+              (eq.matados, VIGILANTE in eq.vivos, cierre.listo), ([], True, True))
+            c.contains("  y el diario dice que no se ha tocado", lo_dicho(), "no se ha terminado")
+            diario.unlink(missing_ok=True)
+        eq.vivos.pop(VIGILANTE, None)
+        registro_v.unlink(missing_ok=True)
+        llavero.parada_vigilante().unlink(missing_ok=True)
+
+        # ni terminándolo se va (un permiso, un antivirus): se dice, y la unidad se deja quitar
+        vigilante_con(DEL_EQUIPO, SUYA)
+        llavero.matar_arbol = lambda pid: eq.matados.append(pid)
+        real_muerte, llavero.ESPERA_MUERTE = llavero.ESPERA_MUERTE, 0.05
+        cierre = keepassxc.cerrar_llavero(config())
+        llavero.matar_arbol, llavero.ESPERA_MUERTE = eq.matar_arbol, real_muerte
+        c("si ni terminándolo se va, se intenta una vez y se dice que sigue vivo",
+          (eq.matados, "sigue vivo" in lo_dicho(), cierre.listo), ([VIGILANTE], True, True))
+        c("  y su registro se queda: sigue siendo suyo", registro_v.exists(), True)
+        diario.unlink(missing_ok=True)
+        eq.vivos.pop(VIGILANTE, None)
+        registro_v.unlink(missing_ok=True)
+        llavero.parada_vigilante().unlink(missing_ok=True)
+        llavero.vigilante_vivo = lambda: eq.vigilante
 
         # lo pendiente
         eq.pendiente = True
@@ -181,6 +260,7 @@ try:
 finally:
     (store.procesos, store.pid_alive, keepassxc.pedir_cierre, keepassxc.terminar,
      llavero.pasada, llavero.pendiente, llavero.vigilante_vivo, llavero.dormir,
+     llavero.matar_arbol, store.orden_de,
      keepassxc.ESPERA_CIERRE, keepassxc.ESPERA_VIGILANTE,
      registro.leer, registro.escribir, registro.borrar, registro.vacia) = reales
     model.APP_DIR = real_app

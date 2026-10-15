@@ -97,11 +97,14 @@ dispositivo.
 2. Abre KeePassXC con tu base.
 3. Escribes la contraseña (y eliges el fichero llave, si lo usas), y los sitios piden la passkey y KeePassXC firma.
 
-Lo que guardas **sube solo**, unos 20 segundos después del último cambio. Lo que
-cambies en otro dispositivo llega en **5 minutos** como mucho mientras KeePassXC
-esté abierto, y siempre al abrirlo. Da igual quién atienda la unidad (la
-ventana, el servicio o el agente, también en el modo «sincronizar al
-conectar»).
+Lo que guardas **sube solo**, en **un par de minutos como mucho** si hay red. La
+regla: sube unos 20 segundos después del último cambio, pero nunca antes de que
+pasen dos minutos desde la última vez que el llavero se sincronizó. Como al abrirlo
+ya se sincroniza, lo normal es que, si guardas poco después de abrir, la subida
+tarde casi esos dos minutos y no los 20 segundos. Lo que cambies en otro
+dispositivo llega en **5 minutos** como mucho mientras KeePassXC esté abierto, y
+siempre al abrirlo. Da igual quién atienda la unidad (la ventana, el servicio o
+el agente, también en el modo «sincronizar al conectar»).
 
 Si KeePassXC ya está abierto, «Abrir llavero» lo trae delante. Si en el equipo hay
 **otro KeePassXC** abierto (uno instalado), te pide que lo cierres antes.

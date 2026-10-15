@@ -26,7 +26,8 @@ from _harness import Checks, sandbox, tmpdir
 
 import ui
 import ui.tk as uitk
-from common import cifrada, components, keepassxc, llavero, model, pins, registro, results, store
+from common import (cifrada, components, equipo, keepassxc, llavero, model, pins, registro,
+                    results, store)
 from ui import llavero_editor
 
 c = Checks("abrir el llavero (common/keepassxc.py)")
@@ -263,6 +264,99 @@ if os.name != "nt":
     c("fuera de Windows no hay registro", registro.leer(CHROME), None)
 else:
     print("  (saltado) el registro de verdad no se toca en las pruebas")
+
+# --- al cerrar solo se borra la NativeMessagingHosts que creó prdrive
+HOSTS = {base: f"{base}\\NativeMessagingHosts" for base, _ in keepassxc.NAVEGADORES}
+CHROME_H, EDGE_H, MOZILLA_H, CHROMIUM_H = HOSTS.values()
+OTRO_PROGRAMA = f"{CHROME_H}\\com.otro.programa"
+equipo_real = equipo.DIR
+try:
+    raiz = tmpdir("prdrive-kpxc-nativos-")
+    model.APP_DIR = raiz / ".prdrive"
+    exe = components.keepassxc_exe(model.APP_DIR, "windows-x64")
+    os.environ["LOCALAPPDATA"] = str(tmpdir("prdrive-kpxc-sin-instalado-"))
+    # La nota es del equipo, y su carpeta puede no existir (sin agente instalado).
+    equipo.DIR = tmpdir("prdrive-kpxc-equipo-") / "prdrive"
+
+    # Lo visto en real el 12/10/2026 (#119): la de Chromium ya estaba, vacía; Edge y Mozilla no
+    reg = Registro({CHROMIUM_H: None, OTRO_PROGRAMA: "C:\\Otro\\otro.json"})
+    usar(reg)
+    c("al abrir se escriben las cuatro, también donde la carpeta de encima no estaba",
+      keepassxc.abrir_navegador(exe), [])
+    c("  (Edge y Mozilla no existían, y ahora sí)", (reg.vacia(EDGE_H), reg.vacia(MOZILLA_H)),
+      (False, False))
+    c("al cerrar, la NativeMessagingHosts que ya estaba, vacía, se queda",
+      (keepassxc.cerrar_navegador(raiz), reg.vacia(CHROMIUM_H)), ([], True))
+    c("  y la de Chrome, con la de otro programa dentro",
+      reg.leer(OTRO_PROGRAMA), "C:\\Otro\\otro.json")
+    c("  las que no estaban y creó prdrive, se van", (reg.vacia(EDGE_H), reg.vacia(MOZILLA_H)),
+      (None, None))
+
+    # Otra unidad abre mientras la primera sigue abierta: ya existen, pero las creó prdrive
+    keepassxc.abrir_navegador(exe)
+    keepassxc.abrir_navegador(exe)
+    keepassxc.cerrar_navegador(raiz)
+    c("abierto dos veces, sigue siendo lo que creó prdrive: se va, y lo de antes se queda",
+      (reg.vacia(EDGE_H), reg.vacia(MOZILLA_H), reg.vacia(CHROMIUM_H)), (None, None, True))
+
+    # Un llavero abierto con una versión anterior no dejó nota: no se sabe cuál creó
+    for base, nombres in keepassxc.NAVEGADORES:
+        reg.escribir(keepassxc.clave_nativa(base),
+                     str(keepassxc.json_nativo(exe.parent / "config", nombres[0])))
+    for suelto in equipo.DIR.glob("*"):
+        suelto.unlink()
+    keepassxc.cerrar_navegador(raiz)
+    c("sin nota, se quita la clave de prdrive pero no se borra ninguna NativeMessagingHosts vacía",
+      (reg.leer(keepassxc.clave_nativa(keepassxc.NAVEGADORES[1][0])),
+       reg.vacia(EDGE_H), reg.vacia(MOZILLA_H), reg.vacia(CHROMIUM_H)),
+      (None, True, True, True))
+    keepassxc.abrir_navegador(exe)
+    keepassxc.cerrar_navegador(raiz)
+    c("  y las que ya están al abrir no pasan a ser suyas: siguen, vacías",
+      (reg.vacia(EDGE_H), reg.vacia(MOZILLA_H), reg.vacia(CHROMIUM_H)), (True, True, True))
+
+    # Una nota que se estropea entre abrir y cerrar se lee como «ninguna»
+    reg.borrar(MOZILLA_H)
+    keepassxc.abrir_navegador(exe)
+    c("  (la de Mozilla vuelve a crearla prdrive y lo apunta)",
+      (reg.vacia(MOZILLA_H), len(list(equipo.DIR.glob("*")))), (False, 1))
+    for nota in equipo.DIR.glob("*"):
+        nota.write_text("{no es json", encoding="utf-8")
+    keepassxc.cerrar_navegador(raiz)
+    c("con la nota ilegible no se borra nada", reg.vacia(MOZILLA_H), True)
+
+    # Sin poder apuntarlo, abrir no falla y cerrar no borra
+    ocupado = tmpdir("prdrive-kpxc-ocupado-") / "fichero"
+    ocupado.write_text("x", encoding="utf-8")
+    equipo.DIR = ocupado / "prdrive"
+    reg2 = Registro()
+    usar(reg2)
+    c("si la nota no se puede escribir, abrir sigue", keepassxc.abrir_navegador(exe), [])
+    c("  y cerrar, sin saber cuáles creó, no borra ninguna",
+      (keepassxc.cerrar_navegador(raiz), reg2.vacia(EDGE_H), reg2.vacia(CHROMIUM_H)),
+      ([], True, True))
+
+    # El agente, tras una unidad que se fue sin expulsar, sigue la misma regla
+    equipo.DIR = tmpdir("prdrive-kpxc-equipo-agente-") / "prdrive"
+    reg3 = Registro({CHROMIUM_H: None})
+    usar(reg3)
+    keepassxc.abrir_navegador(exe)
+    c("la nota vive en la carpeta del equipo mientras hace falta",
+      len(list(equipo.DIR.glob("*"))), 1)
+    model.APP_DIR = raiz / "agente-0.5.5"
+    c("el agente, con la unidad ya ida, quita solo la NativeMessagingHosts que creó prdrive",
+      (keepassxc.cerrar_navegador(carpeta_app=".prdrive", muertas=True),
+       reg3.vacia(EDGE_H), reg3.vacia(MOZILLA_H), reg3.vacia(CHROMIUM_H)),
+      ([], None, None, True))
+    c("  y la nota se va cuando no queda nada que recordar", list(equipo.DIR.glob("*")), [])
+finally:
+    registro.leer, registro.escribir, registro.borrar, registro.vacia = reales_registro
+    model.APP_DIR = real_app
+    equipo.DIR = equipo_real
+    if real_local is None:
+        os.environ.pop("LOCALAPPDATA", None)
+    else:
+        os.environ["LOCALAPPDATA"] = real_local
 
 # --- el fichero llave, por equipo
 with sandbox() as root:

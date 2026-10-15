@@ -548,6 +548,83 @@ def vigilante_vivo() -> bool:
     return vivo_aqui(store.read_json(registro_vigilante()) or None)
 
 
+VIGILAR = "--vigilar-llavero"
+"""El argumento de `runsync.py` que lo hace vigilante: lo que lo distingue de otro proceso."""
+ESPERA_MUERTE = 3.0  # segundos
+"""Lo que se espera a que un proceso terminado deje de estar vivo: la señal no es instantánea."""
+
+
+def apuntar_diario(texto: str) -> None:
+    """Añade una línea con la hora al diario del servicio (`state/daemon.log`), como `runsync.dlog()`.
+
+    No lanza: el diario no es vital. Es función de módulo para que los tests
+    la sustituyan.
+    """
+    ruta = model.STATE_DIR / "daemon.log"
+    try:
+        store.recortar_diario(ruta)
+        with ruta.open("a", encoding="utf-8") as f:
+            f.write(f"{store.stamp()} {texto}\n")
+    except OSError:
+        pass
+
+
+def es_el_vigilante(pid: int) -> bool:
+    """Indica si ese pid es de verdad el vigilante del llavero y no un número reutilizado.
+
+    El registro (`registro_vigilante()`) de uno que murió sin limpiarlo
+    nombra un pid que el sistema puede haberle dado ya a otro programa, y
+    `vigilante_vivo()` lo daría por vivo. Antes de terminar nada hay que
+    saberlo. Donde se ve la línea de órdenes (Linux, `store.orden_de()`) tiene
+    que llevar `VIGILAR`; donde no (Windows) se mira el ejecutable, que ha de
+    correr desde el volumen: es el `pythonw.exe` de la unidad, que es lo que la
+    retiene (`store.procesos_desde()`).
+    """
+    orden = store.orden_de(pid)
+    if orden:
+        return VIGILAR in orden
+    return pid in store.procesos_desde(model.DEVICE_ROOT)
+
+
+def terminar_vigilante() -> str:
+    """Termina al vigilante del llavero, y a lo que cuelga de él, sin esperarle.
+
+    Es para el que no se va tras pedírselo (`parada_vigilante()`): colgado
+    retiene la unidad con su Python, y si está a medio una pasada, con su
+    rclone. Solo lo termina si el pid del registro es de verdad el vigilante
+    (`es_el_vigilante()`); termina el árbol (`matar_arbol()`: `taskkill /F /T`
+    en Windows, nunca un `os.kill` a ciegas) y, si lo ha conseguido, quita su
+    registro y la petición de parada, que él ya no puede quitar. Lo cuenta en
+    el diario (`apuntar_diario()`).
+
+    Returns:
+        Lo que se ha hecho, en una frase: es lo que se apunta en el diario.
+    """
+    info = store.read_json(registro_vigilante())
+    pid = info.get("pid")
+    if not isinstance(pid, int) or not vivo_aqui(info):
+        return ""
+    if not es_el_vigilante(pid):
+        dicho = (f"[llavero] el vigilante (pid {pid}) no se iba, y no se ha terminado: no se "
+                 "ha podido comprobar que ese pid sea el suyo")
+    else:
+        matar_arbol(pid)
+        limite = time.monotonic() + ESPERA_MUERTE
+        while store.pid_alive(pid) and time.monotonic() < limite:
+            dormir(0.1)                     # morir no es instantáneo: la señal llega después
+        if store.pid_alive(pid):
+            dicho = f"[llavero] el vigilante (pid {pid}) no se iba, y sigue vivo tras terminarlo"
+        else:
+            for resto in (registro_vigilante(), parada_vigilante()):
+                try:
+                    resto.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            dicho = f"[llavero] vigilante terminado a la fuerza (pid {pid}): no se iba al pararlo"
+    apuntar_diario(dicho)
+    return dicho
+
+
 def lanzar_vigilante() -> int | None:
     """Arranca el vigilante del llavero, suelto y sin ventana, si hace falta.
 
