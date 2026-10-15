@@ -191,6 +191,11 @@ _casa = tmpdir("prdrive-casa-")
 _keepassxc.bases_navegador = lambda: {"config": Path(os.environ["XDG_CONFIG_HOME"]),
                                       "data": Path(os.environ["XDG_DATA_HOME"]),
                                       "home": _casa}
+# Los KeePassXC de mentira de los tests no son los oficiales: la comprobación
+# del SHA-256 (`keepassxc.comprobar()`) lo daría todo por malo. Aquí lo da todo
+# por bueno; el test que la prueba pone la de verdad (`REAL_COMPROBAR`).
+REAL_COMPROBAR = _keepassxc.comprobar
+_keepassxc.comprobar = lambda *args, **kwargs: None
 
 # Ni los procesos de verdad que no se dejan mirar (`store.sin_exe()`): un
 # KeePassXC abierto en el equipo de quien corre los tests se colaría en los

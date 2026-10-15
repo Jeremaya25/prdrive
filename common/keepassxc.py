@@ -33,6 +33,13 @@ Dónde está cada cosa:
 Lo que toca el equipo (`registro.*`, `store.procesos()`, `lanzar()`) son
 funciones de módulo que los tests sustituyen; lo demás decide sin tocar nada,
 o toca solo ficheros del dispositivo.
+
+Nada de `.prdrive/keepassxc/` entra en la huella del agente (`agente.huella()`),
+así que cada ejecutable de la unidad que se lanza o se registra se compara antes
+con el SHA-256 de `pins.KEEPASSXC_EJECUTABLES` (`comprobar()`; en Linux,
+`preparar_appimage()` resume la copia que va a extraer). Si no cuadra no se
+lanza nada y se dice por qué (`NoOficial`). Las DLL y el resto de ficheros que
+van al lado del programa no se comprueban.
 """
 
 from __future__ import annotations
@@ -70,6 +77,11 @@ SIEMPRE = {
     "UseAtomicSaves": "true",           # deshace un «Deshabilitar almacenajes seguros» (H-11)
     "Browser/UpdateBinaryPath": "true",  # que rehaga los JSON del navegador al arrancar
     "GUI/CheckForUpdates": "false",     # la versión la pone prdrive
+    # El proxy que registra KeePassXC es el que lleva al lado, comprobado
+    # (`comprobar()`): la configuración está en la unidad y fuera de la huella
+    # del agente, y con `UseCustomProxy` registraría en el navegador el programa
+    # que ella dijera (`getInstalledProxyPath()`).
+    "Browser/UseCustomProxy": "false",
 }
 """Lo que se pone en `keepassxc.ini` en cada arranque, diga lo que diga."""
 SIEMPRE_LINUX = {
@@ -201,14 +213,19 @@ def cli_lanzable(programa: Path) -> Path:
     """Devuelve el `keepassxc-cli` que se ejecuta a partir de lo que dio `cli()`.
 
     Del AppImage, el de dentro de lo extraído en este equipo (lo extrae si
-    hace falta); si no, el mismo.
+    hace falta, tras comprobarlo: `preparar_appimage()`); si no, el mismo, tras
+    comprobar que es el oficial (`comprobar()`). El `keepassxc-cli` del equipo
+    (Linux ARM64, sin paquete) no es de la unidad y no se comprueba.
 
     Raises:
+        NoOficial: Si el de la unidad no es el oficial.
         OSError: Si no se ha podido extraer.
     """
     paquete = paquete_del_equipo()
     if es_appimage(paquete) and programa == components.keepassxc_exe(model.APP_DIR, paquete):
         return preparar_appimage(paquete) / CLI_LINUX
+    if paquete is not None:
+        comprobar(programa, paquete)
     return programa
 
 
@@ -265,19 +282,125 @@ def _resumen(ruta: Path) -> str:
     return h.hexdigest()
 
 
-_VERSION_SEGURA = re.compile(r"[0-9A-Za-z][0-9A-Za-z.\-]*")
+# --- que lo que se lanza de la unidad sea el KeePassXC oficial
+
+class NoOficial(OSError):
+    """Un ejecutable de la unidad que no es el KeePassXC oficial: no se lanza ni se registra.
+
+    Su texto es lo que se le dice a la persona, y dice cómo seguir.
+    """
+
+
+RESUMENES: dict[tuple[str, int, int], str] = {}
+"""Los SHA-256 ya calculados en este proceso, por `(ruta, tamaño, mtime_ns)`.
+
+Así abrir el llavero dos veces, o abrirlo y combinar, lee una sola vez cada
+ejecutable. Si la ruta, el tamaño o el mtime cambian, se vuelve a leer.
+"""
+NO_OFICIAL = ("El KeePassXC de la unidad no es el oficial ({motivo}), así que no se ha lanzado "
+              "nada de él. {salida}")
+"""Lo que se dice cuando un ejecutable no cuadra con su pin."""
+SALIDA_ACTUALIZAR = "Pulsa «Actualizar…» en la ventana de prdrive: le pone el oficial."
+"""Cómo seguir si lo que falta es el sello o la versión: «Actualizar…» los trae."""
+SALIDA_BORRAR = ("Borra la carpeta «{carpeta}» de la unidad y pulsa «Actualizar…» en la "
+                 "ventana de prdrive: vuelve a ponerlo.")
+"""Cómo seguir si un fichero no cuadra con un sello que sí está al día.
+
+Con el sello al día, «Actualizar…» no se ofrece y poner el llavero otra vez no
+vuelve a copiar nada (`keepassxc_bin.al_dia()` mira el sello, no los ficheros):
+hace falta quitar la carpeta para que el paquete conste como ausente.
+"""
+
+
+def _no_oficial(motivo: str, carpeta: Path | None = None) -> NoOficial:
+    """Devuelve el aviso de que algo no es el oficial; con `carpeta`, pide borrarla."""
+    salida = SALIDA_BORRAR.format(carpeta=carpeta) if carpeta else SALIDA_ACTUALIZAR
+    return NoOficial(NO_OFICIAL.format(motivo=motivo, salida=salida))
+
+
+def esperado(paquete: str | None, nombre: str,
+             app_dir: Path | None = None) -> tuple[str, str]:
+    """Devuelve la versión del KeePassXC de la unidad y el SHA-256 oficial de uno de sus ficheros.
+
+    La versión es la que dice el sello de la unidad; la suma, la de
+    `pins.KEEPASSXC_EJECUTABLES` para esa versión. El sello lo escribe el
+    instalador pero está en la unidad: solo elige la fila de la tabla, nunca
+    pone la suma.
+
+    Args:
+        paquete: El paquete de KeePassXC (`windows-x64`, `linux-x64`).
+        nombre: El fichero, tal como se llama dentro de la carpeta del paquete.
+        app_dir: La carpeta del código de la unidad; por defecto, esta.
+
+    Raises:
+        NoOficial: Si no hay paquete para este equipo, si el sello no dice la
+            versión, si la tabla no la tiene o si no fija ese fichero.
+    """
+    if paquete is None:
+        raise _no_oficial("este equipo no tiene paquete de KeePassXC")
+    app = model.APP_DIR if app_dir is None else app_dir
+    version = components.keepassxc_sello(app, paquete).get(components.KEEPASSXC, "")
+    if not version:
+        raise _no_oficial("no tiene sello que diga de qué versión es")
+    ficheros = pins.KEEPASSXC_EJECUTABLES.get(version, {}).get(paquete)
+    if ficheros is None:
+        raise _no_oficial(f"es de la versión {version}, que esta versión de prdrive no conoce")
+    suma = ficheros.get(nombre)
+    if suma is None:
+        raise _no_oficial(f"prdrive no tiene fijado {nombre} en la versión {version}")
+    return version, suma
+
+
+def comprobar(ruta: Path, paquete: str | None, app_dir: Path | None = None) -> None:
+    """Comprueba que ese fichero de la unidad es el oficial; si no, lanza `NoOficial`.
+
+    Se llama justo antes de lanzar o registrar cualquier ejecutable de
+    `.prdrive/keepassxc/`: la ventana y su proxy, la línea de órdenes de
+    «Combinar» y de «dejar sin contraseña» y el registro del navegador. Compara
+    el SHA-256 con `esperado()`. No comprueba las DLL ni el resto de ficheros
+    que van al lado. Entre la comprobación y el lanzamiento el fichero puede
+    cambiar (una unidad extraíble no se puede bloquear), salvo el AppImage de
+    Linux, que `preparar_appimage()` resume ya copiado en el equipo.
+
+    Es de módulo para que los tests la sustituyan: los KeePassXC de mentira no
+    son los oficiales.
+
+    Args:
+        ruta: El fichero, dentro de la carpeta del paquete.
+        paquete: El paquete de KeePassXC al que pertenece.
+        app_dir: La carpeta del código de la unidad; por defecto, esta.
+
+    Raises:
+        NoOficial: Si no cuadra con la tabla, no se puede leer o no hay con
+            qué compararlo.
+    """
+    app = model.APP_DIR if app_dir is None else app_dir
+    version, oficial = esperado(paquete, ruta.name, app)
+    try:
+        info = ruta.stat()
+        clave = (str(ruta), info.st_size, info.st_mtime_ns)
+        resumen = RESUMENES.get(clave)
+        if resumen is None:
+            resumen = RESUMENES[clave] = _resumen(ruta)
+    except OSError as e:
+        raise _no_oficial(f"no se ha podido leer {ruta.name}: {e}") from e
+    if resumen != oficial:
+        raise _no_oficial(f"{ruta.name} no es el de la versión {version}",
+                          components.keepassxc_dir(app, paquete))
 
 
 def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
     """Devuelve la carpeta extraída del AppImage de la unidad en este equipo.
 
     Se extrae una vez por versión, en `cache_equipo()/<versión>/`, y la
-    siguiente vez se usa si su `SELLO_EXTRAIDO` es el SHA-256 del AppImage que
-    dice el sello de la unidad. Para extraer, el AppImage se copia antes a la
-    caché y se comprueba contra ese mismo SHA-256: así da igual que el volumen
-    sea `noexec` o exFAT. Lo extraído se coloca de un renombrado, con el sello
-    escrito el último, y las versiones viejas se borran si no corre nada desde
-    ellas.
+    siguiente vez se usa si su `SELLO_EXTRAIDO` es el SHA-256 oficial del
+    AppImage (`esperado()`): lo que ya salió de él no vuelve a depender de lo
+    que haya ahora en la unidad. Para extraer, el AppImage se copia antes a la
+    caché y se comprueba la COPIA contra ese mismo SHA-256, que es lo que se
+    ejecuta: así no se ejecuta nada que no sea el oficial y da igual que el
+    volumen sea `noexec` o exFAT. Lo extraído se coloca de un renombrado, con
+    el sello escrito el último, y las versiones viejas se borran si no corre
+    nada desde ellas.
 
     Args:
         paquete: El paquete de Linux (`linux-x64`).
@@ -287,26 +410,17 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
         La carpeta `squashfs-root/`, con `AppRun` dentro.
 
     Raises:
-        OSError: Si falta el sello, la copia no cuadra o no se ha podido
-            extraer.
+        NoOficial: Si falta el sello, su versión no está en `pins`, o la copia
+            no es el AppImage oficial.
+        OSError: Si no se ha podido extraer.
     """
     app = model.APP_DIR if app_dir is None else app_dir
     appimage = components.keepassxc_exe(app, paquete)
-    sello = components.keepassxc_sello(app, paquete)
-    version = sello.get(components.KEEPASSXC, "")
-    try:
-        texto = (components.keepassxc_dir(app, paquete) / components.KEEPASSXC_STAMP).read_text(
-            encoding="utf-8")
-    except (OSError, ValueError):
-        texto = ""
-    esperado = components.keepassxc_ficheros(texto).get(components.KEEPASSXC_APPIMAGE)
-    if not esperado or not _VERSION_SEGURA.fullmatch(version):
-        raise OSError("el KeePassXC de la unidad no tiene sello: «Actualizar…» lo vuelve "
-                      "a poner")
+    version, oficial = esperado(paquete, components.KEEPASSXC_APPIMAGE, app)
     destino = cache_equipo() / version
     hecho = destino / EXTRAIDO
     try:
-        if ((destino / SELLO_EXTRAIDO).read_text(encoding="utf-8").strip() == esperado
+        if ((destino / SELLO_EXTRAIDO).read_text(encoding="utf-8").strip() == oficial
                 and (hecho / APPRUN).is_file()):
             return hecho
     except OSError:
@@ -317,14 +431,15 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
     try:
         copia = nuevo / components.KEEPASSXC_APPIMAGE
         shutil.copyfile(appimage, copia)
-        if _resumen(copia) != esperado:
-            raise OSError("la copia del AppImage no es la de la unidad: ¿falla la unidad?")
+        if _resumen(copia) != oficial:
+            raise _no_oficial(f"{components.KEEPASSXC_APPIMAGE} no es el de la versión "
+                              f"{version}", components.keepassxc_dir(app, paquete))
         copia.chmod(0o700)
         codigo = extraer_appimage(copia, nuevo)
         if codigo != 0 or not (nuevo / EXTRAIDO / APPRUN).is_file():
             raise OSError(f"no se ha podido extraer el AppImage (código {codigo})")
         copia.unlink()
-        (nuevo / SELLO_EXTRAIDO).write_text(esperado + "\n", encoding="utf-8")
+        (nuevo / SELLO_EXTRAIDO).write_text(oficial + "\n", encoding="utf-8")
         viejo = cache_equipo() / f".{version}.viejo-{os.getpid()}"
         apartado = destino.exists()
         if apartado:
@@ -694,17 +809,27 @@ def json_nativo(carpeta: Path, navegador: str) -> Path:
     return carpeta / f"{HOST_NATIVO}_{navegador}.json"
 
 
-def abrir_navegador(exe: Path) -> list[str]:
+def abrir_navegador(exe: Path, paquete: str | None = None) -> list[str]:
     """Apunta las cuatro claves del navegador a los JSON del KeePassXC de la unidad.
 
     Se escriben las cuatro, haya lo que haya: en Windows `isBrowserEnabled()`
     solo mira que la clave tenga valor, y al arrancar `updateBinaryPaths()`
     rehace el JSON y la clave de todo lo «habilitado». Es lo que configura un
     equipo nuevo sin pasos (B2, B3); KeePassXC se las quedaría igualmente (B5).
+    Lo que se registra es el proxy que lanza el navegador, y no se escribe
+    nada si no es el oficial (`comprobar()`).
+
+    Args:
+        exe: El `KeePassXC.exe` de la unidad; el proxy es el que tiene al lado.
+        paquete: El paquete de KeePassXC; por defecto, el de este equipo.
 
     Returns:
         Lo que no se ha podido escribir, para decirlo; vacío si todo bien.
+
+    Raises:
+        NoOficial: Si el proxy de la unidad no es el oficial.
     """
+    comprobar(exe.with_name(PROXY), paquete_del_equipo() if paquete is None else paquete)
     carpeta = exe.parent / "config"
     fallos = []
     for base, nombres in NAVEGADORES:
@@ -1267,7 +1392,8 @@ def _cli_listo(esperar: Callable[[str], object]) -> Path | None:
     en `~/.config/keepassxc` del equipo.
 
     Returns:
-        El programa, o `None` si falta o no se ha podido preparar (ya se ha dicho).
+        El programa, o `None` si falta, no es el oficial o no se ha podido
+        preparar (ya se ha dicho).
     """
     programa = cli()
     if programa is None or not programa.is_file():
@@ -1277,6 +1403,10 @@ def _cli_listo(esperar: Callable[[str], object]) -> Path | None:
     paquete = paquete_del_equipo()
     try:
         programa = cli_lanzable(programa)
+    except NoOficial as e:
+        print(f"{e}\nNo se ha tocado nada.")
+        esperar("Pulsa Intro para cerrar esta ventana.")
+        return None
     except OSError as e:
         print(f"No se ha podido preparar keepassxc-cli ({e}): no se ha tocado nada.")
         esperar("Pulsa Intro para cerrar esta ventana.")
@@ -1423,8 +1553,8 @@ def llave_vale(base: Path, llave: Path) -> bool | None:
     fichero llave que se ha dado en un dispositivo nuevo es el de la base.
 
     Returns:
-        True o False; `None` si no se ha podido probar (sin `keepassxc-cli`, o
-        no arranca): quien llama no lo da por malo.
+        True o False; `None` si no se ha podido probar (sin `keepassxc-cli`,
+        uno que no es el oficial, o no arranca): quien llama no lo da por malo.
     """
     programa = cli()
     if programa is None or not programa.is_file():
@@ -1576,10 +1706,18 @@ def abrir(ap: Apertura) -> Abierto:
     - Linux ARM64: el KeePassXC del equipo, con su configuración y sus
       manifiestos, que son de la persona; si no tiene passkeys, se dice.
 
+    Nada de la unidad se lanza ni se registra sin comprobar antes que es el
+    oficial (`comprobar()`; en Linux, `preparar_appimage()`): en Windows,
+    `KeePassXC.exe` y el proxy que lleva al lado, porque KeePassXC registra por
+    su cuenta el que encuentra al arrancar. Con el KeePassXC del equipo no hay
+    nada que comprobar.
+
     Args:
         ap: Lo que dijo `mirar_apertura()`, sin `motivo`.
 
     Raises:
+        NoOficial: Si algún ejecutable de la unidad no es el oficial; no se
+            ha tocado nada.
         OSError: Si no se ha podido extraer o lanzar.
     """
     avisos: list[str] = []
@@ -1604,12 +1742,14 @@ def abrir(ap: Apertura) -> Abierto:
                               f"escribir {len(fallos)} de sus manifiestos ({fallos[0]}).")
     else:
         programa = ap.exe
+        comprobar(programa, ap.paquete)
+        comprobar(programa.with_name(PROXY), ap.paquete)
         if not ap.abierto:
             try:
                 ajustar_config(paquete=ap.paquete)
             except OSError as e:
                 avisos.append(f"No se ha podido preparar la configuración de KeePassXC: {e}")
-            fallos = abrir_navegador(ap.exe)
+            fallos = abrir_navegador(ap.exe, ap.paquete)
             if fallos:
                 avisos.append(f"El navegador no encontrará este KeePassXC: no se han podido "
                               f"escribir {len(fallos)} de sus {len(NAVEGADORES)} claves del "
