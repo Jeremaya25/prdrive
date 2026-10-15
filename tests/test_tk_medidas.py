@@ -767,25 +767,34 @@ try:
 
                 # La ventana de una pareja, como se abre y en su caso más alto:
                 # con «Avanzado» desplegado, el aviso ámbar de un espejo y, bajo
-                # cada campo, lo que dice el catálogo.
-                def ventana_de_pareja(desplegada: bool) -> None:
+                # cada campo, lo que dice el catálogo. Y la de una pareja bisync
+                # con el bloque de «Resincronizar…» (#97), que solo sale con algo
+                # con lo que lanzar la pasada.
+                def ventana_de_pareja(desplegada: bool, con_resync: bool = False) -> None:
                     """Abre la ventana de la primera pareja sobre una pantalla de parejas."""
-                    parejas = tk_pairs.PantallaParejas(raiz)
+                    parejas = tk_pairs.PantallaParejas(
+                        raiz, lanzar=(lambda titulo, args: None) if con_resync else None)
                     parejas.cat, parejas.aviso = catalog.load()
                     try:
                         ventana = tk_pairs.VentanaPareja(parejas, "pareja0", False)
                         if desplegada:
                             ventana.editor.plegar()
-                            ventana.editor.modo.set("up-mirror")
-                            ventana.editor.modo_cambiado()
+                            if not con_resync:
+                                ventana.editor.modo.set("up-mirror")
+                                ventana.editor.modo_cambiado()
+                        if con_resync:      # que el caso lleve de verdad el bloque que mide
+                            assert ventana.editor._ofrece_resync(), "falta «Resincronizar…»"
+                            assert not desplegada or ventana.editor.marco_resync is not None
                         ventana.abrir()
                     finally:
                         parejas.dlg.destroy()
 
-                for que, desplegada in (("la ventana de una pareja", False),
-                                        ("la ventana de una pareja con todo desplegado", True)):
-                    entra, corta = medir_dialogo(lambda: ventana_de_pareja(desplegada),
-                                                 ancho, alto, escala)
+                for que, desplegada, con_resync in (
+                        ("la ventana de una pareja", False, False),
+                        ("la ventana de una pareja con todo desplegado", True, False),
+                        ("la ventana de una pareja bisync con «Resincronizar…»", True, True)):
+                    entra, corta = medir_dialogo(
+                        lambda: ventana_de_pareja(desplegada, con_resync), ancho, alto, escala)
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortada", corta, False)
 

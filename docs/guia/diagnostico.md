@@ -26,6 +26,29 @@ borrado todo» y eso se propagaría al remoto. Lo que hay que arreglar está fue
 del programa —el volumen no está montado donde se cree, o la carpeta se movió—,
 así que la pantalla lo dice y se calla.
 
+## Rehacer la referencia cuando tú quieras
+
+«Reparación» ofrece **Resincronizar…** cuando una pareja `bisync` lo necesita. Si
+quieres rehacer la referencia de una pareja sin que haya ningún aviso —porque has
+movido ficheros a mano por los dos lados, por ejemplo—, está también en **Parejas →
+Modificar… → Avanzado → Resincronizar…**.
+
+- Enseña lo mismo que «Reparación» antes de hacer nada: compara los dos lados
+  enteros, no borra nada por estar en uno solo y, si la pareja guarda versiones,
+  deja copia de lo que sobrescriba. Si cancelas, no pasa nada.
+- Trae una casilla, **marcada**, para **apartar la referencia actual antes**: queda en
+  `state/<pareja>.old-<fecha>/`, sin borrarse, por si quieres volver atrás a mano. Si la
+  desmarcas, el resync la sustituye por la nueva.
+- **No es «Forzar sincronización…»**: aquello salta el freno de borrados en una sola
+  pasada; esto rehace la referencia y no salta ningún freno.
+- Solo está en las parejas `bisync` (`up`, `down` y los espejos no tienen referencia que
+  rehacer), y no se ofrece si falta la carpeta local de una pareja que ya tiene
+  referencia: mira antes si el volumen está montado.
+- Si has cambiado algo en la ventana de la pareja y no lo has guardado, guárdalo o
+  descártalo antes: el resync usa la pareja tal como está guardada.
+- Lo pide siempre una persona: no lo lanza el servicio, ni el arranque automático, ni el
+  agente.
+
 ## Cuando salta el freno de borrados
 
 Si de golpe desaparece casi todo de un lado, lo más probable es un error —la

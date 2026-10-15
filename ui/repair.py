@@ -32,6 +32,12 @@ from . import prefs
 ETIQUETA_SIMULAR = "Ver qué se borraría"
 """El botón que lanza la simulación forzada; el plan de forzar lo nombra para recomendarla."""
 
+ETIQUETA_FORZAR = "Forzar sincronización…"
+"""El botón que salta el freno de borrados de UNA pasada; el plan del resync lo nombra para distinguirse."""
+
+ETIQUETA_RESYNC = "Resincronizar…"
+"""El botón que rehace la referencia de una pareja, en «Reparación» y en la ficha de «Parejas»."""
+
 
 class ReparacionImposible(Exception):
     """Lo que se pide no se puede hacer; el mensaje es para la persona."""
@@ -292,6 +298,21 @@ def args_simular(nombres: list[str]) -> list[str]:
     return [*nombres, "--dry-run"]
 
 
+def hallazgo_resync(pair: Pair) -> Hallazgo:
+    """Devuelve un hallazgo `resync` de esa pareja, aunque el diagnóstico no lo vea.
+
+    Es lo que piden `aviso_resync()` y `args_resync()` para una pareja a la que la
+    persona quiere rehacerle la referencia desde su ficha de «Parejas», sin que
+    haya un motivo que `revision.revisar()` encuentre. El `dato` es el mismo que
+    pone el diagnóstico (`revision.dato_resync()`), así que el plan y la orden
+    salen iguales venga el hallazgo de donde venga.
+    """
+    return Hallazgo(
+        "resync", f"{revision.nombre_visible(pair.name)}: resincronización pedida",
+        "La pide la persona desde la ficha de la pareja.",
+        pair.name, revision.NOTA, revision.dato_resync(pair))
+
+
 def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
     """Devuelve el plan, sin disco, de confirmar un resync.
 
@@ -301,6 +322,9 @@ def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
     Si el hallazgo trae la copia de la carpeta del programa que subió una pareja
     de la raíz entera (`dato`), lo avisa aquí y no después: el resync deja de
     subirla pero no la borra, y el listado nuevo ya no la enseñaría.
+
+    Dice también en qué se diferencia de «Forzar sincronización…»: aquello salta
+    el freno de borrados de una pasada y esto rehace la referencia y nada más.
     """
     avisos = ["Puede tardar, según lo que haya que listar.",
               "Si la pareja guarda versiones, lo que el resync sobrescriba se guarda "
@@ -308,10 +332,12 @@ def aviso_resync(hallazgo: Hallazgo) -> RepairPlan:
     if hallazgo.dato:
         avisos.append(aviso_carpeta_programa(hallazgo.dato[0]))
     return RepairPlan(
-        f"Resincronizar «{hallazgo.pareja}»",
+        f"Resincronizar {revision.nombre_visible(str(hallazgo.pareja))}",
         ["Se rehace el baseline de la pareja: rclone compara los dos lados "
          "enteros y se queda con lo que hay ahora en cada uno",
-         "No se borra nada por estar en un solo lado: un resync junta, no iguala"],
+         "No se borra nada por estar en un solo lado: un resync junta, no iguala",
+         f"No es lo mismo que «{ETIQUETA_FORZAR}», que salta el freno de borrados en "
+         "una pasada: un resync rehace la referencia y no salta ningún freno"],
         avisos)
 
 

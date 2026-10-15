@@ -588,7 +588,7 @@ def abrir(cfg, conducir, compartida=None, destruir: bool = True):
     tk_pairs.mostrar = mostrar
     if compartida is None:
         return tk_pairs.open_dialog(raiz, cfg)
-    return tk_pairs.open_dialog(raiz, cfg, compartida)
+    return tk_pairs.open_dialog(raiz, cfg, compartida=compartida)
 
 
 def en_la_ventana(dlg, hacer, pareja: str | None = None) -> None:

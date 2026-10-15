@@ -40,7 +40,7 @@ from common import catalog, model
 from common.model import ConfigError
 
 from . import (catalog_editor, flags_ayuda, flags_editor, icons, pair_editor, perf_al_pintar,
-               perf_empezar, remote_picker, segundo_plano, theme)
+               perf_empezar, remote_picker, repair, segundo_plano, theme)
 from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
                  bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
                  output_window, working)
@@ -78,9 +78,16 @@ NOTA_CATALOGO = "Se guardará una copia del catálogo (.bak) en el remoto"
 """Lo que se dice al confirmar un cambio del catálogo."""
 ANTES = "Antes de guardar se enseña qué va a pasar."
 """La frase del pie: nada se escribe sin enseñarlo antes."""
+NOTA_RESYNC = "Al confirmar, el resync se lanza en la ventana de salida"
+"""Lo que se dice al confirmar un resync desde la ficha de una pareja."""
+CASILLA_APARTAR = "Apartar la referencia actual antes"
+"""La casilla de «Resincronizar…»: la referencia pasa a `state/<pareja>.old-<fecha>/` antes de rehacerla."""
 AVISO_CAMBIADO = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
                   "leer. Revisa y vuelve a guardar.")
 """Lo que dice el pie cuando el config se ha editado por fuera y no se ha hecho lo pedido."""
+AVISO_CAMBIADO_RESYNC = ("sync_config.toml ha cambiado fuera de esta pantalla: se ha vuelto a "
+                         f"leer. Revisa la pareja y vuelve a pulsar «{repair.ETIQUETA_RESYNC}».")
+"""Lo mismo cuando lo pedido era un resync: no hay nada que guardar."""
 CAMPOS_DEL_EDITOR = ("actual", "editable")
 """Lo que, al cambiar, obliga a recargar los campos de la ventana de una pareja.
 
@@ -235,15 +242,25 @@ class EditorPareja:
             Solo vale para una pareja de este dispositivo, que es donde
             `sync.py` la monta: la del catálogo es una plantilla y lo local de
             su orden (`device_remote`, la raíz) lo pone cada dispositivo.
+        al_resincronizar: Lo que se llama, con lo que marca la casilla de apartar
+            la referencia, al pulsar «Resincronizar…» en «Avanzado». Sin él no
+            hay bloque: es de quien tiene la pareja de este dispositivo y con qué
+            lanzar la pasada. El bloque sale cuando la pareja cargada es bisync y
+            se puede cambiar (`pair_editor.admite_resync()`), y lo que marca la
+            casilla no es un campo de la pareja: no entra en `datos()`.
     """
 
     def __init__(self, parent, dlg, sup: str = "", dos_columnas: bool = True,
-                 plegable: bool = True, al_crecer=None, con_orden: bool = False):
+                 plegable: bool = True, al_crecer=None, con_orden: bool = False,
+                 al_resincronizar=None):
         import tkinter as tk
         from tkinter import ttk
         self.dlg, self.sup = dlg, sup
         self.al_crecer = al_crecer
         self.con_orden = con_orden
+        self.al_resincronizar = al_resincronizar
+        self.marco_resync = None
+        self.boton_resync = None
         self.raw: dict = {}
         self.actual: dict = {}
         self.catalogo: dict | None = None
@@ -324,6 +341,7 @@ class EditorPareja:
         self.pista_versiones = ttk.Label(derecha, style=f"{sup}Pista.TLabel",
                                          wraplength=theme.medida(440), justify="left")
         self.pista_versiones.grid(row=5, column=0, sticky="w", padx=(theme.E5, 0))
+        self.apartar = tk.BooleanVar(derecha, value=True)
         self.vigilar = tk.BooleanVar(derecha, value=False)
         self.casilla_vigilar = ttk.Checkbutton(
             derecha, variable=self.vigilar, style=f"{sup}TCheckbutton",
@@ -411,9 +429,63 @@ class EditorPareja:
         self.texto_flags.grid(row=1, column=1, sticky="w")
         self.boton_flags = ttk.Button(flags, text="Editar flags…", command=self.editar_flags)
         self.boton_flags.grid(row=0, column=2, rowspan=2, sticky="e", padx=(theme.E3, 0))
+        if self.al_resincronizar is not None:
+            self._construir_resync()
         self._poner_cajas()
         self.boton_flags.configure(state="normal" if self.editable else "disabled")
         self._resumir()
+
+    def _construir_resync(self) -> None:
+        """Construye el bloque de «Resincronizar…», al pie de «Avanzado».
+
+        Se enseña u oculta según la pareja cargada (`_poner_resync()`). Dice en una
+        línea qué hace y en qué se diferencia de «Forzar sincronización…»; el plan
+        completo sale al pulsar el botón.
+        """
+        from tkinter import ttk
+        sup = "Card."
+        marco = self.marco_resync = ttk.Frame(self.dentro, style="Card.TFrame",
+                                              padding=(theme.E3, theme.E3))
+        marco.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(theme.E3, 0))
+        marco.columnconfigure(0, weight=1)
+        ttk.Label(marco, text="Rehacer la referencia", style=f"{sup}Fuerte.TLabel").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(marco, style=f"{sup}Pista.TLabel", wraplength=theme.medida(440),
+                  justify="left",
+                  text=("Compara los dos lados enteros y vuelve a empezar desde ahí, sin borrar "
+                        "nada por estar en uno solo. Saltar el freno de borrados es otra cosa: "
+                        f"«{repair.ETIQUETA_FORZAR}», en «Reparación».")).grid(
+            row=1, column=0, sticky="w")
+        ttk.Checkbutton(marco, text=CASILLA_APARTAR, variable=self.apartar,
+                        style=f"{sup}TCheckbutton").grid(row=2, column=0, sticky="w",
+                                                         pady=(theme.E2, 0))
+        self.boton_resync = ttk.Button(marco, text=repair.ETIQUETA_RESYNC,
+                                       command=self.pedir_resync)
+        self.boton_resync.grid(row=0, column=1, rowspan=3, sticky="e", padx=(theme.E3, 0))
+        self._poner_resync()
+
+    def _ofrece_resync(self) -> bool:
+        """Dice si «Resincronizar…» vale para la pareja cargada.
+
+        Se mira la pareja como está guardada, no el modo que se esté tecleando: el
+        resync lo hace `sync.py` con la guardada.
+        """
+        return (self.al_resincronizar is not None and self.editable and bool(self.original)
+                and pair_editor.admite_resync(str(self.actual.get("mode", model.DEFAULT_MODE))))
+
+    def _poner_resync(self) -> None:
+        """Enseña u oculta el bloque de «Resincronizar…» según la pareja cargada."""
+        if self.marco_resync is None:
+            return
+        if self._ofrece_resync():
+            self.marco_resync.grid()
+        else:
+            self.marco_resync.grid_remove()
+
+    def pedir_resync(self) -> None:
+        """Pasa a quien tiene la ventana que se ha pedido el resync, con la casilla como esté."""
+        if self.al_resincronizar is not None:
+            self.al_resincronizar(bool(self.apartar.get()))
 
     def _poner_cajas(self) -> None:
         """Escribe los patrones cargados en las cajas, apagadas si no se puede editar."""
@@ -474,6 +546,7 @@ class EditorPareja:
         if self.dentro is not None:
             self._poner_cajas()
             self.boton_flags.configure(state="normal" if editable else "disabled")
+            self._poner_resync()
         self.avanzado = {"flags": dict(actual.get("flags") or {}),
                          "extra_flags": list(model._as_tuple(actual.get("extra_flags")))}
         self._resumir()
@@ -781,8 +854,10 @@ class VentanaPareja:
                   style="Pista.TLabel", wraplength=theme.medida(640), justify="left").grid(
             row=1, column=0, sticky="w", pady=(theme.E1, 0))
 
-        self.editor = EditorPareja(marco, dlg, al_crecer=self.crecer,
-                                   con_orden=not del_catalogo)
+        self.editor = EditorPareja(
+            marco, dlg, al_crecer=self.crecer, con_orden=not del_catalogo,
+            al_resincronizar=(self.resincronizar if not del_catalogo
+                              and pantalla.lanzar is not None else None))
         self.editor.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
 
         ttk.Separator(marco, orient="horizontal").grid(row=3, column=0, sticky="ew",
@@ -919,6 +994,25 @@ class VentanaPareja:
             return
         self.dlg.destroy()
 
+    def resincronizar(self, apartar: bool) -> None:
+        """Pide el resync de esta pareja, tal como está guardada en este dispositivo.
+
+        Con campos sin guardar no se pide: `sync.py` leería la pareja guardada y el
+        plan hablaría de una pareja que no es la que se ve.
+
+        Args:
+            apartar: Lo que marca la casilla de apartar la referencia actual.
+        """
+        from tkinter import messagebox
+
+        if self.hay_cambios():
+            messagebox.showinfo(
+                TITLE, f"Hay cambios sin guardar en '{self.nombre}'. El resync se hace con la "
+                       f"pareja como está guardada: guárdalos o descártalos y vuelve a pulsar "
+                       f"«{repair.ETIQUETA_RESYNC}».", parent=self.dlg)
+            return
+        self.pantalla.resincronizar(self.nombre, apartar)
+
     def guardar(self) -> None:
         """Pide el plan de guardar lo escrito, en este dispositivo o en el catálogo.
 
@@ -954,6 +1048,8 @@ class PantallaParejas:
 
     Args:
         parent: La ventana de la que cuelga.
+        lanzar: El `lanzar(titulo, args)` de la ventana principal, o `None`
+            (entonces la ficha de una pareja no ofrece «Resincronizar…»).
         compartida: La lectura compartida de la ventana principal
             (`ui.instantanea.Compartida`), o `None`.
 
@@ -965,9 +1061,11 @@ class PantallaParejas:
         cat: El catálogo que se enseña (`catalog.Catalogo`), o `None`.
         aviso: Por qué el catálogo es la copia local, o `None`.
         leyendo: Si se está leyendo el catálogo del remoto.
-        cambiado: Si se ha cambiado el config de este dispositivo: lo que
-            devuelve `abrir()`.
+        cambiado: Si la ventana principal tiene algo que releer (se ha cambiado el
+            config de este dispositivo, o un resync apartó la referencia y `lanzar`
+            falló): lo que devuelve `abrir()`.
         ventana: La `VentanaPareja` abierta, o `None`.
+        lanzar: El `lanzar(titulo, args)` de la ventana principal, o `None`.
         compartida: La lectura compartida si aún no se ha usado, o `None`.
         estados: El baseline y los filtros de cada pareja bisync, por nombre.
         estados_de: El config del que salen `estados`, o `None`.
@@ -982,12 +1080,13 @@ class PantallaParejas:
         botones: Los botones de acción, por su texto (o su clave).
     """
 
-    def __init__(self, parent, compartida=None) -> None:
+    def __init__(self, parent, *, lanzar=None, compartida=None) -> None:
         """Construye la pantalla retirada, con la vista de este dispositivo."""
         import tkinter as tk
         from tkinter import ttk
 
         self.parent = parent
+        self.lanzar = lanzar
         dlg = self.dlg = modal(parent, "Parejas")
         self.lector = pair_editor.LecturaConfig()
         self.raw, self.config = self.lector.leer()
@@ -1431,12 +1530,15 @@ class PantallaParejas:
             messagebox.showinfo(TITLE, "Elige antes una pareja de la lista.", parent=self.dlg)
         return fila
 
-    def releer_config_cambiado(self) -> bool:
+    def releer_config_cambiado(self, aviso: str = AVISO_CAMBIADO) -> bool:
         """Dice si el config se ha cambiado por fuera desde que la pantalla lo enseñó.
 
         Si es así lo vuelve a leer, lo dice en el pie y la pantalla se queda
         como el config: quien llama no sigue con lo que iba a hacer. Si ya no
         se puede ni leer (desapareció, o ya no es TOML), lo dice y para igual.
+
+        Args:
+            aviso: Lo que dice el pie si ha cambiado.
         """
         from tkinter import messagebox
 
@@ -1447,7 +1549,7 @@ class PantallaParejas:
             return True
         if not self.lector.cambio:
             return False
-        self.refrescar(AVISO_CAMBIADO)
+        self.refrescar(aviso)
         return True
 
     def aplicar_plan(self, plan, en_catalogo: bool = False, titulo: str = "", base=None) -> None:
@@ -1569,6 +1671,63 @@ class PantallaParejas:
         self.pie_nota.configure(text=f"Simulación de '{fila.name}' terminada: no se ha "
                                      f"tocado nada.")
 
+    def resincronizar(self, nombre: str, apartar: bool) -> None:
+        """Rehace la referencia de esa pareja: plan, confirmación y, con el sí, la pasada.
+
+        El plan y la orden son los de «Reparación» (`pair_editor.plan_resync()`):
+        esta pantalla no escribe ni el texto ni el comando. Nada se aparta ni se
+        lanza hasta que la persona confirma. Con el sí, la referencia se aparta
+        si se pidió, la pantalla se cierra (es modal: con su captura delante no
+        se podría usar la ventana de salida, que cuelga de la principal, como
+        pasa en «Reparación») y la pasada se lanza con el `lanzar` de la ventana
+        principal, que vuelve a leer el estado al cerrarse la ventana de salida.
+
+        La confirmación puede tardar minutos, así que antes de ejecutar se mira
+        otra vez el config, como en `aplicar_plan()`: si se ha editado fuera, o
+        la pareja ya no se puede resincronizar, no se hace nada. Tampoco marca
+        `cambiado` salvo que `lanzar` falle: `sync.py` es quien reescribe `state/`
+        y una lectura de la principal mientras tanto vería la referencia a medias.
+
+        Args:
+            nombre: La pareja, tal como está guardada en este dispositivo.
+            apartar: Si se aparta la referencia actual antes de rehacerla.
+        """
+        from tkinter import messagebox
+
+        if self.lanzar is None or self.releer_config_cambiado(AVISO_CAMBIADO_RESYNC):
+            return
+        base, dlg = self.raw, self.delante()
+        try:
+            plan = pair_editor.plan_resync(self.config, nombre, apartar)
+        except (ConfigError, repair.ReparacionImposible) as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return
+        if not confirmar_plan(dlg, plan, plan.titulo, NOTA_RESYNC):
+            return
+        try:
+            actual, _ = self.lector.leer()
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            return
+        if actual is not base:
+            self.refrescar(AVISO_CAMBIADO_RESYNC)
+            return
+        try:
+            plan.execute()
+        except (ConfigError, repair.ReparacionImposible, OSError) as e:
+            messagebox.showerror(TITLE, f"No se lanza el resync: no se ha podido apartar la "
+                                        f"referencia.\n\n{e}", parent=dlg)
+            self.estados_de, self.compartida = None, None
+            self.refrescar()
+            return
+        self.cerrar_ventana()
+        self.dlg.destroy()
+        try:
+            self.lanzar(plan.titulo, plan.args)
+        except BaseException:
+            self.cambiado = True        # la referencia ya está apartada: que la principal relea
+            raise
+
     def volver_al_catalogo(self) -> None:
         """Devuelve la pareja elegida a lo que dice el catálogo."""
         fila = self.fila_elegida()
@@ -1636,7 +1795,7 @@ class PantallaParejas:
         tk_fleet.open_dialog(self.dlg, self.config, self.raw)
 
 
-def open_dialog(parent, config, compartida=None) -> bool:
+def open_dialog(parent, config, *, lanzar=None, compartida=None) -> bool:
     """Abre la pantalla y devuelve si se ha cambiado el config de este dispositivo.
 
     Se pinta con la copia local del catálogo (`catalog.cached()`) y el remoto
@@ -1659,13 +1818,16 @@ def open_dialog(parent, config, compartida=None) -> bool:
     Args:
         parent: La ventana de la que cuelga.
         config: La configuración del dispositivo. La pantalla lee la de disco.
+        lanzar: El `lanzar(titulo, args)` de la ventana principal, con el que
+            «Resincronizar…» lanza su pasada en la ventana de salida. Sin él no
+            se ofrece.
         compartida: La lectura compartida de la ventana principal
             (`ui.instantanea.Compartida`), o `None`. Al abrir, si vale para el
             config que hay en disco, de ella salen el baseline y los filtros de
             cada pareja; si no, se leen del disco una vez y se guardan mientras
             la pantalla viva.
     """
-    return PantallaParejas(parent, compartida).abrir()
+    return PantallaParejas(parent, lanzar=lanzar, compartida=compartida).abrir()
 
 
 def _resumen_defaults(raw, difiere) -> str:

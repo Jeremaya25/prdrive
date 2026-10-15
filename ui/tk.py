@@ -2538,11 +2538,16 @@ class VentanaPrincipal:
     # Las pantallas que se abren desde aquí.
 
     def abrir_parejas(self) -> None:
-        """Abre «Parejas…» y, si se ha guardado algo, relee el config y el estado."""
+        """Abre «Parejas…» y, si se ha guardado algo, relee el config y el estado.
+
+        Le da `lanzar` para el «Resincronizar…» de la ficha de una pareja: la pasada
+        sale en la ventana de salida de siempre, y al cerrarla se vuelve a leer.
+        """
         perf_empezar("open-parejas")
         from . import tk_pairs
 
-        if tk_pairs.open_dialog(self.root, self.config, compartida=self.la_compartida()):
+        if tk_pairs.open_dialog(self.root, self.config, compartida=self.la_compartida(),
+                                lanzar=self.lanzar):
             self.recargar()
 
     def abrir_arranque(self) -> None:

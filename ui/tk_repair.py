@@ -55,7 +55,7 @@ TODO_BIEN = ("No hay nada que revisar: las parejas tienen su baseline, no hay "
 BOTONES = {
     "prefijo": "Apartar el baseline…",
     "lock": "Borrar los bloqueos…",
-    "resync": "Resincronizar…",
+    "resync": repair.ETIQUETA_RESYNC,
     "fallo": "Ver el log",
 }
 """Qué botón lleva cada avería, junto a su título.
@@ -64,7 +64,7 @@ Lo que no está aquí no tiene botón, y eso también es una respuesta: la carpe
 local que falta no se arregla creándola. El freno de borrados (`freno`) tiene
 varios y van aparte, debajo de su texto (`FORZAR`, `repair.ETIQUETA_SIMULAR`, `VER_LOG`).
 """
-FORZAR = "Forzar sincronización…"
+FORZAR = repair.ETIQUETA_FORZAR
 """El botón que salta el freno de borrados de UNA pasada, tras confirmarlo."""
 VER_LOG = "Ver el log"
 """El botón que abre el log de la pasada que paró el freno."""
@@ -184,12 +184,11 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         hallazgo = fresco(hallazgo)
         if hallazgo is None:
             return
-        if not tk_pairs.confirmar_plan(dlg, repair.aviso_resync(hallazgo),
-                                       f"Resincronizar «{hallazgo.pareja}»", ""):
+        plan = repair.aviso_resync(hallazgo)
+        if not tk_pairs.confirmar_plan(dlg, plan, plan.titulo, ""):
             return
         panel.devolver(True)
-        panel.cerrar(lambda: lanzar(f"Resincronizar «{hallazgo.pareja}»",
-                                    repair.args_resync(hallazgo)))
+        panel.cerrar(lambda: lanzar(plan.titulo, repair.args_resync(hallazgo)))
 
     def forzar(hallazgo) -> None:
         """Pide confirmación y lanza UNA pasada forzada en la ventana de salida.
