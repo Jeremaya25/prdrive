@@ -96,6 +96,74 @@ with sandbox():
     c("y es grave", uno(hallazgos, "prefijo").gravedad, revision.GRAVE)
     c("lo más grave va primero", hallazgos[0].clave, "prefijo")
 
+# Un remote `alias`: rclone nombra el baseline con el destino ya resuelto, y la
+# pareja sana no es un «grave» (#37). Los nombres son los que escribió rclone
+# v1.75.1 de verdad (`test_bisync_prefijo.py`); se fuerza el Linux de allí para
+# que valgan en cualquier sistema.
+ALIAS_REAL = "disp_sync-data_notas..srv_prdrive-alias_remoto_R_notas"
+"""El nombre del baseline de `notas` con `pruebas` (alias de /srv/prdrive-alias/remoto)."""
+
+
+def alias_cfg(destino_alias):
+    """Una config con la pareja `notas` sobre un remote `alias` y el `rclone.conf` que lo define."""
+    model.RCLONE_CONF.write_text(
+        f"[pruebas]\ntype = alias\n{destino_alias}\n", encoding="utf-8")
+    return mkcfg(["notas"], defaults={"remote": "pruebas", "device_remote": "disp"})
+
+
+real_win = bisync.IS_WIN
+bisync.IS_WIN = False
+try:
+    with sandbox():
+        cfg = alias_cfg("remote = /srv/prdrive-alias/remoto")
+        pair = cfg.pairs[0]
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pair, ALIAS_REAL)
+        c("con un alias, el prefijo esperado es el que escribe rclone",
+          bisync.expected_prefix(pair), ALIAS_REAL)
+        c("y el baseline de una pareja alias sana no da avería", revision.revisar(cfg), [])
+        informe = "\n".join(revision.informe(cfg))
+        c("el --doctor no se contradice: ni GRAVE ni «no es de esta pareja»",
+          "GRAVE" in informe or "no es de esta pareja" in informe, False)
+        c.contains("y enseña el prefijo esperado", informe, f"prefijo esperado: {ALIAS_REAL}")
+
+    with sandbox():
+        cfg = alias_cfg("remote = /srv/prdrive-alias/remoto")
+        pair = cfg.pairs[0]
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        # cambiar el destino del alias en rclone.conf es cambiar de extremo: el
+        # baseline de antes ya no es de esta pareja y se aparta, no se renombra
+        listados(pair, ALIAS_REAL)
+        alias_cfg("remote = /srv/prdrive-alias/otro-remoto")
+        ajeno = uno(revision.revisar(cfg), "prefijo")
+        c("si el alias apunta a otro sitio, el baseline es ajeno de verdad", ajeno is not None, True)
+        c("y es grave", ajeno.gravedad, revision.GRAVE)
+
+    with sandbox():
+        cfg = alias_cfg("remote = /srv/prdrive-alias/remoto")
+        pair = cfg.pairs[0]
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pair, "otro-destino-cualquiera")
+        c("con un alias, un prefijo ajeno sigue siendo grave",
+          uno(revision.revisar(cfg), "prefijo").gravedad, revision.GRAVE)
+
+    # Un alias que no se puede resolver (aquí, sin `remote`) no se sabe comprobar:
+    # «un diagnóstico falso es peor que ninguno», así que no se dice «grave».
+    with sandbox():
+        cfg = alias_cfg("")
+        pair = cfg.pairs[0]
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pair, ALIAS_REAL)
+        hallazgos = revision.revisar(cfg)
+        c("un alias sin resolver nunca da el grave del prefijo", uno(hallazgos, "prefijo"), None)
+        c("ni ningún otro grave", [h for h in hallazgos if h.gravedad == revision.GRAVE], [])
+        informe = "\n".join(revision.informe(cfg))
+        c("el --doctor tampoco", "GRAVE" in informe, False)
+        c.contains("y dice que no se puede comprobar, para quien lo mire",
+                   informe, "no se puede comprobar")
+finally:
+    bisync.IS_WIN = real_win
+
 with sandbox():
     cfg = mkcfg(["notas"])
     pair = cfg.pairs[0]

@@ -13,6 +13,10 @@ La cura es `device_remote`: el lado local va como un remote 'combine' propio y
 el prefijo deja de saber dónde está montado nada. Esto comprueba las dos
 mitades (el prefijo y las variables de entorno que definen ese remote) y que la
 venda ya no está.
+
+También fija cómo nombra rclone el extremo de un remote `local` y de uno
+`alias` (que se escribe con el destino ya resuelto): los nombres de la
+derecha son los que escribió rclone de verdad.
 """
 
 import csv
@@ -206,6 +210,192 @@ with sandbox():
         bisync.IS_WIN = real_win
     model.RCLONE_CONF.unlink()
     c("sin rclone.conf, como cualquier remote", nombre("nas:/tmp/p/w//x"), "nas__tmp_p_w__x")
+
+
+# un remote `alias`: rclone nombra los listados con el destino YA resuelto
+#
+# `alias` no es un envoltorio con nombre propio. Su `NewFs` devuelve el `Fs` del
+# destino (`cache.Get(ctx, fspath.JoinRootPath(opt.Remote, root))`,
+# backend/alias/alias.go), así que `FsPath` (cmd/bisync/bilib/canonical.go) ve el
+# `Name()` y el `Root()` del destino y no los del alias. Si el destino es una
+# ruta suelta su `Name()` es `local` y `FsPath` la escribe sin `nombre:`; si es
+# un remote `local`, con su nombre y su `Root()` limpio; si es otro alias, se
+# sigue. Los nombres de la derecha son los que escribió `rclone bisync --resync`
+# v1.75.1 de verdad, en Linux, con este `rclone.conf` y los extremos
+# `disp:sync-data/prueba` (un combine, como `device_remote`) y el de la izquierda.
+# Los envoltorios de verdad (crypt, union, combine, chunker, hasher, compress)
+# devuelven su propio `Fs`, con el nombre de su sección (`Name()` y `Root()` de
+# cada backend), y ahí la regla de siempre vale: se comprueba que no se toca.
+RAIZ_ALIAS = "/srv/prdrive-alias/remoto"
+ALIAS_CONF = f"""
+[nas]
+type = local
+
+[pruebas]
+type = alias
+remote = {RAIZ_ALIAS}
+
+[pruebas_nas]
+type = alias
+remote = nas:{RAIZ_ALIAS}
+
+[base_alias]
+type = alias
+remote = {RAIZ_ALIAS}
+
+[alias_de_alias]
+type = alias
+remote = base_alias:datos
+
+[pruebas_subruta]
+type = alias
+remote = {RAIZ_ALIAS}/datos
+
+[alias_a_nas_vacio]
+type = alias
+remote = nas:
+
+[alias_a_cmb]
+type = alias
+remote = cmb:r
+
+[alias_a_cmb_raiz]
+type = alias
+remote = cmb:
+
+[cmb]
+type = combine
+upstreams = r={RAIZ_ALIAS}
+
+[uni]
+type = union
+upstreams = {RAIZ_ALIAS}/datos {RAIZ_ALIAS}/otro
+
+[cif]
+type = crypt
+remote = {RAIZ_ALIAS}/cifrado
+
+[chk]
+type = chunker
+remote = {RAIZ_ALIAS}
+
+[hsh]
+type = hasher
+remote = {RAIZ_ALIAS}
+
+[cmp]
+type = compress
+remote = {RAIZ_ALIAS}
+
+[mem]
+type = memory
+"""
+LISTADO_ALIAS = "srv_prdrive-alias_remoto_datos_prueba"
+"""El extremo que escribe rclone para una ruta suelta: sin `nombre:` delante."""
+
+with sandbox():
+    model.RCLONE_CONF.write_text(ALIAS_CONF, encoding="utf-8")
+
+    def canonico(destino):
+        """El nombre del extremo del remoto, como lo calcula prdrive."""
+        return bisync.canonical_path(bisync.fs_path_remote(destino))
+
+    real_win = bisync.IS_WIN
+    try:
+        bisync.IS_WIN = False
+        for destino, de_rclone in (
+                ("pruebas:datos/prueba", LISTADO_ALIAS),
+                ("pruebas:/datos/prueba", LISTADO_ALIAS),
+                ("pruebas:/datos//./prueba/", LISTADO_ALIAS),
+                ("pruebas_nas:datos/prueba", "nas__srv_prdrive-alias_remoto_datos_prueba"),
+                ("alias_de_alias:prueba", LISTADO_ALIAS),
+                ("pruebas_subruta:prueba", LISTADO_ALIAS),
+                (f"alias_a_nas_vacio:{RAIZ_ALIAS}/datos/prueba",
+                 "nas__srv_prdrive-alias_remoto_datos_prueba"),
+                ("alias_a_cmb:datos/prueba", "cmb_r_datos_prueba"),
+                ("alias_a_cmb_raiz:r/datos/prueba", "cmb_r_datos_prueba")):
+            c(f"un alias se resuelve a su destino: {destino}", canonico(destino), de_rclone)
+
+        # los que ya valían y no hay que tocar
+        for destino, de_rclone in (
+                (f"nas:{RAIZ_ALIAS}/datos/prueba", "nas__srv_prdrive-alias_remoto_datos_prueba"),
+                ("cmb:r/datos/prueba", "cmb_r_datos_prueba"),
+                ("uni:datos/prueba", "uni_datos_prueba"),
+                ("cif:prueba", "cif_prueba"),
+                ("chk:datos/prueba", "chk_datos_prueba"),
+                ("hsh:datos/prueba", "hsh_datos_prueba"),
+                ("cmp:datos/prueba", "cmp_datos_prueba"),
+                ("mem:datos/prueba", "mem_datos_prueba")):
+            c(f"el resto de remotes, con su propio nombre: {destino}", canonico(destino), de_rclone)
+    finally:
+        bisync.IS_WIN = real_win
+
+    # En Windows, con la unidad de por medio: el nombre que escribió rclone en la
+    # prueba del 24/09/2026 (alias `pruebas` sobre C:\prdrive-pruebas\remoto), el
+    # que «Reparación» daba por ajeno. Sin `nombre:` delante ni `\\?\`.
+    model.RCLONE_CONF.write_text(
+        "[pruebas]\ntype = alias\nremote = C:\\prdrive-pruebas\\remoto\n", encoding="utf-8")
+    try:
+        bisync.IS_WIN = True
+        c("en Windows, un alias a una unidad (el nombre que escribió rclone)",
+          canonico("pruebas:datos/prueba"), "C__prdrive-pruebas_remoto_datos_prueba")
+    finally:
+        bisync.IS_WIN = real_win
+    model.RCLONE_CONF.write_text(ALIAS_CONF, encoding="utf-8")
+
+    # lo que no se puede resolver no se inventa
+    SIN_RESOLVER = """
+[sin_destino]
+type = alias
+
+[ciclo_a]
+type = alias
+remote = ciclo_b:x
+
+[ciclo_b]
+type = alias
+remote = ciclo_a:y
+
+[a_si_mismo]
+type = alias
+remote = a_si_mismo:x
+
+[con_cadena]
+type = alias
+remote = :local:/srv/prdrive-alias
+
+[con_parametros]
+type = alias
+remote = nas,nounc=true:/srv/prdrive-alias
+
+[a_fantasma]
+type = alias
+remote = no_existe:/srv/prdrive-alias
+
+[a_otro_sin_resolver]
+type = alias
+remote = sin_destino:x
+"""
+    model.RCLONE_CONF.write_text(ALIAS_CONF + SIN_RESOLVER, encoding="utf-8")
+    for alias in ("sin_destino", "ciclo_a", "a_si_mismo", "con_cadena", "con_parametros",
+                  "a_fantasma", "a_otro_sin_resolver"):
+        c(f"un alias que no se resuelve no da extremo: {alias}",
+          bisync.resolver_extremo(f"{alias}:datos/prueba"), None)
+    c("y uno que sí se resuelve, el suyo",
+      bisync.resolver_extremo("pruebas:datos/prueba") is not None, True)
+
+    sin_resolver = model.parse_config({"defaults": {"remote": "ciclo_a", "device_remote": "disp"},
+                                       "pair": PAREJAS[:1]}).pairs[0]
+    resuelto = model.parse_config({"defaults": {"remote": "pruebas", "device_remote": "disp"},
+                                   "pair": PAREJAS[:1]}).pairs[0]
+    c("la pareja con un alias sin resolver no se puede comprobar",
+      bisync.prefijo_comprobable(sin_resolver), False)
+    c("pero sigue dando un prefijo, para quien lo necesita igualmente",
+      isinstance(bisync.expected_prefix(sin_resolver), str), True)
+    c("la de un alias que se resuelve, sí", bisync.prefijo_comprobable(resuelto), True)
+    c("y una sin alias, también",
+      bisync.prefijo_comprobable(config("disp", raiz=model.DEVICE_ROOT).pairs[0]), True)
+    model.RCLONE_CONF.unlink()
 
 
 # la venda, retirada
