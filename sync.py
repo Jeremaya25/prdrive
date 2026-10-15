@@ -808,8 +808,9 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
         # El log de la pasada parada se guarda aunque la repetida vaya bien: es lo que dice por
         # qué se forzó, y de la repetida no queda nada (su log se tira si sale bien).
         parada = dispose_log(pair.name, logfile, rc, True)
-        print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha parado "
-              f"(Log: {parada}). El llavero deja lo que pisa cada lado en {model.VERSIONS_DIR}: "
+        print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha parado"
+              + (f" (Log: {parada})" if parada else "")
+              + f". El llavero deja lo que pisa cada lado en {model.VERSIONS_DIR}: "
               "se repite la pasada una vez con --force.")
         cambio = {"force": True}
     else:

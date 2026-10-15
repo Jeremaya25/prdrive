@@ -55,6 +55,14 @@ lo hace nunca el servicio, ni el arranque automático, ni el agente, ni se puede
 dejar puesto en el config. Y no se ofrece si falta la carpeta local, ni en la
 pareja del llavero.
 
+El llavero también puede salir aquí («El llavero: el freno de seguridad ha parado la
+sincronización»), pero solo con **Ver el log**. Si lo para que «han cambiado todos» sus
+ficheros (pasa, por ejemplo, al traerlo a un dispositivo nuevo), prdrive ya ha repetido
+él solo la pasada una vez saltándose el freno, y lo que pisa cada lado se guarda en
+`.prversions/`. Si aun así sigue parado, el texto dice qué hacer: `python sync.py
+keychain --resync`, que se queda con la base más nueva y aparta la otra en
+`.prversions/`.
+
 Antes de forzar, mira ese lado: ¿está montado el volumen?, ¿es la carpeta de
 siempre? Hay salidas menos peligrosas:
 

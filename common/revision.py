@@ -321,6 +321,14 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
     freno con sus cifras, que es lo que necesita `ui/repair.py` para el plan.
     """
     titulo, que = _frase_freno(pair, freno)
+    if pair.llavero:
+        # Sus bases son contraseñas: no se ofrece forzar, ni se dice «si es lo que querías».
+        # Lo que se puede hacer lo dice `frenos`, igual que la consola.
+        detalle = f"{que} {frenos.salida_llavero(freno.tipo)}"
+        if racha is not None:
+            detalle += f" {_frase_racha(racha)}"
+        return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
+                        pair.name, AVISO, (log, freno))
     if freno.tipo == frenos.ESPEJO:
         riesgo = ("Si el origen está vacío o desmontado, lo borrado es un error: "
                   "compruébalo antes de seguir.")
@@ -330,14 +338,6 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
     else:
         riesgo = ("Puede ser lo que querías o un error (el dispositivo sin montar donde "
                   "toca, la carpeta equivocada): mira ese lado antes de seguir.")
-    if pair.llavero:
-        # Sus bases son contraseñas: no se ofrece forzar, ni se dice «si es lo que querías».
-        # Lo que se puede hacer lo dice `frenos`, igual que la consola.
-        detalle = f"{que} {frenos.salida_llavero(freno.tipo)}"
-        if racha is not None:
-            detalle += f" {_frase_racha(racha)}"
-        return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
-                        pair.name, AVISO, (log, freno))
     detalle = f"{que} {riesgo}"
     if racha is not None:
         detalle += f" {_frase_racha(racha)}"

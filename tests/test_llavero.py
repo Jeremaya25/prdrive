@@ -360,6 +360,17 @@ with sandbox() as root:
                                                               any("--force" in o for o in ordenes)),
       (1, 1, False))
 
+    # `--force` es de rclone; la comprobación de la carpeta local es de `_bisync_preflight()`, que
+    # va antes de la primera orden: con baseline y sin carpeta, ni se llega a repetir.
+    oculta = carpeta.with_name(".keychain-fuera")
+    carpeta.rename(oculta)
+    try:
+        rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, "bien"))
+    finally:
+        oculta.rename(carpeta)
+    c("  con baseline y sin la carpeta local, el aborto con 2 sigue mandando: ni rclone, ni --force",
+      (rc, ordenes), (2, []))
+
     # Tras un conflicto que gana el remoto, rclone (v1.75.1) deja la base fuera
     # de los dos listados (`modifyListing()`): se vuelve a pasar en seguida,
     # con las dos iguales, para que la apunte. Líneas como las de rclone.
