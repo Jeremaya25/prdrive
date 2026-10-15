@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
+from _logs_frenos import BISYNC_BORRADOS
 
 import tomllib
 
@@ -835,14 +836,24 @@ try:
                 # sale: «al menos», con el año (la racha empezó el año pasado)
                 # y dos cifras en la cuenta.
                 ano = __import__("datetime").datetime.now().year - 1
-                for p in cfg.pairs:
-                    results.apuntar(p.name, 1, None)
+                # La mitad paradas por el freno de borrados: es la fila más alta de
+                # «Reparación» (cifras, riesgo, la frase del diario, la orden que se
+                # sugiere y una fila de tres botones debajo).
+                for i, p in enumerate(cfg.pairs):
+                    log = None
+                    if i % 2 == 0:
+                        log = model.LOG_DIR / f"{p.name}_20261015_093535.log"
+                        log.parent.mkdir(parents=True, exist_ok=True)
+                        log.write_text(BISYNC_BORRADOS, encoding="utf-8")
+                    results.apuntar(p.name, 1, log)
                     for dia in range(1, 15):
                         historial.apuntar(historial.Pasada(
                             p.name, f"{ano}-12-{dia:02d} 10:00:00", 1, 30.0))
                 c(f"{nombre}: (las doce fallan, con la frase del diario)",
                   sum(f"Falla al menos desde el 01/12/{ano}" in h.detalle
-                      for h in revision.revisar(cfg) if h.clave == "fallo"), 12)
+                      for h in revision.revisar(cfg) if h.clave in ("fallo", "freno")), 12)
+                c(f"{nombre}: (la mitad, por el freno de borrados)",
+                  sum(h.clave == "freno" for h in revision.revisar(cfg)), 6)
                 # Con llavero, además: su base en conflicto, y la fila de
                 # «Combinar» debajo de los botones de la lista.
                 con_llavero = model.parse_config({**BASE, "keychain": {"base": "personal.kdbx"}})
