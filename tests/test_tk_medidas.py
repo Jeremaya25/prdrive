@@ -945,6 +945,20 @@ try:
                 c(f"{nombre}: «Configuración» cabe", entra, True)
                 c(f"{nombre}: «Configuración» no queda recortada", corta, False)
 
+                # ... y la de una unidad cifrada (#123): la casilla de «Pedir la
+                # contraseña al conectarla», con la ayuda más larga (BitLocker).
+                previo_conectar = watch.pedir_al_conectar
+                watch.pedir_al_conectar = lambda: watch.AlConectar("bitlocker", True)
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_configuracion.open_dialog(raiz, cfg),
+                        ancho, alto, escala, modulo=tk_configuracion)
+                finally:
+                    watch.pedir_al_conectar = previo_conectar
+                c(f"{nombre}: «Configuración» de una unidad cifrada cabe", entra, True)
+                c(f"{nombre}: «Configuración» de una unidad cifrada no queda recortada",
+                  corta, False)
+
                 # «Qué hace el agente»: los cuatro modos de una unidad, y el
                 # aviso de que el agente no está en marcha.
                 entra, corta = medir_dialogo(
