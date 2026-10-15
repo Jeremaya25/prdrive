@@ -294,7 +294,8 @@ ag = F.nuevo()
 F.vueltas(ag, 1)
 c("bloqueada y conocida: sale en el resumen a la primera",
   ag.resumen()["bitlocker"],
-  [{"id": A, "nombre": "Trabajo", "raiz": str(E), "desbloqueando": False}])
+  [{"id": A, "nombre": "Trabajo", "raiz": str(E), "desbloqueando": False,
+    "pedir_al_conectar": False}])
 c("  no es una conexión ni se lanza nada", (A in ag.conexiones, F.LANZADOS), (False, []))
 c("  y el diario lo dice una vez", dichas(), [f"Trabajo: bloqueada con BitLocker en {E}"])
 F.vueltas(ag, 3)
@@ -548,8 +549,10 @@ ag = F.nuevo()
 F.vueltas(ag, 1)
 suyo = next((e for e in bandeja.vista(ag.resumen()).menu if e.texto == "Trabajo (bloqueada)"),
             None)
-c("la bandeja le pone su desplegable, con «Desbloquear…»",
-  suyo is not None and [h.texto for h in suyo.hijos], ["Desbloquear…"])
+c("la bandeja le pone su desplegable, con «Desbloquear…» y su casilla de «Pedir la contraseña "
+  "al conectarla» (`test_agente_pedir_al_conectar.py`)",
+  suyo is not None and [h.texto for h in suyo.hijos],
+  ["Desbloquear…", "", "Pedir la contraseña al conectarla"])
 antes = len(DESBLOQUEOS)
 for peticion in (suyo.hijos[0].pide if suyo is not None else ()):
     ag.pedir(dict(peticion))
@@ -559,7 +562,8 @@ c("  y elegirlo le pide a Windows la ventana de esa letra",
 suyo = next(e for e in bandeja.vista(ag.resumen()).menu if e.texto == "Trabajo (bloqueada)")
 c("  tras lo cual la entrada dice que la contraseña la pide Windows",
   [(h.texto, h.activa) for h in suyo.hijos],
-  [("Desbloqueando: la contraseña la pide Windows", False)])
+  [("Desbloqueando: la contraseña la pide Windows", False), ("", True),
+   ("Pedir la contraseña al conectarla", True)])
 c("  y el icono de la bandeja lleva el candado", bandeja.estado(ag.resumen()),
   (icons.BLOQUEADO, "Trabajo bloqueada"))
 

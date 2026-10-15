@@ -453,6 +453,84 @@ def pedir_ajuste(clave: str, valor) -> bool:
     return pedir_al_agente({"pide": equipo.PIDE_AJUSTE, "clave": clave, "valor": valor})
 
 
+class AlConectar(NamedTuple):
+    """El «Pedir la contraseña al conectarla» de ESTA unidad, tal como lo dice el agente.
+
+    Args:
+        cifrado: Cómo va cifrada (`equipo.CIFRADO_VERACRYPT`, `equipo.CIFRADO_BITLOCKER`).
+        valor: Lo que de verdad hará el agente. Sin haberlo tocado nunca es lo de
+            siempre: que sí con VeraCrypt y que no con BitLocker.
+    """
+    cifrado: str
+    valor: bool
+
+
+def pedir_al_conectar() -> AlConectar | None:
+    """Devuelve el ajuste «Pedir la contraseña al conectarla» de esta unidad, o `None`.
+
+    Lo dice el agente en su fila de `estado.json` (`cifrado` y
+    `pedir_al_conectar`, `Agente.resumen()`), así que solo lo hay si el agente
+    la atiende, la tiene en su lista, va cifrada y conoce el ajuste: un agente
+    anterior no pondría el valor, y lo que se le pidiera lo ignoraría. Solo
+    lee ese fichero y no lanza nada.
+    """
+    try:
+        from common import equipo
+        mia = fleet.device_id()
+        for fila in equipo.leer_estado().get("unidades") or []:
+            if fila.get("id") != mia:
+                continue
+            valor = fila.get("pedir_al_conectar")
+            if fila.get("cifrado") and isinstance(valor, bool):
+                return AlConectar(str(fila["cifrado"]), valor)
+            return None
+    except Exception:                                   # noqa: BLE001
+        return None
+    return None
+
+
+def ayuda_al_conectar(cifrado: str) -> str:
+    """Devuelve lo que hace el agente con esta unidad según cómo vaya cifrada.
+
+    Args:
+        cifrado: `equipo.CIFRADO_VERACRYPT` o `equipo.CIFRADO_BITLOCKER`.
+
+    Returns:
+        La frase de ayuda de la casilla; vacía si no se conoce ese cifrado.
+    """
+    from common import equipo
+    return {
+        equipo.CIFRADO_VERACRYPT:
+            "Al enchufarla, el agente le pide a VeraCrypt que la abra y sale la ventana "
+            "de la contraseña, una vez por conexión (también al iniciar sesión con ella "
+            "puesta). Sin marcar, se queda cerrada hasta que uses «Abrir PRDRIVE» en la "
+            "propia unidad.",
+        equipo.CIFRADO_BITLOCKER:
+            "Al enchufarla bloqueada, el agente abre la ventana de Windows que pide la "
+            "contraseña, una vez por conexión (también al iniciar sesión con ella puesta). "
+            "Sin marcar, la desbloqueas tú desde el Explorador o desde el icono de la "
+            "bandeja.",
+    }.get(cifrado, "")
+
+
+def pedir_ajuste_unidad(clave: str, valor) -> bool:
+    """Pide al agente que cambie un ajuste de ESTA unidad (`equipo.AJUSTES_DE_UNIDAD`).
+
+    Args:
+        clave: El campo de la unidad.
+        valor: Su valor nuevo: verdadero, falso o `None` para volver a lo de siempre.
+
+    Returns:
+        False si no es un ajuste de unidad, si el valor no vale o si no se ha
+        podido dejar la petición.
+    """
+    from common import equipo
+    if clave not in equipo.AJUSTES_DE_UNIDAD or not (valor is None or isinstance(valor, bool)):
+        return False
+    return pedir_al_agente({"pide": equipo.PIDE_AJUSTE_UNIDAD, "id": fleet.device_id(),
+                            "clave": clave, "valor": valor})
+
+
 def _agente_linea(res: Resumen) -> Linea:
     """Devuelve la línea del agente para esta raíz.
 

@@ -344,6 +344,47 @@ try:
        [(p["clave"], p["valor"]) for p in equipo.recoger()]),
       (True, False, [("pedir_al_iniciar", True)]))
 
+    # «Pedir la contraseña al conectarla»: lo que el agente dice de ESTA unidad.
+    def estado_dice(*filas) -> None:
+        """Deja en `estado.json` esas filas de unidades conectadas, como las escribe el agente."""
+        store.write_json(equipo.estado_json(), {"unidades": list(filas)})
+
+    equipo.recoger()
+    c("pedir_al_conectar: None mientras el agente no diga nada de esta unidad",
+      watch.pedir_al_conectar(), None)
+    estado_dice({"id": "aaaa", "cifrado": "", "pedir_al_conectar": False})
+    c("  ni si no va cifrada", watch.pedir_al_conectar(), None)
+    estado_dice({"id": "bbbb", "cifrado": "veracrypt", "pedir_al_conectar": True})
+    c("  ni si lo dice de otra", watch.pedir_al_conectar(), None)
+    estado_dice({"id": "aaaa", "cifrado": "veracrypt"})
+    c("  ni un agente que no conoce el ajuste (su fila no trae el valor)",
+      watch.pedir_al_conectar(), None)
+    estado_dice({"id": "aaaa", "cifrado": "veracrypt", "pedir_al_conectar": "sí"})
+    c("  ni un valor que no es un booleano", watch.pedir_al_conectar(), None)
+    estado_dice({"id": "aaaa", "cifrado": "veracrypt", "pedir_al_conectar": True})
+    c("  VeraCrypt: cómo va cifrada y lo que hará el agente",
+      watch.pedir_al_conectar(), watch.AlConectar("veracrypt", True))
+    estado_dice({"id": "bbbb", "cifrado": "veracrypt", "pedir_al_conectar": True},
+                {"id": "aaaa", "cifrado": "bitlocker", "pedir_al_conectar": False})
+    c("  BitLocker, entre las filas de varias unidades",
+      watch.pedir_al_conectar(), watch.AlConectar("bitlocker", False))
+    equipo.estado_json().write_text("{no es json", encoding="utf-8")
+    c("  un estado.json roto no lo rompe", watch.pedir_al_conectar(), None)
+    c("la ayuda dice qué hace el agente según cómo vaya cifrada la unidad",
+      ("VeraCrypt" in watch.ayuda_al_conectar("veracrypt"),
+       "Windows" in watch.ayuda_al_conectar("bitlocker"), watch.ayuda_al_conectar("otra")),
+      (True, True, ""))
+    c("pedir_ajuste_unidad lo pide al agente para ESTA unidad, no lo escribe",
+      (watch.pedir_ajuste_unidad("pedir_al_conectar", False),
+       [(p["pide"], p["id"], p["clave"], p["valor"]) for p in equipo.recoger()]),
+      (True, [(equipo.PIDE_AJUSTE_UNIDAD, "aaaa", "pedir_al_conectar", False)]))
+    c("  y volver a lo de siempre (None)",
+      (watch.pedir_ajuste_unidad("pedir_al_conectar", None),
+       [p["valor"] for p in equipo.recoger()]), (True, [None]))
+    c("  una clave que no es de unidad, o un valor que no es sí/no/lo de siempre, no",
+      (watch.pedir_ajuste_unidad("modo", True), watch.pedir_ajuste_unidad("pedir_al_conectar", "sí"),
+       equipo.recoger()), (False, False, []))
+
     equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "nada")))
     r = watch.resumen()
     c("agente, modo nada: no hace nada, y no vigila", (watch.linea(r).texto, r.vigila_este),
