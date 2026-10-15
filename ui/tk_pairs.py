@@ -39,7 +39,7 @@ from functools import partial
 from common import catalog, model
 from common.model import ConfigError
 
-from . import (catalog_editor, flags_editor, icons, pair_editor, perf_al_pintar,
+from . import (catalog_editor, flags_ayuda, flags_editor, icons, pair_editor, perf_al_pintar,
                perf_empezar, remote_picker, segundo_plano, theme)
 from .tk import (TITLE, CeldaChip, CeldaTexto, FilaTabla, Indicador, Sondeo, Tabla,
                  bloque_aviso, cabecera, centrar, cuerpo_visible, modal, mostrar, orden_sync,
@@ -2220,6 +2220,15 @@ def defaults_form(parent, actual: dict, catalogo: dict | None,
 COLUMNAS_FLAGS = [("Flag", 190, True), ("Valor", 100, False), ("Sale de", 120, False)]
 """Las columnas de la tabla de flags efectivos: `(titulo, ancho, estira)`."""
 
+ESPERA_AVISOS_MS = 350
+"""Cuánto se espera tras la última tecla del cuadro de flags para repasar sus avisos."""
+
+TECLAS_QUE_NO_ESCRIBEN = frozenset((
+    "Up", "Down", "Return", "KP_Enter", "Tab", "ISO_Left_Tab", "Escape", "Shift_L", "Shift_R",
+    "Control_L", "Control_R", "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R",
+    "Caps_Lock", "Num_Lock"))
+"""Las teclas cuyo soltarse no cambia lo escrito ni lo que se sugiere."""
+
 
 def fila_de_flag(fila: flags_editor.Row) -> FilaTabla:
     """Devuelve la fila de la tabla de flags para un flag efectivo.
@@ -2256,6 +2265,14 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     (lo copia al cuadro, para que se cambie) o volver a heredar uno propio
     (lo quita del cuadro). Todo eso lo deciden `flags_editor.acciones()`,
     `sobrescribir()` y `heredar()`; aquí solo se dibuja.
+
+    Mientras se escribe, el editor ayuda sin red (`ui/flags_ayuda.py`, que decide;
+    aquí solo se dibuja): bajo el principio de cada nombre sale un desplegable con
+    los flags de la rclone fijada (Tab lo acepta, ↑/↓ recorren, Intro acepta lo
+    marcado, Esc lo cierra), y un recuadro ámbar con los avisos de cada flag (de otro
+    modo, choca con otro, borra o reescribe), con su línea sombreada en el cuadro.
+    Los avisos nunca impiden guardar, y un flag que no está en la lista se admite:
+    solo un valor de tipo malo, como un reservado, deja el diálogo abierto.
 
     El diálogo NO se cierra si lo escrito no vale y el motivo se enseña DENTRO,
     en un recuadro rojo bajo el texto y no en un `messagebox`: el aviso tiene
@@ -2301,12 +2318,15 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
     ttk.Label(izquierda, text=theme.rotulo("Lo que escribes"),
               style="Rotulo.TLabel").grid(row=0, column=0, sticky="w", pady=(0, theme.E2))
     caja = theme.caja_texto(izquierda, width=40, height=8)
+    caja.tag_configure("ojo", background=theme.AVISO_FONDO)      # la línea de un flag con aviso
     caja.insert("1.0", flags_editor.dump(flags))
     caja.grid(row=1, column=0, sticky="ew")
-    ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330), justify="left",
-              text=("Tal cual se escriben en el TOML: transfers = 4, "
-                    'conflict-resolve = "newer", checksum = true. Sin los guiones '
-                    "de delante.")).grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
+    texto_pista = ("Tal cual se escriben en el TOML: transfers = 4, "
+                   'conflict-resolve = "newer", checksum = true. Sin los guiones '
+                   "de delante. Al escribir un nombre salen los de rclone.")
+    pista_caja = ttk.Label(izquierda, style="Pista.TLabel", wraplength=theme.medida(330),
+                           justify="left", text=texto_pista)
+    pista_caja.grid(row=2, column=0, sticky="w", pady=(theme.E2, 0))
 
     problema = ttk.Frame(izquierda)      # el recuadro rojo, vacío mientras todo vale
     problema.grid(row=3, column=0, sticky="ew", pady=(theme.E2, 0))
@@ -2394,13 +2414,216 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
         avisar(None)
         return datos
 
+    ojo: dict = {}               # el aviso ámbar: se hace la primera vez que hace falta
+    estado["ojos"] = {}          # los avisos de cada flag: nombre normalizado → frases
+    reloj: dict = {"id": None}   # el repaso de avisos pendiente tras teclear
+
+    def crecer() -> None:
+        """Agranda el diálogo si lo que hay bajo el cuadro pide más sitio, y lo recoloca."""
+        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
+            centrar(dlg, parent)
+
+    def poner_ojos(avisos: list) -> None:
+        """Enseña los avisos que no impiden guardar, o esconde el recuadro si no hay.
+
+        Como el recuadro rojo, el ámbar se hace la primera vez que hace falta y
+        desde entonces solo cambia su texto y entra y sale de la rejilla. Además,
+        la línea de cada flag con aviso queda marcada en el propio cuadro, para
+        que se vea junto a qué flag va cada frase.
+        """
+        ojos: dict = {}
+        for a in avisos:
+            ojos.setdefault(flags_ayuda.normalizar(a.flag), []).append(a.texto)
+        estado["ojos"] = ojos
+        caja.tag_remove("ojo", "1.0", "end")
+        for numero in flags_ayuda.lineas_con(caja.get("1.0", "end-1c"), set(ojos)):
+            caja.tag_add("ojo", f"{numero}.0", f"{numero}.end")
+        cuerpo = "\n".join(f"• {a.texto}" for a in avisos)
+        if cuerpo == ojo.get("texto", ""):
+            return
+        ojo["texto"] = cuerpo
+        if not avisos:
+            ojo["marco"].grid_remove()
+        else:
+            if "marco" not in ojo:
+                ojo["marco"] = theme.aviso(problema, "Ojo con esto (no impide guardar)", cuerpo,
+                                           tono="Ambar.", ancho=250)
+            else:
+                ojo["marco"].cuerpo.configure(text=cuerpo)
+            ojo["marco"].grid(row=1, column=0, sticky="ew", pady=(theme.E2, 0))
+        crecer()
+
+    def repasar_ojos() -> None:
+        """Repasa los avisos con lo escrito ahora; si aún no se entiende, deja los que había."""
+        reloj["id"] = None
+        try:
+            propios = flags_editor.parse(caja.get("1.0", "end"))
+        except ConfigError:
+            return
+        poner_ojos(flags_ayuda.avisos(mode_name, defaults_flags, propios, capa))
+
+    def programar_ojos() -> None:
+        """Pide repasar los avisos cuando se deje de teclear un momento."""
+        if reloj["id"] is not None:
+            dlg.after_cancel(reloj["id"])
+        reloj["id"] = dlg.after(ESPERA_AVISOS_MS, repasar_ojos)
+
+    def soltar_reloj(evento) -> None:
+        """Al cerrar el diálogo, quita el repaso pendiente: no puede quedar un reloj sin ventana."""
+        if evento.widget is dlg and reloj["id"] is not None:
+            dlg.after_cancel(reloj["id"])
+            reloj["id"] = None
+
+    dlg.bind("<Destroy>", soltar_reloj, add="+")
+
+    # El desplegable de nombres de flag. Es una lista puesta bajo el cursor, dentro del
+    # propio diálogo (no otra ventana: no pelea por el foco ni por el grab). El foco
+    # no sale del cuadro: se maneja con el teclado desde él, o con un clic.
+    sug: dict = {"flags": [], "palabra": None, "elegida": None}
+
+    def lista_a_la_vista():
+        """Devuelve el desplegable si se está viendo, o `None`."""
+        lista_ = sug.get("lista")
+        return lista_ if lista_ is not None and lista_.winfo_manager() else None
+
+    def ocultar_lista() -> None:
+        """Cierra el desplegable y devuelve a la pista lo que ella decía."""
+        lista_ = lista_a_la_vista()
+        if lista_ is not None:
+            lista_.place_forget()
+            pista_caja.configure(text=texto_pista)
+        sug.update(flags=[], palabra=None, elegida=None)
+
+    def explicar(i: int) -> None:
+        """Pone en la pista la ayuda de rclone del flag `i` del desplegable."""
+        f = sug["flags"][i]
+        pista_caja.configure(text=f"--{f.nombre} ({flags_ayuda.etiqueta_tipo(f)}) · rclone dice, "
+                                  f"en inglés: {flags_ayuda.descripcion(f)}")
+
+    def elegir_en_lista(i: int) -> None:
+        """Marca la fila `i` del desplegable y dice en la pista qué es."""
+        lista_ = sug["lista"]
+        lista_.selection_clear(0, "end")
+        lista_.selection_set(i)
+        lista_.see(i)
+        sug["elegida"] = i
+        explicar(i)
+
+    def aceptar_sugerencia(i: int) -> None:
+        """Pone en el cuadro el flag `i` del desplegable, en el lugar de la palabra escrita."""
+        f, palabra = sug["flags"][i], sug["palabra"]
+        texto = caja.get("1.0", "end-1c")
+        nuevo, cursor = flags_ayuda.completar(texto, palabra, f)
+        largo = len(nuevo) - (len(texto) - (palabra.fin - palabra.inicio))
+        caja.delete(f"1.0+{palabra.inicio}c", f"1.0+{palabra.fin}c")
+        caja.insert(f"1.0+{palabra.inicio}c", nuevo[palabra.inicio:palabra.inicio + largo])
+        caja.mark_set("insert", f"1.0+{cursor}c")
+        caja.see("insert")
+        ocultar_lista()
+        programar_ojos()
+
+    def actualizar_lista() -> None:
+        """Sugiere los flags que encajan con lo que se está escribiendo, o cierra el desplegable."""
+        texto = caja.get("1.0", "end-1c")
+        indice = len(caja.get("1.0", "insert"))
+        palabra = flags_ayuda.palabra_en(texto, indice)
+        sugeridos = []
+        if palabra is not None:
+            puestos = dict.fromkeys(flags_ayuda.escritos(texto, sin_linea_en=indice))
+            sugeridos = flags_ayuda.sugerir(
+                palabra.texto, None if capa == model.ORIGEN_DEFAULTS else mode_name, puestos)
+            if any(f.nombre == flags_ayuda.normalizar(palabra.texto) for f in sugeridos):
+                sugeridos = []                  # el nombre ya está escrito entero: no estorba
+        if not sugeridos:
+            ocultar_lista()
+            return
+        if "lista" not in sug:
+            sug["lista"] = theme.lista_desplegable(izquierda)
+            sug["lista"].bind("<Button-1>", al_clic_en_lista)
+        lista_ = sug["lista"]
+        lista_.delete(0, "end")
+        columna = max(len(f.nombre) for f in sugeridos) + 2
+        filas = [f"{f.nombre:<{columna}}{flags_ayuda.etiqueta_tipo(f)}" for f in sugeridos]
+        for fila in filas:
+            lista_.insert("end", fila)
+        lista_.selection_clear(0, "end")
+        lista_.configure(height=len(sugeridos), width=max(len(fila) for fila in filas) + 1)
+        sug.update(flags=sugeridos, palabra=palabra, elegida=None)
+        # Bajo el principio de la palabra, y no más ancha que el cuadro. Las distancias
+        # del tema son de Tk, no píxeles: `winfo_pixels()` las pasa.
+        marca = caja.bbox(f"1.0+{palabra.inicio}c")
+        px = caja.winfo_pixels
+        x, y = (marca[0], marca[1] + marca[3] + px(theme.E1)) if marca else (px(theme.E3), px(theme.E5))
+        lista_.update_idletasks()
+        lista_.place(in_=caja, x=x, y=y,
+                     width=max(min(lista_.winfo_reqwidth(), caja.winfo_width() - x), 1))
+        lista_.lift()
+        explicar(0)
+
+    def al_clic_en_lista(evento) -> str:
+        """Un clic en una fila del desplegable la acepta."""
+        i = sug["lista"].nearest(evento.y)
+        if 0 <= i < len(sug["flags"]):
+            aceptar_sugerencia(i)
+        return "break"
+
+    def al_moverse(paso: int) -> str | None:
+        """Flecha arriba o abajo: recorre el desplegable si se ve; si no, mueve el cursor."""
+        if lista_a_la_vista() is None:
+            return None
+        n, i = len(sug["flags"]), sug["elegida"]
+        elegir_en_lista((0 if paso > 0 else n - 1) if i is None else (i + paso) % n)
+        return "break"
+
+    def al_tabular(_evento) -> str | None:
+        """Tab acepta el flag marcado (o el primero) si el desplegable se ve."""
+        if lista_a_la_vista() is None:
+            return None
+        aceptar_sugerencia(sug["elegida"] or 0)
+        return "break"
+
+    def al_intro(_evento) -> str | None:
+        """Intro acepta solo lo que se ha marcado con las flechas: si no, es un salto de línea."""
+        if lista_a_la_vista() is None or sug["elegida"] is None:
+            return None
+        aceptar_sugerencia(sug["elegida"])
+        return "break"
+
+    def al_escapar(_evento) -> str | None:
+        """Escape cierra el desplegable sin tocar lo escrito."""
+        if lista_a_la_vista() is None:
+            return None
+        ocultar_lista()
+        return "break"
+
+    def al_soltar(evento) -> None:
+        """Tras cada tecla que escribe, repasa qué sugerir y, en un momento, los avisos."""
+        if evento.keysym in ("Return", "KP_Enter"):
+            ocultar_lista()
+        elif evento.keysym in TECLAS_QUE_NO_ESCRIBEN:
+            return
+        else:
+            actualizar_lista()
+        programar_ojos()
+
+    caja.bind("<KeyRelease>", al_soltar)
+    caja.bind("<Down>", lambda e: al_moverse(1))
+    caja.bind("<Up>", lambda e: al_moverse(-1))
+    caja.bind("<Tab>", al_tabular)
+    caja.bind("<Return>", al_intro)
+    caja.bind("<Escape>", al_escapar)
+    caja.bind("<ButtonRelease-1>", lambda e: ocultar_lista())
+    caja.bind("<FocusOut>", lambda e: ocultar_lista())
+
     def habilitar() -> None:
         """Enciende los botones que valen para la fila elegida y dice qué pasaría."""
         fila = estado["filas"].get(tabla.elegida) if tabla.elegida else None
         sobrescribible, quitable = flags_editor.acciones(fila)
         boton_sobrescribir.state(["!disabled" if sobrescribible else "disabled"])
         boton_heredar.state(["!disabled" if quitable else "disabled"])
-        nota.configure(text=fila.nota if fila else flags_editor.cascada(capa))
+        ojos = " ".join(estado["ojos"].get(fila.nombre, ())) if fila else ""
+        nota.configure(text=(fila.nota + (f" {ojos}" if ojos else "")) if fila
+                       else flags_editor.cascada(capa))
 
     def aplicar(hacer) -> None:
         """Pone en el cuadro lo que da `hacer` y repinta; si no se puede, lo dice.
@@ -2449,6 +2672,7 @@ def flags_form(parent, titulo: str, subtitulo: str, flags: dict, extra: list,
             return
         efectivos = flags_editor.effective(mode_name, defaults_flags, datos["flags"], capa)
         estado["filas"] = {f.nombre: f for f in efectivos}
+        poner_ojos(flags_ayuda.avisos(mode_name, defaults_flags, datos["flags"], capa))
         filas = [fila_de_flag(fila) for fila in efectivos]
         filas += [fila_de_extra(j, arg) for j, arg in enumerate(datos["extra_flags"])]
         tabla.poner(filas)

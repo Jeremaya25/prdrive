@@ -726,6 +726,16 @@ try:
                              "bisync", {"transfers": 4},
                              orden=lambda f, e: pair_editor.orden_previa(
                                  BASE, {**BASE["pair"][0], "versions": True, "flags": f,
+                                        "extra_flags": e}))),
+                        # Y con el aviso ámbar de lo que ayuda a escribir (#125): un flag
+                        # que borra y choca a la vez, que son dos frases.
+                        ("el editor de flags con la orden de rclone y avisos",
+                         lambda: tk_pairs.flags_form(
+                             raiz, "Flags", "pareja0",
+                             {"max-delete": 10, "remove-empty-dirs": True}, ["--bwlimit", "8M"],
+                             "bisync", {"transfers": 4},
+                             orden=lambda f, e: pair_editor.orden_previa(
+                                 BASE, {**BASE["pair"][0], "versions": True, "flags": f,
                                         "extra_flags": e})))):
                     entra, corta = medir_dialogo(fabricar, ancho, alto, escala)
                     c(f"{nombre}: {que} cabe", entra, True)

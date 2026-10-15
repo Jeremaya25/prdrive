@@ -2270,6 +2270,25 @@ def caja_texto(parent, **kw):
     return tk.Text(parent, **opciones)
 
 
+def lista_desplegable(parent, **kw):
+    """Devuelve un `tk.Listbox` con la ropa del diseño, para una lista que se despliega bajo un campo.
+
+    Es una lista pelada, como `caja_texto()` es un texto pelado: el fondo de
+    una tarjeta, un borde de 1 px, la monoespaciada y la fila elegida en el
+    azul suave. No toma el foco ni deja su selección a quien la mire: quien la
+    usa (el autocompletado del editor de flags) la maneja con el teclado desde
+    el campo.
+    """
+    import tkinter as tk
+    opciones = dict(background=SUPERFICIE, foreground=TINTA, font=fuente("mono"),
+                    relief="flat", borderwidth=0, highlightthickness=1,
+                    highlightbackground=BORDE, highlightcolor=BORDE,
+                    selectbackground=ACENTO_SUAVE, selectforeground=TINTA,
+                    activestyle="none", exportselection=False, takefocus=0)
+    opciones.update(kw)
+    return tk.Listbox(parent, **opciones)
+
+
 def pista_campo(entrada, texto: str):
     """Pone en un campo vacío una pista en gris («Buscar un ajuste…»).
 
