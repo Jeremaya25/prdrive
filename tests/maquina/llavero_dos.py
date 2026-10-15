@@ -156,7 +156,10 @@ def estado(app: Path) -> dict:
 
 
 def pasada(app: Path, etiqueta: str) -> tuple[int, str]:
-    """Una pasada de `sync.py keychain` de ese dispositivo; devuelve su código y lo que imprimió.
+    """Una pasada de `sync.py keychain` de ese dispositivo; devuelve su código y lo que dijo.
+
+    Lo que dijo es lo que imprimió `sync.py` más las líneas de su último log de rclone que
+    cuentan qué decidió bisync (`SALIDA_UTIL`).
 
     Se guarda el log de rclone aunque vaya bien (`--keep-logs`) para enseñar lo que decidió
     bisync. Sin terminal, como el servicio: un resync del llavero no pregunta.
@@ -175,6 +178,7 @@ def pasada(app: Path, etiqueta: str) -> tuple[int, str]:
         for linea in logs[-1].read_text(encoding="utf-8", errors="replace").splitlines():
             if any(k in linea for k in SALIDA_UTIL):
                 print(f"      | {linea.split(': ', 1)[-1].strip()}", flush=True)
+                salida += "\n" + linea
     return r.returncode, salida
 
 
@@ -202,9 +206,12 @@ def escenario(p: comun.Prueba, nombre_a: str, raiz_a: Path, nombre_b: str, raiz_
     desvio = comun.medir_hora(raiz_b)
     p.nota(f"{nombre_b}: una hora con fracción queda {desvio / 1e9:+.3f} s respecto a la pedida")
 
-    # Una hora con fracción, de ahora: lo que redondea exFAT en Windows. Los guardados siguientes
-    # van siempre más adelante, como los de una persona (la primera copia a `.keychain/` es de ahora).
-    hora = (time.time_ns() // 1_000_000_000) * 1_000_000_000 + 123_456_789
+    # Una hora con fracción, de ahora, en un segundo PAR: exFAT y FAT32 en Windows la redondean
+    # hacia arriba al siguiente par, así que la copia que baja queda +1,877 s por delante, el peor
+    # caso (con un segundo impar quedaría +0,877 s y no llegaría a pasar a la segunda copia de A).
+    # Los guardados siguientes van siempre más adelante, como los de una persona (la primera
+    # copia a `.keychain/` es de ahora).
+    hora = (time.time_ns() // 2_000_000_000) * 2_000_000_000 + 123_456_789
     version = 1
     origen = comun.carpeta("origen") / BASE
     guardar(origen, version, hora)
@@ -215,14 +222,23 @@ def escenario(p: comun.Prueba, nombre_a: str, raiz_a: Path, nombre_b: str, raiz_
     p.ver(f"LL-6: {a} activa el llavero y pasa", rc, 0)
     p.ver("  y la base y su compañero están en el remoto", sorted(bases_en(llavero_remoto)),
           ["LEEME.txt", BASE])
+    horas_remotas = {f: (llavero_remoto / f).stat().st_mtime_ns for f in (BASE, "LEEME.txt")}
+    # B llega más tarde que A (en la prueba del 12/10, días): cada uno crea su LEEME.txt, y si no
+    # llevan la misma hora, el de B parece «más nuevo». Con menos que la ventana de rclone (2 s)
+    # de por medio no se vería la diferencia.
+    time.sleep(3.5)
     print(en_dispositivo(app_b, ACTIVAR, ""), flush=True)
     rc, salida = pasada(app_b, b + " trae el del remoto")
     p.ver(f"LL-6: {b} trae el llavero del remoto y pasa", rc, 0)
     p.ver("  con la misma base que A", bases_en(keychain_b).get(BASE), base_de_mentira(version))
-    for nombre, app in ((a, app_a), (b, app_b)):
-        rc, salida = pasada(app, f"{nombre} otra vez")
-        p.ver(f"LL-6: {nombre} sigue pasando bien, sin 'all files were changed'",
-              (rc, "all files were changed" in salida), (0, False))
+    p.ver(f"LL-6: {b} no le cambia la hora a nada en el remoto (la base, que exFAT redondea, "
+          "ni LEEME.txt, que crea cada uno)",
+          {f: (llavero_remoto / f).stat().st_mtime_ns for f in horas_remotas}, horas_remotas)
+    rc, salida = pasada(app_a, f"{a} otra vez")
+    p.ver(f"LL-6: {a} sigue pasando bien, y no ve cambio ninguno (ni 'all files were changed')",
+          (rc, "all files were changed" in salida, "File changed" in salida), (0, False, False))
+    rc, salida = pasada(app_b, f"{b} otra vez")
+    p.ver(f"LL-6: {b} sigue pasando bien, sin cambios", (rc, "File changed" in salida), (0, False))
     for nombre, app in ((a, app_a), (b, app_b)):
         est = estado(app)
         p.ver(f"LL-6: {nombre} no tiene nada pendiente de subir (la hora de lo que bajó no cuenta)",
