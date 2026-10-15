@@ -470,6 +470,13 @@ def main() -> int:
     copia = BASE.replace(".kdbx", ".conflicto-dispositivo1.kdbx")
     ver("la pasada deja al lado la copia de este lado (no la manda a .prversions)",
         (rc, sorted(p.name for p in local.parent.glob("*.conflicto-*.kdbx"))), (0, [copia]))
+    # Quien pulsa «Combinar» lo hace un rato después de la pasada, no a los 0,4 s:
+    # con la ventana de 2 s (#114) bisync no ve una base de IGUAL tamaño y a menos
+    # de 2 s de la hora que apuntó (la del ganador que bajó la pasada). Los tamaños
+    # de una base van de 16 en 16 y se repiten (del orden de 1 de cada 25 ejecuciones;
+    # se vio una vez en el CI de la PR #149), y entonces la combinada no sube. Es un
+    # límite de la ventana (`llavero.md`), no de lo que se prueba aquí.
+    time.sleep(max(0.0, 2.5 - (time.time() - remota.stat().st_mtime)))
     hechos = json.loads(en_dispositivo(app, "combinar", entrada=CLAVE + "\n"))
     ver("«Combinar» la mete en la base", hechos, [f"«{copia}» combinada en «{BASE}»"])
     ver("  la base tiene lo de los dos lados",

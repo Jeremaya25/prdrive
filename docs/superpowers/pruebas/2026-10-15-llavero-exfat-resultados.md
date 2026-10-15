@@ -55,3 +55,12 @@ Ejecución [38756095655](https://github.com/Jeremaya25/prdrive/actions/runs/3875
 - **Un remoto con sumas** (SFTP, el del issue): el remoto es una carpeta del equipo (`type local`).
 - **Un cambio de horario de verano**, el ejemplo que da rclone para «all files were changed»: no se ha reproducido.
 - **Un dispositivo que ya tenía el llavero de antes de `LEEME_HORA`**: lo cubren los tests de siempre (un `LEEME.txt` con el texto de siempre y otra hora se corrige en la pasada siguiente), no la nube.
+
+## 5. Lo que se vio de más, en el CI: el punto ciego de la ventana de 2 s
+
+`llavero (ubuntu-latest)` falló una vez sobre e0dfb4d ([ejecución 38758125912](https://github.com/Jeremaya25/prdrive/actions/runs/38758125912)) en `la base, igual en los dos lados`, y pasó en el resto. No es de esta PR: el punto ciego de abajo está en `main` desde #114 (con el rclone y la ventana de `main` se reproduce igual, sin nada de #115).
+
+- **Qué pasa.** bisync compara tamaño y hora. Con `modify-window = 2s` (#114), una base del **mismo tamaño** que su línea del listado y con una hora a menos de 2 s se da por no cambiada: `No changes found`, código 0. `llavero.pendiente()` usa la misma regla, así que la ventana decía «al día» con la combinada sin subir. Reproducido de forma determinista con el rclone fijado (v1.75.2) sobre dos carpetas locales: con `--modify-window 2s` no sube; con la ventana mínima, sí lo ve.
+- **Por qué se dio ahí.** La prueba pulsaba «Combinar» 0,4 s después de la pasada que bajó el ganador, y el tamaño de la combinada coincidió con el del ganador (1742 B). Un KDBX va de 16 en 16 bytes y su tamaño se mueve unos ±100 B entre guardados (en 3 ejecuciones locales: 1854→1758 B al añadir una entrada), así que coincidir no es raro: del orden de 1 de cada 25.
+- **Qué se ha hecho.** La prueba espera 2,5 s desde la hora del ganador antes de «Combinar», que es lo que tarda una persona. El punto ciego queda anotado en `llavero.md` y no se ha tocado: cerrarlo es comparar algo más que tamaño y hora (por ejemplo `--compare size,modtime,checksum` donde los dos lados tengan suma, o `kdbx.semilla()`), un cambio de diseño que no es de #115.
+- **Alcance real.** No se pierde nada: la base sigue en el dispositivo y la sube el siguiente cambio. Hace falta un segundo guardado a menos de 2 s del primero con una pasada justo entre los dos; el vigilante espera la calma y 120 s entre pasadas, así que en la práctica solo lo alcanzaría una pasada periódica o la de arranque.
