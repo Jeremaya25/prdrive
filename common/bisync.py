@@ -232,6 +232,18 @@ def _escribir_filtros(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
+def ruta_filtros(pair: Pair) -> Path | None:
+    """Devuelve dónde está el fichero de filtros de la pareja, sin tocar el disco.
+
+    Es la ruta que `filters_file_for()` genera y la que `sync.py` le pasa a
+    rclone; la vista previa de la orden la usa sin escribir nada.
+
+    Returns:
+        La ruta, o `None` si la pareja no usa fichero de filtros.
+    """
+    return model.FILTERS_DIR / f"{pair.name}.txt" if pair.wants_filters_file else None
+
+
 def filters_file_for(pair: Pair) -> Path | None:
     """Genera `filters/<pareja>.txt` si hace falta y devuelve su ruta.
 
@@ -240,14 +252,15 @@ def filters_file_for(pair: Pair) -> Path | None:
     cambia se escribe de golpe (`_escribir_filtros()`).
 
     Returns:
-        La ruta, o `None` si la pareja no usa fichero de filtros.
+        La ruta (`ruta_filtros()`), o `None` si la pareja no usa fichero de
+        filtros.
     """
-    if not pair.wants_filters_file:
+    path = ruta_filtros(pair)
+    if path is None:
         return None
 
     content = filters_content(pair)
     model.FILTERS_DIR.mkdir(parents=True, exist_ok=True)
-    path = model.FILTERS_DIR / f"{pair.name}.txt"
     if not path.exists() or path.read_text(encoding="utf-8") != content:
         _escribir_filtros(path, content)
     return path

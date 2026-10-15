@@ -24,7 +24,7 @@ from _harness import Checks, sandbox
 
 import sync
 import ui
-from common import bisync, catalog, config_file, kdbx, llavero, model, revision
+from common import bisync, catalog, config_file, kdbx, llavero, model, orden, revision
 from common.model import ConfigError
 
 c = Checks("el llavero")
@@ -110,7 +110,7 @@ with sandbox():
     # las parejas de la raíz entera no se llevan el llavero
     c("la pareja de la raíz recibe la regla, detrás de la del programa",
       cfg.pairs[0].reglas, (model.REGLA_SIN_PROGRAMA, model.REGLA_SIN_LLAVERO))
-    c("  como --exclude en un espejo", sync.filter_args(cfg.pairs[0], None)[:4],
+    c("  como --exclude en un espejo", orden.filter_args(cfg.pairs[0], None)[:4],
       ["--exclude", f"/{model.APP_DIR.name}/**", "--exclude", "/.keychain/**"])
     c("  y una pareja de una carpeta no", cfg.pairs[1].reglas, ())
     raiz_bi = config(pares=({"name": "raiz", "local": ".", "remote_path": "/r",

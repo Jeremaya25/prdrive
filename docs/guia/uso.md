@@ -90,8 +90,10 @@ Cuatro cosas más:
   dispositivo se cambia en [«Nombre e icono de la unidad»](diagnostico.md#nombre-e-icono-de-la-unidad)
   y ningún dispositivo escribe la nota de otro.
 - **Editar flags…** (en «Avanzado» de la ventana de la pareja, junto a incluir y
-  excluir) enseña las cuatro capas resueltas y avisa si un cambio sube el
-  `--max-delete` efectivo.
+  excluir) enseña las cuatro capas resueltas, cada flag con su valor y de dónde
+  viene; deja **sobrescribir** uno heredado o **volver a heredarlo**, enseña la
+  orden de rclone que saldría y avisa si un cambio sube el `--max-delete`
+  efectivo. Cómo se leen las capas: [Configuración](configuracion.md).
 
 Todo lo que escribe algo pasa antes por la misma ceremonia: un plan que todavía
 no ha tocado nada, con una línea por consecuencia, y una confirmación.

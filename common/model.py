@@ -22,7 +22,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, NamedTuple
 
 from . import APP_NAME
 
@@ -631,7 +631,8 @@ FLAGS_RESERVADOS: Mapping[str, str] = {
 }
 """Flags que `sync.py` pone por su cuenta, con el motivo de cada uno.
 
-Salen de `build_command()` y `filter_args()`. `problema_flag()` los rechaza al
+Salen de `orden.flags_de_la_pasada()` y `orden.filter_args()` (lo que monta
+`sync.build_command()`). `problema_flag()` los rechaza al
 parsear, no al ejecutar: rclone recibiría el flag dos veces y, en el caso de
 `--workdir` o `--filters-file`, eso es apuntar a bisync a un baseline que no es
 el suyo.
@@ -1021,6 +1022,68 @@ Flags propios de `bisync`:
 """
 
 
+ORIGEN_BASE = "base"
+"""Capa de `BASE_FLAGS`: lo que lleva toda ejecución."""
+ORIGEN_MODO = "modo"
+"""Capa de `Mode.flags`: lo propio del modo de la pareja."""
+ORIGEN_DEFAULTS = "defaults"
+"""Capa de `[defaults.flags]`: lo común a todas las parejas."""
+ORIGEN_PAREJA = "pareja"
+"""Capa de `[pair.flags]`: lo que la pareja pone por su cuenta."""
+ORIGEN_PRDRIVE = "prdrive"
+"""Lo que `sync.py` añade en cada pasada y no se configura (`common/orden.py`)."""
+ORIGEN_PATRONES = "patrones"
+"""Los patrones incluir/excluir de la pareja, que salen como `--include`/`--exclude`."""
+ORIGEN_EXTRA = "extra"
+"""Los `extra_flags`: argumentos en bruto al final de la orden."""
+
+
+class FlagEfectivo(NamedTuple):
+    """Un flag tal como le llegará a rclone y la capa que lo puso.
+
+    Args:
+        nombre: La clave como está escrita en la capa (`max-delete` o `max_delete`).
+        valor: Su valor, con el tipo del TOML.
+        origen: La capa que ha ganado (`ORIGEN_*`).
+    """
+    nombre: str
+    valor: Any
+    origen: str
+
+
+def flags_efectivos(modo: Mode | None, defaults_flags: Mapping[str, Any] | None,
+                    propios: Mapping[str, Any] | None) -> list[FlagEfectivo]:
+    """Funde las capas de flags de una pareja y recuerda de cuál sale cada uno.
+
+    Es la única cascada: `BASE_FLAGS` < `Mode.flags` < `[defaults.flags]` <
+    `[pair.flags]`, la última que nombra una clave se queda con ella. `_build_pair`
+    saca de aquí `Pair.flags` (lo que lee `sync.py`) y el editor de flags saca la
+    tabla que enseña, así que no pueden contar cosas distintas.
+
+    Se funde por la clave tal como está escrita: `max_delete` en la pareja y
+    `max-delete` en el modo son dos claves, y rclone recibe las dos (gana la
+    última). Juntarlas por su nombre normalizado cambiaría lo que ya llega a
+    rclone; quien las enseña es quien las junta.
+
+    Args:
+        modo: El modo de la pareja, o `None` si no se sabe (no hay capa de modo).
+        defaults_flags: La tabla `[defaults.flags]`.
+        propios: La tabla `[pair.flags]`.
+
+    Returns:
+        Un `FlagEfectivo` por clave, en el orden en que apareció por primera vez.
+    """
+    capas = ((ORIGEN_BASE, BASE_FLAGS),
+             (ORIGEN_MODO, modo.flags if modo else {}),
+             (ORIGEN_DEFAULTS, defaults_flags or {}),
+             (ORIGEN_PAREJA, propios or {}))
+    efectivos: dict[str, FlagEfectivo] = {}
+    for origen, tabla in capas:
+        for nombre, valor in tabla.items():
+            efectivos[nombre] = FlagEfectivo(nombre, valor, origen)
+    return list(efectivos.values())
+
+
 def _as_tuple(value: Any) -> tuple[str, ...]:
     """Normaliza un valor del TOML (nada, un string o una lista) a tupla de strings."""
     if not value:
@@ -1045,8 +1108,8 @@ class Pair:
         remote_name: Nombre del remote de rclone.
         includes: Patrones `include`.
         excludes: Patrones `exclude`.
-        flags: Flags de rclone ya fusionados (`BASE_FLAGS` < modo <
-            `[defaults.flags]` < `[pair.flags]`).
+        flags: Flags de rclone ya fusionados (`flags_efectivos()`: `BASE_FLAGS` <
+            modo < `[defaults.flags]` < `[pair.flags]`).
         extra_flags: Argumentos en bruto añadidos al final del comando.
         use_filters_file: Si los patrones van en un fichero de filtros (solo
             bisync).
@@ -1064,6 +1127,9 @@ class Pair:
         llave_interna: Si el llavero va sin contraseña, solo con su fichero llave
             (`[keychain] llave_interna`): solo se sincroniza en un dispositivo
             cifrado (`common/cifrada.py`).
+        origen_flags: De qué capa (`ORIGEN_*`) sale cada clave de `flags`. Una
+            `Pair` hecha a mano que no lo diga cuenta sus flags como de la
+            pareja.
     """
     name: str
     mode: Mode
@@ -1081,6 +1147,7 @@ class Pair:
     reglas: tuple[str, ...] = ()
     llavero: bool = False
     llave_interna: bool = False
+    origen_flags: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def es_raiz(self) -> bool:
@@ -1242,6 +1309,8 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
     remote = raw.get("remote", defaults.get("remote", DEFAULT_REMOTE))
     _comprobar_remote(f"[{name}]", remote, "remote")
 
+    efectivos = flags_efectivos(mode, defaults.get("flags", {}), raw.get("flags", {}))
+
     return Pair(
         name=name,
         mode=mode,
@@ -1250,14 +1319,14 @@ def _build_pair(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> Pair:
         remote_name=remote,
         includes=_as_tuple(defaults.get("include")) + _as_tuple(raw.get("include")),
         excludes=_as_tuple(defaults.get("exclude")) + _as_tuple(raw.get("exclude")),
-        flags={**BASE_FLAGS, **mode.flags,
-               **defaults.get("flags", {}), **raw.get("flags", {})},
+        flags={f.nombre: f.valor for f in efectivos},
         extra_flags=_as_tuple(defaults.get("extra_flags")) + _as_tuple(raw.get("extra_flags")),
         use_filters_file=raw.get("use_filters_file",
                                  defaults.get("use_filters_file", True)),
         device_remote=_device_remote_name(defaults),
         versions=versions,
         watch=watch,
+        origen_flags={f.nombre: f.origen for f in efectivos},
     )
 
 
@@ -1308,14 +1377,16 @@ def _build_llavero(tabla: Any, defaults: Mapping[str, Any]) -> Pair:
                           "la base se abre solo con su fichero llave.")
     remote, carpeta = carpeta_del_catalogo(defaults)
     mode = MODES["bisync"]
+    efectivos = flags_efectivos(mode, None, LLAVERO_FLAGS)
     return Pair(
         name=LLAVERO, mode=mode, local=LLAVERO_LOCAL,
         remote_path=carpeta + LLAVERO_REMOTO, remote_name=remote,
         includes=(), excludes=(),
-        flags={**BASE_FLAGS, **mode.flags, **LLAVERO_FLAGS},
+        flags={f.nombre: f.valor for f in efectivos},
         extra_flags=(), use_filters_file=True,
         device_remote=_device_remote_name(defaults), versions=True,
-        reglas=LLAVERO_REGLAS, llavero=True, llave_interna=interna)
+        reglas=LLAVERO_REGLAS, llavero=True, llave_interna=interna,
+        origen_flags={f.nombre: f.origen for f in efectivos})
 
 
 def _leer_watch(name: str, raw: Mapping[str, Any], mode: Mode) -> bool:
