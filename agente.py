@@ -2454,6 +2454,8 @@ class Agente:
             con.servicio, con.error = leer_servicio(con.raiz), None
         except ValueError as e:
             self._sin_servicio(con, e)
+        else:
+            self._al_dia_el_lock(con)
 
     def _sin_servicio(self, con: Conexion, error: ValueError) -> None:
         """Deja esa conexión sin servicio por su config, y lo avisa una vez.
@@ -3553,6 +3555,36 @@ class Agente:
             return f"Abre la ventana de {APP_NAME} en este equipo para ver qué ha pasado."
         return f"Abre {APP_NAME} desde la unidad para ver qué ha pasado."
 
+    def _al_dia_el_lock(self, con: Conexion) -> None:
+        """Pone en el lock de la raíz las parejas y el intervalo que el agente atiende ahora.
+
+        El lock lo escribe el agente al tomar la raíz y tras cada pasada. Si la
+        config cambia mientras la atiende (la ventana añade el llavero, quita
+        una pareja, cambia el intervalo), se quedaba con lo de antes, y
+        `llavero.atiende_el_servicio()` daba por no atendido el llavero. Solo
+        escribe si el lock es de este agente y algo de eso ha cambiado. Un
+        fallo al escribir no se reintenta aquí: la pasada siguiente escribe
+        `con.lock` entero (`_apuntar_en_lock()`).
+
+        Args:
+            con: La conexión, con el servicio que acaba de leerse.
+        """
+        if con.lock is None or not self._lock_es_nuestro(con):
+            return
+        parejas = [p.nombre for p in con.servicio.parejas]
+        if con.lock.get("pairs") == parejas \
+                and con.lock.get("interval_min") == con.servicio.minutos:
+            return
+        con.lock["pairs"] = parejas
+        con.lock["interval_min"] = con.servicio.minutos
+        self._escribir_lock(con)
+
+    def _escribir_lock(self, con: Conexion) -> None:
+        """Escribe `con.lock` en el `daemon.lock.json` de la raíz, si sigue dentro de ella."""
+        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
+        if destino is not None:
+            store.write_json(destino, con.lock)
+
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
                          segundos: float) -> None:
         """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo."""
@@ -3563,9 +3595,7 @@ class Agente:
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
         con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
-        destino = en_la_raiz(con.raiz, con.raiz / penwatch.DAEMON_LOCK_REL)
-        if destino is not None:
-            store.write_json(destino, con.lock)
+        self._escribir_lock(con)
 
     def _cifrada(self, uid: str) -> equipo.Unidad | None:
         """Devuelve la raíz cifrada de ese id, o la única que haya si no se dice."""
