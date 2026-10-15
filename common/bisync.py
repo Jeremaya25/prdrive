@@ -69,8 +69,8 @@ def fs_path_local(p: str) -> str:
     Termina siempre en el separador del sistema; en Windows quita el prefijo
     `\\?\`.
     """
-    sep = os.sep
-    if os.name == "nt":
+    sep = "\\" if IS_WIN else "/"
+    if IS_WIN:
         p = p.replace("/", sep)
         if p.startswith("\\\\?\\"):
             p = p[4:]
@@ -81,14 +81,17 @@ def fs_path_remote(s: str) -> str:
     """Réplica de `FsPath` de canonical.go para un remote con nombre: `remote:ruta/`.
 
     `FsPath` pone `nombre + ":" + f.Root()`, y casi siempre `Root()` es la ruta
-    tal cual. Un remote de tipo `local` (`tipos_de_remote()`) es la excepción:
-    su `Root()` es la ruta limpia (`raiz_local()`).
+    tal cual. Dos tipos de remote son la excepción (`tipos_de_remote()`): uno
+    `local` tiene por `Root()` la ruta limpia (`raiz_local()`), y uno `alias`
+    ni siquiera es él: se escribe el destino (`resolver_extremo()`).
+
+    Si pasa por un alias que no se puede resolver, lo deja como viene: es la
+    mejor estimación que queda, y `prefijo_comprobable()` avisa de que no es de
+    fiar.
     """
-    nombre, dos_puntos, ruta = s.partition(":")
-    if dos_puntos:
-        tipo, nounc = tipos_de_remote().get(nombre, (None, False))
-        if tipo == "local":
-            s = f"{nombre}:{raiz_local(ruta, nounc)}"
+    resuelto = resolver_extremo(s)
+    if resuelto is not None:
+        return resuelto
     return s if s.endswith("/") else s + "/"
 
 
@@ -96,9 +99,25 @@ IS_WIN = os.name == "nt"
 """Si `raiz_local()` hace lo de Windows; de módulo para que los tests prueben las dos."""
 _UNIDAD = re.compile(r"^[a-zA-Z]:\\")
 
+TOPE_ALIAS = 8
+"""Cuántos alias encadenados se siguen antes de darlos por un ciclo."""
 
-def tipos_de_remote() -> dict[str, tuple[str | None, bool]]:
-    """Devuelve `{remote: (tipo, nounc)}` del `rclone.conf` del dispositivo.
+
+class TipoRemote(NamedTuple):
+    """Lo que hace falta saber de un remote del `rclone.conf` para nombrar su extremo.
+
+    Args:
+        tipo: Su `type`, o `None` si el remote no lo dice.
+        nounc: Si tiene `nounc = true`; solo cuenta en un remote `local`.
+        destino: Su opción `remote`, vacía si no la tiene; solo un `alias` la lleva.
+    """
+    tipo: str | None
+    nounc: bool
+    destino: str
+
+
+def tipos_de_remote() -> dict[str, TipoRemote]:
+    """Devuelve `{remote: TipoRemote}` del `rclone.conf` del dispositivo.
 
     Lo lee `pairing.parse_rclone_conf()`, el único lector del proyecto. Sin
     fichero, o sin leerse, vacío: el nombre se calcula como el de cualquier
@@ -109,8 +128,131 @@ def tipos_de_remote() -> dict[str, tuple[str | None, bool]]:
         texto = model.RCLONE_CONF.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    return {nombre: (opciones.get("type"), opciones.get("nounc", "").lower() == "true")
+    return {nombre: TipoRemote(opciones.get("type"),
+                               opciones.get("nounc", "").lower() == "true",
+                               opciones.get("remote", ""))
             for nombre, opciones in parse_rclone_conf(texto).items()}
+
+
+def resolver_extremo(s: str) -> str | None:
+    """Devuelve el extremo `remote:ruta/` tal como lo escribe `FsPath`, o `None` si no se sabe.
+
+    Un remote `alias` no tiene nombre propio: su `NewFs` devuelve el `Fs` del
+    destino (`cache.Get(ctx, fspath.JoinRootPath(opt.Remote, root))`,
+    backend/alias/alias.go), y `FsPath` ve el `Name()` y el `Root()` de ese
+    destino. Se sigue la cadena como rclone, con el `rclone.conf` del
+    dispositivo:
+
+    - un destino que es una ruta suelta (`/datos`, `C:\\datos`) es el backend
+      local de nombre `local`, que `FsPath` escribe sin `nombre:` y con el
+      separador del sistema (`fs_path_local()` sobre su `Root()`);
+    - uno que es otro remote se nombra por él, con la regla de su tipo
+      (`local`: `raiz_local()`; otro `alias`: se sigue; cualquier otro, tal
+      cual).
+
+    Los demás envoltorios (`crypt`, `union`, `combine`, `chunker`, `hasher`,
+    `compress`) devuelven su propio `Fs`, con el nombre de su sección, y no
+    necesitan nada de esto.
+
+    Returns:
+        El extremo, o `None` si pasa por un alias que no se puede seguir: sin
+        `remote`, un ciclo (`TOPE_ALIAS`), un destino que no está en el
+        `rclone.conf` o una cadena de conexión (`:backend,…:ruta`), que no se
+        modela.
+    """
+    nombre, dos_puntos, ruta = s.partition(":")
+    if not dos_puntos:
+        return s if s.endswith("/") else s + "/"
+    return _extremo(nombre, ruta, tipos_de_remote(), 0)
+
+
+def _extremo(nombre: str, ruta: str, tipos: dict[str, TipoRemote], saltos: int) -> str | None:
+    """Devuelve el extremo de `nombre:ruta` con la regla de su tipo; ver `resolver_extremo()`."""
+    tipo = tipos.get(nombre, TipoRemote(None, False, ""))
+    if tipo.tipo == "alias":
+        return _extremo_alias(nombre, tipo, ruta, tipos, saltos)
+    if tipo.tipo == "local":
+        ruta = raiz_local(ruta, tipo.nounc)
+    extremo = f"{nombre}:{ruta}"
+    return extremo if extremo.endswith("/") else extremo + "/"
+
+
+def _extremo_alias(nombre: str, tipo: TipoRemote, ruta: str, tipos: dict[str, TipoRemote],
+                   saltos: int) -> str | None:
+    """Sigue un alias hasta su destino, con la raíz `ruta` que le llega a su `NewFs`."""
+    if not tipo.destino or saltos >= TOPE_ALIAS:
+        return None
+    partido = _partir_remote(tipo.destino)
+    if partido is None:
+        return None
+    destino, base = partido
+    raiz = _unir_raiz(base, ruta, bool(destino))
+    if not destino:
+        return fs_path_local(raiz_local(raiz))
+    if destino not in tipos:
+        return None
+    return _extremo(destino, raiz, tipos, saltos + 1)
+
+
+def _partir_remote(texto: str) -> tuple[str, str] | None:
+    """Réplica reducida de `fspath.Parse` (fs/fspath/path.go) para la opción `remote` de un alias.
+
+    Returns:
+        `(nombre, ruta)`, con el nombre vacío si es una ruta local (también
+        `C:\\ruta` en Windows, donde una sola letra es una unidad: no hay
+        unidades en `driveletter.IsDriveLetter` fuera de Windows). `None` si
+        no hay nada, o si es una cadena de conexión (`:backend:ruta`, o con
+        parámetros `nombre,clave=valor:ruta`).
+    """
+    if not texto or texto.startswith(":"):
+        return None
+    ruta_local = texto.replace("\\", "/") if IS_WIN else texto   # `filepath.ToSlash`
+    if ":" not in texto:
+        return "", ruta_local
+    for i, letra in enumerate(texto):
+        if letra in "/\\":
+            return "", ruta_local        # un `:` tras una barra es de la ruta
+        if letra == ",":
+            return None
+        if letra == ":":
+            nombre, resto = texto[:i], texto[i + 1:]
+            if IS_WIN and len(nombre) == 1 and nombre.isascii() and nombre.isalpha():
+                return "", ruta_local
+            return nombre, resto.replace("\\", "/") if IS_WIN else resto
+    return None
+
+
+def _limpiar(ruta: str) -> str:
+    """Réplica de `path.Clean` de Go: como `posixpath.normpath`, sin guardar las dos barras."""
+    limpia = posixpath.normpath(ruta)
+    return limpia[1:] if limpia.startswith("//") else limpia
+
+
+def _unir(*partes: str) -> str:
+    """Réplica de `path.Join` de Go: ignora lo vacío y limpia el resultado."""
+    partes = tuple(p for p in partes if p)
+    return _limpiar("/".join(partes)) if partes else ""
+
+
+def _unir_raiz(base: str, ruta: str, con_nombre: bool) -> str:
+    """Réplica de `fspath.JoinRootPath` (fs/fspath/path.go) con el remote ya separado de su ruta.
+
+    Args:
+        base: La ruta del remote del alias (lo que va detrás de `nombre:`).
+        ruta: La raíz con la que llega al alias; se hace absoluta antes de
+            unirla, para que no pueda salirse de él (`makeAbsolute`).
+        con_nombre: Si el destino es un remote con nombre y no una ruta local.
+    """
+    if not ruta:
+        return base
+    ruta = ruta.replace("\\", "/") if IS_WIN else ruta
+    con_barra = ruta.startswith("/")
+    absoluta = _limpiar("/" + ruta)
+    ruta = absoluta if con_barra else absoluta[1:]
+    if not con_nombre and base.startswith("//"):
+        return "/" + _unir(base, ruta)       # las rutas de red de Windows guardan sus dos barras
+    unida = _unir(base, ruta)
+    return "" if con_nombre and unida == "." else unida
 
 
 def raiz_local(ruta: str, nounc: bool = False) -> str:
@@ -158,6 +300,23 @@ def expected_prefix(pair: Pair) -> str:
         return fs_path_remote(endpoint)
 
     return session_name(render(pair.mode.source), render(pair.mode.dest))
+
+
+def prefijo_comprobable(pair: Pair) -> bool:
+    """Indica si `expected_prefix()` es el nombre que rclone escribirá, y no una estimación.
+
+    No lo es cuando un extremo pasa por un alias que no se puede seguir
+    (`resolver_extremo()`): entonces el prefijo esperado es el del alias sin
+    resolver, y comparar con él un baseline que rclone escribió con el destino
+    daría un «no es de esta pareja» falso. Quien diagnostica no debe acusar con
+    él.
+    """
+    for kind in (pair.mode.source, pair.mode.dest):
+        if kind == "local" and not pair.device_remote:
+            continue
+        if resolver_extremo(pair.endpoint(kind)) is None:
+            return False
+    return True
 
 
 FILTERS_HEADER = (

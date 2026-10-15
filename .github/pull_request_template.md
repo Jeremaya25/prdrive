@@ -31,7 +31,7 @@ puede romperse en un dispositivo que ya está en uso. -->
 <!-- Lo que puede borrar ficheros, o hacer creer a bisync que se han borrado. Si
 no toca nada de esto, escribe «Ninguno» y borra la lista. -->
 
-- [ ] Cambia algo que entra en `bisync.expected_prefix()` (`local`, `remote`, `remote_path`, `mode`, `device_remote`, `RAIZ_UPSTREAM`). Qué baselines se apartan, y quién pide el `--resync`:
+- [ ] Cambia algo que entra en `bisync.expected_prefix()` (`local`, `remote`, `remote_path`, `mode`, `device_remote`, `RAIZ_UPSTREAM`, el destino de un remote `alias`). Qué baselines se apartan, y quién pide el `--resync`:
 - [ ] Toca `max-delete`, `_bisync_preflight()`, los filtros o `--backup-dir`
 - [ ] Toca un modo `*-mirror`, y se ha probado con `--dry-run` antes que sin él
 - [ ] Borra algo, en el dispositivo o en el remoto, y pasa por `confirmar_plan()` con sus consecuencias

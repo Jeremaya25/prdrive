@@ -55,6 +55,7 @@ python tests/_runtime_ci.py compilador windows-x64 DESTINO CACHE  # the same run
 python tests/_runtime_ci.py rclone PLAT CACHE                      # the pinned rclone, for the timing check's real pass
 python tests/rendimiento/correr.py --pr DIR --base DIR --trabajo DIR [--python PY] [--rondas 7] [--capturas] [--rclone RCLONE]  # the timing check (CI)
 python tests/integracion/llavero_real.py --de-verdad  # the keychain end to end, for real (CI only)
+python tests/integracion/prefijo_alias_real.py --de-verdad  # `expected_prefix()` of rclone `alias` remotes vs the listings the pinned rclone writes (CI: Linux + Windows, `prefijo-alias-real.yml`)
 python tests/maquina/correr.py --lista           # checklist rows with a cloud real-machine test (F9, F14…)
 ```
 
