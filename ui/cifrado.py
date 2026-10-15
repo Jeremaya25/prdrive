@@ -71,6 +71,23 @@ def lanzar_expulsion(script: Path) -> None:
                      stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def nombrar_letra() -> None:
+    """Le pasa al Explorador el nombre y el icono de este volumen, si es uno de VeraCrypt.
+
+    Y antes borra las claves que se quedaron de volúmenes ya cerrados
+    (`common/explorador.py`: el Explorador no lee el `autorun.inf` de un volumen
+    VeraCrypt). Lo hacen la ventana, en un hilo tras su primer pintado, y el
+    servicio al arrancar: así arranca prdrive desde un contenedor recién
+    abierto (`Abrir PRDRIVE.bat`, penwatch). Si este dispositivo no vive en la
+    letra de un volumen VeraCrypt no se toca el registro. No lanza.
+    """
+    from common import explorador, model
+    if not explorador.letra_veracrypt(model.DEVICE_ROOT):
+        return
+    explorador.limpiar()
+    explorador.poner(model.DEVICE_ROOT)
+
+
 def olvidar_letra() -> None:
     """Quita el nombre y el icono que prdrive le puso a la letra de este volumen.
 

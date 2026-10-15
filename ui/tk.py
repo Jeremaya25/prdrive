@@ -1969,11 +1969,23 @@ class VentanaPrincipal:
         # la apertura ni un parpadeo. La lectura va la primera, en cuanto Tk tiene
         # un momento libre.
         root.after_idle(self.refrescar_instantanea)
+        root.after_idle(self.nombrar_letra)
         root.after(300, self.mirar_version)
         root.after(300, self.mirar_conflictos)
         precargar_a_ratos(root, precarga_de(self.config))
         root.mainloop()
         return self.eleccion
+
+    def nombrar_letra(self) -> None:
+        """Le pasa al Explorador el nombre y el icono de este volumen, en un hilo.
+
+        Es `cifrado.nombrar_letra()`, tras el primer pintado como las lecturas:
+        toca el registro y el disco, y nada de eso puede retrasar la apertura.
+        No es una lectura (no devuelve nada que la ventana espere), así que va
+        en un hilo suelto y no por `segundo_plano`.
+        """
+        threading.Thread(target=cifrado.nombrar_letra, name="nombrar-letra",
+                         daemon=True).start()
 
     def cerrar(self) -> None:
         """Cierra la ventana sin elegir nada: `abrir()` devuelve `None`."""

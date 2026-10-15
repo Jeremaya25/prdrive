@@ -945,7 +945,9 @@ def daemon_main(pairs: list[str], interval_min: float) -> int:
     # fallo (`ui.avisar_fallo`, que lo importa fuera de su `try`); `llavero`,
     # solo con `[keychain]`, abajo.
     from common import results, update  # noqa: F401
-    nombrar_letra()
+    # El nombre y el icono de un volumen VeraCrypt, que el Explorador no lee de él.
+    from ui import cifrado
+    cifrado.nombrar_letra()
     llave = pareja_llavero()
     v = None
     if llave is not None:
@@ -1044,20 +1046,6 @@ def run_interactive(extra_args: list[str]) -> int:
     return subprocess.run([sys.executable, str(model.SYNC_PY), *extra_args]).returncode
 
 
-def nombrar_letra() -> None:
-    """Le pasa al Explorador el nombre y el icono de este volumen, si es uno de VeraCrypt.
-
-    Y antes borra las claves que se quedaron de volúmenes ya cerrados
-    (`common/explorador.py`: el Explorador no lee el `autorun.inf` de un volumen
-    VeraCrypt). Va al abrir la ventana y al arrancar el servicio, que es como
-    arranca prdrive desde un contenedor recién abierto (`Abrir PRDRIVE.bat`,
-    penwatch). Fuera de Windows no hace nada. No lanza.
-    """
-    from common import explorador
-    explorador.limpiar()
-    explorador.poner(model.DEVICE_ROOT)
-
-
 def ui_flow() -> int:
     """Hace el camino sin argumentos: para el servicio anterior, pregunta y obedece."""
     # Lo PRIMERO, antes de parar nada: abrir runsync detiene el servicio
@@ -1073,7 +1061,6 @@ def ui_flow() -> int:
 
     try:
         startup_msg = stop_previous_daemon()
-        nombrar_letra()
 
         try:
             config = model.load_config()

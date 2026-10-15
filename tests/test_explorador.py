@@ -20,7 +20,6 @@ from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
 
-import runsync
 from common import autorun, explorador, model, registro
 from ui import cifrado
 
@@ -236,8 +235,14 @@ try:
             K2 = unidad("K", ID_J, "Quieto", ICONO)
             explorador.poner(K2, APP)
             VERACRYPT.discard("K")
-            runsync.nombrar_letra()
-            c("la ventana y el servicio, al arrancar: limpian y ponen la suya",
+            VERACRYPT.discard("H")
+            antes = {k: dict(v) for k, v in reg.claves.items()}
+            cifrado.nombrar_letra()
+            c("fuera de un volumen VeraCrypt, al arrancar no se toca el registro",
+              reg.claves, antes)
+            VERACRYPT.add("H")
+            cifrado.nombrar_letra()
+            c("en uno, la ventana y el servicio al arrancar limpian y ponen la suya",
               (sorted(registro.subclaves(explorador.DRIVES)),
                valores("H", explorador.NOMBRE)[0]), (["h"], "Nuevo nombre"))
         finally:

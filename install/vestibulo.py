@@ -94,7 +94,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
-from common import components, explorador, llavero
+from common import components, llavero
 from common import vestibulo as v
 
 from . import IS_WIN, InstallError
@@ -163,26 +163,31 @@ estaba. Con el Python de consola del dispositivo, el mismo orden que
 mientras corre retiene el volumen. Sale con 1 si KeePassXC sigue abierto.
 """
 
-_CLAVE_LETRA = f"HKCU\\{explorador.DRIVES}\\%LETRA%"
-_OLVIDAR_LETRA_BAT = (
-    ":olvidar_letra\n"
-    "if not defined LETRA exit /b 0\n"
-    + "".join(
-        f'reg query "{_CLAVE_LETRA}\\{sub}" /v {explorador.MARCA} 2>nul '
-        '| find /i "%ID%" >nul && '
-        f'reg delete "{_CLAVE_LETRA}\\{sub}" /f >nul 2>&1\n'
-        for sub in (explorador.ICONO, explorador.NOMBRE))
-    + "exit /b 0\n"
-)
-"""Subrutina `:olvidar_letra`: quita el nombre y el icono de la letra que se acaba de cerrar.
+def _olvidar_letra_bat() -> str:
+    """Devuelve la subrutina `:olvidar_letra`: quita el nombre y el icono de la letra que se acaba de cerrar.
 
-Son las claves por letra con que prdrive le pasa al Explorador el nombre y el
-icono de un volumen VeraCrypt (`common/explorador.py`). Solo las subclaves cuya
-`MARCA` lleva el id de ESTA unidad; las de otro y las de encima se quedan, y
-lo que quede vacío lo recoge `explorador.limpiar()` la próxima vez que arranque
-prdrive. `LETRA` se apunta antes del desmontaje, porque después `:buscar` ya
-no la encuentra; sin ella (el contenedor ya estaba cerrado) no se hace nada.
-"""
+    Son las claves por letra con que prdrive le pasa al Explorador el nombre y
+    el icono de un volumen VeraCrypt (`common/explorador.py`, importado aquí y
+    no arriba: el asistente no lo necesita para pintarse). Solo las subclaves
+    cuya `MARCA` lleva el id de ESTA unidad; las de otro y las de encima se
+    quedan, y lo que quede vacío lo recoge `explorador.limpiar()` la próxima
+    vez que arranque prdrive. `LETRA` se apunta antes del desmontaje, porque
+    después `:buscar` ya no la encuentra; sin ella (el contenedor ya estaba
+    cerrado) no se hace nada.
+    """
+    from common import explorador
+
+    clave = f"HKCU\\{explorador.DRIVES}\\%LETRA%"
+    return (
+        ":olvidar_letra\n"
+        "if not defined LETRA exit /b 0\n"
+        + "".join(
+            f'reg query "{clave}\\{sub}" /v {explorador.MARCA} 2>nul '
+            '| find /i "%ID%" >nul && '
+            f'reg delete "{clave}\\{sub}" /f >nul 2>&1\n'
+            for sub in (explorador.ICONO, explorador.NOMBRE))
+        + "exit /b 0\n"
+    )
 
 _BUSCAR_BAT = (
     ":buscar\n"
@@ -552,7 +557,7 @@ def bat_expulsar(device_id: str) -> str:
         "\n"
         + _LIBRE_BAT +
         "\n"
-        + _OLVIDAR_LETRA_BAT +
+        + _olvidar_letra_bat() +
         "\n"
         + _VC_PENDIENTE_BAT +
         "\n"
