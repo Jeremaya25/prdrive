@@ -491,6 +491,24 @@ with sandbox() as root:
       (leeme.read_bytes(), leeme.stat().st_mtime_ns),
       (llavero.LEEME_TEXTO.encode("utf-8"), HORA_NS))
 
+    # Una simulación no escribe en el dispositivo: no le corrige la hora a uno que ya existe.
+    antigua = 1_700_000_000_000_000_000
+    os.utime(leeme, ns=(antigua, antigua))
+    llavero.preparar(config().pareja_llavero, simulacro=True)
+    c("en una simulación no se le toca la hora a uno que ya existe",
+      leeme.stat().st_mtime_ns, antigua)
+    real_execute = sync.execute
+    sync.execute = lambda ctx, cmd, logfile=None: 0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            sync.run_pair(sync.RunContext(binary="RCLONE", env={}, dry_run=True,
+                                          resync_approved=True), config().pareja_llavero)
+    finally:
+        sync.execute = real_execute
+    c("  ni `sync.py keychain --dry-run`", leeme.stat().st_mtime_ns, antigua)
+    llavero.preparar(config().pareja_llavero)
+    c("  y la pasada de verdad sí, antes de pasar", leeme.stat().st_mtime_ns, HORA_NS)
+
     cerca = HORA_NS + 1_000_000_000          # a menos de la ventana de rclone (2 s): iguales
     os.utime(leeme, ns=(cerca, cerca))
     llavero.preparar(config().pareja_llavero)

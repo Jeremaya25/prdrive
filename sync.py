@@ -726,7 +726,7 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
             record_result(ctx, pair, LLAVERO_SIN_CIFRAR, None, reloj)
             return LLAVERO_SIN_CIFRAR
     if pair.llavero:
-        motivo = llavero.preparar(pair)
+        motivo = llavero.preparar(pair, simulacro=ctx.dry_run)
         if motivo is not None:
             print(f"[{pair.name}] NO SE SUBE: {motivo}")
             record_result(ctx, pair, LLAVERO_ROTO, None, reloj)

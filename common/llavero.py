@@ -140,7 +140,7 @@ def rotas(donde: Path) -> list[Rota]:
     return salida
 
 
-def asegurar_leeme(donde: Path) -> bool:
+def asegurar_leeme(donde: Path, corregir_hora: bool = True) -> bool:
     """Pone `LEEME.txt` si falta, con la hora fija; si dice otra cosa, no lo toca.
 
     Se escriben los bytes tal cual, con `\\n` en todos los sistemas, y se le pone
@@ -149,12 +149,18 @@ def asegurar_leeme(donde: Path) -> bool:
     estaba con el texto de siempre y otra hora (de antes de #115) se corrige: es
     nuestro y no cambia de contenido. Si dice otra cosa, ni el texto ni la hora.
 
+    Args:
+        donde: La carpeta del llavero.
+        corregir_hora: Si se le corrige la hora a uno que ya existía. Una simulación
+            (`--dry-run`) no escribe en el dispositivo: pasa `False`, y la corrección espera a
+            la pasada de verdad. Uno recién creado siempre sale con su hora.
+
     Returns:
         True si lo ha escrito.
     """
     ruta = donde / LEEME
     creado = store.crear_exclusivo(ruta, LEEME_TEXTO.encode("utf-8"))
-    if creado is not None and _es_el_leeme_nuestro(ruta):
+    if creado is not None and (creado or corregir_hora) and _es_el_leeme_nuestro(ruta):
         _poner_hora_fija(ruta)
     return creado is True
 
@@ -183,11 +189,16 @@ def _poner_hora_fija(ruta: Path) -> None:
         return
 
 
-def preparar(pair: model.Pair) -> str | None:
+def preparar(pair: model.Pair, simulacro: bool = False) -> str | None:
     """Prepara la pareja del llavero para una pasada y dice si no se puede subir.
 
     Pone el compañero fijo y comprueba las bases. No crea la carpeta: eso lo
     decide `sync.py` con sus reglas (nunca si hay baseline).
+
+    Args:
+        pair: La pareja del llavero.
+        simulacro: Si la pasada es un `--dry-run`: no le corrige la hora a un
+            `LEEME.txt` que ya existe (`asegurar_leeme()`).
 
     Returns:
         El motivo para no hacer la pasada, o `None` si se puede.
@@ -198,7 +209,7 @@ def preparar(pair: model.Pair) -> str | None:
             return None
     except OSError:
         return None
-    asegurar_leeme(donde)
+    asegurar_leeme(donde, corregir_hora=not simulacro)
     malas = rotas(donde)
     if not malas:
         return None
