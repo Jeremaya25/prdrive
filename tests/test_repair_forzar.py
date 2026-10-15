@@ -125,7 +125,10 @@ with sandbox():
     c("  con el nombre del llavero, nunca el de su pareja", ("El llavero" in h.titulo, "keychain" in h.titulo),
       (True, False))
     c.contains("  dice qué ha pasado", h.detalle, "han cambiado todos los ficheros")
-    c.contains("  y que ya se repitió una vez con --force", h.detalle, "repetido la pasada una vez con --force")
+    c.contains("  y que prdrive la repite una vez con --force, sin dar por hecho que ya lo hizo",
+               h.detalle, "repite solo la pasada una vez con --force")
+    c("  (no dice «ya ha repetido»: puede que no se pudiera, o que la única repetición fuera otra)",
+      "ya ha repetido" in h.detalle, False)
     c.contains("  y la salida: rehacer la referencia, que no pierde nada", h.detalle,
                "python sync.py keychain --resync")
     c("  no ofrece forzarlo ni lo trata como las demás parejas",

@@ -2,7 +2,7 @@
 
 Files: `sync.py`, `common/model.py`, `common/orden.py`, `common/bisync.py`, `common/config_file.py`.
 Formerly AGENTS.md «Architecture», «bisync», «Logs and live progress», «Writing the TOML».
-The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md. Their narrow exceptions are the keychain's, a pass whose only deletions are conflict copies, which is repeated once without the `max-delete` brake, and a pass stopped by «all files were changed», repeated once with `--force` (both `sync.repetir_sin_freno()`, one repeat per pass in total, `llavero.md`), and a pass a person forces with `--force` (below, `repair.md`).
+The safety invariants (missing local dir, `max-delete`, mirrors) stay in AGENTS.md. Their narrow exceptions are the keychain's, a pass whose only deletions are conflict copies, which is repeated once without the `max-delete` brake, and a pass stopped by «all files were changed», repeated once with `--force` only after a `--dry-run` of that repeat shows it deletes nothing (both `sync.repetir_sin_freno()`, one repeat per pass in total, `llavero.md`; named in `AGENTS.md`, «Safety invariants»), and a pass a person forces with `--force` (below, `repair.md`).
 
 ## Process split
 

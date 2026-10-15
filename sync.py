@@ -769,6 +769,32 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     return rc
 
 
+def lo_que_borraria_forzando(ctx: RunContext, pair: Pair, ffile: Path | None) -> list[str] | None:
+    """Simula la pasada del llavero con `--force` y dice qué ficheros borraría.
+
+    Es la comprobación de antes de repetir una pasada parada por «han cambiado todos»
+    (`repetir_sin_freno()`): la misma orden que se repetiría, con `--dry-run` (que no apunta
+    nada en el listado). Cuenta lo que rclone dice que saltaría al simular
+    (`frenos.borrarian()`: `Skipped delete` y `Skipped move into backup dir`), no lo que
+    sobrescribiría, que el backup-dir guarda.
+
+    Returns:
+        Los nombres que borraría (vacío si ninguno), o `None` si no se ha podido saber: la
+        simulación falló o su log no se deja leer.
+    """
+    simulada = replace(ctx, dry_run=True)
+    cmd, logfile = build_command(simulada, replace(pair, flags={**pair.flags, "force": True}),
+                                 ffile, False)
+    try:
+        if execute(simulada, cmd, logfile) != 0:
+            return None
+        return frenos.borrarian(frenos.leer(logfile, completo=True))
+    except OSError:
+        return None
+    finally:
+        logfile.unlink(missing_ok=True)
+
+
 def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: Path,
                       rc: int) -> tuple[int, Path]:
     """Repite UNA vez la pasada del llavero sin el freno que la ha parado, si ese freno se puede quitar.
@@ -784,7 +810,9 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
       base entre lo borrado, no.
     - **Han cambiado todos los ficheros de un lado** (#115): con dos ficheros, una base y
       `LEEME.txt`, basta con que cambie la hora de los dos, y pasaba al traer el llavero a un
-      segundo dispositivo. Se repite con `--force`.
+      segundo dispositivo. Se repite con `--force`, que también salta el freno de borrados:
+      por eso antes se simula (`lo_que_borraria_forzando()`) y solo se fuerza si la
+      simulación sale bien y no borra nada.
 
     Una sola repetición por pasada, sea cual sea el freno: si la repetida vuelve a pararse
     (por ese u otro), se queda el fallo, que `explain_failure()` y «Reparación» explican. Esto
@@ -805,6 +833,16 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
         dispose_log(pair.name, logfile, 0, ctx.keep_logs)
         cambio = {"max-delete": llavero.FRENO_SIN_COPIAS}
     elif frenos.es_cambiados_bisync(texto):
+        # `--force` salta también el freno de borrados, y la repetición es otra ejecución de rclone
+        # que vuelve a listar los dos lados: lo que se hubiera borrado entre una y otra no
+        # frenaría. Se simula antes, y si borrara algo (o no se pudiera saber) no se fuerza.
+        borraria = lo_que_borraria_forzando(ctx, pair, ffile)
+        if borraria is None or borraria:
+            que = ("no se ha podido simular" if borraria is None
+                   else f"borraría {', '.join(borraria)}")
+            print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha parado, "
+                  f"pero forzar la pasada {que}: no se fuerza, el freno manda.")
+            return rc, logfile
         # El log de la pasada parada se guarda aunque la repetida vaya bien: es lo que dice por
         # qué se forzó, y de la repetida no queda nada (su log se tira si sale bien).
         parada = dispose_log(pair.name, logfile, rc, True)

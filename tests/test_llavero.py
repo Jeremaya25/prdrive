@@ -301,11 +301,22 @@ with sandbox() as root:
         finally:
             sync.execute = original
 
-    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, "bien"))
-    c("«han cambiado todos» en el llavero: la pasada se repite una vez, con --force",
-      (rc, len(ordenes), "--force" in ordenes[0], "--force" in ordenes[1]), (0, 2, False, True))
+    # Lo que dice rclone de una simulación (`--dry-run`): lo que copiaría y, si los hay, los borrados.
+    SIMULADA = ("2026/10/15 10:00:00 NOTICE: Pruebas.kdbx: Skipped copy as --dry-run is set (size 100)\n"
+                "2026/10/15 10:00:00 NOTICE: LEEME.txt: Skipped copy as --dry-run is set (size 200)")
+    SIMULADA_BORRA = (SIMULADA + "\n2026/10/15 10:00:00 NOTICE: Pruebas.kdbx: "
+                      "Skipped move into backup dir as --dry-run is set")
+
+    def bisyncs(ordenes):
+        """Las órdenes de bisync, como `(simulada, con --force)`, en el orden en que corrieron."""
+        return [("--dry-run" in o, "--force" in o) for o in ordenes if o[1] == "bisync"]
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA), (0, "bien"))
+    c("«han cambiado todos» en el llavero: se simula con --force y, si no borra nada, se repite una vez",
+      (rc, bisyncs(ordenes)), (0, [(False, False), (True, True), (False, True)]))
+    real = [o for o in ordenes if o[1] == "bisync"][2]
     c("  sin --resync, que no lo necesita, y con el freno de borrados que tenía",
-      ("--resync" in ordenes[1], freno(ordenes[1])), (False, "25"))
+      ("--resync" in real, freno(real)), (False, "25"))
     c.contains("  y lo dice, con qué hace y por qué es seguro", salida,
                "se repite la pasada una vez con --force")
     c.contains("  (cada lado guarda lo que pierda en las versiones)", salida, model.VERSIONS_DIR)
@@ -313,23 +324,37 @@ with sandbox() as root:
       any("all files were changed" in p.read_text(encoding="utf-8")
           for p in model.LOG_DIR.glob("keychain*")), True)
 
-    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS))
-    c("  si la repetida vuelve a pararse, no hay una tercera: una vez por pasada, nunca dos seguidas",
-      (rc, len(ordenes)), (1, 2))
+    # `--force` salta también el freno de borrados y la repetición es otra ejecución de rclone: lo
+    # que borrara, no frenaría. Antes de forzar se simula, y si borrara algo no se fuerza.
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA_BORRA), (0, "bien"))
+    c("  si forzarla borraría algo, no se fuerza: el freno manda y queda el fallo",
+      (rc, bisyncs(ordenes)), (1, [(False, False), (True, True)]))
+    c.contains("  y lo dice, con lo que borraría", salida, "Pruebas.kdbx")
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (7, "Failed to bisync: no sé"), (0, "bien"))
+    c("  si la simulación falla, no se fuerza lo que no se ha podido comprobar",
+      (rc, bisyncs(ordenes)), (1, [(False, False), (True, True)]))
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA), (1, TODOS))
+    c("  si la repetida vuelve a pararse, no hay otra: una vez por pasada, nunca dos seguidas",
+      (rc, len(bisyncs(ordenes))), (1, 3))
     explicacion = [linea for linea in salida.splitlines() if linea.strip().startswith(">>")]
     c("  y el fallo no queda mudo: lo explica, con el llavero por su nombre y sin ofrecer forzar",
       (len(explicacion), "llavero" in " ".join(explicacion),
        frenos.COMO_FORZAR in " ".join(explicacion), "--resync" in " ".join(explicacion)),
       (1, True, False, True))
+    c("  sin dar por hecho que ya se repitió con --force (a veces no se pudo o no tocaba)",
+      "ya ha repetido" in " ".join(explicacion), False)
 
-    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS.replace("Path2", "Path1")), (0, "bien"))
-    c("  se repite igual si los que han cambiado son los de este lado", (rc, len(ordenes)), (0, 2))
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS.replace("Path2", "Path1")),
+                                         (0, SIMULADA), (0, "bien"))
+    c("  se repite igual si los que han cambiado son los de este lado",
+      (rc, len(bisyncs(ordenes))), (0, 3))
 
     # Con el freno de copias de conflicto ya se ha repetido: una sola repetición en toda la pasada.
     rc, salida, ordenes = correr_pasadas(
         pareja, (7, "\n".join([borrado("Path1", copia1), ABORTO])), (1, TODOS), (0, "bien"))
-    c("  tras repetir sin el freno de borrados no se repite otra vez con --force",
-      (rc, len(ordenes), ["--force" in o for o in ordenes]), (1, 2, [False, False]))
+    c("  tras repetir sin el freno de borrados no se repite otra vez con --force, ni se simula",
+      (rc, bisyncs(ordenes)), (1, [(False, False), (False, False)]))
 
     rc, salida, ordenes = correr_pasadas(pareja, (1, "Failed to bisync: lo que sea"), (0, "bien"))
     c("  otro fallo cualquiera del llavero no se repite", (rc, len(ordenes)), (1, 1))

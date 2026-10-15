@@ -294,8 +294,8 @@ def escenario(p: comun.Prueba, nombre_a: str, raiz_a: Path, nombre_b: str, raiz_
     if fija is None:
         p.nota("sin LEEME_HORA tampoco hay repetición con --force")
     else:
-        p.ver("  se repite UNA vez, con --force (o ni hace falta: no pasó a toparse con el freno)",
-              (repetida, veces) in ((True, 2), (False, 1)), True)
+        p.ver("  se simula y se repite UNA vez, con --force (o ni hace falta: no pasó a toparse con el freno)",
+              (repetida, veces) in ((True, 3), (False, 1)), True)
         p.nota(f"la repetición con --force {'hizo falta' if repetida else 'no hizo falta'}")
     rc, salida = pasada(app_a, f"{a} otra vez")
     p.ver(f"  y {a} sigue pasando, sin repetir", (rc, "--force" in salida), (0, False))
@@ -303,3 +303,24 @@ def escenario(p: comun.Prueba, nombre_a: str, raiz_a: Path, nombre_b: str, raiz_
     p.ver(f"  y {b} también, sin conflictos", (rc, copias_de_conflicto(keychain_a, keychain_b,
                                                                          llavero_remoto)),
           (0, []))
+
+    if fija is None:
+        return
+    # Forzar también salta el freno de borrados: con un fichero borrado en el remoto (1 de 5 = 20 %,
+    # por debajo del 25 %, así que bisync llega a «han cambiado todos»), la simulación lo ve y no se
+    # fuerza. Los otros cuatro cambian de hora.
+    print("  -- La simulación frena: cuatro ficheros con otra hora y uno borrado en el remoto", flush=True)
+    hora = nueva + 60_000_000_000
+    for i in (1, 2, 3):
+        guardar(keychain_a / f"X{i}.kdbx", 20 + i, hora)
+    rc, _ = pasada(app_a, f"{a} sube tres bases más")
+    p.ver(f"{a} sube tres bases más (cinco ficheros)", (rc, sorted(bases_en(llavero_remoto))),
+          (0, ["LEEME.txt", BASE, "X1.kdbx", "X2.kdbx", "X3.kdbx"]))
+    (llavero_remoto / "X3.kdbx").unlink()
+    for fichero in (BASE, "LEEME.txt", "X1.kdbx", "X2.kdbx"):
+        os.utime(llavero_remoto / fichero, ns=(hora + 30_000_000_000, hora + 30_000_000_000))
+    rc, salida = pasada(app_a, f"{a}, con X3 borrado y los demás con otra hora")
+    veces = sum(1 for linea in salida.splitlines() if "ejecutando" in linea and " bisync " in linea)
+    p.ver("  forzarla borraría X3: no se fuerza, el freno manda y queda el fallo",
+          (rc != 0, "borraría X3.kdbx" in salida, "all files were changed" in salida, veces),
+          (True, True, True, 2))

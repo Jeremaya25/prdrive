@@ -163,11 +163,12 @@ EXPLICACION_LLAVERO = (
     "el llavero.")
 """Lo que se dice en la consola cuando es el llavero el que ha topado con un freno de borrados."""
 SALIDA_LLAVERO_CAMBIADOS = (
-    "prdrive ya ha repetido la pasada una vez con --force (lo que pisa cada lado queda en "
-    ".prversions/) y ha vuelto a pararse. Lo que guardes en el llavero no sube mientras tanto. "
-    "Desde aquí no se fuerza: `python sync.py keychain --resync` rehace la referencia y se queda "
-    "con la base más nueva, y la otra queda en .prversions/.")
-"""Qué pasa y qué hacer cuando al llavero lo para «han cambiado todos» aun después de repetirlo."""
+    "prdrive repite solo la pasada una vez con --force cuando es esto lo único que la para y "
+    "forzarla no borraría nada (lo que pisa cada lado queda en .prversions/); si la ves aquí, "
+    "no ha podido hacerlo o no ha bastado. Lo que guardes en el llavero no sube mientras tanto. "
+    "Desde aquí no se fuerza: `python sync.py keychain --resync` rehace la referencia y se "
+    "queda con la base más nueva, y la otra queda en .prversions/.")
+"""Qué pasa y qué hacer cuando al llavero lo para «han cambiado todos», se haya podido repetir o no."""
 EXPLICACION_LLAVERO_CAMBIADOS = (
     "Han cambiado todos los ficheros de un lado del llavero (suele ser la hora de un dispositivo "
     f"nuevo o de otra versión) y bisync se ha parado. {SALIDA_LLAVERO_CAMBIADOS}")
