@@ -75,8 +75,6 @@ Las [guías](docs/guia/README.md) tienen el detalle:
 - **Que se sincronice sola:** [Servicio y vigilante](docs/guia/servicio-y-vigilante.md) · [Agente residente](docs/guia/agente-residente.md)
 - **Por dentro:** [Cómo funciona](docs/guia/como-funciona.md) · [Seguridad](docs/guia/seguridad.md)
 
-¿Vas a tocar el código? Empieza por [AGENTS.md](AGENTS.md).
-
 ## Licencia
 
 Apache License 2.0: el texto completo está en [`LICENSE`](LICENSE).
