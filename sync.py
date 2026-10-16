@@ -799,9 +799,9 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
                       rc: int) -> tuple[int, Path]:
     """Repite UNA vez la pasada del llavero sin el freno que la ha parado, si ese freno se puede quitar.
 
-    Son dos, los de rclone que `--force` salta (`frenos.py`), y los dos son seguros en el
-    llavero porque lo que pisa cada lado se queda en `.prversions/` (backup-dir, también en un
-    conflicto):
+    Son tres frenos de rclone, y quitarlos es seguro en el llavero porque lo que pisa cada lado
+    se queda en `.prversions/` (backup-dir, también en un conflicto y en un `--resync`). Los
+    dos primeros los salta `--force` (`frenos.py`):
 
     - **Borrados** (`--max-delete`, 25 % del listado anterior): el llavero tiene tan pocos
       ficheros que quitar una copia de conflicto ya lo pisa, al combinar aquí o al ver en otro
@@ -813,6 +813,14 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
       segundo dispositivo. Se repite con `--force`, que también salta el freno de borrados:
       por eso antes se simula (`lo_que_borraria_forzando()`) y solo se fuerza si la
       simulación sale bien y no borra nada.
+
+    El tercero solo lo salta `--resync`:
+
+    - **El remoto está vacío** (`llavero.remoto_vacio()`): alguien ha borrado a mano la carpeta
+      del llavero en el remoto. Con baseline nadie la vuelve a crear, rclone no sincroniza
+      contra un lado vacío y, con `--resilient`, falla así en cada pasada. Se crea la carpeta
+      (`crear_carpeta_remota()`) y se repite con `--resync`, que no borra nada y se queda con
+      la base más nueva (`resync-mode = newer`): la del dispositivo vuelve a subir.
 
     Una sola repetición por pasada, sea cual sea el freno: si la repetida vuelve a pararse
     (por ese u otro), se queda el fallo, que `explain_failure()` y «Reparación» explican. Esto
@@ -827,6 +835,8 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
     except OSError:
         return rc, logfile
     copias = llavero.solo_copias_borradas(texto, pair) if "too many deletes" in texto else None
+    cambio: dict = {}
+    resync = False
     if copias is not None:
         print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
               f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
@@ -851,10 +861,20 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
               + f". El llavero deja lo que pisa cada lado en {model.VERSIONS_DIR}: "
               "se repite la pasada una vez con --force.")
         cambio = {"force": True}
+    elif llavero.remoto_vacio(texto):
+        # Su log se guarda como el del forzado: dice por qué se ha vuelto a subir el llavero.
+        parada = dispose_log(pair.name, logfile, rc, True)
+        print(f"[{pair.name}] La carpeta del llavero en el remoto está vacía o ya no está, y "
+              "bisync no sincroniza contra un lado vacío"
+              + (f" (Log: {parada})" if parada else "")
+              + f". Un --resync no borra nada y lo que pise queda en {model.VERSIONS_DIR}: "
+              "se crea la carpeta y se repite la pasada una vez con --resync.")
+        crear_carpeta_remota(ctx, pair)
+        resync = True
     else:
         return rc, logfile
     repetida = replace(pair, flags={**pair.flags, **cambio})
-    cmd, logfile = build_command(ctx, repetida, ffile, False)
+    cmd, logfile = build_command(ctx, repetida, ffile, resync)
     return execute(ctx, cmd, logfile), logfile
 
 
