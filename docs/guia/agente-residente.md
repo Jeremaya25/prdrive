@@ -54,7 +54,9 @@ agente»**. El diseño completo está en
   suyo y vuelve a preguntar, diciendo que su código ha cambiado.
 - **Atiende el [llavero](llavero.md)** de una unidad que lo lleve, sea cual sea
   su modo: mientras KeePassXC está abierto, lo de otros dispositivos llega cada
-  5 minutos y lo que guardas sube solo. Su desplegable lleva **Abrir llavero**;
+  5 minutos y lo que guardas sube solo. Su desplegable lleva **Abrir llavero**,
+  que trae lo último también con el agente en pausa (o esperando por la batería
+  o el ahorro de energía; lo que guardes entonces sube al reanudar);
   si la base tiene dos versiones, avisa; y si quitas la unidad sin expulsar,
   deja el navegador como estaba y, en Linux, cierra KeePassXC, que allí no se
   va con la unidad.
@@ -228,9 +230,8 @@ agente»**. El diseño completo está en
   última que has usado **de las que llevan llavero** (aunque después usaras
   otra sin él); si KeePassXC ya está abierto, lo trae delante. Si no hay
   ninguna con llavero conectada, o si la que toca se está actualizando o
-  expulsando, un aviso lo dice. Si el agente está en pausa (o esperando por la
-  batería o el ahorro de energía), lo abre igual y avisa de que no trae lo
-  último: lo que guardes sube cuando vuelva a sincronizar. Se guardan en este
+  expulsando, un aviso lo dice. Como el de la bandeja, trae lo último aunque
+  el agente esté en pausa. Se guardan en este
   equipo, no en la unidad, y de fábrica no hay
   ninguno. Si una combinación la tiene ya otro programa o el propio sistema, se
   dice al guardar y esa acción se queda sin atajo: elige otra. Si cancelas la
