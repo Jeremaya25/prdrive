@@ -211,8 +211,9 @@ agente»**. El diseño completo está en
   20 000 entradas deja de vigilarse (lo dice el diario) y sigue por su
   intervalo. Detalles en `sync_config.example.toml`.
 - **Atajos de teclado.** En la bandeja, **Atajos de teclado…** abre una ventana
-  donde grabas una combinación para cuatro cosas: **Sincronizar ahora**,
-  **Abrir su carpeta**, **Pausar o reanudar** y **Abrir su ventana**. Pulsa
+  donde grabas una combinación para cinco cosas: **Sincronizar ahora**,
+  **Abrir su carpeta**, **Pausar o reanudar**, **Abrir su ventana** y **Abrir
+  el llavero**. Pulsa
   «Grabar» en la fila, luego la combinación (con Ctrl, Alt o la tecla de Windows
   o Súper; Esc lo deja como estaba), y «Guardar». En Windows no vale Ctrl+Alt
   con una letra, un número o el espacio: Windows trata AltGr como Ctrl+Alt, y
@@ -223,7 +224,14 @@ agente»**. El diseño completo está en
   la última que conectaste. Sincronizar y pausar lo cuentan con un aviso con el
   nombre de la unidad; abrir su carpeta o su ventana se ve sola. La pausa es la
   de esa unidad, la misma que el «Pausar» de su ventana: el atajo la pone y la
-  quita. Se guardan en este equipo, no en la unidad, y de fábrica no hay
+  quita. **Abrir el llavero** es el «Abrir llavero» de la bandeja sobre la
+  última que has usado **de las que llevan llavero** (aunque después usaras
+  otra sin él); si KeePassXC ya está abierto, lo trae delante. Si no hay
+  ninguna con llavero conectada, o si la que toca se está actualizando o
+  expulsando, un aviso lo dice. Si el agente está en pausa (o esperando por la
+  batería o el ahorro de energía), lo abre igual y avisa de que no trae lo
+  último: lo que guardes sube cuando vuelva a sincronizar. Se guardan en este
+  equipo, no en la unidad, y de fábrica no hay
   ninguno. Si una combinación la tiene ya otro programa o el propio sistema, se
   dice al guardar y esa acción se queda sin atajo: elige otra. Si cancelas la
   ventana de confirmación del escritorio (Wayland), no se guarda nada y siguen
@@ -233,7 +241,8 @@ agente»**. El diseño completo está en
   ofrece el portal de atajos (Plasma 6, GNOME 48 o posterior…), que te pedirá
   confirmarlos en su propia ventana; si no lo ofrece, la ventana te lo dice. Ahí
   puedes crear el atajo en los ajustes de teclado del escritorio con la orden
-  `python agente.py atajo sincronizar` (o `carpeta`, `pausar`, `ventana`).
+  `python agente.py atajo sincronizar` (o `carpeta`, `pausar`, `ventana`,
+  `llavero`).
 - **Se registra por usuario, sin administrador**: en Windows con una tarea
   programada; en Linux con un autostart del escritorio (y no con systemd: los
   avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
@@ -251,7 +260,7 @@ python agente.py actualizar           # la versión nueva, como «Actualizar» d
 python agente.py actualizar <id>      # esa unidad, a la versión del agente
 python agente.py expulsar <id>        # soltar esa unidad extraíble, como «Expulsar» de la bandeja
 python agente.py atajos               # la ventana que graba los atajos de teclado
-python agente.py atajo sincronizar    # lo de ese atajo, como si lo pulsaras (carpeta, pausar, ventana)
+python agente.py atajo sincronizar    # lo de ese atajo, como si lo pulsaras (carpeta, pausar, ventana, llavero)
 ```
 
 Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del

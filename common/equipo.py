@@ -79,8 +79,11 @@ TEXTO_MODO = {UI: "abrir la ventana", DAEMON: "sincronizar en segundo plano",
               SYNC: "una pasada al enchufarla", NADA: "nada"}
 """Cómo se nombra cada modo de cara al usuario."""
 
-ACCIONES_DE_ATAJO = ("sincronizar", "carpeta", "pausar", "ventana")
-"""Las acciones que pueden llevar un atajo de teclado global (`ui/atajos.py`)."""
+ACCIONES_DE_ATAJO = ("sincronizar", "carpeta", "pausar", "ventana", "llavero")
+"""Las acciones que pueden llevar un atajo de teclado global (`ui/atajos.py`).
+
+Una nueva va al final: en Windows el id de cada atajo es su posición aquí.
+"""
 FORMA_ATAJO = re.compile(r"(?:(?:ctrl|alt|shift|super)\+){1,4}[a-z0-9]{1,8}")
 """La forma de una combinación guardada en `agente.json` (`ctrl+alt+s`).
 

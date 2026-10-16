@@ -2,8 +2,9 @@
 """Los atajos de teclado globales: la mitad que decide (`ui/atajos.py`), sin Tk ni sistema.
 
 Cómo se lee y se escribe una combinación, qué necesita cada sistema, cuál vale,
-sobre qué unidad actúa un atajo (la última usada; si no, la última conectada),
-qué peticiones del buzón hace cada acción y qué aviso da, lo que la ventana va
+sobre qué unidad actúa un atajo (la última usada; si no, la última conectada;
+el del llavero, solo entre las que lo llevan), qué peticiones del buzón hace
+cada acción y qué aviso da, lo que la ventana va
 viendo mientras graba, y cómo se guardan en `agente.json` (ninguno de fábrica).
 """
 
@@ -14,6 +15,7 @@ import sys
 from _harness import Checks
 
 from common import equipo
+from common import planificador as pl
 from ui import atajos as a
 
 c = Checks("atajos de teclado: la decisión")
@@ -155,6 +157,55 @@ c("sin unidad a mano: nada que pedir y un aviso que lo dice",
 c("una acción que no existe no hace nada", a.pulsado("formatear", {"unidades": [A]}, {}, {}),
   a.Respuesta())
 
+# --- abrir el llavero
+c("el llavero es la última acción: los ids de los atajos ya guardados no se mueven",
+  (a.ACCIONES[-1], a.ACCIONES.index(a.VENTANA)), (a.LLAVERO, 3))
+c("  y se llama «Abrir el llavero»", a.NOMBRES[a.LLAVERO], "Abrir el llavero")
+LA, LB = {**A, "llavero": True}, {**B, "llavero": True}
+SE_ABRE = {"abre_llavero": True}
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [LA]}, {}, {})
+c("abrir el llavero: la misma petición que «Abrir llavero» de la bandeja, sin aviso",
+  (r.peticiones, r.aviso, r.unidad), (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), None, "A"))
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [LA, B]}, {"A": 1.0, "B": 50.0}, {})
+c("  la última usada de las que llevan llavero, aunque luego se usara otra sin él",
+  r.unidad, "A")
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [B, LA]}, {"B": 50.0}, {"B": 9.0, "A": 1.0})
+c("  con una sola con llavero, esa", r.unidad, "A")
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [LA, LB]}, {"A": 5.0, "B": 9.0}, {})
+c("  con varias con llavero, la última usada de ellas", r.unidad, "B")
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [LA, LB]}, {}, {"A": 9.0, "B": 2.0})
+c("  sin usar ninguna, la última que se conectó", r.unidad, "A")
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [A, B]}, {"A": 1.0}, {})
+c("sin ninguna con llavero: nada que pedir y un aviso que lo dice",
+  (r.peticiones, "ningún llavero" in r.aviso[0], "«Abrir el llavero»" in r.aviso[1]),
+  ((), True, True))
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [{**N, "llavero": True}]}, {}, {})
+c("  una con llavero que no está en la lista no cuenta", (r.peticiones, r.unidad), ((), ""))
+r = a.pulsado(a.LLAVERO, {"abre_llavero": False, "unidades": [LA]}, {}, {})
+c("en un equipo que no abre llaveros: nada que pedir, y lo dice",
+  (r.peticiones, "no abre" in (r.aviso or ("", ""))[1]), ((), True))
+for marca, dice in (("actualizando", "se está actualizando"), ("expulsando", "se está expulsando")):
+    r = a.pulsado(a.LLAVERO, {**SE_ABRE, "unidades": [{**LA, marca: True}]}, {}, {})
+    c(f"  {dice}: nada que pedir, y lo dice con su nombre",
+      (r.peticiones, r.unidad, "PRDRIVE-A" in r.aviso[0], dice in r.aviso[1].lower()),
+      ((), "A", True, True))
+
+# Con las pasadas retenidas (pausa, batería, ahorro de energía), el agente que la
+# atiende no trae lo último antes de abrirlo, y `--llavero` tampoco (ve el servicio).
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "en pausa", "unidades": [LA]}, {}, {})
+c("con el agente retenido: lo abre igual y avisa de que no trae lo último, y por qué",
+  (r.peticiones, "sin traer lo último" in r.aviso[0], "en pausa" in r.aviso[1]),
+  (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), True, True))
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "modo de ahorro de energía",
+                          "unidades": [LA]}, {}, {})
+c("  el ahorro de energía también lo retiene", "ahorro de energía" in r.aviso[1], True)
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": pl.MOTIVO_RED_MEDIDA, "unidades": [LA]}, {}, {})
+c("  la red de uso medido no: deja pasar al llavero", r.aviso, None)
+r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "en pausa",
+                          "unidades": [{**LA, "atendida": False, "pausada": True}]}, {}, {})
+c("  si el agente no la atiende (su propia pausa), tampoco: --llavero hace su pasada",
+  (r.peticiones, r.aviso), (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), None))
+
 # --- grabar: lo que llega del teclado
 t = a.Teclas(windows=False)
 c("X11: un modificador solo deja la combinación a medias", t.pulsa("Control_L", 37, 0), None)
@@ -275,6 +326,10 @@ c("agente.json: se guardan por acción y en minúsculas; lo que no tiene su form
   dict(aj.atajos), {"sincronizar": "ctrl+alt+s", "ventana": "ctrl+alt+v"})
 c("  y se escriben tal cual", equipo.a_dict(aj)["atajos"],
   {"sincronizar": "ctrl+alt+s", "ventana": "ctrl+alt+v"})
+aj = equipo.desde_dict({"atajos": {"llavero": "ctrl+super+k"}})
+c("  el del llavero también, y vuelve a escribirse",
+  (dict(aj.atajos), equipo.a_dict(aj)["atajos"]),
+  ({"llavero": "ctrl+super+k"}, {"llavero": "ctrl+super+k"}))
 c("de fábrica, ninguno, y agente.json no cambia de forma",
   (dict(equipo.Ajustes().atajos), "atajos" in equipo.a_dict(equipo.Ajustes()),
    dict(equipo.desde_dict({}).atajos)), ({}, False, {}))
