@@ -238,6 +238,11 @@ asistente), el llavero va igual, con tres diferencias:
   propósito: con una sola base, sin él la sincronización creería que «ha cambiado
   todo». Lleva siempre la misma fecha en todos los dispositivos, para que traer el
   llavero a uno nuevo no haga que los demás crean que ha cambiado todo; no se la cambies.
+- **Borrar `keychain/` en el remoto no lo vacía.** La siguiente pasada de
+  cualquier dispositivo vuelve a crear la carpeta y sube su base; si hay dos
+  distintas, gana la más nueva y la otra no se pierde (queda en `.prversions/`, o
+  al lado para «Combinar»). Para cambiar de base, cámbiala en un dispositivo y
+  deja que se sincronice.
 - **Los equipos prestados.** Lo que tecleas en un equipo con algo malo instalado
   se puede leer, también la contraseña de la base. Las passkeys no lo arreglan:
   con la base abierta, ese equipo puede usarlas. Abre el llavero solo en equipos

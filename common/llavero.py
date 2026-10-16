@@ -353,6 +353,33 @@ def sin_listar(pair: model.Pair) -> list[str]:
     return [n for n in nombres if n not in listado]
 
 
+_REMOTO_VACIO = "Empty current Path2 listing"
+"""Lo que dice bisync cuando el remoto (Path2) no trae nada que sincronizar.
+
+Es `checkListing()` (`cmd/bisync/listing.go`) sobre el listado de ahora, desde
+`findDeltas()`: «Empty current Path2 listing. Cannot sync to an empty
+directory: <listado>», código 7. Visto con rclone v1.75.2 y dos carpetas
+locales, tras borrar la del remoto: con `--resilient` el error es «retryable
+without --resync», no aparta los listados a `.lst-err`, y cada pasada siguiente
+falla igual.
+"""
+
+
+def remoto_vacio(log: str) -> bool:
+    """Indica si la pasada se ha parado porque la carpeta del llavero en el remoto está vacía o no está.
+
+    Pasa si alguien la borra a mano en el remoto: con baseline la pasada es
+    normal, nadie vuelve a crear `keychain/` (`sync.crear_carpeta_remota()` va
+    solo antes de un `--resync`) y rclone no sincroniza contra un lado vacío.
+    Solo el remoto: el lado del dispositivo no se queda vacío nunca, porque
+    `preparar()` pone `LEEME.txt` antes de cada pasada.
+
+    Args:
+        log: El log de la pasada que ha fallado.
+    """
+    return _REMOTO_VACIO in log
+
+
 FRENO_SIN_COPIAS = 100
 """El `--max-delete` (un %) de la pasada que se repite cuando lo borrado son solo copias."""
 _BORRADO = re.compile(r": - (Path[12]) +File was deleted +- (.*)$")

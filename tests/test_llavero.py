@@ -14,6 +14,8 @@ el equipo se sustituye. Lo que se sujeta:
 - El compañero fijo lleva siempre la misma hora, la de `llavero.LEEME_HORA` (#115).
 - Un freno de «han cambiado todos los ficheros» se repite una vez con `--force`,
   solo en el llavero, y nunca dos veces en la misma pasada (#115).
+- Con el remoto vacío (su carpeta borrada a mano) se vuelve a crear la carpeta y
+  se repite una vez con `--resync`, también solo en el llavero.
 """
 
 import contextlib
@@ -359,6 +361,44 @@ with sandbox() as root:
     rc, salida, ordenes = correr_pasadas(pareja, (1, "Failed to bisync: lo que sea"), (0, "bien"))
     c("  otro fallo cualquiera del llavero no se repite", (rc, len(ordenes)), (1, 1))
 
+    # La carpeta del llavero se borró a mano en el remoto: con baseline, la pasada es normal, nadie
+    # vuelve a crear `keychain/`, y rclone no sincroniza contra un lado vacío (`checkListing()`).
+    # Con `--resilient` el error es «reintentable»: no aparta los listados y la pasada siguiente
+    # falla igual, para siempre. El log, tal como sale con rclone v1.75.2 y dos carpetas locales.
+    VACIO = (
+        "2026/10/16 08:52:39 ERROR : Empty current Path2 listing. Cannot sync to an empty directory: "
+        "C:\\prdrive\\.prdrive\\state\\keychain\\disp_.keychain..nas_prdrive-catalog_keychain.path2.lst-new\n"
+        "2026/10/16 08:52:39 ERROR : Bisync critical error: empty current Path2 listing: "
+        "C:\\prdrive\\.prdrive\\state\\keychain\\disp_.keychain..nas_prdrive-catalog_keychain.path2.lst-new\n"
+        "2026/10/16 08:52:39 ERROR : Bisync aborted. Error is retryable without --resync due to "
+        "--resilient mode.\n"
+        "2026/10/16 08:52:39 NOTICE: Failed to bisync: bisync aborted")
+    c("un remoto vacío se reconoce en el log", llavero.remoto_vacio(VACIO), True)
+    c("  y solo el remoto: el lado del dispositivo nunca está vacío (LEEME.txt)",
+      llavero.remoto_vacio(VACIO.replace("Path2", "Path1")), False)
+    for p in model.LOG_DIR.glob("keychain*"):
+        p.unlink()
+    rc, salida, ordenes = correr_pasadas(pareja, (7, VACIO), (0, "bien"))
+    c("con el remoto vacío, se vuelve a crear su carpeta y se repite la pasada una vez con --resync",
+      (rc, [o[1] for o in ordenes], "--resync" in ordenes[-1]), (0, ["bisync", "mkdir", "bisync"], True))
+    c("  que se queda con la más nueva, como cualquier resync del llavero, y no fuerza nada",
+      (ordenes[-1][ordenes[-1].index("--resync-mode") + 1], "--force" in ordenes[-1]),
+      ("newer", False))
+    c("  la carpeta, la del remoto del llavero", ordenes[1][:3], ["RCLONE", "mkdir", pareja.dest])
+    c.contains("  y lo dice, con qué hace", salida, "se repite la pasada una vez con --resync")
+    c.contains("  (lo que pise queda en las versiones)", salida, model.VERSIONS_DIR)
+    c("  el log de la pasada parada se queda: dice por qué se rehízo el remoto",
+      any("Empty current Path2 listing" in p.read_text(encoding="utf-8")
+          for p in model.LOG_DIR.glob("keychain*")), True)
+    rc, salida, ordenes = correr_pasadas(pareja, (7, VACIO), (7, VACIO))
+    c("  si la repetida vuelve a fallar, no hay otra", (rc, len(bisyncs(ordenes))), (7, 2))
+    rc, salida, ordenes = correr_pasadas(pareja, (7, VACIO.replace("Path2", "Path1")), (0, "bien"))
+    c("  con el lado del dispositivo vacío, no se repite", (rc, len(ordenes)), (7, 1))
+    rc, salida, ordenes = correr_pasadas(
+        pareja, (7, "\n".join([borrado("Path1", copia1), ABORTO])), (7, VACIO), (0, "bien"))
+    c("  tras repetir sin el freno de borrados no se repite otra vez con --resync",
+      (rc, [o[1] for o in ordenes]), (7, ["bisync", "bisync"]))
+
     # Ni en un resync: ahí no hay listado anterior con el que comparar, y `--force` no se pide con él.
     sin_listados = [p for p in pareja.workdir.iterdir()]
     for p in sin_listados:
@@ -367,6 +407,9 @@ with sandbox() as root:
     c("  un --resync no se repite con --force", (rc, [o[1] for o in ordenes],
                                                  any("--force" in o for o in ordenes)),
       (1, ["mkdir", "bisync"], False))
+    rc, salida, ordenes = correr_pasadas(pareja, (7, VACIO), (0, "bien"))
+    c("  ni con otro --resync si el remoto sigue vacío", (rc, [o[1] for o in ordenes]),
+      (7, ["mkdir", "bisync"]))
     for p in sin_listados:
         p.with_name(p.name + ".guardado").rename(p)
 
@@ -384,6 +427,9 @@ with sandbox() as root:
     c("  otra pareja con ese log no se repite ni se fuerza", (rc, len(ordenes),
                                                               any("--force" in o for o in ordenes)),
       (1, 1, False))
+    rc, salida, ordenes = correr_pasadas(otra, (7, VACIO), (0, "bien"))
+    c("  ni se resincroniza sola con el remoto vacío: eso lo decide una persona",
+      (rc, [o[1] for o in ordenes]), (7, ["bisync"]))
 
     # `--force` es de rclone; la comprobación de la carpeta local es de `_bisync_preflight()`, que
     # va antes de la primera orden: con baseline y sin carpeta, ni se llega a repetir.
