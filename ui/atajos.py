@@ -49,7 +49,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from common import APP_NAME, equipo
-from common import planificador as pl
 
 ACCIONES = equipo.ACCIONES_DE_ATAJO
 """Las acciones que pueden llevar atajo, en el orden en que se enseñan."""
@@ -514,10 +513,11 @@ def _llavero(resumen: Mapping[str, Any], usadas: Mapping[str, float],
     """Decide qué hace el atajo de «Abrir el llavero».
 
     Es la petición de «Abrir llavero» de la bandeja (`PIDE_LLAVERO`) sobre la
-    última usada de las que llevan llavero, sin aviso: se ve abrirse. Lo que no
-    se ve sí avisa: no hay ninguna con llavero, se está actualizando o
-    expulsando (el agente no la abre, y sin aviso el atajo parecería roto), o
-    el agente la atiende con las pasadas retenidas (`_retiene_el_llavero()`).
+    última usada de las que llevan llavero, sin aviso: se ve abrirse, y con las
+    pasadas retenidas el agente trae lo último igual (`Agente._traer_al_abrir()`).
+    Lo que no se ve sí avisa: no hay ninguna con llavero, o se está
+    actualizando o expulsando (el agente no la abre, y sin aviso el atajo
+    parecería roto).
     """
     if not resumen.get("abre_llavero"):
         return Respuesta(aviso=(f"{APP_NAME}: aquí no se abre el llavero",
@@ -534,35 +534,7 @@ def _llavero(resumen: Mapping[str, Any], usadas: Mapping[str, float],
         porque = ("Se está actualizando: vuelve a pulsar el atajo cuando acabe."
                   if fila.get("actualizando") else "Se está expulsando.")
         return Respuesta(aviso=(f"{nombre}: ahora no abro su llavero", porque), unidad=uid)
-    pide = ({"pide": equipo.PIDE_LLAVERO, "id": uid},)
-    motivo = _retiene_el_llavero(resumen, fila)
-    if motivo:
-        return Respuesta(pide, (f"{nombre}: abro el llavero sin traer lo último",
-                                f"El agente no sincroniza ahora ({motivo}): lo que guardes "
-                                f"subirá cuando vuelva a sincronizar."), uid)
-    return Respuesta(pide, unidad=uid)
-
-
-def _retiene_el_llavero(resumen: Mapping[str, Any], fila: Mapping[str, Any]) -> str:
-    """Dice por qué el llavero de esa unidad se abrirá sin traer lo último, o `""`.
-
-    Pasa cuando el agente la atiende (`fila["atendida"]`) pero retiene las
-    pasadas (`resumen["retenido"]`, el motivo del planificador): entonces su
-    `runsync.py --llavero` no hace la pasada de antes de abrir (ve el servicio)
-    y el agente tampoco la hace. Con la pausa de la propia unidad el agente la
-    suelta y `--llavero` sí trae lo último, así que no hay nada que decir.
-
-    Args:
-        resumen: El resumen del agente.
-        fila: La fila de la unidad elegida.
-
-    Returns:
-        El motivo, dicho para el usuario, o `""` si nada lo retiene.
-    """
-    motivo = str(resumen.get("retenido") or "").strip()
-    if not fila.get("atendida") or motivo == pl.MOTIVO_RED_MEDIDA:
-        return ""                       # la red de uso medido deja pasar al llavero
-    return motivo
+    return Respuesta(({"pide": equipo.PIDE_LLAVERO, "id": uid},), unidad=uid)
 
 
 # --- Grabar

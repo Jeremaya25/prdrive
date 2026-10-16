@@ -166,6 +166,23 @@ c("ni lanza una raíz que no se puede atender",
 c("una pareja urgente que ya no existe se ignora",
   que(dec(urgentes=[("unidad", "fantasma")])), ("pasada", "equipo", "docs"))
 
+# Qué motivos retienen también al llavero: con esos, «Abrir llavero» pide una
+# pasada urgente para traer lo último (`Agente._lanzar_llavero()`).
+LLAVE = pl.Pareja("keychain", "nas", llavero=True)
+for nombre, ent, retiene in (("nada", pl.Entorno(), False),
+                             ("la pausa", pl.Entorno(pausado=True), True),
+                             ("la batería baja", bateria_baja, True),
+                             ("el ahorro de energía", ahorro, True),
+                             ("la red de uso medido", medida, False)):
+    motivo = pl.moderacion(ent, P)
+    c(f"{nombre} {'retiene' if retiene else 'no retiene'} al llavero",
+      (pl.retiene_al_llavero(motivo), pl.deja_pasar(motivo, LLAVE)), (retiene, not retiene))
+c("funcionando con batería, si la política no la quiere, también",
+  pl.retiene_al_llavero(pl.moderacion(pl.Entorno(con_bateria=True, bateria=90),
+                                      pl.Politica(con_bateria=False))), True)
+c("a las demás parejas las retiene también la red de uso medido",
+  pl.deja_pasar(pl.MOTIVO_RED_MEDIDA, pl.Pareja("docs", "nas")), False)
+
 # sin conexión
 ent = pl.sin_conexion(pl.Entorno(), "equipo", "nas", T0 + P.sondeo_sin_conexion)
 d = dec(entorno=ent)

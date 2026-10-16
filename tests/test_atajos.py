@@ -15,7 +15,6 @@ import sys
 from _harness import Checks
 
 from common import equipo
-from common import planificador as pl
 from ui import atajos as a
 
 c = Checks("atajos de teclado: la decisión")
@@ -190,20 +189,15 @@ for marca, dice in (("actualizando", "se está actualizando"), ("expulsando", "s
       (r.peticiones, r.unidad, "PRDRIVE-A" in r.aviso[0], dice in r.aviso[1].lower()),
       ((), "A", True, True))
 
-# Con las pasadas retenidas (pausa, batería, ahorro de energía), el agente que la
-# atiende no trae lo último antes de abrirlo, y `--llavero` tampoco (ve el servicio).
-r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "en pausa", "unidades": [LA]}, {}, {})
-c("con el agente retenido: lo abre igual y avisa de que no trae lo último, y por qué",
-  (r.peticiones, "sin traer lo último" in r.aviso[0], "en pausa" in r.aviso[1]),
-  (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), True, True))
-r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "modo de ahorro de energía",
-                          "unidades": [LA]}, {}, {})
-c("  el ahorro de energía también lo retiene", "ahorro de energía" in r.aviso[1], True)
-r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": pl.MOTIVO_RED_MEDIDA, "unidades": [LA]}, {}, {})
-c("  la red de uso medido no: deja pasar al llavero", r.aviso, None)
+# Con las pasadas retenidas (pausa, batería, ahorro de energía) el agente trae
+# lo último igual al pedirlo (`Agente._traer_al_abrir()`): no hay nada que avisar.
+for retenido in ("en pausa", "modo de ahorro de energía"):
+    r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": retenido, "unidades": [LA]}, {}, {})
+    c(f"con el agente retenido ({retenido}): lo pide, sin aviso",
+      (r.peticiones, r.aviso), (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), None))
 r = a.pulsado(a.LLAVERO, {**SE_ABRE, "retenido": "en pausa",
                           "unidades": [{**LA, "atendida": False, "pausada": True}]}, {}, {})
-c("  si el agente no la atiende (su propia pausa), tampoco: --llavero hace su pasada",
+c("  ni con la unidad pausada desde su ventana: --llavero hace su pasada",
   (r.peticiones, r.aviso), (({"pide": equipo.PIDE_LLAVERO, "id": "A"},), None))
 
 # --- grabar: lo que llega del teclado
