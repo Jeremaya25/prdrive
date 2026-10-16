@@ -2615,6 +2615,8 @@ class Agente:
         con sus mismas guardas, salvo una ventana abierta: «Abrir llavero» no
         para el servicio ni choca con ella (es lo que hace también
         `Llavero.bat`). Lo que diga (el fichero llave, combinar) lo dice él.
+        Lanzado, pide la pasada que trae lo último si no la va a hacer nadie
+        (`_traer_al_abrir()`).
         """
         if self._por_actualizar(con) or rclone_propio() is None:
             diario(f"{con.nombre}: no abro su llavero: "
@@ -2634,6 +2636,32 @@ class Agente:
             diario(f"{con.nombre}: abriendo su llavero")
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir su llavero: {e}")
+            return
+        self._traer_al_abrir(con)
+
+    def _traer_al_abrir(self, con: Conexion) -> None:
+        """Encola la pasada que trae lo último del llavero al abrirlo, si no la hará nadie.
+
+        Su `runsync.py --llavero` no la hace cuando el agente atiende la raíz
+        (`llavero.atiende_el_servicio()`), y la del agente al verse KeePassXC
+        abierto no sale si la moderación retiene al llavero
+        (`pl.retiene_al_llavero()`: la pausa de la bandeja, la batería, el
+        ahorro de energía). Entonces va como urgente, que se salta la
+        moderación; lo de después (lo que se guarde, al cerrarlo) sigue
+        retenido. Con su KeePassXC ya abierto no se pide: abrirlo solo lo trae
+        delante, como en `keepassxc.mirar_apertura()`.
+        """
+        clave = (con.id, model.LLAVERO)
+        if con.lock is None or con.servicio is None or con.id in self.bloqueos \
+                or con.id in self.keepassxc or clave in self.urgentes \
+                or not any(p.nombre == model.LLAVERO for p in con.servicio.parejas):
+            return
+        motivo = pl.moderacion(replace(self.entorno, pausado=self.pausado),
+                               self.ajustes.politica)
+        if pl.retiene_al_llavero(motivo):
+            self.urgentes.append(clave)
+            diario(f"{con.nombre}: se trae lo último de su llavero aunque no se "
+                   f"sincroniza ({motivo})")
 
     def _sirve(self, con: Conexion) -> bool:
         """Indica si el agente tiene que servir esa conexión.

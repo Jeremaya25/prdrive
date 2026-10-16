@@ -339,6 +339,17 @@ tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 | KP3 | W | Cambiar un byte de `keepassxc-proxy.exe` y, aparte, de `KeePassXC.exe`, con el sello intacto; «Abrir llavero». Luego, sin borrar nada, mirar la ventana y pulsar «Actualizar…». | No se abre, no se escribe ni la configuración ni ninguna clave del registro, y el aviso manda a «Actualizar…» (no a borrar ninguna carpeta). Tras el aviso, la ventana ofrece «Actualizar…» («lleva 2.7.12 (con ficheros que no cuadran)»); al pulsarlo se repone el paquete, se apaga el aviso (`state/keepassxc-no-oficial.json` sin el apunte) y se abre. | `NoOficial`, `SALIDA_ACTUALIZAR`, `keepassxc_bin.al_dia()` |
 | KP4 | L | KP2 en Linux x64 con el AppImage. Después, con lo extraído en `~/.cache/prdrive/keepassxc/`, cambiar el AppImage de la unidad; y lo mismo con esa caché borrada. | Con la caché al día se abre igual; sin ella no se extrae nada y el aviso lo dice. | `keepassxc.preparar_appimage()` |
 
+### «Abrir llavero» desde la bandeja con las pasadas retenidas
+
+Con la pausa de la bandeja, la batería o el ahorro de energía, «Abrir llavero»
+encola una pasada urgente del llavero (`Agente._traer_al_abrir()`) y KeePassXC
+se abre a la vez. Los tests lo sujetan con el agente de mentira; lo que solo
+prueba un KeePassXC de verdad es qué ve quien desbloquea antes de que acabe:
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| KR1 | W, L | Dos equipos con la misma unidad (o dos unidades con el mismo llavero). En el B, añadir una entrada y esperar a su pasada. En el A, con la unidad atendida, «Pausar» en la bandeja y «Abrir llavero»; desbloquear sin prisa. Repetir desbloqueando lo antes posible, y otra vez editando algo antes de que acabe la pasada. Después, guardar un cambio en el A, cerrar KeePassXC y «Reanudar». | El diario del agente dice «se trae lo último de su llavero aunque no se sincroniza (en pausa)» y la base desbloqueada tiene la entrada del B. Desbloqueada antes de que acabe la pasada: apuntar qué hace KeePassXC al cambiar el fichero (recargarlo solo, o preguntar si combinar con lo editado). El cambio del A no sube hasta «Reanudar». | `Agente._traer_al_abrir()`, `pl.retiene_al_llavero()` |
+
 ## El modo de ahorro de energía
 
 El agente no lanza pasadas ni recorre carpetas vigiladas mientras el sistema

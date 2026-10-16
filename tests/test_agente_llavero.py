@@ -16,7 +16,9 @@ Lo que se sujeta:
   llevan llavero.
 - La bandeja: «Abrir llavero» en el desplegable de un dispositivo con llavero,
   solo donde se abre (Windows), y la petición lanza su `runsync.py --llavero`
-  con las guardas de su ventana.
+  con las guardas de su ventana. Con las pasadas retenidas (pausa, batería,
+  ahorro de energía) pide además una pasada urgente del llavero, que trae lo
+  último; lo de después sigue retenido.
 - Un conflicto del llavero (lo que su `sync.py` apunta en `conflicts.json`):
   un aviso por copia nueva y conexión, y una línea de aviso en la bandeja que
   lleva a combinarlo.
@@ -397,6 +399,67 @@ ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": UID_B})
 F.vueltas(ag, 1)
 F.PANTALLA[0] = True
 c("sin entorno gráfico, tampoco", F.LANZADOS, [])
+
+
+# Con las pasadas retenidas, `--llavero` no trae lo último (ve que el agente
+# atiende la raíz) y la pasada del agente al verse KeePassXC abierto tampoco
+# sale: «Abrir llavero» pide una pasada urgente del llavero.
+def abrir_llavero(uid: str = UID_B) -> tuple[list, bool]:
+    """Pide «Abrir llavero» de esa raíz y da la vuelta que lo atiende.
+
+    Returns:
+        Lo lanzado en esa vuelta (el último argumento de cada proceso) y si
+        queda en la cola una pasada urgente de su llavero.
+    """
+    F.LANZADOS.clear()
+    ag.pedir({"pide": equipo.PIDE_LLAVERO, "id": uid})
+    F.vueltas(ag, 1)
+    return [p.args[-1] for p in F.LANZADOS], (uid, model.LLAVERO) in ag.urgentes
+
+
+terminar(ag)
+ag.pedir({"pide": equipo.PIDE_PAUSA})
+F.vueltas(ag, 1)
+dicho = len(F.DIARIO)
+c("en pausa, abrirlo lanza su --llavero y una pasada del llavero que trae lo último",
+  abrir_llavero(), (["--llavero", model.LLAVERO], False))
+c("  urgente: la pausa no la retiene", ag.pasada is not None and ag.pasada.tarea.urgente, True)
+c("  y el diario dice por qué",
+  any("trae lo último" in m and "en pausa" in m for m in F.DIARIO[dicho:]), True)
+terminar(ag, CON)
+ABIERTO[0] = True
+c("lo de después sigue retenido: verse KeePassXC abierto no trae nada",
+  (hasta(ag, CON, 30), UID_B in ag.keepassxc), (None, True))
+c("ya abierto, abrirlo solo lo trae delante: sin pasada", abrir_llavero(), (["--llavero"], False))
+ABIERTO[0] = False
+F.vueltas(ag, int(20 / TICK))
+c("(KeePassXC cerrado, y su pasada retenida)", (UID_B in ag.keepassxc, ag.pasada), (False, None))
+
+BUZON_B = CON / ".prdrive" / "state" / equipo.BUZON_SERVICIO
+equipo.pedir({"pide": equipo.PIDE_PAUSAR_RAIZ}, BUZON_B)
+F.vueltas(ag, 2)
+c("(pausada también desde su ventana: el agente la suelta)", F.lock(CON), {})
+c("  esa no la atiende el agente: su --llavero trae lo último, y no el agente",
+  abrir_llavero(), (["--llavero"], False))
+equipo.pedir({"pide": equipo.PIDE_REANUDAR}, BUZON_B)
+F.vueltas(ag, 2)
+
+ag.pedir({"pide": equipo.PIDE_SIGUE})
+F.vueltas(ag, 1)
+terminar(ag)
+c("(sin pausa, atendida otra vez por el agente)",
+  (F.lock(CON).get("agente"), ag.retenido), (True, None))
+c("sin pausa no hace falta: la pasada sale al verse KeePassXC abierto",
+  abrir_llavero(), (["--llavero"], False))
+moderacion.red_medida = lambda: True
+ag.entorno_leido = -math.inf
+F.vueltas(ag, 1)
+c("en una red de uso medido, tampoco: el llavero ya pasa",
+  (abrir_llavero(), ag.retenido), ((["--llavero"], False), pl.MOTIVO_RED_MEDIDA))
+moderacion.red_medida = lambda: False
+ag.entorno_leido = -math.inf
+F.vueltas(ag, 1)
+terminar(ag)
 FUERA = "f" * 32
 extrano = F.unidad(FUERA, parejas=("docs",), daemon=DAEMON)
 config = extrano / ".prdrive" / "sync_config.toml"

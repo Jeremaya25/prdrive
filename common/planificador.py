@@ -371,14 +371,23 @@ def moderacion(entorno: Entorno, politica: Politica) -> str | None:
     return None
 
 
+def retiene_al_llavero(motivo: str | None) -> bool:
+    """Indica si la moderación retiene también al llavero por ese motivo.
+
+    Lo retienen la pausa, la batería y el ahorro de energía; la red de uso
+    medido, no. Se comprueban antes que la red (`moderacion()`), así que con
+    cualquiera de ellos el motivo es otro.
+    """
+    return motivo is not None and motivo != MOTIVO_RED_MEDIDA
+
+
 def deja_pasar(motivo: str | None, pareja: Pareja) -> bool:
     """Indica si la pareja puede ir aunque la moderación retenga por ese motivo.
 
-    Sin motivo, todas. En una red de uso medido, solo el llavero. La pausa, la
-    batería y el ahorro de energía retienen también al llavero: se comprueban
-    antes que la red (`moderacion()`), así que su motivo es otro.
+    Sin motivo, todas. Con uno, solo el llavero, si no lo retiene
+    (`retiene_al_llavero()`): en una red de uso medido.
     """
-    return motivo is None or (motivo == MOTIVO_RED_MEDIDA and pareja.llavero)
+    return motivo is None or (pareja.llavero and not retiene_al_llavero(motivo))
 
 
 def decidir(raices: Iterable[Raiz], marcas: Mapping[tuple[str, str], Marca],
