@@ -194,8 +194,9 @@ c("  y la ventana no cambia de ancho ni sale con barras", (r["ancho_igual"], r["
 c("Mayús+P no vale: se dice y sigue grabando",
   (any("Ctrl, Alt" in t for t in r["mal"]), "Pulsa la combinación…" in r["mal"]),
   (True, True))
-c("Esc lo deja como estaba", ("Pulsa la combinación…" in r["tras_esc"],
-                              r["tras_esc"].count(atajos.SIN_ATAJO)), (False, 3))
+c("Esc lo deja como estaba (solo una acción tiene atajo)",
+  ("Pulsa la combinación…" in r["tras_esc"], r["tras_esc"].count(atajos.SIN_ATAJO)),
+  (False, len(atajos.ACCIONES) - 1))
 c("Ctrl+Mayús+P la pone", "Ctrl+Mayús+P" in r["grabada"], True)
 c("«Quitar» la deja sin atajo", "Ctrl+Alt+S" in r["quitada"], False)
 c("«Guardar» pide lo de la ventana, con su vez",

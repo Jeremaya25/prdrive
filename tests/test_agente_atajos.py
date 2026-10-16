@@ -11,6 +11,8 @@ que en un sistema de verdad es `RegisterHotKey`, `XGrabKey` o el portal):
   bandeja o desde su ventana; si no, la última conectada.
 - Sincronizar encola sus parejas y avisa; pausar la pausa o la reanuda y avisa;
   abrir su carpeta y su ventana no avisan; sin unidad, un aviso lo dice.
+- Abrir el llavero lanza el `runsync.py --llavero` de la última usada de las
+  que lo llevan, sin aviso; sin ninguna con llavero, un aviso lo dice.
 - La ventana que graba: se abre una (`pregunta.py --atajos`); mientras está
   abierta los atajos se sueltan para que la combinación le llegue a ella, y un
   atajo pulsado no hace nada. «Guardar» los prueba con el sistema: se guarda
@@ -216,6 +218,37 @@ pulsar(ag, atajos.CARPETA)
 c("  se ve abrirse la ventana de B (desde su propio acceso): B", EXPLORADAS, [RB])
 (RB / agente.APP_SUBDIR / "state" / "ui.lock.json").unlink()
 F.vueltas(ag, 2)
+
+# --- abrir el llavero: la última usada de las que lo llevan
+L = "c" * 32
+RL = F.unidad(L, parejas=("docs",), nombre="PEN-L")
+config = RL / agente.APP_SUBDIR / "sync_config.toml"
+config.write_text(config.read_text(encoding="utf-8")
+                  + '\n[keychain]\nbase = "personal.kdbx"\n', encoding="utf-8")
+lista(L, RL, "PEN-L")
+ag.ajustes = equipo.leer_ajustes()
+real_abre, real_abierto = agente.ABRE_LLAVERO, agente.keepassxc_abierto
+agente.ABRE_LLAVERO = True
+agente.keepassxc_abierto = lambda raiz: False
+F.RAICES[:] = [RA, RB, RL]
+F.vueltas(ag, 3)
+ag.pedir({"pide": equipo.PIDE_ABRIR, "id": A})          # A, sin llavero, la última usada
+F.vueltas(ag, 1)
+F.AVISOS.clear()
+antes = len(F.LANZADOS)
+pulsar(ag, atajos.LLAVERO)
+c("abrir el llavero: su runsync.py --llavero en la que lo lleva, aunque se usara otra después",
+  [p.args for p in F.LANZADOS[antes:]],
+  [[agente.python(ventana=True), str(RL / agente.APP_SUBDIR / "runsync.py"), "--llavero"]])
+c("  sin aviso: se ve", F.AVISOS, [])
+F.RAICES[:] = [RA, RB]
+F.vueltas(ag, 3)
+antes = len(F.LANZADOS)
+pulsar(ag, atajos.LLAVERO)
+c("sin ninguna con llavero conectada: un aviso que lo dice y nada más",
+  (len(F.LANZADOS) - antes, [t for t, _x in F.AVISOS]),
+  (0, ["prdrive: no hay ningún llavero a mano"]))
+agente.ABRE_LLAVERO, agente.keepassxc_abierto = real_abre, real_abierto
 
 F.RAICES[:] = []
 F.vueltas(ag, 3)
