@@ -1769,6 +1769,8 @@ class Agente:
             rechazados)`: se recoge en cada vuelta.
         atajos_pedidos: Lo último pedido al motor, por acción, o `None` si nada.
         atajos_en_vuelo: Cuándo se le pidió, mientras no conteste.
+        atajos_vencida: Si lo último pedido lleva `ESPERA_ATAJOS` sin respuesta:
+            ya se dio por no puesto, pero su respuesta, si llega, se acepta.
         atajos_errores: Por qué el sistema no ha dejado poner cada atajo, por
             acción: lo que enseñan la bandeja y la ventana.
         atajos_avisados: Las `(acción, combinación)` rechazadas ya avisadas.
@@ -1852,6 +1854,7 @@ class Agente:
     atajos_hechos: Any = field(default_factory=queue.SimpleQueue)
     atajos_pedidos: dict[str, str] | None = None
     atajos_en_vuelo: float | None = None
+    atajos_vencida: bool = False
     atajos_errores: dict[str, str] = field(default_factory=dict)
     atajos_avisados: set[tuple[str, str]] = field(default_factory=set)
     atajos_prueba: tuple[str, dict[str, str], dict[str, str]] | None = None
@@ -4940,8 +4943,11 @@ class Agente:
 
         Recoge lo que ha contestado el motor desde su hilo, da por no puesto lo
         que lleva `ESPERA_ATAJOS` sin respuesta y, si lo que tiene que haber
-        (`_atajos_deseados()`) no es lo último pedido, lo pide. Una petición a
-        la vez: el portal puede tener al usuario delante de su ventana.
+        (`_atajos_deseados()`) no es lo último pedido, o es un «Guardar» que
+        aún se prueba, lo pide. Una petición a la vez: el portal puede tener al
+        usuario delante de su ventana, así que al vencer la espera no se vuelve
+        a pedir (cerraría su ventana), pero la respuesta tardía a lo último
+        pedido se acepta (`atajos_vencida`).
         """
         if self.ventana_atajos is not None and self.ventana_atajos.poll() is not None:
             self.ventana_atajos = None
@@ -4957,17 +4963,19 @@ class Agente:
                 combos, rechazados = self.atajos_hechos.get_nowait()
             except queue.Empty:
                 break
-            if self.atajos_en_vuelo is not None and combos == self.atajos_pedidos:
-                self.atajos_en_vuelo = None
+            if ((self.atajos_en_vuelo is not None or self.atajos_vencida)
+                    and combos == self.atajos_pedidos):
+                self.atajos_en_vuelo, self.atajos_vencida = None, False
                 self._atajos_puestos(combos, rechazados)
         if self.atajos_en_vuelo is not None and ahora - self.atajos_en_vuelo >= ESPERA_ATAJOS:
             combos = dict(self.atajos_pedidos or {})
-            self.atajos_en_vuelo = None
+            self.atajos_en_vuelo, self.atajos_vencida = None, True
             diario(f"atajos de teclado: {self.atajos_motor.nombre} no ha contestado en "
                    f"{ESPERA_ATAJOS:g} s")
             self._atajos_puestos(combos, {a: atajos.SIN_RESPUESTA for a in combos})
         deseados = self._atajos_deseados()
-        if self.atajos_en_vuelo is not None or deseados == self.atajos_pedidos \
+        if self.atajos_en_vuelo is not None \
+                or (deseados == self.atajos_pedidos and self.atajos_prueba is None) \
                 or not (deseados or self.atajos_pedidos):
             return
         motor = self._motor_de_atajos()
@@ -4975,7 +4983,7 @@ class Agente:
             if self.atajos_prueba is not None:
                 self._atajos_puestos(deseados, {a: self.atajos_motivo for a in deseados})
             return
-        self.atajos_pedidos, self.atajos_en_vuelo = deseados, ahora
+        self.atajos_pedidos, self.atajos_en_vuelo, self.atajos_vencida = deseados, ahora, False
         motor.poner(deseados)
 
     def _atajos_puestos(self, combos: dict[str, str], rechazados: Mapping[str, str]) -> None:
