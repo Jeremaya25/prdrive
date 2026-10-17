@@ -77,7 +77,7 @@ def fs_path_local(p: str) -> str:
     return p if p.endswith(sep) else p + sep
 
 
-def fs_path_remote(s: str) -> str:
+def fs_path_remote(s: str, tipos: dict[str, TipoRemote] | None = None) -> str:
     """Réplica de `FsPath` de canonical.go para un remote con nombre: `remote:ruta/`.
 
     `FsPath` pone `nombre + ":" + f.Root()`, y casi siempre `Root()` es la ruta
@@ -88,8 +88,13 @@ def fs_path_remote(s: str) -> str:
     Si pasa por un alias que no se puede resolver, lo deja como viene: es la
     mejor estimación que queda, y `prefijo_comprobable()` avisa de que no es de
     fiar.
+
+    Args:
+        tipos: Los remotes del `rclone.conf` ya leídos (`tipos_de_remote()`),
+            para que quien calcula varios extremos lo lea una sola vez; `None`
+            lo lee aquí.
     """
-    resuelto = resolver_extremo(s)
+    resuelto = resolver_extremo(s, tipos)
     if resuelto is not None:
         return resuelto
     return s if s.endswith("/") else s + "/"
@@ -134,7 +139,7 @@ def tipos_de_remote() -> dict[str, TipoRemote]:
             for nombre, opciones in parse_rclone_conf(texto).items()}
 
 
-def resolver_extremo(s: str) -> str | None:
+def resolver_extremo(s: str, tipos: dict[str, TipoRemote] | None = None) -> str | None:
     """Devuelve el extremo `remote:ruta/` tal como lo escribe `FsPath`, o `None` si no se sabe.
 
     Un remote `alias` no tiene nombre propio: su `NewFs` devuelve el `Fs` del
@@ -154,6 +159,11 @@ def resolver_extremo(s: str) -> str | None:
     `compress`) devuelven su propio `Fs`, con el nombre de su sección, y no
     necesitan nada de esto.
 
+    Args:
+        tipos: Los remotes del `rclone.conf` ya leídos (`tipos_de_remote()`);
+            `None` lo lee aquí. Un diccionario vacío es un `rclone.conf` sin
+            remotes, no «sin leer».
+
     Returns:
         El extremo, o `None` si pasa por un alias que no se puede seguir: sin
         `remote`, un ciclo (`TOPE_ALIAS`), un destino que no está en el
@@ -163,7 +173,7 @@ def resolver_extremo(s: str) -> str | None:
     nombre, dos_puntos, ruta = s.partition(":")
     if not dos_puntos:
         return s if s.endswith("/") else s + "/"
-    return _extremo(nombre, ruta, tipos_de_remote(), 0)
+    return _extremo(nombre, ruta, tipos_de_remote() if tipos is None else tipos, 0)
 
 
 def _extremo(nombre: str, ruta: str, tipos: dict[str, TipoRemote], saltos: int) -> str | None:
@@ -290,19 +300,24 @@ def session_name(path1: str, path2: str) -> str:
     return strip_hex_string(canonical_path(path1)) + ".." + strip_hex_string(canonical_path(path2))
 
 
-def expected_prefix(pair: Pair) -> str:
-    """Devuelve el nombre base de los `.path1.lst` y `.path2.lst` que rclone buscará."""
+def expected_prefix(pair: Pair, tipos: dict[str, TipoRemote] | None = None) -> str:
+    """Devuelve el nombre base de los `.path1.lst` y `.path2.lst` que rclone buscará.
+
+    Args:
+        tipos: Los remotes del `rclone.conf` ya leídos (`tipos_de_remote()`);
+            `None` lo lee cada vez que hace falta.
+    """
     def render(kind: str) -> str:
         """Devuelve el extremo tal como lo escribe rclone al nombrar la sesión."""
         endpoint = pair.endpoint(kind)
         if kind == "local" and not pair.device_remote:
             return fs_path_local(endpoint)
-        return fs_path_remote(endpoint)
+        return fs_path_remote(endpoint, tipos)
 
     return session_name(render(pair.mode.source), render(pair.mode.dest))
 
 
-def prefijo_comprobable(pair: Pair) -> bool:
+def prefijo_comprobable(pair: Pair, tipos: dict[str, TipoRemote] | None = None) -> bool:
     """Indica si `expected_prefix()` es el nombre que rclone escribirá, y no una estimación.
 
     No lo es cuando un extremo pasa por un alias que no se puede seguir
@@ -310,11 +325,15 @@ def prefijo_comprobable(pair: Pair) -> bool:
     resolver, y comparar con él un baseline que rclone escribió con el destino
     daría un «no es de esta pareja» falso. Quien diagnostica no debe acusar con
     él.
+
+    Args:
+        tipos: Los remotes del `rclone.conf` ya leídos (`tipos_de_remote()`);
+            `None` lo lee cada vez que hace falta.
     """
     for kind in (pair.mode.source, pair.mode.dest):
         if kind == "local" and not pair.device_remote:
             continue
-        if resolver_extremo(pair.endpoint(kind)) is None:
+        if resolver_extremo(pair.endpoint(kind), tipos) is None:
             return False
     return True
 
@@ -597,7 +616,8 @@ def _sin_entradas(lst: Path) -> bool:
     return True
 
 
-def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
+def referencia_vacia(pair: Pair, state: PairState | None = None,
+                     tipos: dict[str, TipoRemote] | None = None) -> bool:
     """Indica si la pasada va a rehacer sola el baseline de la pareja, por estar vacío.
 
     Un baseline vacío es lo que deja un `--resync` sobre dos lados vacíos, y
@@ -623,6 +643,9 @@ def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
 
     Args:
         state: El estado ya calculado, para no recorrer otra vez el workdir.
+        tipos: Los remotes del `rclone.conf` ya leídos (`tipos_de_remote()`),
+            para no volver a leerlo; `None` lo lee aquí, una sola vez y solo si
+            la pareja tiene baseline.
 
     Returns:
         `True` si se cumple todo lo anterior; `False` si no, si falta un
@@ -632,9 +655,11 @@ def referencia_vacia(pair: Pair, state: PairState | None = None) -> bool:
         return False
     if state is None:
         state = pair_state(pair)
-    if not state.has_baseline or not prefijo_comprobable(pair):
+    if not state.has_baseline:
         return False
-    if state.prefix != expected_prefix(pair):
+    if tipos is None:
+        tipos = tipos_de_remote()
+    if not prefijo_comprobable(pair, tipos) or state.prefix != expected_prefix(pair, tipos):
         return False
     if not pair.local_abs.exists():
         return False

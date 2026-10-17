@@ -871,7 +871,7 @@ def nombre_guardado(unidad: equipo.Unidad | None, uid: str) -> str:
     return (unidad.nombre if unidad is not None else "") or nombres.por_defecto(uid)
 
 
-def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = (),
+def nombre_de(raiz: Path, uid: str, otros: Iterable[str] = (),
               con_etiqueta: bool = True) -> str:
     """Devuelve el nombre con que se enseña la unidad conectada en `raiz`.
 
@@ -879,13 +879,13 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = 
     alguien puso, y sin él la etiqueta del volumen o «prdrive · <id>». Lo que
     se sabe de la unidad sale de su `state/fleet.json` (solo se lee): su
     `nombre` y los equipos desde los que ha publicado, que dicen si ese nombre es
-    de verdad suyo o el del ordenador que la aprovisionó.
+    de verdad suyo o el del ordenador que la aprovisionó. El que el agente
+    recuerda de ella (`Unidad.nombre`) no cuenta: lo calculó él, no lo puso
+    nadie, y darlo por propio lo congelaría.
 
     Args:
         raiz: Donde está montada.
         uid: Su id.
-        recordado: El nombre que el agente le conocía; vale si el fichero no
-            dice ninguno.
         otros: Los nombres de las demás unidades: con uno igual se añade el
             equipo (`nombres.distinguir()`).
         con_etiqueta: Si se lee la etiqueta del volumen; una carpeta del equipo
@@ -898,7 +898,7 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = 
     equipos = publicado.get("equipos") if isinstance(publicado, dict) else None
     equipos = [e for e in equipos if isinstance(e, str)] if isinstance(equipos, list) else []
     etiqueta = nombres.etiqueta_de(raiz) if con_etiqueta else ""
-    elegido = nombres.elegir(uid, guardado or recordado, etiqueta, equipos)
+    elegido = nombres.elegir(uid, guardado, etiqueta, equipos)
     return nombres.distinguir(elegido, uid, otros)
 
 
@@ -949,8 +949,9 @@ def leer_config(raiz: Path) -> dict:
         ConfigRechazada: Si `model.comprobar_seguridad()` lo rechaza.
         ValueError: Si no se puede leer o no es TOML válido.
     """
+    fichero = app(raiz) / "sync_config.toml"
     try:
-        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
+        crudo = tomllib.loads(fichero.read_text(encoding="utf-8"))
     except OSError as e:
         raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
     except tomllib.TOMLDecodeError as e:
@@ -959,7 +960,8 @@ def leer_config(raiz: Path) -> dict:
         model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)),
                                   carpeta_programa=APP_SUBDIR)
     except model.ConfigError as e:
-        raise ConfigRechazada(str(e)) from e
+        # El fichero del dispositivo está oculto (`.prdrive/`): el aviso lo nombra.
+        raise ConfigRechazada(f"{e} (en {fichero})") from e
     return crudo
 
 
@@ -1754,6 +1756,10 @@ class Agente:
         keepassxc_mirado: Cuándo se miró.
         navegador_mirado: Si ya se han mirado, al arrancar, las claves del
             navegador que dejó una unidad quitada sin expulsar.
+        letras_vistas: Las letras de unidad que vio el último recorrido, o
+            `None` antes del primero: una que aparece de nuevo hace limpiar el
+            nombre y el icono que quedaban de otra unidad en ella
+            (`_limpiar_letras()`).
         poner_motor: Crea lo que pone los atajos de teclado en este sistema
             (`poner_atajos()`), o `None` sin bandeja ni vigía (los tests).
         atajos_motor: Lo que pone los atajos (`poner(combos)`, `cerrar()`,
@@ -1769,6 +1775,8 @@ class Agente:
             rechazados)`: se recoge en cada vuelta.
         atajos_pedidos: Lo último pedido al motor, por acción, o `None` si nada.
         atajos_en_vuelo: Cuándo se le pidió, mientras no conteste.
+        atajos_vencida: Si lo último pedido lleva `ESPERA_ATAJOS` sin respuesta:
+            ya se dio por no puesto, pero su respuesta, si llega, se acepta.
         atajos_errores: Por qué el sistema no ha dejado poner cada atajo, por
             acción: lo que enseñan la bandeja y la ventana.
         atajos_avisados: Las `(acción, combinación)` rechazadas ya avisadas.
@@ -1843,6 +1851,7 @@ class Agente:
     oye_buzon: bool = False
     letras: int | None = None
     navegador_mirado: bool = False
+    letras_vistas: set[str] | None = None
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
     poner_motor: Any = None
     atajos_motor: Any = None
@@ -1852,6 +1861,7 @@ class Agente:
     atajos_hechos: Any = field(default_factory=queue.SimpleQueue)
     atajos_pedidos: dict[str, str] | None = None
     atajos_en_vuelo: float | None = None
+    atajos_vencida: bool = False
     atajos_errores: dict[str, str] = field(default_factory=dict)
     atajos_avisados: set[tuple[str, str]] = field(default_factory=set)
     atajos_prueba: tuple[str, dict[str, str], dict[str, str]] | None = None
@@ -1879,6 +1889,7 @@ class Agente:
             # Las de una unidad que se fue mientras el agente no estaba.
             self.navegador_mirado = True
             self._limpiar_navegador("al arrancar")
+            self._limpiar_letras("al arrancar")
         self._buzon(ahora)
         if recorrer:
             self._recorrer(ahora)
@@ -1930,8 +1941,12 @@ class Agente:
         # volúmenes, y el recorrido no las vería. Van como las raíces extra de
         # penwatch: el recorrido sigue siendo uno.
         propias = [u.ruta for u in self.ajustes.raices.values()]
+        letras: set[str] = set()
         for raiz in penwatch.candidate_roots(
                 {"extra_roots": propias + list(self.ajustes.extra_roots)}):
+            letra = explorador.letra_de(raiz)
+            if letra is not None:
+                letras.add(letra)
             try:
                 if (raiz / penwatch.CONTROL_FILE).is_file():
                     if not (raiz / penwatch.STRUCT_MARKER).is_file():
@@ -1948,6 +1963,12 @@ class Agente:
                     resto.append(raiz)
             except OSError:
                 resto.append(raiz)  # un volumen bloqueado contesta con error: ahora no
+        if self.letras_vistas is not None and letras - self.letras_vistas:
+            # Una letra que no estaba: la puede haber tomado una unidad a la que
+            # le quedaría el nombre y el icono de otra. La primera vez ya se
+            # limpió al arrancar.
+            self._limpiar_letras("letra nueva")
+        self.letras_vistas = letras
         self._fantasmas(abiertas)
         self.con_vestibulo = set(cerradas)
 
@@ -2252,8 +2273,7 @@ class Agente:
         nada suyo. Si no, se atiende según su modo.
         """
         unidad = self.ajustes.unidades.get(uid)
-        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "",
-                           self._nombres_de_otras(uid),
+        nombre = nombre_de(raiz, uid, self._nombres_de_otras(uid),
                            con_etiqueta=not (unidad is not None and unidad.es_raiz))
         con = Conexion(uid, raiz, nombre, ahora)
         # Un lock con nuestro pid es de la conexión anterior (se desenchufó y
@@ -2407,6 +2427,28 @@ class Agente:
         if fallos:
             diario(f"{por}: no he podido dejar como estaban las claves del navegador: "
                    f"{fallos[0]}")
+
+    def _limpiar_letras(self, por: str) -> None:
+        """Hace `explorador.limpiar()` y apunta en el diario las letras que ha limpiado.
+
+        Quita el nombre y el icono que prdrive le puso a la letra de un volumen
+        VeraCrypt que se cerró sin que el agente lo viese (con el agente
+        parado, desde VeraCrypt, tras un fallo): si no, la unidad que tome esa
+        letra saldría en el Explorador con lo de otra. No toca las de un
+        volumen que sigue abierto. Nunca lanza.
+
+        Args:
+            por: Cuándo se hace, para el diario.
+        """
+        try:
+            letras = explorador.limpiar(APP_SUBDIR)
+        except Exception as e:                          # noqa: BLE001
+            diario(f"{por}: no he podido limpiar el nombre y el icono de las letras: {e}")
+            return
+        if letras:
+            que = (f"la letra {letras[0]}:" if len(letras) == 1
+                   else "las letras " + ", ".join(f"{letra}:" for letra in letras))
+            diario(f"{por}: quito el nombre y el icono que quedaban en {que}")
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
         """Abre las unidades VeraCrypt de la lista que se ven cerradas.
@@ -4940,8 +4982,11 @@ class Agente:
 
         Recoge lo que ha contestado el motor desde su hilo, da por no puesto lo
         que lleva `ESPERA_ATAJOS` sin respuesta y, si lo que tiene que haber
-        (`_atajos_deseados()`) no es lo último pedido, lo pide. Una petición a
-        la vez: el portal puede tener al usuario delante de su ventana.
+        (`_atajos_deseados()`) no es lo último pedido, o es un «Guardar» que
+        aún se prueba, lo pide. Una petición a la vez: el portal puede tener al
+        usuario delante de su ventana, así que al vencer la espera no se vuelve
+        a pedir (cerraría su ventana), pero la respuesta tardía a lo último
+        pedido se acepta (`atajos_vencida`).
         """
         if self.ventana_atajos is not None and self.ventana_atajos.poll() is not None:
             self.ventana_atajos = None
@@ -4957,17 +5002,19 @@ class Agente:
                 combos, rechazados = self.atajos_hechos.get_nowait()
             except queue.Empty:
                 break
-            if self.atajos_en_vuelo is not None and combos == self.atajos_pedidos:
-                self.atajos_en_vuelo = None
+            if ((self.atajos_en_vuelo is not None or self.atajos_vencida)
+                    and combos == self.atajos_pedidos):
+                self.atajos_en_vuelo, self.atajos_vencida = None, False
                 self._atajos_puestos(combos, rechazados)
         if self.atajos_en_vuelo is not None and ahora - self.atajos_en_vuelo >= ESPERA_ATAJOS:
             combos = dict(self.atajos_pedidos or {})
-            self.atajos_en_vuelo = None
+            self.atajos_en_vuelo, self.atajos_vencida = None, True
             diario(f"atajos de teclado: {self.atajos_motor.nombre} no ha contestado en "
                    f"{ESPERA_ATAJOS:g} s")
             self._atajos_puestos(combos, {a: atajos.SIN_RESPUESTA for a in combos})
         deseados = self._atajos_deseados()
-        if self.atajos_en_vuelo is not None or deseados == self.atajos_pedidos \
+        if self.atajos_en_vuelo is not None \
+                or (deseados == self.atajos_pedidos and self.atajos_prueba is None) \
                 or not (deseados or self.atajos_pedidos):
             return
         motor = self._motor_de_atajos()
@@ -4975,7 +5022,7 @@ class Agente:
             if self.atajos_prueba is not None:
                 self._atajos_puestos(deseados, {a: self.atajos_motivo for a in deseados})
             return
-        self.atajos_pedidos, self.atajos_en_vuelo = deseados, ahora
+        self.atajos_pedidos, self.atajos_en_vuelo, self.atajos_vencida = deseados, ahora, False
         motor.poner(deseados)
 
     def _atajos_puestos(self, combos: dict[str, str], rechazados: Mapping[str, str]) -> None:

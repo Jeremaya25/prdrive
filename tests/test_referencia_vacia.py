@@ -236,6 +236,62 @@ with sandbox():
     c("filtros cambiados con referencia llena, sin aprobar: se salta como siempre",
       (rc, ordenes), (sync.SKIPPED, []))
 
+# --- `--force` sobre una pasada que es un --resync -----------------------------------
+
+with sandbox():
+    # `sync.py PAREJA --force` con la referencia vacía: la pasada es un --resync, que no pasa por el
+    # freno de borrados y no lleva --force. No se anuncia una pasada forzada que no lo es.
+    par = pareja()
+    baseline(par)
+    rc, salida, ordenes, _ = pasar(par, force=True)
+    c("referencia vacía con --force: rclone va con --resync y sin --force",
+      (rc, con_resync(ordenes), "--force" in ordenes[0]), (0, True, False))
+    c("  y no dice PASADA FORZADA", "PASADA FORZADA" in salida, False)
+    c.contains("  dice que --force no se aplica", salida,
+               "--force no se aplica: esta pasada es un --resync, que no pasa por el freno")
+    c.contains("  y por qué es un resync", salida, "la referencia está vacía: se rehace")
+    c("  el aviso viene después de decir que se rehace, ya con la pasada decidida",
+      0 <= salida.find("la referencia está vacía") < salida.find("--force no se aplica"), True)
+    rc, salida, ordenes, _ = pasar(par)
+    c("  sin --force no hay ninguna de las dos líneas",
+      ("PASADA FORZADA" in salida, "--force no se aplica" in salida), (False, False))
+
+with sandbox():
+    par = pareja()
+    baseline(par)
+    rc, salida, ordenes, _ = pasar(par, force=True, dry_run=True)
+    c("referencia vacía con --force y --dry-run: lo que se simula es un --dry-run --resync",
+      (rc, con_resync(ordenes), "--dry-run" in ordenes[0], "--force" in ordenes[0]),
+      (0, True, True, False))
+    c("  y no dice «Simulación forzada»: no hay nada forzado que contar",
+      ("Simulación forzada" in salida, "PASADA FORZADA" in salida), (False, False))
+
+with sandbox():
+    par = pareja()
+    baseline(par)
+    Path(str(bisync.filters_file_for(par)) + ".md5").write_text("0" * 32, encoding="utf-8")
+    rc, salida, ordenes, _ = pasar(par, force=True)
+    c("referencia vacía con los filtros cambiados y --force: también un --resync sin --force",
+      (rc, con_resync(ordenes), "--force" in ordenes[0], "PASADA FORZADA" in salida),
+      (0, True, False, False))
+
+with sandbox():
+    par = pareja()
+    baseline(par, CABECERA + FICHERO, CABECERA + FICHERO)
+    Path(str(bisync.filters_file_for(par)) + ".md5").write_text("0" * 32, encoding="utf-8")
+    rc, salida, ordenes, _ = pasar(par, force=True)
+    c("filtros cambiados con --force y sin aprobar el resync: se salta y no se anuncia forzada",
+      (rc, ordenes, "PASADA FORZADA" in salida), (sync.SKIPPED, [], False))
+    c.contains("  y dice que se salta", salida, "Saltada: requiere --resync")
+
+with sandbox():
+    par = pareja()
+    baseline(par, CABECERA + FICHERO, CABECERA + FICHERO)
+    rc, salida, ordenes, _ = pasar(par, force=True)
+    c("con algo en la referencia, --force sigue siendo una pasada forzada (sin --resync)",
+      (rc, "--force" in ordenes[0], con_resync(ordenes), "PASADA FORZADA (--force)" in salida),
+      (0, True, False, True))
+
 
 # --- lo que el agente lee del parte ------------------------------------------------
 

@@ -571,6 +571,94 @@ def _zombi(pid: int) -> bool | None:
     return datos[datos.rfind(b")") + 2:][:1] in (b"Z", b"X")
 
 
+EPOCA_FILETIME = 11644473600
+"""Segundos entre el origen de un FILETIME de Windows (1601-01-01) y la época Unix (1970-01-01)."""
+
+
+def creado(pid: int) -> float | None:
+    """Devuelve cuándo se creó ese proceso, en segundos de época.
+
+    El pid de un registro puede ser, más tarde y en el mismo arranque, el de
+    otro proceso (`vivo_en_este_arranque()` no lo ve); lo que distingue a los
+    dos es la hora en que cada uno se creó (`llavero.es_el_vigilante()`). En
+    Windows la da `GetProcessTimes` (un FILETIME: intervalos de 100 ns desde
+    1601). En Linux, el campo 22 de `/proc/<pid>/stat` (ticks desde el
+    arranque) entre `SC_CLK_TCK`, sumado al `btime` de `/proc/stat`. `btime` es
+    de segundos enteros, así que la hora sale hasta un segundo antes de la
+    real, y la misma en cada lectura mientras nadie mueva el reloj del sistema.
+    Es función de módulo para que los tests la sustituyan.
+
+    Returns:
+        Los segundos de época, o `None` si no se sabe: el proceso no existe, no
+        se deja mirar o el sistema no tiene ninguna de las dos vías.
+    """
+    if not 1 <= pid <= PID_MAXIMO:
+        return None
+    try:
+        if os.name == "nt":
+            return _creado_en_windows(pid)
+        return _creado_en_linux(pid)
+    except (OSError, ValueError, IndexError, OverflowError, AttributeError):
+        return None
+
+
+def _creado_en_windows(pid: int) -> float | None:
+    """Devuelve la hora de creación de un proceso con `GetProcessTimes`, o `None` si no se abre."""
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.GetProcessTimes.restype = wintypes.BOOL
+    k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        creacion, salida, nucleo, usuario = (wintypes.FILETIME() for _ in range(4))
+        if not k32.GetProcessTimes(handle, ctypes.byref(creacion), ctypes.byref(salida),
+                                   ctypes.byref(nucleo), ctypes.byref(usuario)):
+            return None
+    finally:
+        k32.CloseHandle(handle)
+    return _epoca_de_filetime(creacion.dwHighDateTime, creacion.dwLowDateTime)
+
+
+def _epoca_de_filetime(alto: int, bajo: int) -> float:
+    """Pasa un FILETIME (dos DWORD: intervalos de 100 ns desde 1601-01-01 UTC) a segundos de época."""
+    return ((alto << 32) | bajo) / 1e7 - EPOCA_FILETIME
+
+
+def _creado_en_linux(pid: int) -> float | None:
+    """Devuelve la hora de creación de un proceso con `/proc`, o `None` si no se lee."""
+    datos = (Path("/proc") / str(pid) / "stat").read_bytes()
+    with open("/proc/stat", encoding="ascii", errors="replace") as f:
+        for linea in f:
+            if linea.startswith("btime "):
+                return float(linea.split()[1]) + _inicio_en_ticks(datos) / os.sysconf("SC_CLK_TCK")
+    return None
+
+
+def _inicio_en_ticks(datos: bytes) -> int:
+    """Devuelve el campo 22 (`starttime`, en ticks desde el arranque) de un `/proc/<pid>/stat`.
+
+    El nombre del programa (campo 2) va entre paréntesis y puede llevar
+    espacios y paréntesis: se cuenta desde el último, tras el que el primer
+    campo es el 3 (como `_zombi()`).
+
+    Raises:
+        ValueError: Si eso no es el contenido de un `stat`.
+    """
+    cierre = datos.rfind(b")")
+    if cierre < 0:
+        raise ValueError("no es un /proc/<pid>/stat")
+    return int(datos[cierre + 2:].split()[22 - 3])
+
+
 def matar_arbol(pid: int) -> None:
     """Termina un proceso y todos los que cuelgan de él; no lanza nunca.
 

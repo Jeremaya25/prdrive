@@ -20,7 +20,7 @@ c = Checks("agente: el intervalo que se estira")
 F.preparar()
 UID = "ritmo-0001"
 MIN = 60.0
-raiz = F.unidad(UID, parejas=("docs",),
+raiz = F.unidad(UID, parejas=("docs",), nombre="U",
                 daemon='[daemon]\npairs = ["docs"]\ninterval_minutes = 5\n')
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(UID, equipo.DAEMON, "U", codigo=agente.huella(raiz) or "")))

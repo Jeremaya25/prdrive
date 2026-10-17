@@ -10,6 +10,7 @@ frases escritas a mano: lo que rclone dice es justo lo que se reconoce.
 
 import contextlib
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -235,6 +236,41 @@ with sandbox():
     c.contains("  y uno sin ellos, tal cual", suyos["notas-2"], "`python sync.py notas-2 --force`")
 
 with sandbox():
+    # Un nombre que un intérprete de órdenes interpreta no se pega: ni `$`, ni el acento grave,
+    # ni `%` (que `cmd` expande aun entre comillas), ni `!`, ni una comilla que cierre las del
+    # nombre. El parser los acepta (solo la ventana prohíbe `"`), y el nombre puede llegar de un
+    # TOML editado o del catálogo del remoto. Espejos de bajada y un solo log para todas: el
+    # nombre de la pareja no tiene por qué valer como nombre de fichero (`"` en Windows), y un
+    # bisync escribiría `filters/<pareja>.txt`.
+    peligrosos = ["Fotos $HOME", "a$(id)", "x`id`", "50%PATH%", "hola!", 'a"b', 'x" & calc & "']
+    seguros = ["Mis fotos", "notas-2", "Año_2026.v2", "a+b, c=d@e"]
+    cfg = mkcfg(None, pairs=[dict(BAJADA, name=n, local=f"sync-data/raro{i}",
+                                  remote_path=f"/R/raro{i}")
+                             for i, n in enumerate(peligrosos + seguros)])
+    log = model.LOG_DIR / "nombres_raros.log"
+    log.write_text(ESPEJO_DOWN, encoding="utf-8")
+    for n in peligrosos + seguros:
+        results.apuntar(n, 7, log)
+    freno = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "freno"}
+    informe = "\n".join(revision.informe(cfg))
+    c("todas las parejas de nombre raro tienen su hallazgo de freno",
+      sorted(freno), sorted(peligrosos + seguros))
+    for n in peligrosos:
+        d = freno[n].detalle
+        c(f"{n!r}: no hay orden literal, ni con su nombre ni entre comillas",
+          (d.count("python sync.py "), "python sync.py <pareja> --force" in d,
+           f"sync.py {n}" in d, f'sync.py "{n}"' in d), (1, True, False, False))
+        c.contains("  y se puede forzar desde «Reparación»", d, "desde «Reparación»")
+        c("  --doctor tampoco la da",
+          (f"sync.py {n} --force" in informe, f'sync.py "{n}" --force' in informe), (False, False))
+    for n, orden in (("Mis fotos", '`python sync.py "Mis fotos" --force`'),
+                     ("notas-2", "`python sync.py notas-2 --force`"),
+                     ("Año_2026.v2", "`python sync.py Año_2026.v2 --force`"),
+                     ("a+b, c=d@e", '`python sync.py "a+b, c=d@e" --force`')):
+        c.contains(f"{n!r}: conserva la orden literal", freno[n].detalle, orden)
+        c("  y no remite a «<pareja>»", "<pareja>" in freno[n].detalle, False)
+
+with sandbox():
     cfg, P = parejas()
     fallar("notas", BISYNC_BORRADOS.replace('on Path1 "', 'on Path2 "'))
     c.contains("un borrado en el remoto se dice del remoto y se cuida el dispositivo",
@@ -295,5 +331,89 @@ with sandbox():
       fallo_sin_freno("bajada"), (True, False))
     c("  y un log de bisync en una pareja que no es bisync",
       fallo_sin_freno("copia"), (True, False))
+
+# ---- Un log ya leído no se vuelve a leer mientras no cambie --------------------------------
+
+
+@contextlib.contextmanager
+def lecturas_de_logs():
+    """Da la lista de logs que `frenos.leer()` abre mientras dura el bloque."""
+    abiertos, original = [], frenos.leer
+
+    def contando(log, **kw):
+        abiertos.append(log)
+        return original(log, **kw)
+
+    frenos.leer = contando
+    try:
+        yield abiertos
+    finally:
+        frenos.leer = original
+
+
+with sandbox():
+    cfg, P = parejas()
+    log = fallar("notas", BISYNC_BORRADOS)
+    with lecturas_de_logs() as lecturas:
+        primero = de(revision.revisar(cfg), "notas")
+        c("el primer repaso lee el log de la pareja fallida, una vez", lecturas, [log])
+        segundo = de(revision.revisar(cfg), "notas")
+        c("un segundo repaso no vuelve a leerlo", lecturas, [log])
+        c("  y da el mismo hallazgo", segundo["freno"], primero["freno"])
+
+        # Cambia el tamaño: el log de otra pasada, con otro freno.
+        fallar("notas", BISYNC_CAMBIADOS)
+        nuevo = de(revision.revisar(cfg), "notas")["freno"]
+        c("si el log cambia de tamaño, se lee otra vez", lecturas, [log, log])
+        c.contains("  y el hallazgo es el del log nuevo", nuevo.detalle,
+                   "han cambiado todos los ficheros")
+
+        # Cambia solo el mtime: el mismo número de bytes, pero es otro log.
+        en_remoto = BISYNC_CAMBIADOS.replace('on Path1 "', 'on Path2 "')
+        tam = log.stat().st_size
+        log.write_text(en_remoto, encoding="utf-8")
+        ahora = log.stat().st_mtime_ns
+        os.utime(log, ns=(ahora, ahora + 5_000_000_000))
+        c("  (otro contenido del mismo tamaño)", log.stat().st_size, tam)
+        nuevo = de(revision.revisar(cfg), "notas")["freno"]
+        c("si solo cambia el mtime, se lee otra vez", lecturas, [log, log, log])
+        c.contains("  y el hallazgo es el del log nuevo", nuevo.detalle, "en el remoto")
+
+        # El veredicto depende del modo: el mismo log en una pareja `copy` no es un freno.
+        results.apuntar("copia", 1, log)
+        dos = revision.revisar(cfg)
+        c("el mismo log en otra pareja, de otro modo, se lee con su modo",
+          ("freno" in de(dos, "notas"), "freno" in de(dos, "copia"),
+           "fallo" in de(dos, "copia")), (True, False, True))
+        revision.revisar(cfg)
+        c("  y los dos veredictos se recuerdan: el siguiente repaso no lee nada",
+          lecturas, [log, log, log, log])
+
+        # Un log que no se puede leer no se recuerda.
+        antes = len(revision._VEREDICTOS)
+        c("un log que ya no está no es un freno",
+          revision._freno(results.Fallo("notas", "", 1, model.LOG_DIR / "no_esta.log"),
+                          P["notas"]), None)
+        c("  y no deja un veredicto recordado", len(revision._VEREDICTOS), antes)
+
+        # Lo que se recuerda tiene tope: el más antiguo es el que se olvida.
+        tope = revision._TOPE_VEREDICTOS
+        logs = []
+        for i in range(tope + 5):
+            logs.append(model.LOG_DIR / f"notas_tope_{i:03d}.log")
+            logs[-1].write_text(BISYNC_BORRADOS + f"# {i}\n", encoding="utf-8")
+            revision._freno_de(logs[-1], P["notas"])
+        c("los veredictos recordados no pasan del tope", len(revision._VEREDICTOS), tope)
+        lecturas.clear()
+        revision._freno_de(logs[-1], P["notas"])
+        c("  el último sigue recordado", lecturas, [])
+        revision._freno_de(logs[0], P["notas"])
+        c("  y el primero se olvidó", lecturas, [logs[0]])
+
+        revision.olvidar_frenos()
+        lecturas.clear()
+        revision.revisar(cfg)
+        c("olvidar_frenos() hace que el siguiente repaso lea otra vez los logs de las dos parejas",
+          lecturas, [log, log])
 
 sys.exit(c.report())

@@ -86,6 +86,29 @@ with sandbox():
     c.contains("y se dice que no se arregla creándola",
                uno(hallazgos, "local").detalle, "no lo arregles")
 
+# Un espejo de subida sin su carpeta (#151): es el ORIGEN de un `rclone sync`, y la pasada ya no
+# lo crea vacío (vaciaría el remoto). Es tan grave como un bisync con baseline, no una nota.
+ESPEJO = {"name": "espejo", "mode": "up-mirror", "local": "sync-data/espejo",
+          "remote_path": "/R/espejo"}
+BAJADA = {"name": "bajada", "mode": "down-mirror", "local": "sync-data/bajada",
+          "remote_path": "/R/bajada"}
+
+with sandbox():
+    cfg = mkcfg([], pairs=[ESPEJO, BAJADA])
+    hallazgos = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "local"}
+    c("un espejo de subida sin carpeta local es grave", hallazgos["espejo"].gravedad,
+      revision.GRAVE)
+    c.contains("  y se dice que no se arregla creándola", hallazgos["espejo"].detalle,
+               "no lo arregles")
+    c.contains("  ni se promete que la pasada la cree", hallazgos["espejo"].detalle,
+               "vaciaría el remoto")
+    c("  y cuenta en la ventana, no es una nota", revision.cuenta(list(hallazgos.values())), 1)
+    c("un espejo de bajada sin carpeta sigue siendo una nota: su carpeta es el destino",
+      hallazgos["bajada"].gravedad, revision.NOTA)
+    cfg.pairs[0].local_abs.mkdir(parents=True)
+    c("  y la de una subida con su carpeta, aunque esté vacía, no tiene hallazgo",
+      [h.pareja for h in revision.revisar(cfg) if h.clave == "local"], ["bajada"])
+
 with sandbox():
     cfg = mkcfg(["notas"])
     pair = cfg.pairs[0]

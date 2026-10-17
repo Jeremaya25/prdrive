@@ -13,8 +13,14 @@ test). Se comprueba que:
   llamarse así al conectarse, y lo que recuerda se actualiza.
 - Las que no se ven (la lista, un desbloqueo pendiente) usan el mismo nombre
   por defecto, sin etiqueta.
+- El nombre que el agente recuerda (`Unidad.nombre`) lo calculó él, no lo puso
+  nadie: en `fleet.json` sin `nombre` no se toma por propio y se recalcula al
+  conectarse (otra etiqueta, lo que guardaba la 0.7.4, una unidad que se quita,
+  el nombre del ordenador repetido en dos). Uno de `fleet.json` que no es de un
+  equipo sigue siendo propio.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 from _harness import Checks
@@ -107,6 +113,72 @@ c("lo que el agente recordaba con el nombre del ordenador, ya no",
   ag.conexiones["d" * 32].nombre, "prdrive · dddd")
 c("  y lo que recuerda es lo nuevo", equipo.leer_ajustes().unidades["d" * 32].nombre,
   "prdrive · dddd")
+
+# --- lo que el agente recuerda no es un nombre propio: sin `nombre` en fleet.json
+# (nunca se ha publicado la nota de la flota) se recalcula al conectarse
+F.ETIQUETAS.clear()
+equipo.guardar_ajustes(equipo.Ajustes())
+RE = F.unidad("e" * 32)                                   # sin `nombre` ni equipos
+lista("e" * 32, RE)
+F.ETIQUETAS[RE] = "SANDISK"
+ag = poner(RE)
+c("sin nombre en fleet.json, la etiqueta", ag.conexiones["e" * 32].nombre, "SANDISK")
+c("  y el agente la recuerda", equipo.leer_ajustes().unidades["e" * 32].nombre, "SANDISK")
+F.ETIQUETAS[RE] = "KINGSTON"
+ag = poner(RE)
+c("  la etiqueta cambia: la de ahora, no la que recordaba",
+  ag.conexiones["e" * 32].nombre, "KINGSTON")
+c("  y recuerda la nueva", equipo.leer_ajustes().unidades["e" * 32].nombre, "KINGSTON")
+
+F.ETIQUETAS.clear()
+RF = F.unidad("f" * 32)
+lista("f" * 32, RF, "PRDRIVE ffffffff")                     # lo que guardaban los agentes de la 0.7.4
+ag = poner(RF)
+c("lo que guardaba la 0.7.4 recibe el nombre por defecto de ahora",
+  ag.conexiones["f" * 32].nombre, "prdrive · ffff")
+c("  y lo que recuerda es lo nuevo", equipo.leer_ajustes().unidades["f" * 32].nombre,
+  "prdrive · ffff")
+
+RA2, RB2 = F.unidad(A), F.unidad(B)                       # sin `nombre` ni equipos
+equipo.guardar_ajustes(equipo.Ajustes())
+lista(A, RA2)
+lista(B, RB2)
+F.ETIQUETAS[RA2] = F.ETIQUETAS[RB2] = "USB DISK"
+F.RAICES[:] = [RA2]
+ag = F.nuevo()
+F.vueltas(ag, 3)
+F.RAICES[:] = [RA2, RB2]
+F.vueltas(ag, 3)
+c("dos con la misma etiqueta y sin equipos: la segunda lleva el principio de su id",
+  (ag.conexiones[A].nombre, ag.conexiones[B].nombre), ("USB DISK", "USB DISK · bbbbbbbb"))
+c("  y el agente recuerda las dos",
+  (equipo.leer_ajustes().unidades[A].nombre, equipo.leer_ajustes().unidades[B].nombre),
+  ("USB DISK", "USB DISK · bbbbbbbb"))
+ajustes = equipo.leer_ajustes()                           # se quita la primera
+equipo.guardar_ajustes(replace(ajustes, unidades={B: ajustes.unidades[B]}))
+ag = poner(RB2)
+c("  se quita la primera: la otra deja de distinguirse de una que ya no está",
+  ag.conexiones[B].nombre, "USB DISK")
+
+F.ETIQUETAS.clear()
+RG, RH = F.unidad("1" * 32), F.unidad("2" * 32)           # sin `nombre` ni equipos
+equipo.guardar_ajustes(equipo.Ajustes())
+lista("1" * 32, RG, PC)                                   # lo que escribe el asistente sin publicar
+lista("2" * 32, RH, PC)
+ag = poner(RG, RH)
+c("dos recordadas con el nombre del ordenador no salen iguales",
+  sorted(con.nombre for con in ag.conexiones.values()), ["prdrive · 1111", "prdrive · 2222"])
+
+F.ETIQUETAS.clear()
+RI = F.unidad("3" * 32, nombre="Pen de Ana")               # un nombre de fleet.json que no es un equipo
+equipo.guardar_ajustes(equipo.Ajustes())
+lista("3" * 32, RI, "prdrive · 3333")                     # y lo que el agente recordaba, otro
+F.ETIQUETAS[RI] = "SANDISK"
+ag = poner(RI)
+c("un nombre de fleet.json que no es de un equipo sigue siendo propio",
+  ag.conexiones["3" * 32].nombre, "Pen de Ana")
+c("  y es lo que el agente recuerda ahora", equipo.leer_ajustes().unidades["3" * 32].nombre,
+  "Pen de Ana")
 
 # --- una unidad que no se ve: el mismo nombre por defecto, sin etiqueta
 c("sin nombre recordado, el del id (lo que llevan los avisos de una raíz que no está)",

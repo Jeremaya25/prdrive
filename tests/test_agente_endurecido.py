@@ -317,7 +317,7 @@ def servida(uid: str, config: str | None = None, **kw):
         uid: El id de la unidad.
         config: El `sync_config.toml` que lleva en vez del de `F.unidad()`.
     """
-    r = F.unidad(uid, **kw)
+    r = F.unidad(uid, nombre="U", **kw)
     if config is not None:
         (r / ".prdrive" / "sync_config.toml").write_text(config, encoding="utf-8")
     equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
@@ -443,6 +443,10 @@ mios = [(t_, x) for t_, x in F.AVISOS if t_.startswith("U:")]
 c("un config que la puerta de seguridad rechaza: «config rechazado»", [t_ for t_, _ in mios],
   ["U: config rechazado"])
 c.contains("  y el texto dice qué sobra", mios[0][1] if mios else "", "[docs] 'remote' no vale")
+# El fichero del dispositivo está oculto (`.prdrive/`) y con el config rechazado no hay ventana
+# desde la que buscarlo: el aviso lo nombra (#161).
+c.contains("  y en qué fichero", mios[0][1] if mios else "",
+           str(Path(".prdrive") / "sync_config.toml"))
 F.AVISOS.clear()
 servida("z" * 32, config="esto no es toml\n")
 c("uno que no es TOML sigue siendo «nada que sincronizar»",
@@ -774,7 +778,7 @@ c("sin el agente, el de la unidad como siempre",
 
 # unidades de antes de la 0.5.0: no se atienden
 V = "6" * 32
-RV = F.unidad(V, parejas=("docs",))
+RV = F.unidad(V, parejas=("docs",), nombre="Vieja")
 (RV / ".prdrive" / "VERSION").write_text("0.4.3\n", encoding="utf-8")
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(V, equipo.UI, "Vieja", codigo=agente.huella(RV) or "")))

@@ -182,6 +182,43 @@ with sandbox():
     c("abortar por la carpeta local ausente cuenta como fallo",
       [(f.pareja, f.codigo) for f in results.fallos(CFG_BI)], [("bi", 2)])
 
+# INVARIANTE (#151): la carpeta local de un espejo de subida es el ORIGEN de un `rclone sync`.
+# Sin ella, rclone se niega («directory not found»); creada vacía, hace del remoto una copia de
+# nada y lo vacía (50 ficheros por pasada con el tope de fábrica). Se aborta como bisync con
+# baseline; el resto de modos siguen creándola.
+CFG_MIR = model.parse_config({"defaults": DEF, "pair": [MIR]})
+DOWN = {"name": "down", "local": "sync-data/down", "remote_path": "/R/down", "mode": "down"}
+DOWN_MIR = {"name": "dmir", "local": "sync-data/dmir", "remote_path": "/R/dmir",
+            "mode": "down-mirror"}
+
+with sandbox() as root:
+    rc, salida, ordenes = correr(MIR, make_local=False)
+    c("INVARIANTE espejo de subida sin carpeta local: aborta con rc=2", rc, 2)
+    c("  no crea la carpeta, que vacía vaciaría el remoto",
+      (root / "sync-data" / "mir").exists(), False)
+    c("  no ejecuta rclone", ordenes, [])
+    c.contains("  lo explica", salida, "no se crea vacía a propósito")
+    c("  y queda apuntado como fallo",
+      [(f.pareja, f.codigo) for f in results.fallos(CFG_MIR)], [("mir", 2)])
+
+with sandbox() as root:
+    rc, salida, ordenes = correr(MIR, make_local=False, dry_run=True)
+    c("  también en un simulacro: aborta y no crea la carpeta",
+      (rc, ordenes, (root / "sync-data" / "mir").exists()), (2, [], False))
+    c("  y un simulacro no apunta resultados", results.ruta_estado().exists(), False)
+
+with sandbox() as root:
+    rc, _, ordenes = correr(MIR)
+    c("un espejo de subida con su carpeta (aunque esté vacía) sigue su camino",
+      (rc, len(ordenes)), (0, 1))
+
+with sandbox() as root:
+    rc, _, ordenes = correr(DOWN_MIR, make_local=False)
+    c("down-mirror: la carpeta local es el destino y se crea, como siempre",
+      (rc, len(ordenes), (root / "sync-data" / "dmir").is_dir()), (0, 1, True))
+    rc, _, ordenes = correr(DOWN, make_local=False)
+    c("down: lo mismo", (rc, len(ordenes), (root / "sync-data" / "down").is_dir()), (0, 1, True))
+
 
 # el diario de pasadas
 #

@@ -615,9 +615,13 @@ FLAGS_RESERVADOS: Mapping[str, str] = {
     "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
     "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
     "resync": "es --resync de sync.py, que además pregunta antes",
+    # Con el config rechazado no se abre la ventana, ni «Reparación» con ella: el
+    # motivo dice primero qué quitar y de dónde, y solo después cómo se fuerza.
     "force": "es --force de sync.py: salta el freno de borrados en UNA pasada y no puede quedar "
-             "fijo en el config. Para saltarlo ahora, «Forzar sincronización…» en «Reparación» "
-             "o `sync.py PAREJA --force`",
+             "fijo. Quita `force` (o `--force` de `extra_flags`) de `.prdrive/sync_config.toml` "
+             "del dispositivo o, si viene del catálogo, del `remote.toml` del remoto; ya quitado, "
+             "para saltar el freno una vez está «Forzar sincronización…» en «Reparación» o "
+             "`sync.py PAREJA --force`",
     "filters-file": "sale de los patrones incluir/excluir de la pareja",
     "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
     "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
@@ -1012,6 +1016,18 @@ class Mode:
         no es algo que la pasada vaya a enviar.
         """
         return self.source == "local"
+
+    @property
+    def borra_en_remoto(self) -> bool:
+        """Indica si la pasada borra en el remoto lo que falta en la carpeta local.
+
+        Es el espejo de subida: `rclone sync` hace del remoto una copia de la
+        carpeta local, así que si esa carpeta está vacía le quita al remoto todo
+        lo que tiene. Por eso la carpeta local de este modo nunca se crea vacía
+        (`sync._pasar_pareja()`, `revision._local()`): rclone, ante un origen que
+        no existe, se niega con «directory not found» y no borra nada.
+        """
+        return self.verb == "sync" and self.origen_local
 
 
 MODES: Mapping[str, Mode] = {m.name: m for m in (

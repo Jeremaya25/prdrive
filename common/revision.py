@@ -18,6 +18,7 @@ confirmación antes de mover un baseline.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -67,11 +68,13 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     """Devuelve la avería de una carpeta local que no está.
 
     Es la única de la lista que NO se repara desde aquí, a propósito: crearla
-    es exactamente lo que `sync._bisync_preflight()` se niega a hacer cuando
-    hay baseline, porque un lado local vacío se lee como «se ha borrado todo» y
-    eso se propaga al remoto. Lo que hay que arreglar está fuera del programa
-    (el volumen no está montado donde se cree, o la carpeta se movió), así que
-    aquí solo se dice.
+    es exactamente lo que `sync._pasar_pareja()` se niega a hacer cuando hay
+    baseline (`sync._bisync_preflight()`) o cuando es el origen de un espejo de
+    subida (`Mode.borra_en_remoto`), porque un lado local vacío se lee como «se
+    ha borrado todo» y eso se propaga al remoto. Lo que hay que arreglar está
+    fuera del programa (el volumen no está montado donde se cree, o la carpeta
+    se movió), así que aquí solo se dice. Queda como nota lo que la próxima
+    pasada sí crea sin riesgo: una bajada, una copia o un bisync sin baseline.
     """
     if pair.local_abs.exists():
         return None
@@ -83,6 +86,15 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
             "como «se ha borrado todo». Comprueba que el volumen esté montado "
             "donde toca y que la carpeta no se haya movido; no lo arregles "
             "creándola vacía.",
+            pair.name, GRAVE)
+    if pair.mode.borra_en_remoto:
+        return Hallazgo(
+            "local", f"{nombre_visible(pair.name)}: la carpeta local no está",
+            f"{pair.local_endpoint} no existe, y es el origen de este espejo de "
+            "subida. La sincronización se parará en vez de crearla: un origen "
+            "vacío se lee como «se ha borrado todo» y vaciaría el remoto. "
+            "Comprueba que el volumen esté montado donde toca y que la carpeta "
+            "no se haya movido; no lo arregles creándola vacía.",
             pair.name, GRAVE)
     return Hallazgo(
         "local", f"{nombre_visible(pair.name)}: la carpeta local aún no está",
@@ -98,10 +110,11 @@ def _prefijo(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     `bisync.prefijo_comprobable()`) no dice nada: acusar de grave a un baseline
     que quizá es bueno, y ofrecer apartarlo, es peor que callar.
     """
-    esperado = bisync.expected_prefix(pair)
+    tipos = bisync.tipos_de_remote()      # una sola lectura del rclone.conf
+    esperado = bisync.expected_prefix(pair, tipos)
     if not estado.prefix or estado.prefix == esperado:
         return None
-    if not bisync.prefijo_comprobable(pair):
+    if not bisync.prefijo_comprobable(pair, tipos):
         return None
     return Hallazgo(
         "prefijo", f"{nombre_visible(pair.name)}: el baseline no es de esta pareja",
@@ -266,6 +279,52 @@ def _frase_racha(racha: historial.Racha) -> str:
     return f"{desde}{_dia(racha.desde)} · {cuenta}."
 
 
+_VEREDICTOS: dict[tuple[Path, int, int, str], frenos.Freno | None] = {}
+"""Lo que `_freno_de()` ya leyó: el freno de un log (o `None`), por log, tamaño, mtime y modo.
+
+Solo vive en el proceso. Un log de `logs/` se escribe una vez, así que mientras no
+cambie su tamaño ni su mtime el veredicto es el mismo y no hace falta leerlo otra vez
+(hasta 4 MiB por pareja fallida, y `revisar()` corre en cada instantánea de la ventana
+y dos veces por acción de «Reparación», en el hilo de Tk).
+"""
+_TOPE_VEREDICTOS = 64
+"""Veredictos que se recuerdan a la vez: una ventana abierta días ve logs nuevos sin parar."""
+_CERROJO_VEREDICTOS = threading.Lock()
+"""Protege `_VEREDICTOS`: `revisar()` corre en un hilo de la ventana y en el de Tk."""
+_SIN_VEREDICTO = object()
+"""Lo que `_VEREDICTOS` no tiene, para distinguirlo de un veredicto `None` (no es un freno)."""
+
+
+def olvidar_frenos() -> None:
+    """Olvida los veredictos de `_freno_de()`, de modo que el siguiente repaso lea los logs."""
+    with _CERROJO_VEREDICTOS:
+        _VEREDICTOS.clear()
+
+
+def _freno_de(log: Path, pair: Pair) -> frenos.Freno | None:
+    """Devuelve el freno que paró la pasada de ese log, leyéndolo solo si ha cambiado.
+
+    Recuerda el veredicto por `(log, tamaño, mtime, modo de la pareja)`. El `stat()`
+    va antes de la lectura: si el log cambia entre las dos, queda recordado bajo la
+    marca vieja y el repaso siguiente lo vuelve a leer.
+
+    Raises:
+        OSError: Si no se puede leer el log; no se recuerda nada.
+    """
+    st = log.stat()
+    clave = (log, st.st_size, st.st_mtime_ns, pair.mode.name)
+    with _CERROJO_VEREDICTOS:
+        visto = _VEREDICTOS.get(clave, _SIN_VEREDICTO)
+    if visto is not _SIN_VEREDICTO:
+        return visto
+    freno = frenos.detectar_en(log, pair)
+    with _CERROJO_VEREDICTOS:
+        if clave not in _VEREDICTOS and len(_VEREDICTOS) >= _TOPE_VEREDICTOS:
+            del _VEREDICTOS[next(iter(_VEREDICTOS))]    # el más antiguo
+        _VEREDICTOS[clave] = freno
+    return freno
+
+
 def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
     """Devuelve el freno de borrados que paró esa pasada, o `None` si falló por otra cosa.
 
@@ -276,7 +335,7 @@ def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
     if fallo.log is None or pair is None:
         return None
     try:
-        return frenos.detectar_en(fallo.log, pair)
+        return _freno_de(fallo.log, pair)
     except OSError:
         return None
 
@@ -320,12 +379,32 @@ def _frase_freno(pair: Pair, freno: frenos.Freno) -> tuple[str, str]:
             f"{frenos.hacia(frenos.otro_lado(freno.lados[0]))}.")
 
 
-def _como_argumento(nombre: str) -> str:
-    """Devuelve el nombre de una pareja tal como se escribe en una línea de órdenes.
+_NOMBRE_PEGABLE = re.compile(r"[\w .+,=@-]+")
+"""Los nombres de pareja que se pueden escribir en una orden para pegar.
 
-    Con comillas dobles si lleva algo más que letras, cifras, `_`, `.` o `-`
-    («Mis fotos»): valen en `cmd`, en PowerShell y en un intérprete POSIX.
+Letras, cifras, `_`, espacio y `. + , = @ -`: nada de eso lo interpreta `cmd`, PowerShell
+ni un intérprete POSIX entre comillas dobles. Un `-` al principio ya lo rechaza
+`model.problema_nombre()`.
+"""
+
+
+def _como_argumento(nombre: str) -> str | None:
+    """Devuelve el nombre de una pareja tal como se escribe en una orden para pegar.
+
+    Solo cuando el nombre cabe en `_NOMBRE_PEGABLE`: sin comillas si lleva únicamente
+    letras, cifras, `_`, `.` o `-`, y entre comillas dobles si lleva algo más («Mis
+    fotos»). Lo demás no se intenta escapar, porque no hay un escapado que valga en todos
+    los intérpretes: `$` y el acento grave se expanden en bash y en PowerShell, `%` se
+    expande en `cmd` aun entre comillas, `!` dispara el historial de bash y una comilla
+    doble cierra las del nombre y deja el resto como otra orden. Y en Windows no se sabe
+    si quien pega es `cmd` o PowerShell.
+
+    Returns:
+        El nombre listo para la orden, o `None` si no cabe: quien llama no da entonces una
+        orden literal para pegar.
     """
+    if not _NOMBRE_PEGABLE.fullmatch(nombre):
+        return None
     return nombre if re.fullmatch(r"[\w.-]+", nombre) else f'"{nombre}"'
 
 
@@ -357,8 +436,14 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
     detalle = f"{que} {riesgo}"
     if racha is not None:
         detalle += f" {_frase_racha(racha)}"
-    detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, se "
-                f"puede forzar UNA pasada: `python sync.py {_como_argumento(pair.name)} --force`.")
+    nombre = _como_argumento(pair.name)
+    if nombre is None:
+        forzar = (f"{frenos.COMO_FORZAR}, escribiendo tú el nombre: lleva caracteres que la "
+                  "consola cambiaría al pegarlo, y por eso no se da la orden escrita.")
+    else:
+        forzar = f"se puede forzar UNA pasada: `python sync.py {nombre} --force`."
+    detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, "
+                f"{forzar}")
     return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
                     pair.name, AVISO, (log, freno))
 
@@ -554,11 +639,12 @@ def _informe_pareja(pair: Pair) -> list[str]:
         return lineas + [""]
 
     estado = bisync.pair_state(pair)
-    sin_fiar = ("" if bisync.prefijo_comprobable(pair) else
+    tipos = bisync.tipos_de_remote()      # una sola lectura del rclone.conf
+    sin_fiar = ("" if bisync.prefijo_comprobable(pair, tipos) else
                 " (no se puede comprobar: un alias del rclone.conf no se puede resolver)")
     lineas += [f"  estado: {estado.status} — {estado.detail}",
-               f"  prefijo esperado: {bisync.expected_prefix(pair)}{sin_fiar}"]
-    if bisync.referencia_vacia(pair, estado):
+               f"  prefijo esperado: {bisync.expected_prefix(pair, tipos)}{sin_fiar}"]
+    if bisync.referencia_vacia(pair, estado, tipos):
         lineas.append("  referencia: vacía — la próxima pasada la rehace con --resync "
                       "(no hay nada que proteger)")
     filtros = bisync.filters_state(bisync.filters_file_for(pair))

@@ -20,6 +20,9 @@ que en un sistema de verdad es `RegisterHotKey`, `XGrabKey` o el portal):
   ya no está, con un aviso). Al cerrarse, vuelven los guardados.
 - Sin forma de ponerlos en este equipo, la ventana se abre diciendo por qué y
   un «Guardar» se rechaza entero; un sistema que no contesta se da por «no».
+- Con el portal, que no suelta los atajos al grabar, un «Guardar» igual a lo
+  último pedido (quitada la entrada guardada que no valía) se prueba también, y
+  la respuesta del portal que llega pasado el plazo se acepta sin volver a pedir.
 - `agente.py atajo ACCION` y `agente.py atajos` dejan la petición en el buzón,
   y `status` los enseña.
 """
@@ -400,6 +403,65 @@ c("el sistema no contesta en el plazo: tampoco cambia nada, y vuelven los de ant
    motor6.pedidos[-1]),
   ({atajos.SINCRONIZAR: "ctrl+shift+s"}, {atajos.SINCRONIZAR: "ctrl+shift+s"},
    {atajos.SINCRONIZAR: "ctrl+shift+s"}))
+
+# --- un «Guardar» igual a lo ya pedido también se prueba (el portal no suelta nada)
+guardados(sincronizar="ctrl+shift+s", carpeta="shift+f9")      # `validar()` rechaza la segunda
+F.RAICES[:] = []
+ag11 = F.nuevo()
+portal11 = Motor(ag11, suspende=False)
+con_motor(ag11, portal11)
+F.vueltas(ag11, 3)
+c("con el portal y una entrada guardada que no vale, solo se pide la buena",
+  portal11.pedidos, [{atajos.SINCRONIZAR: "ctrl+shift+s"}])
+ag11.pedir({"pide": equipo.PIDE_GRABAR_ATAJOS})
+F.vueltas(ag11, 2)
+c("  la ventana abierta no vuelve a pedir nada (el portal no los suelta)",
+  len(portal11.pedidos), 1)
+equipo.pedir({"pide": equipo.PIDE_ATAJOS, "vez": "i",
+              "atajos": {atajos.SINCRONIZAR: "ctrl+shift+s"}})
+F.vueltas(ag11, 2)
+c("  quitada la mala, «Guardar» lo mismo que ya estaba pedido: se llama al motor otra vez",
+  portal11.pedidos[1:], [{atajos.SINCRONIZAR: "ctrl+shift+s"}])
+c("  y la ventana lee la respuesta a su «Guardar»", ag11.resumen()["atajos"]["respuesta"],
+  {"vez": "i", "rechazados": {}, "guardados": {atajos.SINCRONIZAR: "ctrl+shift+s"}})
+c("  agente.json queda sin la entrada mala", dict(equipo.leer_ajustes().atajos),
+  {atajos.SINCRONIZAR: "ctrl+shift+s"})
+ventanas_de_atajos()[-1].rc = 0
+F.vueltas(ag11, 2, recorrer=False)
+ag11.oye_buzon = True
+ag11.proximo_recorrido = F.reloj() + 500
+c("  y al cerrar la ventana el agente descansa",
+  (ag11.atajos_prueba, ag11.en_reposo(), agente.cuanto_esperar(ag11)),
+  (None, True, agente.REPOSO))
+c("  sin volver a pedirlos al cerrarse", len(portal11.pedidos), 2)
+F.RAICES[:] = [RA]
+
+# --- el portal contesta pasado el plazo: se acepta, sin volver a pedir
+guardados(sincronizar="ctrl+shift+s")
+ag12 = F.nuevo()
+portal12 = Motor(ag12, suspende=False)
+portal12.respuestas = [None]
+con_motor(ag12, portal12)
+F.AVISOS.clear()
+F.vueltas(ag12, 2)
+F.vueltas(ag12, 1, cada=agente.ESPERA_ATAJOS)
+F.vueltas(ag12, 2)
+c("el portal no contesta en el plazo: se da por no puesto y se avisa una vez, sin pedirlo otra vez",
+  (ag12.resumen()["atajos"]["acciones"][atajos.SINCRONIZAR]["error"],
+   len(avisos("No he podido poner el atajo")), len(portal12.pedidos)),
+  (atajos.SIN_RESPUESTA, 1, 1))
+ag12.atajos_hechos.put(({atajos.CARPETA: "ctrl+shift+c"}, {atajos.CARPETA: atajos.YA_LA_USA}))
+F.vueltas(ag12, 2)
+c("  una respuesta a otra cosa no es de nadie",
+  ag12.resumen()["atajos"]["acciones"][atajos.SINCRONIZAR]["error"], atajos.SIN_RESPUESTA)
+ag12.atajos_hechos.put(({atajos.SINCRONIZAR: "ctrl+shift+s"}, {}))        # confirma, tarde
+F.vueltas(ag12, 2)
+c("  la respuesta tardía a lo último pedido se acepta: el error desaparece",
+  ag12.resumen()["atajos"]["acciones"][atajos.SINCRONIZAR]["error"], "")
+c("  sin pedirlo otra vez ni repetir el aviso",
+  (len(portal12.pedidos), len(avisos("No he podido poner el atajo")), ag12.atajos_vencida),
+  (1, 1, False))
+guardados()
 
 # --- los guardados que no valen (agente.json escrito a mano o por otra versión)
 guardados(sincronizar="shift+a", carpeta="ctrl+shift+c", ventana="ctrl+shift+c")

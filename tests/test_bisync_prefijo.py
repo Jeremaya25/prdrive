@@ -419,6 +419,100 @@ remote = sin_destino:x
     model.RCLONE_CONF.unlink()
 
 
+# el rclone.conf se lee una vez por decisión, no una por extremo
+#
+# `tipos_de_remote()` lee y analiza el fichero entero, y cada extremo que se
+# resolvía lo volvía a llamar: 4 lecturas por pareja en cada pasada y 10 en
+# `--doctor`. Quien decide lo lee una vez y pasa lo leído (`tipos=`). No hay caché
+# por (ruta, mtime) a propósito: con los 2 s de granularidad de FAT, una ventana
+# abierta mucho rato serviría el destino de un alias viejo, y daría un «el baseline
+# no es de esta pareja» falso que apartaría uno bueno.
+from common import revision
+
+with sandbox():
+    model.RCLONE_CONF.write_text(ALIAS_CONF + "\n[ciclo_a]\ntype = alias\nremote = ciclo_a:x\n",
+                                 encoding="utf-8")
+    real_tipos = bisync.tipos_de_remote
+    leidas: list[int] = []
+
+    def tipos_contado():
+        """Lee el rclone.conf como siempre, y apunta que lo ha leído."""
+        leidas.append(1)
+        return real_tipos()
+
+    def lecturas(que):
+        """Devuelve `(resultado, cuántas veces ha leído el rclone.conf)` al hacer `que()`."""
+        leidas.clear()
+        bisync.tipos_de_remote = tipos_contado
+        try:
+            resultado = que()
+        finally:
+            bisync.tipos_de_remote = real_tipos
+        return resultado, len(leidas)
+
+    def pareja_de(remote):
+        """La pareja `notas` sobre ese remote, con su carpeta local creada."""
+        par = model.parse_config({"defaults": {"remote": remote, "device_remote": "disp"},
+                                  "pair": PAREJAS[:1]}).pairs[0]
+        par.local_abs.mkdir(parents=True, exist_ok=True)
+        return par
+
+    def con_baseline(par, prefijo=None):
+        """Deja en el workdir los dos listados vacíos de un baseline, con ese prefijo."""
+        par.workdir.mkdir(parents=True, exist_ok=True)
+        for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+            (par.workdir / ((prefijo or bisync.expected_prefix(par)) + sufijo)).write_text(
+                "# bisync listing v1 from 2026-10-12T10:00:00.000000000+0200\n",
+                encoding="utf-8")
+
+    par = pareja_de("pruebas")
+    tipos = real_tipos()
+    c("sin baseline, referencia_vacia no lee el rclone.conf",
+      lecturas(lambda: bisync.referencia_vacia(par)), (False, 0))
+    con_baseline(par)
+    c("con baseline, referencia_vacia lo lee una sola vez (eran cuatro)",
+      lecturas(lambda: bisync.referencia_vacia(par)), (True, 1))
+    c("  y con lo ya leído, ninguna",
+      lecturas(lambda: bisync.referencia_vacia(par, tipos=tipos)), (True, 0))
+
+    esperado = bisync.expected_prefix(par)
+    c("expected_prefix con lo ya leído no lee, y da el mismo prefijo",
+      lecturas(lambda: bisync.expected_prefix(par, tipos)), (esperado, 0))
+    c("  prefijo_comprobable, igual",
+      (lecturas(lambda: bisync.prefijo_comprobable(par, tipos)),
+       bisync.prefijo_comprobable(par)), ((True, 0), True))
+    c("  fs_path_remote y resolver_extremo, igual",
+      (lecturas(lambda: bisync.fs_path_remote("pruebas:datos", tipos)),
+       lecturas(lambda: bisync.resolver_extremo("pruebas:datos", tipos))),
+      ((bisync.fs_path_remote("pruebas:datos"), 0), (bisync.resolver_extremo("pruebas:datos"), 0)))
+    c("un diccionario vacío es un rclone.conf sin remotes, no «sin leer»",
+      lecturas(lambda: bisync.fs_path_remote("pruebas:datos", {})), ("pruebas:datos/", 0))
+
+    # `--doctor`: una lectura por pareja en su informe, no cuatro más seis
+    c("el informe de una pareja bisync lee el rclone.conf una sola vez",
+      lecturas(lambda: revision._informe_pareja(par))[1], 1)
+    informe, _ = lecturas(lambda: revision._informe_pareja(par))
+    c.contains("  y sigue diciendo su prefijo", "\n".join(informe),
+               f"prefijo esperado: {esperado}\n")
+    c.contains("  y que su referencia está vacía", "\n".join(informe), "referencia: vacía")
+    otra = model.parse_config({"defaults": {"remote": "pruebas"},
+                               "pair": [{**PAREJAS[0], "mode": "down-mirror"}]}).pairs[0]
+    c("el de una pareja que no es bisync, ninguna",
+      lecturas(lambda: revision._informe_pareja(otra))[1], 0)
+
+    # «Reparación»: lo mismo en `_prefijo`, en el camino corto y en el largo
+    estado = bisync.pair_state(par)
+    c("_prefijo con el baseline de esta pareja: una lectura, sin hallazgo",
+      lecturas(lambda: revision._prefijo(par, estado)), (None, 1))
+    ajeno = bisync.PairState(estado.status, estado.detail, "disp_otra..cosa")
+    hallazgo, n = lecturas(lambda: revision._prefijo(par, ajeno))
+    c("  con el de otra, también una (eran cuatro), y acusa",
+      (hallazgo.clave if hallazgo else None, n), ("prefijo", 1))
+    ciclo = pareja_de("ciclo_a")
+    hallazgo, n = lecturas(lambda: revision._prefijo(
+        ciclo, bisync.PairState(estado.status, estado.detail, "disp_otra..cosa")))
+    c("  y con un alias que no se puede seguir, una y no acusa", (hallazgo, n), (None, 1))
+
 # la venda, retirada
 #
 # No es una comprobación de aspecto: renombrar los listados al prefijo nuevo es

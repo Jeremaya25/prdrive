@@ -577,14 +577,57 @@ def _texto_veto(letra: str, tipo: int, nombre: str) -> str:
     return f"Windows no deja quitar la unidad {letra}: {plantilla.format(nombre=nombre)}"
 
 
-def _expulsar_medio(letra: str) -> None:
-    """Expulsa el medio de un volumen ya desmontado (`IOCTL_STORAGE_EJECT_MEDIA`), si se deja."""
+def _soltar(k32, handle, letra: str) -> Resultado | None:
+    """Bloquea, desmonta y deja sacar el volumen abierto en `handle`, sin forzar.
+
+    Es la secuencia de KB 165721: con el volumen bloqueado (`FSCTL_LOCK_VOLUME`,
+    `INTENTOS_BLOQUEO` veces, medio segundo entre una y otra) nadie más lo
+    tiene abierto, así que desmontarlo (`FSCTL_DISMOUNT_VOLUME`) vacía lo
+    pendiente, y `IOCTL_STORAGE_MEDIA_REMOVAL` no impide sacarlo. Si el bloqueo
+    no se consigue no se desmonta ni se fuerza.
+
+    Returns:
+        `None` si el volumen queda bloqueado, desmontado y sin impedir sacarlo;
+        si no, el `Resultado` (no `ok`) que dice por qué no.
+    """
+    for intento in range(INTENTOS_BLOQUEO):
+        if _ioctl(k32, handle, FSCTL_LOCK_VOLUME) is not None:
+            break
+        if intento < INTENTOS_BLOQUEO - 1:
+            time.sleep(0.5)
+    else:
+        return Resultado(False, f"Algo está usando la unidad {letra}: cierra lo que "
+                                f"tenga abierto de ella (una ventana del Explorador, "
+                                f"un programa) y vuelve a pedirlo.")
+    if _ioctl(k32, handle, FSCTL_DISMOUNT_VOLUME) is None:
+        return Resultado(False, f"El sistema no ha podido desmontar la unidad {letra}.")
+    _ioctl(k32, handle, IOCTL_STORAGE_MEDIA_REMOVAL, b"\0")     # no impedir sacarlo
+    return None
+
+
+def _expulsar_medio(letra: str) -> bool:
+    """Expulsa el medio del volumen (`IOCTL_STORAGE_EJECT_MEDIA`) tras bloquearlo y desmontarlo.
+
+    Se abre el volumen de nuevo y se suelta otra vez (`_soltar()`): abrirlo
+    (`GENERIC_READ | GENERIC_WRITE`) no es un acceso directo al dispositivo, así
+    que el sistema vuelve a montar el sistema de ficheros, y en ese hueco el
+    Explorador o el indexador pueden haberlo abierto. Si la expulsión del medio
+    es lo único que falla, la unidad ya está desmontada y se da por suelta.
+
+    Returns:
+        `True` si la unidad queda suelta o si el volumen ya no se puede abrir
+        (el dispositivo se ha ido); `False` si se ha abierto pero no se ha
+        podido bloquear o desmontar.
+    """
     k32 = _kernel32()
     handle = _abrir_volumen(k32, letra, 0xC0000000)        # GENERIC_READ | GENERIC_WRITE
     if handle is None:
-        return
+        return True
     try:
+        if _soltar(k32, handle, letra) is not None:
+            return False
         _ioctl(k32, handle, IOCTL_STORAGE_EJECT_MEDIA)
+        return True
     finally:
         k32.CloseHandle(handle)
 
@@ -602,9 +645,11 @@ def _expulsar_windows(letra: str) -> Resultado:
     la retirada), se pide a Windows retirar el dispositivo extraíble
     (`_dispositivo_a_retirar()`), que es lo que hace desaparecer su letra; un
     veto se dice con su causa. Sin dispositivo que retirar (un disco virtual,
-    uno que no se deja preguntar) o si Windows no puede ni pedirlo, se expulsa el
-    medio como antes: si ni eso se consigue, el volumen ya está desmontado y se
-    puede quitar igual.
+    uno que no se deja preguntar) se expulsa el medio con el mismo manejador.
+    Si Windows no puede ni pedir la retirada, se expulsa el medio abriendo el
+    volumen de nuevo y soltándolo otra vez (`_expulsar_medio()`): solo si eso
+    tampoco se consigue se dice que no, con el `CONFIGRET`, y nunca que se puede
+    quitar.
     """
     nodo = _dispositivo_a_retirar(letra)
     k32 = _kernel32()
@@ -612,18 +657,9 @@ def _expulsar_windows(letra: str) -> Resultado:
     if handle is None:
         return Resultado(False, f"El sistema no deja abrir la unidad {letra}.")
     try:
-        for intento in range(INTENTOS_BLOQUEO):
-            if _ioctl(k32, handle, FSCTL_LOCK_VOLUME) is not None:
-                break
-            if intento < INTENTOS_BLOQUEO - 1:
-                time.sleep(0.5)
-        else:
-            return Resultado(False, f"Algo está usando la unidad {letra}: cierra lo que "
-                                    f"tenga abierto de ella (una ventana del Explorador, "
-                                    f"un programa) y vuelve a pedirlo.")
-        if _ioctl(k32, handle, FSCTL_DISMOUNT_VOLUME) is None:
-            return Resultado(False, f"El sistema no ha podido desmontar la unidad {letra}.")
-        _ioctl(k32, handle, IOCTL_STORAGE_MEDIA_REMOVAL, b"\0")     # no impedir sacarlo
+        fallo = _soltar(k32, handle, letra)
+        if fallo is not None:
+            return fallo
         if nodo is None:
             _ioctl(k32, handle, IOCTL_STORAGE_EJECT_MEDIA)
     finally:
@@ -633,8 +669,11 @@ def _expulsar_windows(letra: str) -> Resultado:
     cr, tipo, quien = _retirar_dispositivo(nodo.id)
     if cr == CR_REMOVE_VETOED:
         return Resultado(False, _texto_veto(letra, tipo, quien))
-    if cr != CR_SUCCESS:
-        _expulsar_medio(letra)          # Windows no ha podido ni pedirlo: lo de siempre
+    if cr != CR_SUCCESS and not _expulsar_medio(letra):
+        return Resultado(False, f"Windows no ha podido retirar la unidad {letra} "
+                                f"(CONFIGRET {cr:#04x}) y tampoco se ha podido bloquear "
+                                f"y desmontar de nuevo. No la quites todavía: usa "
+                                f"«Quitar hardware de forma segura».")
     return Resultado(True, "Ya puedes quitarla.")
 
 

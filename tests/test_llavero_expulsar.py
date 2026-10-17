@@ -7,7 +7,9 @@ pasada de lo pendiente devuelve el código que se le pida. Lo que se sujeta:
   espera a que salga; si no sale, no se sigue: la unidad no está libre.
 - El proxy del navegador se termina; el vigilante se para y se le espera, y si
   no se va se le termina con lo que cuelga de él (#119) siendo de verdad él:
-  un pid que ya es de otro programa no se toca.
+  un pid que ya es de otro programa no se toca, y tampoco el de otra Python de
+  la unidad (el servicio, una pasada, una consola) aunque su ejecutable corra
+  desde ella: se distingue por la hora de creación (#158).
 - Lo pendiente sube con un tope, y solo se dice algo si no ha ido bien.
 - Las claves del navegador vuelven a como estaban.
 - `--cerrar-llavero` pregunta en la consola, y un fallo suyo no impide expulsar.
@@ -73,7 +75,7 @@ class Equipo:
 
 reales = (store.procesos, store.pid_alive, keepassxc.pedir_cierre, keepassxc.terminar,
           llavero.pasada, llavero.pendiente, llavero.vigilante_vivo, llavero.dormir,
-          llavero.matar_arbol, store.orden_de,
+          llavero.matar_arbol, store.orden_de, store.creado,
           keepassxc.ESPERA_CIERRE, keepassxc.ESPERA_VIGILANTE,
           registro.leer, registro.escribir, registro.borrar, registro.vacia)
 real_app = model.APP_DIR
@@ -95,6 +97,8 @@ try:
         llavero.matar_arbol = eq.matar_arbol
         ordenes: dict[int, list[str]] = {}
         store.orden_de = lambda pid: ordenes.get(pid, [])
+        creados: dict[int, float] = {}
+        store.creado = creados.get
         keepassxc.ESPERA_CIERRE = keepassxc.ESPERA_VIGILANTE = 0.05
         claves: dict = {}
         registro.leer = claves.get
@@ -131,12 +135,30 @@ try:
         registro_v = llavero.registro_vigilante()
         diario = model.STATE_DIR / "daemon.log"
 
-        def vigilante_con(exe, orden):
-            """Deja un vigilante vivo (pid, ejecutable y línea de órdenes) con su registro."""
-            store.write_json(registro_v, {"pid": VIGILANTE, "host": llavero.equipo(),
-                                          "started": store.stamp()})
+        INICIO = float(int(time.time()) - 600)      # cuando se creó el vigilante, en segundos enteros
+
+        def sello(t):
+            """El `started` de un registro, a la hora `t`."""
+            return time.strftime(store.FORMATO, time.localtime(t))
+
+        def vigilante_con(exe, orden, *, apuntado=INICIO, ahora=INICIO, started=None):
+            """Deja un vigilante vivo (pid, ejecutable y línea de órdenes) con su registro.
+
+            Args:
+                apuntado: El `creado` del registro; `None`, un registro sin él.
+                ahora: La hora de creación que el sistema da hoy a ese pid; `None`, ilegible.
+                started: El `started` del registro, por defecto un segundo después de crearse.
+            """
+            datos = {"pid": VIGILANTE, "host": llavero.equipo(),
+                     "started": sello(INICIO + 1) if started is None else started}
+            if apuntado is not None:
+                datos["creado"] = apuntado
+            store.write_json(registro_v, datos)
             eq.vivos[VIGILANTE] = exe
             ordenes[VIGILANTE] = orden
+            creados.pop(VIGILANTE, None)
+            if ahora is not None:
+                creados[VIGILANTE] = ahora
             eq.matados.clear()
 
         def lo_dicho():
@@ -199,6 +221,48 @@ try:
         c("  en Windows, sin línea de órdenes, vale que corra desde la unidad", eq.matados,
           [VIGILANTE])
         diario.unlink(missing_ok=True)
+
+        # el pid lo tomó otra Python de la unidad, que en Windows (sin línea de órdenes) pasa por
+        # el vigilante: se distingue por la hora de creación (#158)
+        CREADO_DESPUES = INICIO + 300
+        for etiqueta, exe, orden, ajustes, se_termina in (
+                ("en Windows, otra Python de la unidad creada después", EN_LA_UNIDAD, [],
+                 {"ahora": CREADO_DESPUES}, False),
+                ("en Linux, otro vigilante creado después", DEL_EQUIPO, SUYA,
+                 {"ahora": CREADO_DESPUES}, False),
+                ("  ni 1,5 s después, fuera de la holgura", EN_LA_UNIDAD, [],
+                 {"ahora": INICIO + 1.5}, False),
+                ("  y con la misma hora, sí es él (en Windows)", EN_LA_UNIDAD, [], {}, True),
+                ("  y con medio segundo de diferencia, dentro de la holgura, también",
+                 EN_LA_UNIDAD, [], {"ahora": INICIO + 0.5}, True),
+                ("un registro sin `creado` (de un vigilante anterior), con el proceso anterior "
+                 "a `started`", EN_LA_UNIDAD, [], {"apuntado": None}, True),
+                ("  y creado 1,5 s después de `started`, dentro de su holgura (recorta los segundos)",
+                 EN_LA_UNIDAD, [], {"apuntado": None, "ahora": INICIO + 2.5}, True),
+                ("  y creado más de 2 s después de `started`", EN_LA_UNIDAD, [],
+                 {"apuntado": None, "ahora": INICIO + 3.5}, False),
+                ("  y el proceso creado después de `started`", EN_LA_UNIDAD, [],
+                 {"apuntado": None, "ahora": CREADO_DESPUES}, False),
+                ("  y con el `started` ilegible", EN_LA_UNIDAD, [],
+                 {"apuntado": None, "started": "ayer"}, False),
+                ("con la hora del proceso ilegible, en Windows", EN_LA_UNIDAD, [],
+                 {"ahora": None}, False),
+                ("  y en Linux, donde la línea de órdenes lo identifica, se sigue como antes",
+                 DEL_EQUIPO, SUYA, {"ahora": None}, True),
+                ("  y con el `started` ilegible y sin `creado`, también",
+                 DEL_EQUIPO, SUYA, {"apuntado": None, "started": "ayer"}, True)):
+            vigilante_con(exe, orden, **ajustes)
+            keepassxc.cerrar_llavero(config())
+            c(f"un pid con otra hora de creación: {etiqueta}: "
+              + ("se termina" if se_termina else "no se termina"),
+              eq.matados, [VIGILANTE] if se_termina else [])
+            if not se_termina:
+                c.contains("  y el diario dice que no se ha tocado", lo_dicho(),
+                           "no se ha terminado")
+            diario.unlink(missing_ok=True)
+            eq.vivos.pop(VIGILANTE, None)
+            registro_v.unlink(missing_ok=True)
+            llavero.parada_vigilante().unlink(missing_ok=True)
 
         # el pid ya es de otro programa (un registro que quedó de un vigilante muerto)
         for etiqueta, exe, orden in (
@@ -316,7 +380,7 @@ try:
 finally:
     (store.procesos, store.pid_alive, keepassxc.pedir_cierre, keepassxc.terminar,
      llavero.pasada, llavero.pendiente, llavero.vigilante_vivo, llavero.dormir,
-     llavero.matar_arbol, store.orden_de,
+     llavero.matar_arbol, store.orden_de, store.creado,
      keepassxc.ESPERA_CIERRE, keepassxc.ESPERA_VIGILANTE,
      registro.leer, registro.escribir, registro.borrar, registro.vacia) = reales
     model.APP_DIR = real_app

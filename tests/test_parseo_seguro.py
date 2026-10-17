@@ -245,6 +245,40 @@ for etiqueta, texto in (
         ("un remote de [defaults]", rechaza({**una(), "defaults": {"remote": "nas,x=y"}}))):
     c(f"{etiqueta}: acaba diciendo qué hacer", texto.endswith("o quita la clave del config."), True)
 
+# --- con el config rechazado no hay ventana: el mensaje fatal lleva el fichero (#161) ----
+# `ui_flow`, `--auto` y `--llavero` acaban en `ui.fatal` sin abrir nada, y el config del
+# dispositivo es un fichero oculto (`.prdrive/sync_config.toml`): el texto dice cuál es.
+import runsync
+
+CON_FORCE = ('[defaults]\nremote = "nas"\n\n[[pair]]\nname = "p"\nlocal = "sync-data/p"\n'
+             'remote_path = "R/p"\n\n[pair.flags]\nforce = true\n')
+with sandbox() as raiz:
+    guardado = (runsync.UI_LOCK, runsync.LOCK, runsync.stop_previous_daemon, runsync.ui.fatal)
+    runsync.UI_LOCK, runsync.LOCK = raiz / "state" / "ui.lock.json", raiz / "state" / "d.lock.json"
+    runsync.stop_previous_daemon = lambda: None
+    dicho: list[str] = []
+    runsync.ui.fatal = lambda msg: dicho.append(msg) or 1
+    try:
+        for camino, lanzar in (("la ventana (ui_flow)", runsync.ui_flow),
+                               ("--auto", lambda: runsync.auto_start([])),
+                               ("--llavero", runsync.abrir_llavero)):
+            model.CONFIG_FILE.write_text(CON_FORCE, encoding="utf-8")
+            dicho.clear()
+            rc = lanzar()
+            texto = dicho[0] if dicho else ""
+            c(f"{camino}: con un config rechazado sale con error y lo muestra", (rc, len(dicho)),
+              (1, 1))
+            c.contains(f"  {camino}: dice la ruta del config", texto, str(model.CONFIG_FILE))
+            c.contains(f"  {camino}: y sigue diciendo qué se rechaza", texto, "'force' no se admite")
+            c(f"  {camino}: la ruta va una sola vez", texto.count(str(model.CONFIG_FILE)), 1)
+        model.CONFIG_FILE.unlink()
+        dicho.clear()
+        runsync.ui_flow()
+        c("un config que no existe ya nombra su ruta: no se repite",
+          dicho[0].count(str(model.CONFIG_FILE)) if dicho else 0, 1)
+    finally:
+        runsync.UI_LOCK, runsync.LOCK, runsync.stop_previous_daemon, runsync.ui.fatal = guardado
+
 # --- local: dentro de la raíz, y ni el programa ni el llavero -----------------
 app = model.APP_DIR.name            # «.prdrive» en un dispositivo, el nombre del checkout aquí
 for local in ("../../fuera", "a/../../b", "C:/Users/x", "C:\\Users\\x", "d:x",
