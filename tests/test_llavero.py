@@ -280,7 +280,7 @@ with sandbox() as root:
         "2026/10/12 17:38:16 NOTICE: Bisync aborted. Please try again.\n"
         "2026/10/12 17:38:16 NOTICE: Failed to bisync: all files were changed")
 
-    def correr_pasadas(par, *pasadas, aprobado=False):
+    def correr_pasadas(par, *pasadas, aprobado=False, dry_run=False, keep_logs=False):
         """run_pair con rclone simulado: la pasada N-ésima acaba con `(rc, texto del log)`."""
         ordenes = []
 
@@ -298,7 +298,8 @@ with sandbox() as root:
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc_ = sync.run_pair(sync.RunContext(binary="RCLONE", env={},
-                                                    resync_approved=aprobado), par)
+                                                    resync_approved=aprobado, dry_run=dry_run,
+                                                    keep_logs=keep_logs), par)
             return rc_, buf.getvalue(), ordenes
         finally:
             sync.execute = original
@@ -351,6 +352,53 @@ with sandbox() as root:
                                          (0, SIMULADA), (0, "bien"))
     c("  se repite igual si los que han cambiado son los de este lado",
       (rc, len(bisyncs(ordenes))), (0, 3))
+
+    # En un `--dry-run` (que bisync para igual con ese error) no hay repetición de verdad: la
+    # simulación con --force ES la repetición, sin una tercera ejecución, sin dejar un log en `logs/`
+    # que cuente para los 20 de la pareja y diciendo lo que se haría en una pasada de verdad.
+    for p in model.LOG_DIR.glob("keychain*"):
+        p.unlink()
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA), (0, "bien"), dry_run=True)
+    c("simulacro de «han cambiado todos»: bisync corre dos veces, no tres, las dos simuladas",
+      (rc, bisyncs(ordenes)), (0, [(True, False), (True, True)]))
+    c("  la segunda, la simulación, es la repetición: lleva --force y no --resync",
+      ("--force" in ordenes[1], "--resync" in ordenes[1]), (True, False))
+    c.contains("  y lo dice en condicional, que no ocurre", salida,
+               "en una pasada de verdad se repetiría una vez con --force (no borraría nada)")
+    c("  sin anunciar una repetición que no ocurre", "se repite la pasada" in salida, False)
+    c.contains("  (cada lado guarda lo que pierda en las versiones)", salida, model.VERSIONS_DIR)
+    c("  una simulación que acaba bien no deja log en logs/", list(model.LOG_DIR.glob("keychain*")), [])
+    c.contains("  y acaba bien", salida, f"[{model.LLAVERO}] OK.")
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA), (0, "bien"),
+                                         dry_run=True, keep_logs=True)
+    guardados = list(model.LOG_DIR.glob("keychain*"))
+    c("  con --keep-logs el log de la pasada parada sí se guarda (y solo ese), y se dice",
+      (rc, len(bisyncs(ordenes)), len(guardados),
+       any("all files were changed" in g.read_text(encoding="utf-8") for g in guardados),
+       any(g.name in salida for g in guardados)), (0, 2, 1, True, True))
+    for g in guardados:
+        g.unlink()
+
+    rc, salida, ordenes = correr_pasadas(pareja, (1, TODOS), (0, SIMULADA_BORRA), (0, "bien"),
+                                         dry_run=True)
+    c("  si forzarla borraría algo, el simulacro dice que el freno manda y el fallo se queda",
+      (rc, bisyncs(ordenes), "no se fuerza, el freno manda" in salida),
+      (1, [(True, False), (True, True)], True))
+    c("  (ese fallo sí deja su log: es una pasada que ha fallado)",
+      len(list(model.LOG_DIR.glob("keychain*"))), 1)
+    for g in model.LOG_DIR.glob("keychain*"):
+        g.unlink()
+
+    rc, salida, ordenes = correr_pasadas(
+        pareja, (7, "\n".join([borrado("Path1", copia1), borrado("Path2", copia2), ABORTO])),
+        (0, "bien"), dry_run=True)
+    c("simulacro de un freno de borrados que solo pisan copias de conflicto: también en condicional",
+      (rc, bisyncs(ordenes), "se repite la pasada sin el freno" in salida,
+       "en una pasada de verdad se repetiría una vez sin el freno de borrados" in salida),
+      (0, [(True, False), (True, False)], False, True))
+    c("  la repetición simulada lleva el freno de las copias y la pasada no deja log",
+      (freno(ordenes[1]), list(model.LOG_DIR.glob("keychain*"))), (str(llavero.FRENO_SIN_COPIAS), []))
 
     # Con el freno de copias de conflicto ya se ha repetido: una sola repetición en toda la pasada.
     rc, salida, ordenes = correr_pasadas(

@@ -134,13 +134,30 @@ def max_delete_efectivo(pair: Pair) -> int | None:
         return None
 
 
+def pasada_forzada(pair: Pair, forzar: bool, resync: bool) -> bool:
+    """Indica si esta pasada salta de verdad el freno de borrados de la pareja.
+
+    Es la única regla: la orden (`flags_de_la_pasada()`, `_salta_el_tope()`) y lo que
+    `sync.py` dice y simula de una pasada forzada la comparten. Pedir `--force` no basta: la
+    pareja ha de tener un freno que se pueda saltar (`frenos.se_puede_forzar()`) y la pasada
+    no puede ser un `--resync`, que no pasa por el freno (no compara contra el listado
+    anterior) y no lleva `--force`.
+
+    Args:
+        pair: La pareja.
+        forzar: Si se pidió forzar la pasada (`RunContext.force`).
+        resync: Si la pasada es un `--resync`, pedido o decidido por el programa.
+    """
+    return forzar and frenos.se_puede_forzar(pair) and not resync
+
+
 def _salta_el_tope(pair: Pair, forzar: bool, resync: bool) -> bool:
     """Indica si la orden de esta pasada quita el `--max-delete` de un espejo (`forzar`).
 
     Solo un espejo (`sync`): bisync se salta el suyo con `--force`, que no quita nada, y un
     resync no pasa por el freno.
     """
-    return forzar and not resync and frenos.se_puede_forzar(pair) and not pair.is_bisync
+    return pasada_forzada(pair, forzar, resync) and not pair.is_bisync
 
 
 def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
@@ -195,7 +212,7 @@ def flags_de_la_pasada(pair: Pair, *, config: str | Path, logfile: str | Path,
 
     # Un resync no pasa por el freno de borrados (no compara contra el listado
     # anterior): no tiene nada que saltar, y juntos `--resync --force` no se piden.
-    if forzar and frenos.se_puede_forzar(pair) and not resync:
+    if pasada_forzada(pair, forzar, resync):
         if pair.is_bisync:
             pone("force", True)
         else:

@@ -654,6 +654,9 @@ def decir_lo_que_borraria(pair: Pair, logfile: Path) -> None:
     no la da. Se calla si no se puede leer el log (el dispositivo ha desaparecido):
     la pasada ya lo dirá por su cuenta.
 
+    Solo se llama tras una simulación que de verdad saltaba el freno
+    (`orden.pasada_forzada()`): la de un `--resync` no es una simulación forzada.
+
     Args:
         pair: La pareja simulada.
         logfile: El log temporal de la pasada, que `dispose_log()` va a tirar.
@@ -675,14 +678,24 @@ def decir_lo_que_borraria(pair: Pair, logfile: Path) -> None:
         print(f"    … y {len(nombres) - SIMULADOS_SHOWN} más")
 
 
-def avisar_forzada(pair: Pair) -> str:
-    """Devuelve la línea que dice cómo salta el freno una pasada forzada, o que no hay freno."""
+def avisar_forzada(pair: Pair, resync: bool = False) -> str:
+    """Devuelve la línea que dice cómo salta el freno una pasada forzada, o que no lo salta.
+
+    Se dice cuando ya se sabe qué pasada es (`_pasar_pareja()`, tras el preflight): un
+    `--resync` no pasa por el freno y su orden no lleva `--force` (`orden.pasada_forzada()`).
+
+    Args:
+        pair: La pareja a la que se pidió forzar.
+        resync: Si la pasada es un `--resync`.
+    """
     if pair.llavero:
         return ("--force no se aplica al llavero: sus bases son tus contraseñas y su freno no "
                 "se salta. Sigue la pasada normal.")
     if not frenos.se_puede_forzar(pair):
         return (f"--force no hace nada aquí: el modo {pair.mode.name} no tiene freno de "
                 "borrados. Sigue la pasada normal.")
+    if not orden.pasada_forzada(pair, True, resync):
+        return "--force no se aplica: esta pasada es un --resync, que no pasa por el freno."
     como = "--force" if pair.is_bisync else "--max-delete -1"
     return (f"PASADA FORZADA ({como}): esta pasada no frena los borrados; la siguiente "
             "vuelve a llevar el freno.")
@@ -691,8 +704,6 @@ def avisar_forzada(pair: Pair) -> str:
 def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
     """Hace la pasada de una pareja (`run_pair()`) y deja en `medida` lo que solo se sabe aquí."""
     print(f"\n=== {pair.name} ({pair.mode.name}){ctx.tag} ===")
-    if ctx.force:
-        print(f"[{pair.name}] " + avisar_forzada(pair))
     reloj = historial.Reloj()
 
     # Dónde cae de verdad su carpeta, resuelta: lo que el texto del config no
@@ -743,13 +754,15 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
             crear_carpeta_remota(ctx, pair)
 
     ffile = bisync.filters_file_for(pair)
+    if ctx.force:
+        print(f"[{pair.name}] " + avisar_forzada(pair, need_resync))
     cmd, logfile = build_command(ctx, pair, ffile, need_resync)
     # Un resync que parte de una referencia vacía solo mueve algo si trae
     # ficheros: lo dirá la comparación de los listados (`parte.Medida.acabar()`),
     # no el simple hecho de ser un resync.
     medida.resync = bool(need_resync) and not vacia
     rc = execute(ctx, cmd, logfile)
-    if ctx.dry_run and ctx.force and rc == 0 and frenos.se_puede_forzar(pair):
+    if ctx.dry_run and rc == 0 and orden.pasada_forzada(pair, ctx.force, need_resync):
         decir_lo_que_borraria(pair, logfile)
     if rc != 0 and pair.llavero and not need_resync:
         rc, logfile = repetir_sin_freno(ctx, pair, ffile, logfile, rc)
@@ -782,7 +795,8 @@ def lo_que_borraria_forzando(ctx: RunContext, pair: Pair, ffile: Path | None) ->
 
     Es la comprobación de antes de repetir una pasada parada por «han cambiado todos»
     (`repetir_sin_freno()`): la misma orden que se repetiría, con `--dry-run` (que no apunta
-    nada en el listado). Cuenta lo que rclone dice que saltaría al simular
+    nada en el listado). En un simulacro (`ctx.dry_run`) ES la repetición: no hay otra
+    ejecución detrás. Cuenta lo que rclone dice que saltaría al simular
     (`frenos.borrarian()`: `Skipped delete` y `Skipped move into backup dir`), no lo que
     sobrescribiría, que el backup-dir guarda.
 
@@ -835,8 +849,15 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
     es de la pasada del llavero y de ninguna otra, y no pasa por `RunContext.force`: a una
     persona no se le deja forzar el llavero (`frenos.se_puede_forzar()`).
 
+    En un simulacro (`ctx.dry_run`) no hay repetición de verdad: si el freno es el de «han
+    cambiado todos», la simulación de `lo_que_borraria_forzando()` es la repetición (sin una
+    tercera ejecución de rclone) y solo se dice qué se haría en una pasada de verdad; el log de
+    la pasada parada es entonces el de la pasada y se guarda solo con `--keep-logs`. El de los
+    borrados sí repite la orden, también simulada, y lo dice con las mismas palabras.
+
     Returns:
-        `(código, log)`: los de la pasada repetida, o los mismos si no se repite.
+        `(código, log)`: los de la pasada repetida, o los mismos si no se repite. En un simulacro
+        que habría forzado sin borrar nada, `(0, log de la pasada parada)`.
     """
     try:
         texto = logfile.read_text(encoding="utf-8", errors="replace")
@@ -847,7 +868,9 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
     resync = False
     if copias is not None:
         print(f"[{pair.name}] Lo borrado son copias de conflicto ({', '.join(copias)}), y cada "
-              f"una queda en {model.VERSIONS_DIR}: se repite la pasada sin el freno de borrados.")
+              f"una queda en {model.VERSIONS_DIR}: "
+              + ("en una pasada de verdad se repetiría una vez sin el freno de borrados."
+                 if ctx.dry_run else "se repite la pasada sin el freno de borrados."))
         dispose_log(pair.name, logfile, 0, ctx.keep_logs)
         cambio = {"max-delete": llavero.FRENO_SIN_COPIAS}
     elif frenos.es_cambiados_bisync(texto):
@@ -861,6 +884,14 @@ def repetir_sin_freno(ctx: RunContext, pair: Pair, ffile: Path | None, logfile: 
             print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha parado, "
                   f"pero forzar la pasada {que}: no se fuerza, el freno manda.")
             return rc, logfile
+        if ctx.dry_run:
+            # La simulación de arriba es la repetición: no se vuelve a ejecutar rclone. Se
+            # devuelve el log de la pasada parada con un 0: quien llama lo tira, o lo guarda con
+            # `--keep-logs`, como el de cualquier pasada buena.
+            print(f"[{pair.name}] Han cambiado todos los ficheros de un lado y bisync se ha "
+                  f"parado. El llavero deja lo que pisa cada lado en {model.VERSIONS_DIR}: en una "
+                  "pasada de verdad se repetiría una vez con --force (no borraría nada).")
+            return 0, logfile
         # El log de la pasada parada se guarda aunque la repetida vaya bien: es lo que dice por
         # qué se forzó, y de la repetida no queda nada (su log se tira si sale bien).
         parada = dispose_log(pair.name, logfile, rc, True)

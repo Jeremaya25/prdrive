@@ -186,8 +186,13 @@ with sandbox():
 # ---- Una pasada entera -------------------------------------------------------------------
 
 
-def correr(raw, *, con_baseline=True, rc=0, texto_log="simulado\n", **opciones):
-    """Hace `run_pair()` con un rclone de mentira; devuelve `(rc, salida, órdenes, pareja)`."""
+def correr(raw, *, con_baseline=True, rc=0, texto_log="simulado\n", filtros_cambiados=False,
+           **opciones):
+    """Hace `run_pair()` con un rclone de mentira; devuelve `(rc, salida, órdenes, pareja)`.
+
+    Con `filtros_cambiados`, el `.md5` del baseline no es el de los filtros de ahora: la pareja
+    pide `--resync` por ellos.
+    """
     p = pareja(raw)
     p.local_abs.mkdir(parents=True, exist_ok=True)
     if con_baseline and p.is_bisync:
@@ -197,7 +202,8 @@ def correr(raw, *, con_baseline=True, rc=0, texto_log="simulado\n", **opciones):
         ffile = bisync.filters_file_for(p)
         if ffile:
             Path(str(ffile) + ".md5").write_text(
-                hashlib.md5(ffile.read_bytes()).hexdigest(), encoding="utf-8")
+                "0" * 32 if filtros_cambiados else hashlib.md5(ffile.read_bytes()).hexdigest(),
+                encoding="utf-8")
     ordenes = []
 
     def execute_simulado(ctx, cmd, logfile=None):
@@ -237,6 +243,66 @@ with sandbox():
     c("forzar un copy no cambia nada, y lo dice en vez de callarse",
       (rc, "--force" in ordenes[0], valores(ordenes[0], "--max-delete")), (0, False, []))
     c.contains("  no tiene freno", salida, "no tiene freno")
+
+# `--force` en una pasada que resulta ser un --resync: el aviso se da cuando ya se sabe qué pasada
+# es (tras el preflight), y una pasada que no pasa por el freno no se anuncia como forzada.
+with sandbox():
+    rc, salida, ordenes, p = correr(BISYNC, force=True)
+    c("una pasada forzada anuncia el salto del freno después de conocer el estado de la pareja",
+      0 <= salida.find("estado:") < salida.find("PASADA FORZADA"), True)
+    c("  y la orden lleva --force y no --resync", ("--force" in ordenes[0], "--resync" in ordenes[0]),
+      (True, False))
+    c("  sin decir que no se aplica", "--force no se aplica" in salida, False)
+
+with sandbox():
+    rc, salida, ordenes, p = correr(BISYNC, filtros_cambiados=True, force=True)
+    c("filtros cambiados y --resync sin aprobar: se salta, aunque se pida --force",
+      (rc, ordenes), (sync.SKIPPED, []))
+    c.contains("  y lo dice", salida, "Saltada: requiere --resync")
+    c("  y no anuncia una pasada forzada que no va a hacerse",
+      ("PASADA FORZADA" in salida, "--force no se aplica" in salida), (False, False))
+
+with sandbox():
+    rc, salida, ordenes, p = correr(BISYNC, filtros_cambiados=True, force=True, resync_approved=True)
+    c("filtros cambiados con --force y el --resync aprobado: corre como un --resync, sin --force",
+      (rc, "--resync" in ordenes[0], "--force" in ordenes[0]), (0, True, False))
+    c.contains("  y dice que --force no se aplica", salida,
+               "--force no se aplica: esta pasada es un --resync, que no pasa por el freno")
+    c("  y no dice PASADA FORZADA", "PASADA FORZADA" in salida, False)
+
+with sandbox():
+    rc, salida, ordenes, p = correr(BISYNC, con_baseline=False, force=True, resync_approved=True)
+    c("sin baseline y con el --resync aprobado, igual: --resync sin --force y sin anunciar el salto",
+      (rc, "--resync" in ordenes[0], "--force" in ordenes[0], "PASADA FORZADA" in salida,
+       "--force no se aplica" in salida), (0, True, False, False, True))
+
+with sandbox():
+    rc, salida, ordenes, p = correr(BISYNC, filtros_cambiados=True, force=True, resync_approved=True,
+                                    dry_run=True, texto_log=SIMULACION_BISYNC)
+    c("el simulacro de un --resync no es una simulación forzada: lleva --dry-run --resync",
+      (rc, "--dry-run" in ordenes[0], "--resync" in ordenes[0], "--force" in ordenes[0]),
+      (0, True, True, False))
+    c("  y no cuenta lo que borraría ni dice «Simulación forzada»",
+      ("Simulación forzada" in salida, "se borrarían" in salida), (False, False))
+
+with sandbox():
+    # Un aborto antes de la orden tampoco anuncia nada: con baseline y sin carpeta local no se corre.
+    p = pareja(BISYNC)
+    p.workdir.mkdir(parents=True, exist_ok=True)
+    for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+        (p.workdir / f"{bisync.expected_prefix(p)}{sufijo}").write_text("x", encoding="utf-8")
+    ffile = bisync.filters_file_for(p)
+    Path(str(ffile) + ".md5").write_text(hashlib.md5(ffile.read_bytes()).hexdigest(),
+                                         encoding="utf-8")
+    original, sync.execute = sync.execute, lambda *a, **k: 0
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = sync.run_pair(sync.RunContext(binary="RCLONE", env={}, force=True), p)
+    finally:
+        sync.execute = original
+    c("una pasada que aborta antes de la orden (sin carpeta local) no anuncia que sea forzada",
+      (rc, "PASADA FORZADA" in buf.getvalue()), (2, False))
 
 # La simulación forzada es la que enseña lo que borraría: sin eso, "OK" no dice nada.
 with sandbox():
@@ -377,6 +443,29 @@ c("  ni la de una pareja normal deja de llevarlo",
                                   logfile="l", forzar=True), True)
 c("  la línea de aviso dice que al llavero no se le fuerza",
   "llavero" in sync.avisar_forzada(llavero_pair), True)
+
+# La regla que comparten la orden, el aviso y la simulación forzada: pedir forzar, que la pareja
+# tenga un freno que se pueda saltar y que la pasada no sea un --resync.
+c("pasada_forzada: bisync y espejo, si se pide y no es un resync",
+  [orden.pasada_forzada(pareja(raw), True, False) for raw in (BISYNC, SUBIDA, BAJADA)],
+  [True, True, True])
+c("  sin pedirlo, no", [orden.pasada_forzada(pareja(raw), False, False)
+                        for raw in (BISYNC, SUBIDA)], [False, False])
+c("  un --resync no pasa por el freno: no es forzada aunque se pida",
+  [orden.pasada_forzada(pareja(raw), True, True) for raw in (BISYNC, SUBIDA)], [False, False])
+c("  un copy no tiene freno, y el llavero no se fuerza",
+  (orden.pasada_forzada(pareja(COPIA), True, False),
+   orden.pasada_forzada(llavero_pair, True, False)), (False, False))
+c("  y la orden de rclone la sigue: --force solo cuando la regla lo dice",
+  ["--force" in orden.orden_rclone(pareja(BISYNC), binario="R", filtros=None, config="c",
+                                   logfile="l", resync=resync, forzar=True) for resync in (False, True)],
+  [True, False])
+c("avisar_forzada: la del --resync dice que no se aplica y no anuncia nada forzado",
+  ("--force no se aplica: esta pasada es un --resync" in sync.avisar_forzada(pareja(BISYNC), True),
+   "PASADA FORZADA" in sync.avisar_forzada(pareja(BISYNC), True)), (True, False))
+c("  y sin resync, la de siempre (el espejo con su --max-delete -1)",
+  ("PASADA FORZADA (--force)" in sync.avisar_forzada(pareja(BISYNC)),
+   "PASADA FORZADA (--max-delete -1)" in sync.avisar_forzada(pareja(SUBIDA))), (True, True))
 
 with sandbox():
     model.CONFIG_FILE.write_text(
