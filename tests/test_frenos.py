@@ -10,6 +10,7 @@ frases escritas a mano: lo que rclone dice es justo lo que se reconoce.
 
 import contextlib
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -327,5 +328,89 @@ with sandbox():
       fallo_sin_freno("bajada"), (True, False))
     c("  y un log de bisync en una pareja que no es bisync",
       fallo_sin_freno("copia"), (True, False))
+
+# ---- Un log ya leído no se vuelve a leer mientras no cambie --------------------------------
+
+
+@contextlib.contextmanager
+def lecturas_de_logs():
+    """Da la lista de logs que `frenos.leer()` abre mientras dura el bloque."""
+    abiertos, original = [], frenos.leer
+
+    def contando(log, **kw):
+        abiertos.append(log)
+        return original(log, **kw)
+
+    frenos.leer = contando
+    try:
+        yield abiertos
+    finally:
+        frenos.leer = original
+
+
+with sandbox():
+    cfg, P = parejas()
+    log = fallar("notas", BISYNC_BORRADOS)
+    with lecturas_de_logs() as lecturas:
+        primero = de(revision.revisar(cfg), "notas")
+        c("el primer repaso lee el log de la pareja fallida, una vez", lecturas, [log])
+        segundo = de(revision.revisar(cfg), "notas")
+        c("un segundo repaso no vuelve a leerlo", lecturas, [log])
+        c("  y da el mismo hallazgo", segundo["freno"], primero["freno"])
+
+        # Cambia el tamaño: el log de otra pasada, con otro freno.
+        fallar("notas", BISYNC_CAMBIADOS)
+        nuevo = de(revision.revisar(cfg), "notas")["freno"]
+        c("si el log cambia de tamaño, se lee otra vez", lecturas, [log, log])
+        c.contains("  y el hallazgo es el del log nuevo", nuevo.detalle,
+                   "han cambiado todos los ficheros")
+
+        # Cambia solo el mtime: el mismo número de bytes, pero es otro log.
+        en_remoto = BISYNC_CAMBIADOS.replace('on Path1 "', 'on Path2 "')
+        tam = log.stat().st_size
+        log.write_text(en_remoto, encoding="utf-8")
+        ahora = log.stat().st_mtime_ns
+        os.utime(log, ns=(ahora, ahora + 5_000_000_000))
+        c("  (otro contenido del mismo tamaño)", log.stat().st_size, tam)
+        nuevo = de(revision.revisar(cfg), "notas")["freno"]
+        c("si solo cambia el mtime, se lee otra vez", lecturas, [log, log, log])
+        c.contains("  y el hallazgo es el del log nuevo", nuevo.detalle, "en el remoto")
+
+        # El veredicto depende del modo: el mismo log en una pareja `copy` no es un freno.
+        results.apuntar("copia", 1, log)
+        dos = revision.revisar(cfg)
+        c("el mismo log en otra pareja, de otro modo, se lee con su modo",
+          ("freno" in de(dos, "notas"), "freno" in de(dos, "copia"),
+           "fallo" in de(dos, "copia")), (True, False, True))
+        revision.revisar(cfg)
+        c("  y los dos veredictos se recuerdan: el siguiente repaso no lee nada",
+          lecturas, [log, log, log, log])
+
+        # Un log que no se puede leer no se recuerda.
+        antes = len(revision._VEREDICTOS)
+        c("un log que ya no está no es un freno",
+          revision._freno(results.Fallo("notas", "", 1, model.LOG_DIR / "no_esta.log"),
+                          P["notas"]), None)
+        c("  y no deja un veredicto recordado", len(revision._VEREDICTOS), antes)
+
+        # Lo que se recuerda tiene tope: el más antiguo es el que se olvida.
+        tope = revision._TOPE_VEREDICTOS
+        logs = []
+        for i in range(tope + 5):
+            logs.append(model.LOG_DIR / f"notas_tope_{i:03d}.log")
+            logs[-1].write_text(BISYNC_BORRADOS + f"# {i}\n", encoding="utf-8")
+            revision._freno_de(logs[-1], P["notas"])
+        c("los veredictos recordados no pasan del tope", len(revision._VEREDICTOS), tope)
+        lecturas.clear()
+        revision._freno_de(logs[-1], P["notas"])
+        c("  el último sigue recordado", lecturas, [])
+        revision._freno_de(logs[0], P["notas"])
+        c("  y el primero se olvidó", lecturas, [logs[0]])
+
+        revision.olvidar_frenos()
+        lecturas.clear()
+        revision.revisar(cfg)
+        c("olvidar_frenos() hace que el siguiente repaso lea otra vez los logs de las dos parejas",
+          lecturas, [log, log])
 
 sys.exit(c.report())

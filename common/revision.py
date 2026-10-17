@@ -18,6 +18,7 @@ confirmación antes de mover un baseline.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -277,6 +278,52 @@ def _frase_racha(racha: historial.Racha) -> str:
     return f"{desde}{_dia(racha.desde)} · {cuenta}."
 
 
+_VEREDICTOS: dict[tuple[Path, int, int, str], frenos.Freno | None] = {}
+"""Lo que `_freno_de()` ya leyó: el freno de un log (o `None`), por log, tamaño, mtime y modo.
+
+Solo vive en el proceso. Un log de `logs/` se escribe una vez, así que mientras no
+cambie su tamaño ni su mtime el veredicto es el mismo y no hace falta leerlo otra vez
+(hasta 4 MiB por pareja fallida, y `revisar()` corre en cada instantánea de la ventana
+y dos veces por acción de «Reparación», en el hilo de Tk).
+"""
+_TOPE_VEREDICTOS = 64
+"""Veredictos que se recuerdan a la vez: una ventana abierta días ve logs nuevos sin parar."""
+_CERROJO_VEREDICTOS = threading.Lock()
+"""Protege `_VEREDICTOS`: `revisar()` corre en un hilo de la ventana y en el de Tk."""
+_SIN_VEREDICTO = object()
+"""Lo que `_VEREDICTOS` no tiene, para distinguirlo de un veredicto `None` (no es un freno)."""
+
+
+def olvidar_frenos() -> None:
+    """Olvida los veredictos de `_freno_de()`, de modo que el siguiente repaso lea los logs."""
+    with _CERROJO_VEREDICTOS:
+        _VEREDICTOS.clear()
+
+
+def _freno_de(log: Path, pair: Pair) -> frenos.Freno | None:
+    """Devuelve el freno que paró la pasada de ese log, leyéndolo solo si ha cambiado.
+
+    Recuerda el veredicto por `(log, tamaño, mtime, modo de la pareja)`. El `stat()`
+    va antes de la lectura: si el log cambia entre las dos, queda recordado bajo la
+    marca vieja y el repaso siguiente lo vuelve a leer.
+
+    Raises:
+        OSError: Si no se puede leer el log; no se recuerda nada.
+    """
+    st = log.stat()
+    clave = (log, st.st_size, st.st_mtime_ns, pair.mode.name)
+    with _CERROJO_VEREDICTOS:
+        visto = _VEREDICTOS.get(clave, _SIN_VEREDICTO)
+    if visto is not _SIN_VEREDICTO:
+        return visto
+    freno = frenos.detectar_en(log, pair)
+    with _CERROJO_VEREDICTOS:
+        if clave not in _VEREDICTOS and len(_VEREDICTOS) >= _TOPE_VEREDICTOS:
+            del _VEREDICTOS[next(iter(_VEREDICTOS))]    # el más antiguo
+        _VEREDICTOS[clave] = freno
+    return freno
+
+
 def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
     """Devuelve el freno de borrados que paró esa pasada, o `None` si falló por otra cosa.
 
@@ -287,7 +334,7 @@ def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
     if fallo.log is None or pair is None:
         return None
     try:
-        return frenos.detectar_en(fallo.log, pair)
+        return _freno_de(fallo.log, pair)
     except OSError:
         return None
 
