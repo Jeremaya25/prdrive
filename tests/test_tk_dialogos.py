@@ -168,8 +168,15 @@ try:
     else:
         c("Escape cancela", r, False)
 
-    # Intro pulsa el botón que tiene el foco, no siempre el principal.
-    for tecla in ("<Return>", "<KP_Enter>"):
+    # Intro pulsa el botón que tiene el foco, no siempre el principal. Tk en Windows no tiene
+    # `KP_Enter` (`win/tkWinKey.c`: VK_RETURN es siempre `Return`): allí el Intro del teclado
+    # numérico llega como `<Return>`, y generar `<KP_Enter>` no llega a ningún sitio.
+    teclas = ["<Return>"]
+    if raiz.tk.call("tk", "windowingsystem") == "win32":
+        print("  (saltado) <KP_Enter>: en Windows Tk lo da como <Return>, ya comprobado")
+    else:
+        teclas.append("<KP_Enter>")
+    for tecla in teclas:
         r = con_tecla_en(tecla, "Aceptar", "Expulsar", "¿Seguro?")
         if r is not None:
             c(f"{tecla} con el foco en el principal acepta", r, True)

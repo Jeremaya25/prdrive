@@ -239,15 +239,18 @@ with sandbox():
     # Un nombre que un intérprete de órdenes interpreta no se pega: ni `$`, ni el acento grave,
     # ni `%` (que `cmd` expande aun entre comillas), ni `!`, ni una comilla que cierre las del
     # nombre. El parser los acepta (solo la ventana prohíbe `"`), y el nombre puede llegar de un
-    # TOML editado o del catálogo del remoto. Un solo log para todas: el nombre de la pareja
-    # no tiene por qué valer como nombre de fichero (`"` en Windows).
+    # TOML editado o del catálogo del remoto. Espejos de bajada y un solo log para todas: el
+    # nombre de la pareja no tiene por qué valer como nombre de fichero (`"` en Windows), y un
+    # bisync escribiría `filters/<pareja>.txt`.
     peligrosos = ["Fotos $HOME", "a$(id)", "x`id`", "50%PATH%", "hola!", 'a"b', 'x" & calc & "']
     seguros = ["Mis fotos", "notas-2", "Año_2026.v2", "a+b, c=d@e"]
-    cfg = mkcfg(None, pairs=[dict(BISYNC, name=n) for n in peligrosos + seguros])
+    cfg = mkcfg(None, pairs=[dict(BAJADA, name=n, local=f"sync-data/raro{i}",
+                                  remote_path=f"/R/raro{i}")
+                             for i, n in enumerate(peligrosos + seguros)])
     log = model.LOG_DIR / "nombres_raros.log"
-    log.write_text(BISYNC_BORRADOS, encoding="utf-8")
+    log.write_text(ESPEJO_DOWN, encoding="utf-8")
     for n in peligrosos + seguros:
-        results.apuntar(n, 1, log)
+        results.apuntar(n, 7, log)
     freno = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "freno"}
     informe = "\n".join(revision.informe(cfg))
     c("todas las parejas de nombre raro tienen su hallazgo de freno",
