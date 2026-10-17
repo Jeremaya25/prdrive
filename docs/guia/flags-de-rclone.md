@@ -423,7 +423,7 @@ prdrive pone estos flags en cada pasada o les da un valor de partida. Los marcad
 
 **Saltarse el freno de los borrados**
 
-> **Lo pone prdrive, no se puede cambiar** (es --force de sync.py: salta el freno de borrados en UNA pasada y no puede quedar fijo en el config. Para saltarlo ahora, «Forzar sincronización…» en «Reparación» o `sync.py PAREJA --force`)
+> **Lo pone prdrive, no se puede cambiar** (es --force de sync.py: salta el freno de borrados en UNA pasada y no puede quedar fijo. Quita `force` (o `--force` de `extra_flags`) de `.prdrive/sync_config.toml` del dispositivo o, si viene del catálogo, del `remote.toml` del remoto; ya quitado, para saltar el freno una vez está «Forzar sincronización…» en «Reparación» o `sync.py PAREJA --force`)
 
 - **Para qué sirve:** Para que bisync haga una pasada aunque vaya a borrar más de lo que permite --max-delete.
 - **Qué hace en la práctica:** Quita justo la protección que evita que una unidad vacía arrase el otro lado.

@@ -742,6 +742,25 @@ def vigilar_llavero() -> int:
     return 0
 
 
+def config_no_valido(error: model.ConfigError) -> str:
+    """Devuelve lo que se enseña de un config que no se puede leer, con su fichero.
+
+    Un config rechazado deja la ventana sin abrir (`ui.fatal`), y con ella
+    «Reparación» y «Ajustes»: se arregla a mano, y el del dispositivo
+    (`.prdrive/sync_config.toml`) está oculto.
+
+    Args:
+        error: Por qué `model.load_config()` no lo leyó.
+
+    Returns:
+        El texto del error y, si no la nombra ya, la ruta de `model.CONFIG_FILE`.
+    """
+    texto = str(error)
+    if str(model.CONFIG_FILE) in texto:
+        return texto
+    return f"{texto}\n\nFichero que hay que corregir, a mano: {model.CONFIG_FILE}"
+
+
 def abrir_llavero() -> int:
     """Hace `--llavero`: «Abrir llavero» sin la ventana de prdrive.
 
@@ -751,7 +770,7 @@ def abrir_llavero() -> int:
     try:
         config = model.load_config()
     except model.ConfigError as e:
-        return ui.fatal(f"El config no se puede leer:\n\n{e}")
+        return ui.fatal(f"El config no se puede leer:\n\n{config_no_valido(e)}")
     return ui.abrir_llavero(config)
 
 
@@ -1058,7 +1077,7 @@ def ui_flow() -> int:
         try:
             config = model.load_config()
         except model.ConfigError as e:
-            return ui.fatal(str(e))
+            return ui.fatal(config_no_valido(e))
 
         return _atender(config, startup_msg)
     finally:
@@ -1143,7 +1162,7 @@ def auto_start(rest: list[str]) -> int:
     try:
         config = model.load_config()
     except model.ConfigError as e:
-        return ui.fatal(str(e))
+        return ui.fatal(config_no_valido(e))
 
     # También lo lanzan un acceso directo o un cron: arrancar el servicio tras
     # una ventana abierta pondría dos cosas a sincronizar las mismas parejas.

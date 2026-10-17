@@ -471,6 +471,18 @@ for donde, trozos in (("[pair.flags]", {"pair": {"flags": {"force": True}}}),
     dicho = motivo(con(**trozos))
     c(f"  y a quien ya lo tenía ({donde}) le dice cómo forzar una pasada ahora",
       ("Reparación" in dicho, "sync.py PAREJA --force" in dicho), (True, True))
+# Con el config rechazado no se abre la ventana, así que «Reparación» no se alcanza: el mensaje
+# dice PRIMERO qué quitar y de qué fichero, y solo después, ya quitado, cómo se fuerza (#161).
+for donde, trozos in (("[defaults.flags]", {"defaults": {"flags": {"force": True}}}),
+                      ("[pair.flags]", {"pair": {"flags": {"force": True}}}),
+                      ("extra_flags", {"pair": {"extra_flags": ["--force"]}})):
+    dicho = motivo(con(**trozos))
+    c(f"  ({donde}) nombra el fichero del dispositivo y el del catálogo",
+      (".prdrive/sync_config.toml" in dicho, "remote.toml" in dicho), (True, True))
+    antes_de_reparacion = dicho.split("Reparación")[0]
+    c(f"  ({donde}) antes de «Reparación» dice qué quitar y de dónde",
+      ("Quita `force`" in antes_de_reparacion, "sync_config.toml" in antes_de_reparacion,
+       "ya quitado" in antes_de_reparacion), (True, True, True))
 
 # Decisión: `max-delete = -1` SIGUE valiendo. En un espejo es el «sin tope» de rclone y en bisync
 # vuelve al 50 % de fábrica (`applyContext()` solo atiende un valor >= 0): una elección

@@ -949,8 +949,9 @@ def leer_config(raiz: Path) -> dict:
         ConfigRechazada: Si `model.comprobar_seguridad()` lo rechaza.
         ValueError: Si no se puede leer o no es TOML válido.
     """
+    fichero = app(raiz) / "sync_config.toml"
     try:
-        crudo = tomllib.loads((app(raiz) / "sync_config.toml").read_text(encoding="utf-8"))
+        crudo = tomllib.loads(fichero.read_text(encoding="utf-8"))
     except OSError as e:
         raise ValueError(f"no se puede leer sync_config.toml ({e})") from e
     except tomllib.TOMLDecodeError as e:
@@ -959,7 +960,8 @@ def leer_config(raiz: Path) -> dict:
         model.comprobar_seguridad(crudo, model.es_equipo(app(raiz)),
                                   carpeta_programa=APP_SUBDIR)
     except model.ConfigError as e:
-        raise ConfigRechazada(str(e)) from e
+        # El fichero del dispositivo está oculto (`.prdrive/`): el aviso lo nombra.
+        raise ConfigRechazada(f"{e} (en {fichero})") from e
     return crudo
 
 

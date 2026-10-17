@@ -615,9 +615,13 @@ FLAGS_RESERVADOS: Mapping[str, str] = {
     "dry-run": "es --dry-run de sync.py, para que valga en todas las parejas",
     "workdir": "lo pone sync.py: state/<pareja>/, y cambiarlo mueve el baseline",
     "resync": "es --resync de sync.py, que además pregunta antes",
+    # Con el config rechazado no se abre la ventana, ni «Reparación» con ella: el
+    # motivo dice primero qué quitar y de dónde, y solo después cómo se fuerza.
     "force": "es --force de sync.py: salta el freno de borrados en UNA pasada y no puede quedar "
-             "fijo en el config. Para saltarlo ahora, «Forzar sincronización…» en «Reparación» "
-             "o `sync.py PAREJA --force`",
+             "fijo. Quita `force` (o `--force` de `extra_flags`) de `.prdrive/sync_config.toml` "
+             "del dispositivo o, si viene del catálogo, del `remote.toml` del remoto; ya quitado, "
+             "para saltar el freno una vez está «Forzar sincronización…» en «Reparación» o "
+             "`sync.py PAREJA --force`",
     "filters-file": "sale de los patrones incluir/excluir de la pareja",
     "filter": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
     "filter-from": "usa los patrones incluir/excluir; mezclarlos rompe el filtrado",
