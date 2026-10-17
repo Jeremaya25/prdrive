@@ -36,7 +36,7 @@ Opening the window stops the service first (`stop_previous_daemon()`), so how fa
 
 ## A lock record names its boot
 
-`ui.lock.json`, `daemon.lock.json` (runsync's service and the agent), `llavero.lock.json` and the agent's `agente.lock.json` carry `"arranque": store.arranque_del_sistema()` next to `pid`/`host`. The file travels with the device, so after a reboot it can hold a pid that the new boot handed to an unrelated process; without the boot time that pid reads as alive and a window that no longer exists blocks the new one.
+`ui.lock.json`, `daemon.lock.json` (runsync's service and the agent), `llavero.lock.json` and the agent's `agente.lock.json` carry `"arranque": store.arranque_del_sistema()` next to `pid`/`host` (the watcher's `llavero.lock.json` is `{pid, host, started, arranque, creado}`). The file travels with the device, so after a reboot it can hold a pid that the new boot handed to an unrelated process; without the boot time that pid reads as alive and a window that no longer exists blocks the new one.
 
 Liveness is `store.vivo_en_este_arranque(info, host)`: same host, an int pid in `1..2**31-1` (a larger one is unreadable, not a process) that is alive, and, when the record has a numeric `arranque` and this system's boot time is known, a difference within `HOLGURA_ARRANQUE` (600 s). A record with no `arranque` (written by an older version) or one whose boot cannot be compared falls back to the pid alone. These readers go through it, each keeping its own `HOST` source:
 
@@ -55,7 +55,7 @@ Liveness is `store.vivo_en_este_arranque(info, host)`: same host, an int pid in 
 - It tolerates `HOLGURA_ARRANQUE` = 600 s of difference: the Windows value drifts with every wall-clock correction, and some records live for days.
 - Owners refresh `arranque` whenever they rewrite their own record (`runsync.daemon_cycle()` for the service lock, `Agente._apuntar_en_lock()` for a root's `daemon.lock.json`): a live process never spans a reboot, so recomputing cancels the drift. Records written once (`ui.lock.json`, `llavero.lock.json`, the agent's `agente.lock.json`) keep the value of their start.
 
-Follow-up idea: record the pid together with the process creation time (`GetProcessTimes` / the `starttime` of `/proc/<pid>/stat`), which tells a recycled pid on any shutdown path.
+**The creation time, for one record.** `llavero.lock.json` also carries `"creado": store.creado(pid)` (`GetProcessTimes` on Windows; field 22 of `/proc/<pid>/stat` over `SC_CLK_TCK` plus `btime` on Linux), written once by `runsync.vigilar_llavero()`: `llavero.es_el_vigilante(pid, info)` asks for it to match (±1 s) before `terminar_vigilante()` ends the pid with `taskkill /F /T`, since a recycled pid in the same boot passes `vivo_en_este_arranque()` (`llavero.md`, step 3 of «Expulsar»). A record without it is judged by `started` instead. The other records (`ui.lock.json`, `daemon.lock.json`, `agente.lock.json`) do not carry it, and `vivo_en_este_arranque()` ignores it: recording the pid together with its creation time there too, which would tell a recycled pid on any shutdown path, is still open.
 
 ## One window at a time; the watcher waits for it
 

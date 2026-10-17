@@ -650,9 +650,43 @@ def apuntar_diario(texto: str) -> None:
 
 INTERPRETES = ("python.exe", "pythonw.exe")
 """Los ejecutables que pueden ser el vigilante en Windows, donde no se ve su línea de órdenes."""
+HOLGURA_CREADO = 1.0  # segundos
+"""Lo que pueden diferir la hora de creación del registro y la que se lee ahora del mismo proceso."""
+HOLGURA_STARTED = 2.0  # segundos
+"""Lo que cabe entre la hora de creación y el `started` de un registro sin `creado`.
+
+`started` es un sello de segundos enteros (`store.stamp()`) que el vigilante apunta
+ya arrancado: su proceso se creó antes, o a lo sumo en el segundo que el sello recorta.
+"""
 
 
-def es_el_vigilante(pid: int) -> bool:
+def _creado_como_el_registro(pid: int, info: dict) -> bool | None:
+    """Dice si la hora de creación de ese proceso es la del vigilante que apuntó el registro.
+
+    Un pid reutilizado en el mismo arranque pasa por vivo (`vigilante_vivo()`)
+    aunque sea otro proceso, y este es el único dato que lo delata. El registro
+    de hoy trae `creado` (`store.creado()` del vigilante al arrancar) y debe
+    coincidir con la de ahora (`HOLGURA_CREADO`). El de un vigilante anterior no
+    lo trae: vale que el proceso sea anterior a `started` (`HOLGURA_STARTED`),
+    porque uno que tomó el pid después se creó después.
+
+    Returns:
+        `None` si no se puede decidir: no se lee la hora del proceso, o el
+        registro no trae ni `creado` ni un `started` que se entienda.
+    """
+    ahora = store.creado(pid)
+    if ahora is None:
+        return None
+    apuntado = info.get("creado")
+    if isinstance(apuntado, (int, float)) and not isinstance(apuntado, bool):
+        return abs(ahora - apuntado) <= HOLGURA_CREADO
+    inicio = store.desde_sello(info.get("started"))
+    if inicio is None:
+        return None
+    return ahora <= inicio + HOLGURA_STARTED
+
+
+def es_el_vigilante(pid: int, info: dict) -> bool:
     """Indica si ese pid es de verdad el vigilante del llavero y no un número reutilizado.
 
     El registro (`registro_vigilante()`) de uno que murió sin limpiarlo
@@ -664,14 +698,33 @@ def es_el_vigilante(pid: int) -> bool:
     ejecutable ha de ser un intérprete de Python (`INTERPRETES`) que corra desde
     el volumen: el `pythonw.exe` de la unidad, que es lo que la retiene
     (`store.procesos_desde()`), y no un rclone ni otro programa de ella.
+
+    Y su hora de creación (`store.creado()`) tiene que ser la del registro
+    (`_creado_como_el_registro()`): es lo que distingue al vigilante de otra
+    Python de la unidad (el servicio, una pasada, otra consola) que tomó su pid.
+    Si no se puede comparar (la hora no se lee, o el registro no dice nada con
+    que compararla), vale lo que ya valía: donde se ve la línea de órdenes
+    (Linux) basta con que lleve `VIGILAR`; en Windows, donde el ejecutable no
+    identifica a nadie, no se termina.
+
+    Args:
+        pid: El pid del registro.
+        info: El registro del vigilante (`pid`, `started` y, si lo trae, `creado`).
     """
     if pid in (os.getpid(), os.getppid()):
         return False
     orden = store.orden_de(pid)
     if orden:
-        return VIGILAR in orden
-    exe = store.procesos_desde(model.DEVICE_ROOT).get(pid)
-    return exe is not None and Path(exe).name.lower() in INTERPRETES
+        if VIGILAR not in orden:
+            return False
+    else:
+        exe = store.procesos_desde(model.DEVICE_ROOT).get(pid)
+        if exe is None or Path(exe).name.lower() not in INTERPRETES:
+            return False
+    coincide = _creado_como_el_registro(pid, info)
+    if coincide is None:
+        return bool(orden)
+    return coincide
 
 
 def terminar_vigilante() -> bool:
@@ -694,7 +747,7 @@ def terminar_vigilante() -> bool:
     if not isinstance(pid, int) or not vivo_aqui(info):
         return False
     terminado = False
-    if not es_el_vigilante(pid):
+    if not es_el_vigilante(pid, info):
         dicho = (f"[llavero] el vigilante (pid {pid}) no se iba, y no se ha terminado: no se "
                  "ha podido comprobar que ese pid sea el suyo")
     else:

@@ -216,6 +216,8 @@ try:
         arranque = store.arranque_del_sistema()     # baila unos ms entre llamadas
         c("mientras corre, su registro apunta en qué arranque del sistema está",
           abs((registros[0].get("arranque") or 0) - (arranque or 0)) < 5, True)
+        c("  y cuándo se creó su proceso, con lo que «Expulsar» sabe si un pid reutilizado es el suyo (#158)",
+          abs((registros[0].get("creado") or 0) - (store.creado(os.getpid()) or 1)) < 1, True)
 
         # Al cerrar KeePassXC con algo sin subir, lo sube antes de irse.
         pasadas.clear()

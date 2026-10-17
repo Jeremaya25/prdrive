@@ -700,7 +700,7 @@ def vigilar_llavero() -> int:
         return 0
     registro = llavero.registro_vigilante()
     datos = {"pid": os.getpid(), "host": HOST, "started": store.stamp(),
-             "arranque": store.arranque_del_sistema()}
+             "arranque": store.arranque_del_sistema(), "creado": store.creado(os.getpid())}
     tomado, otro = store.tomar_registro(registro, datos, _viva_aqui)
     if tomado is False:
         return 0                        # ya hay un vigilante
