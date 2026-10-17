@@ -321,11 +321,13 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
         if progreso:
             progreso(msg)
 
-    if al_dia(app_dir, clave):
+    # Es `al_dia()`, pero resumiendo los ejecutables una sola vez (el AppImage son 47 MB).
+    sello = _sello_al_dia(app_dir, clave)
+    malos = ficheros_que_no_cuadran(app_dir, clave) if sello else []
+    if sello and _fijados(clave) and not malos:
         components.keepassxc_olvidar_alterado(app_dir, clave)
         decir(f"KeePassXC {pins.KEEPASSXC_VERSION} ya está en la unidad.")
         return []
-    malos = ficheros_que_no_cuadran(app_dir, clave) if _sello_al_dia(app_dir, clave) else []
     if malos:
         decir(f"KeePassXC {pins.KEEPASSXC_VERSION}: no cuadra con el oficial "
               f"{', '.join(malos)}; se vuelve a poner el paquete.")

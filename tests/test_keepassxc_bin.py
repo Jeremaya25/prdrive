@@ -188,6 +188,41 @@ fichero.write_bytes(b"MZ otra cli")
 visto: list[str] = []
 keepassxc_bin.instalar(app, progreso=visto.append)
 c.contains("  y dice qué fichero no cuadraba", " ".join(visto), "keepassxc-cli.exe")
+
+# cada lectura de un ejecutable es un trozo del pendrive (11 MB en Windows, 47 en Linux): los que
+# mira `instalar()` para decidir se resumen una vez, no dos (`al_dia()` y luego otra vez para decir
+# cuáles no cuadran)
+resumen_de_verdad = keepassxc_bin._resumen
+
+
+def resumiendo(donde, apuntar):
+    """Devuelve un `_resumen` que apunta qué ficheros de `donde` se resumen, y los resume."""
+    def resumen(ruta):
+        """Resume como siempre y apunta el nombre si el fichero está en `donde`."""
+        if ruta.is_relative_to(donde):
+            apuntar.append(ruta.name)
+        return resumen_de_verdad(ruta)
+    return resumen
+
+
+resumidos: list[str] = []
+fichero.write_bytes(b"MZ otra cli")
+keepassxc_bin._resumen = resumiendo(carpeta, resumidos)
+try:
+    hecho = keepassxc_bin.instalar(app)
+finally:
+    keepassxc_bin._resumen = resumen_de_verdad
+c("con un ejecutable que no cuadra, cada fijado se resume una sola vez (eran dos)",
+  sorted(resumidos), sorted(EJECUTABLES))
+c("  y lo repone", (len(hecho), fichero.read_bytes()), (1, BUENO["keepassxc-cli.exe"]))
+resumidos.clear()
+keepassxc_bin._resumen = resumiendo(carpeta, resumidos)
+try:
+    hecho = keepassxc_bin.instalar(app)
+finally:
+    keepassxc_bin._resumen = resumen_de_verdad
+c("  y con todo en su sitio, también una vez cada uno, y no hace nada",
+  (sorted(resumidos), hecho), (sorted(EJECUTABLES), []))
 c("la lista de los que no cuadran sale vacía cuando todo cuadra",
   keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"), [])
 fichero.write_bytes(b"MZ otra cli")
@@ -294,6 +329,15 @@ c("  ponerlo lo repone y olvida lo apuntado",
   (len(keepassxc_bin.instalar(app, "linux-x64")),
    (linux / components.KEEPASSXC_APPIMAGE).read_bytes(),
    components.keepassxc_alterado(app, "linux-x64")), (1, APPIMAGE, {}))
+(linux / components.KEEPASSXC_APPIMAGE).write_bytes(b"\x7fELF otro AppImage")
+resumidos.clear()
+keepassxc_bin._resumen = resumiendo(linux, resumidos)
+try:
+    keepassxc_bin.instalar(app, "linux-x64")
+finally:
+    keepassxc_bin._resumen = resumen_de_verdad
+c("  el AppImage de 47 MB que no cuadra se lee una vez de la unidad, no dos",
+  resumidos, [components.KEEPASSXC_APPIMAGE])
 (linux / components.KEEPASSXC_STAMP).write_text(
     components.keepassxc_stamp_text("2.7.10", "viejo.AppImage", "00", {}), encoding="utf-8")
 keepassxc_bin._resumen = (lambda r: "mentira" if r.name == components.KEEPASSXC_APPIMAGE
