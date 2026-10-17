@@ -131,9 +131,10 @@ def preguntar(parent, titulo: str, texto: str, aceptar: str = "Aceptar",
 
     Es lo que ven los cuadros que salen con la ventana principal abierta: el
     `askokcancel` del sistema salía claro sobre una ventana oscura. Se hace con
-    `modal()` y `mostrar()`, como el resto. Intro acepta y Escape cancela, como
-    en el del sistema; cerrar con la X, también cancela. Es de módulo para que
-    los tests lo sustituyan.
+    `modal()` y `mostrar()`, como el resto. Intro pulsa el botón que tiene el
+    foco, que al abrir es el principal, y Escape cancela, como en el del
+    sistema; cerrar con la X, también cancela. Es de módulo para que los tests
+    lo sustituyan.
 
     Args:
         parent: La ventana de la que cuelga; puede ser la raíz oculta de
@@ -166,7 +167,16 @@ def preguntar(parent, titulo: str, texto: str, aceptar: str = "Aceptar",
                                                              padx=(0, theme.E2))
     boton = ttk.Button(pie, text=aceptar, style="Primary.TButton", command=si)
     boton.grid(row=0, column=1)
-    dlg.bind("<Return>", si)
+
+    def intro(evento):
+        """Pulsa el botón con el foco; si el foco está en otro sitio, acepta."""
+        if evento.widget.winfo_class() in ("TButton", "Button"):
+            evento.widget.invoke()
+        else:
+            si()
+
+    dlg.bind("<Return>", intro)
+    dlg.bind("<KP_Enter>", intro)
     dlg.bind("<Escape>", lambda _e: dlg.destroy())
     boton.focus_set()
     mostrar(dlg, parent)

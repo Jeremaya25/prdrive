@@ -8,6 +8,9 @@ sobre la ventana oscura. Se montan de verdad (`modal()`, `cuerpo_visible()`) y
   estilos de prdrive, y el fondo del papel.
 - `preguntar()` devuelve `True` con el botón principal y con Intro, y `False`
   con «Cancelar», con Escape y cerrando la ventana.
+- Intro (y el Intro del teclado numérico) pulsa el botón que tiene el foco: con
+  el foco en «Cancelar» o en «No» (a lo que se llega con Tab) cancela, y con el
+  foco en el principal acepta.
 - `avisar()` dice el texto en un aviso del tono pedido y se cierra con «Aceptar».
 - Cuelga de su padre salvo que el padre no se enseñe (la raíz oculta).
 - `preguntar_resync()` y las dos preguntas del llavero pasan por ellos.
@@ -90,19 +93,42 @@ def conducir(accion):
     uitk.mostrar = mostrar
 
 
-def con_teclado(tecla):
-    """Devuelve una acción que manda esa tecla al diálogo, ya enseñado y con el foco."""
+def con_teclado(tecla, foco=None):
+    """Devuelve una acción que manda esa tecla al diálogo, ya enseñado y con el foco.
+
+    Con `foco`, antes de mandarla se lleva el foco al botón con ese texto (a lo
+    que llega Tab); sin él, queda donde lo dejó el diálogo al abrirse.
+    """
     def accion(dlg):
         dlg.deiconify()
         dlg.update()
         dlg.focus_force()
         dlg.update()
+        if foco is not None and str(dlg.focus_get()).startswith(str(dlg)):
+            destino = boton(dlg, foco)
+            destino.focus_set()
+            dlg.update()
+            if dlg.focus_get() is not destino:
+                vistos["sin_foco"] = True
+                return
         if str(dlg.focus_get()).startswith(str(dlg)):
             dlg.event_generate(tecla)
             dlg.update()
         else:
             vistos["sin_foco"] = True
     return accion
+
+
+def con_tecla_en(tecla, foco, *pregunta):
+    """Pregunta con `preguntar()` mandando la tecla con el foco en `foco`; `None` si no hay foco."""
+    vistos.pop("sin_foco", None)
+    conducir(con_teclado(tecla, foco))
+    r = uitk.preguntar(raiz, *pregunta)
+    if vistos.pop("sin_foco", False):
+        print(f"  (saltado) {tecla} con el foco en «{foco}»: "
+              "este escritorio no da el foco a una ventana nueva")
+        return None
+    return r
 
 
 try:
@@ -141,6 +167,21 @@ try:
         print("  (saltado) Escape: este escritorio no da el foco a una ventana nueva")
     else:
         c("Escape cancela", r, False)
+
+    # Intro pulsa el botón que tiene el foco, no siempre el principal.
+    for tecla in ("<Return>", "<KP_Enter>"):
+        r = con_tecla_en(tecla, "Aceptar", "Expulsar", "¿Seguro?")
+        if r is not None:
+            c(f"{tecla} con el foco en el principal acepta", r, True)
+        r = con_tecla_en(tecla, "Cancelar", "Expulsar", "¿Seguro?")
+        if r is not None:
+            c(f"{tecla} con el foco en «Cancelar» cancela", r, False)
+        r = con_tecla_en(tecla, "Sí", "Resync", "¿Ahora?", "Sí", "No")
+        if r is not None:
+            c(f"{tecla} con el foco en «Sí» (rótulos del resync) acepta", r, True)
+        r = con_tecla_en(tecla, "No", "Resync", "¿Ahora?", "Sí", "No")
+        if r is not None:
+            c(f"{tecla} con el foco en «No» (rótulos del resync) cancela", r, False)
 
     # --- avisar()
     conducir(lambda dlg: boton(dlg, "Aceptar").invoke())
