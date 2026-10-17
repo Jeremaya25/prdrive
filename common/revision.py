@@ -320,12 +320,32 @@ def _frase_freno(pair: Pair, freno: frenos.Freno) -> tuple[str, str]:
             f"{frenos.hacia(frenos.otro_lado(freno.lados[0]))}.")
 
 
-def _como_argumento(nombre: str) -> str:
-    """Devuelve el nombre de una pareja tal como se escribe en una línea de órdenes.
+_NOMBRE_PEGABLE = re.compile(r"[\w .+,=@-]+")
+"""Los nombres de pareja que se pueden escribir en una orden para pegar.
 
-    Con comillas dobles si lleva algo más que letras, cifras, `_`, `.` o `-`
-    («Mis fotos»): valen en `cmd`, en PowerShell y en un intérprete POSIX.
+Letras, cifras, `_`, espacio y `. + , = @ -`: nada de eso lo interpreta `cmd`, PowerShell
+ni un intérprete POSIX entre comillas dobles. Un `-` al principio ya lo rechaza
+`model.problema_nombre()`.
+"""
+
+
+def _como_argumento(nombre: str) -> str | None:
+    """Devuelve el nombre de una pareja tal como se escribe en una orden para pegar.
+
+    Solo cuando el nombre cabe en `_NOMBRE_PEGABLE`: sin comillas si lleva únicamente
+    letras, cifras, `_`, `.` o `-`, y entre comillas dobles si lleva algo más («Mis
+    fotos»). Lo demás no se intenta escapar, porque no hay un escapado que valga en todos
+    los intérpretes: `$` y el acento grave se expanden en bash y en PowerShell, `%` se
+    expande en `cmd` aun entre comillas, `!` dispara el historial de bash y una comilla
+    doble cierra las del nombre y deja el resto como otra orden. Y en Windows no se sabe
+    si quien pega es `cmd` o PowerShell.
+
+    Returns:
+        El nombre listo para la orden, o `None` si no cabe: quien llama no da entonces una
+        orden literal para pegar.
     """
+    if not _NOMBRE_PEGABLE.fullmatch(nombre):
+        return None
     return nombre if re.fullmatch(r"[\w.-]+", nombre) else f'"{nombre}"'
 
 
@@ -357,8 +377,14 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
     detalle = f"{que} {riesgo}"
     if racha is not None:
         detalle += f" {_frase_racha(racha)}"
-    detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, se "
-                f"puede forzar UNA pasada: `python sync.py {_como_argumento(pair.name)} --force`.")
+    nombre = _como_argumento(pair.name)
+    if nombre is None:
+        forzar = (f"{frenos.COMO_FORZAR}, escribiendo tú el nombre: lleva caracteres que un "
+                  "intérprete de órdenes interpretaría, y por eso no se da la orden para pegar.")
+    else:
+        forzar = f"se puede forzar UNA pasada: `python sync.py {nombre} --force`."
+    detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, "
+                f"{forzar}")
     return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
                     pair.name, AVISO, (log, freno))
 

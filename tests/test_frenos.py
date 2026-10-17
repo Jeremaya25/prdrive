@@ -235,6 +235,38 @@ with sandbox():
     c.contains("  y uno sin ellos, tal cual", suyos["notas-2"], "`python sync.py notas-2 --force`")
 
 with sandbox():
+    # Un nombre que un intérprete de órdenes interpreta no se pega: ni `$`, ni el acento grave,
+    # ni `%` (que `cmd` expande aun entre comillas), ni `!`, ni una comilla que cierre las del
+    # nombre. El parser los acepta (solo la ventana prohíbe `"`), y el nombre puede llegar de un
+    # TOML editado o del catálogo del remoto. Un solo log para todas: el nombre de la pareja
+    # no tiene por qué valer como nombre de fichero (`"` en Windows).
+    peligrosos = ["Fotos $HOME", "a$(id)", "x`id`", "50%PATH%", "hola!", 'a"b', 'x" & calc & "']
+    seguros = ["Mis fotos", "notas-2", "Año_2026.v2", "a+b, c=d@e"]
+    cfg = mkcfg(None, pairs=[dict(BISYNC, name=n) for n in peligrosos + seguros])
+    log = model.LOG_DIR / "nombres_raros.log"
+    log.write_text(BISYNC_BORRADOS, encoding="utf-8")
+    for n in peligrosos + seguros:
+        results.apuntar(n, 1, log)
+    freno = {h.pareja: h for h in revision.revisar(cfg) if h.clave == "freno"}
+    informe = "\n".join(revision.informe(cfg))
+    c("todas las parejas de nombre raro tienen su hallazgo de freno",
+      sorted(freno), sorted(peligrosos + seguros))
+    for n in peligrosos:
+        d = freno[n].detalle
+        c(f"{n!r}: no hay orden literal, ni con su nombre ni entre comillas",
+          (d.count("python sync.py "), "python sync.py <pareja> --force" in d,
+           f"sync.py {n}" in d, f'sync.py "{n}"' in d), (1, True, False, False))
+        c.contains("  y se puede forzar desde «Reparación»", d, "desde «Reparación»")
+        c("  --doctor tampoco la da",
+          (f"sync.py {n} --force" in informe, f'sync.py "{n}" --force' in informe), (False, False))
+    for n, orden in (("Mis fotos", '`python sync.py "Mis fotos" --force`'),
+                     ("notas-2", "`python sync.py notas-2 --force`"),
+                     ("Año_2026.v2", "`python sync.py Año_2026.v2 --force`"),
+                     ("a+b, c=d@e", '`python sync.py "a+b, c=d@e" --force`')):
+        c.contains(f"{n!r}: conserva la orden literal", freno[n].detalle, orden)
+        c("  y no remite a «<pareja>»", "<pareja>" in freno[n].detalle, False)
+
+with sandbox():
     cfg, P = parejas()
     fallar("notas", BISYNC_BORRADOS.replace('on Path1 "', 'on Path2 "'))
     c.contains("un borrado en el remoto se dice del remoto y se cuida el dispositivo",
