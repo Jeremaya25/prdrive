@@ -327,6 +327,39 @@ with sandbox():
     c("INVARIANTE: baseline sin carpeta local aborta con 2 aunque se fuerce",
       (rc, ordenes), (2, []))
 
+
+def pasada_sin_carpeta(raw, **opciones):
+    """Hace `run_pair()` sin crear la carpeta local; devuelve `(rc, órdenes, existe_la_carpeta)`."""
+    p = pareja(raw)
+    ordenes = []
+    original, sync.execute = sync.execute, lambda *a, **k: ordenes.append(a) or 0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = sync.run_pair(sync.RunContext(binary="RCLONE", env={}, **opciones), p)
+    finally:
+        sync.execute = original
+    return rc, ordenes, p.local_abs.exists()
+
+
+with sandbox():
+    # INVARIANTE (#151): la carpeta local de un espejo de subida es su ORIGEN. Creada vacía, el
+    # `--max-delete -1` de una pasada forzada (o el 50 de la normal) vaciaría el remoto; sin
+    # ella, rclone se niega. `sync.py NOMBRE --force` pasa por el mismo `_pasar_pareja()`.
+    c("INVARIANTE: espejo de subida sin carpeta local aborta con 2, no crea la carpeta y no corre",
+      pasada_sin_carpeta(SUBIDA, force=True), (2, [], False))
+    c("  y tampoco en una simulación forzada",
+      pasada_sin_carpeta(SUBIDA, force=True, dry_run=True), (2, [], False))
+    c("  ni sin forzar, que es de donde viene el riesgo",
+      pasada_sin_carpeta(SUBIDA), (2, [], False))
+    c("  y el aborto queda apuntado, forzado o no",
+      [(f.pareja, f.codigo) for f in results.fallos(model.parse_config(
+          {"defaults": DEF, "pair": [SUBIDA]}))], [("espejo", 2)])
+    rc, ordenes, existe = pasada_sin_carpeta(BAJADA, force=True)
+    c("una bajada forzada sigue creando su carpeta: es el destino",
+      (rc, len(ordenes), existe), (0, 1, True))
+    rc, ordenes, existe = pasada_sin_carpeta(COPIA, force=True)
+    c("  y un copy, igual", (rc, len(ordenes), existe), (0, 1, True))
+
 # ---- El llavero no se fuerza: sus bases son contraseñas ---------------------------------
 
 CON_LLAVERO = {"defaults": DEF, "pair": [BISYNC],

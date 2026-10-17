@@ -100,8 +100,11 @@ editaron.
 **Una ruta local que no existe es una alarma, no un descuido.** Si hay referencia
 pero la carpeta local no está, se aborta con código 2 en vez de crearla: un lado
 local vacío se leería como «se ha borrado todo» y se propagaría, con
-`--max-delete` como único freno. Solo se crea la carpeta de las parejas que aún no
-tienen referencia.
+`--max-delete` como único freno. Lo mismo en un espejo de subida (`up-mirror`),
+donde la carpeta local es el origen: creada vacía, el espejo vaciaría el remoto, así
+que tampoco se crea y la pasada falla con el código 2. Solo se crea la carpeta de
+las parejas que aún no tienen referencia y de las que bajan o copian (`down`,
+`down-mirror`, `up`).
 
 **El resync se pregunta una vez, antes de empezar.** Y si no hay terminal (cron,
 el servicio, el vigilante) la respuesta por defecto es *no*: esas parejas se

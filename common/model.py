@@ -1013,6 +1013,18 @@ class Mode:
         """
         return self.source == "local"
 
+    @property
+    def borra_en_remoto(self) -> bool:
+        """Indica si la pasada borra en el remoto lo que falta en la carpeta local.
+
+        Es el espejo de subida: `rclone sync` hace del remoto una copia de la
+        carpeta local, así que si esa carpeta está vacía le quita al remoto todo
+        lo que tiene. Por eso la carpeta local de este modo nunca se crea vacía
+        (`sync._pasar_pareja()`, `revision._local()`): rclone, ante un origen que
+        no existe, se niega con «directory not found» y no borra nada.
+        """
+        return self.verb == "sync" and self.origen_local
+
 
 MODES: Mapping[str, Mode] = {m.name: m for m in (
     Mode("bisync", "bisync", "local", "remote", {

@@ -21,10 +21,14 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 
 Nada se toca sin confirmarlo antes, con la misma pantalla de consecuencias que
 gobierna los demás borrados. Y si falta la carpeta local de una pareja que ya
-tiene baseline, **no se ofrece crearla**: un lado local vacío se lee como «se ha
-borrado todo» y eso se propagaría al remoto. Lo que hay que arreglar está fuera
-del programa —el volumen no está montado donde se cree, o la carpeta se movió—,
-así que la pantalla lo dice y se calla.
+tiene baseline, o la de un espejo de subida (`up-mirror`), **no se ofrece
+crearla**: un lado local vacío se lee como «se ha borrado todo» y eso se
+propagaría al remoto (en un espejo de subida, lo vaciaría). La pasada tampoco la
+crea: se para con el código 2 y aquí sale como **grave**. Lo que hay que arreglar
+está fuera del programa —el volumen no está montado donde se cree, o la carpeta
+se movió—, así que la pantalla lo dice y se calla. Un espejo de subida nuevo cuya
+carpeta aún no existe falla igual: no hay nada que subir, y crearla vacía es justo
+lo que borraría el remoto; créala tú cuando tengas qué subir.
 
 ## Rehacer la referencia cuando tú quieras
 
@@ -75,8 +79,9 @@ pasada se paró para no copiar ese borrado al remoto.»* Y trae tres botones:
 
 Forzar vale **para esa pasada y nada más**: la siguiente vuelve a llevar el freno. No
 lo hace nunca el servicio, ni el arranque automático, ni el agente, ni se puede
-dejar puesto en el config. Y no se ofrece si falta la carpeta local, ni en la
-pareja del llavero.
+dejar puesto en el config. Y no se ofrece si falta la carpeta local (un espejo de
+subida no la crea vacía para forzarlo: la pasada se para antes), ni en la pareja
+del llavero.
 
 El llavero también puede salir aquí («El llavero: el freno de seguridad ha parado la
 sincronización»), pero solo con **Ver el log**. Si lo para que «han cambiado todos» sus

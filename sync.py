@@ -712,6 +712,14 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
             return abort_code
 
     if not pair.local_abs.exists():
+        if pair.mode.borra_en_remoto:
+            # Un espejo de subida vacía el remoto si su origen está vacío: sin la
+            # carpeta, rclone se niega («directory not found»); creada vacía, borra.
+            print(f"[{pair.name}] ERROR: la ruta local '{pair.local_abs}' no existe y es el "
+                  "origen de un espejo de subida. Se aborta (no se crea vacía a propósito: "
+                  "un origen vacío vaciaría el remoto).")
+            record_result(ctx, pair, 2, None, reloj)
+            return 2
         print(f"[{pair.name}] La ruta local '{pair.local_abs}' no existe. Creándola...")
         pair.local_abs.mkdir(parents=True, exist_ok=True)
         if pair.llavero:

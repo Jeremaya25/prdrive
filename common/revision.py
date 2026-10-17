@@ -67,11 +67,13 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
     """Devuelve la avería de una carpeta local que no está.
 
     Es la única de la lista que NO se repara desde aquí, a propósito: crearla
-    es exactamente lo que `sync._bisync_preflight()` se niega a hacer cuando
-    hay baseline, porque un lado local vacío se lee como «se ha borrado todo» y
-    eso se propaga al remoto. Lo que hay que arreglar está fuera del programa
-    (el volumen no está montado donde se cree, o la carpeta se movió), así que
-    aquí solo se dice.
+    es exactamente lo que `sync._pasar_pareja()` se niega a hacer cuando hay
+    baseline (`sync._bisync_preflight()`) o cuando es el origen de un espejo de
+    subida (`Mode.borra_en_remoto`), porque un lado local vacío se lee como «se
+    ha borrado todo» y eso se propaga al remoto. Lo que hay que arreglar está
+    fuera del programa (el volumen no está montado donde se cree, o la carpeta
+    se movió), así que aquí solo se dice. Queda como nota lo que la próxima
+    pasada sí crea sin riesgo: una bajada, una copia o un bisync sin baseline.
     """
     if pair.local_abs.exists():
         return None
@@ -83,6 +85,15 @@ def _local(pair: Pair, estado: bisync.PairState) -> Hallazgo | None:
             "como «se ha borrado todo». Comprueba que el volumen esté montado "
             "donde toca y que la carpeta no se haya movido; no lo arregles "
             "creándola vacía.",
+            pair.name, GRAVE)
+    if pair.mode.borra_en_remoto:
+        return Hallazgo(
+            "local", f"{nombre_visible(pair.name)}: la carpeta local no está",
+            f"{pair.local_endpoint} no existe, y es el origen de este espejo de "
+            "subida. La sincronización se parará en vez de crearla: un origen "
+            "vacío se lee como «se ha borrado todo» y vaciaría el remoto. "
+            "Comprueba que el volumen esté montado donde toca y que la carpeta "
+            "no se haya movido; no lo arregles creándola vacía.",
             pair.name, GRAVE)
     return Hallazgo(
         "local", f"{nombre_visible(pair.name)}: la carpeta local aún no está",
