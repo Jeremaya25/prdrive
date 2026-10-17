@@ -25,7 +25,9 @@ unidad:
 - `poner()` las escribe al abrir prdrive desde el volumen (ventana o servicio,
   `runsync.py`), al atenderlo el agente y al guardar un nombre o un icono.
 - `quitar()` las borra al expulsarlo o bloquearlo, y `limpiar()` las que se han
-  quedado huérfanas (cerrado desde VeraCrypt, o quitado sin expulsar).
+  quedado huérfanas (cerrado desde VeraCrypt, o quitado sin expulsar). La llaman
+  prdrive al arrancar desde un volumen VeraCrypt y el agente, al arrancar y al
+  ver una letra nueva.
 
 **Cuáles son de prdrive:** cada subclave que se escribe lleva al lado del
 predeterminado un valor `MARCA` con el id del dispositivo (el `id=` de su
@@ -285,8 +287,11 @@ def limpiar(app: str | None = None) -> list[str]:
     Son las que se quedan cuando el volumen se cierra sin pasar por prdrive
     (desde VeraCrypt, o quitando la unidad sin expulsar). Huérfana es la de
     una letra que no es un volumen VeraCrypt o en la que no vive el dispositivo
-    de su `MARCA`. Por el camino se borran las subclaves de letra vacías. No
-    lanza.
+    de su `MARCA`. Por el camino se borran las subclaves de letra vacías. De
+    cada letra que se limpia se avisa al Explorador (`avisar_shell()`), para que
+    una ventana ya abierta la repinte. Una letra de VeraCrypt cuyo id no se
+    puede leer (un fallo pasajero del disco) cuenta como huérfana: pierde sus
+    claves hasta el siguiente `poner()`. No lanza.
 
     Args:
         app: El nombre de la carpeta del programa en una raíz, como en `poner()`.
@@ -309,6 +314,7 @@ def limpiar(app: str | None = None) -> list[str]:
                 continue
             if any([_quitar_letra(letra, m) for m in huerfanas]):
                 limpias.append(letra)
+                avisar_shell(raiz_de(letra))
     except Exception:                                   # noqa: BLE001
         pass
     return limpias

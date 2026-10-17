@@ -47,6 +47,21 @@ EXPLORADOR: list = []
 agente.explorador.poner = lambda raiz, app=None: EXPLORADOR.append(("poner", raiz, app))
 agente.explorador.quitar = lambda raiz, dispositivo=None: EXPLORADOR.append(
     ("quitar", raiz, dispositivo))
+LIMPIEZAS: list = []
+"""Las veces que se ha pedido limpiar las claves huérfanas, con la carpeta que se dijo."""
+HUERFANAS: list = [[]]
+"""Las letras que `explorador.limpiar()` dice haber limpiado; `None`, que lanza."""
+
+
+def limpiar(app=None):
+    """`explorador.limpiar()` de mentira: apunta quién lo pide y contesta `HUERFANAS`."""
+    LIMPIEZAS.append(app)
+    if HUERFANAS[0] is None:
+        raise OSError("registro roto")
+    return list(HUERFANAS[0])
+
+
+agente.explorador.limpiar = limpiar
 
 # Lo que sigue es Linux: la raíz se monta en una carpeta, con el `veracrypt` de
 # la línea de órdenes. En Windows va en una letra fija (la sección «las órdenes
@@ -96,6 +111,8 @@ c("la unidad sabe que es cifrada, y sin letra en Linux",
 # al iniciar sesión
 ag = F.nuevo()
 F.vueltas(ag, 1)
+c("al arrancar limpia lo que dejó una letra cerrada sin el agente, con la carpeta de la raíz",
+  LIMPIEZAS, [penwatch.APP_SUBDIR])
 c("antes de recorrer lo bastante, no pide nada", veracrypts(), [])
 F.vueltas(ag, 1)
 abrir = veracrypts()
@@ -105,9 +122,44 @@ c("  con el contenedor y el punto de montaje fijo, y sin contraseña",
 c("  lanzada suelta, fuera de la raíz", abrir[0].kwargs.get("cwd"), str(equipo.DIR))
 F.vueltas(ag, 10)
 c("si se cancela (no aparece), no se vuelve a pedir", len(veracrypts()), 1)
+c("  y sin letras nuevas no vuelve a limpiar, vuelta tras vuelta", len(LIMPIEZAS), 1)
 c("cerrada no es «no la encuentro»: ningún aviso", F.AVISOS, [])
 c("  el estado la da por bloqueada", ag.resumen()["bloqueadas"], ["Mi portátil"])
 c("  y nada se lanza", F.pasadas(), [])
+
+# una letra nueva: la puede tomar una unidad que no es de prdrive
+LETRA = Path("H:\\")
+F.RAICES.append(LETRA)
+HUERFANAS[0] = ["H"]
+F.DIARIO.clear()
+F.vueltas(ag, 1)
+c("al aparecer una letra nueva limpia, con la carpeta de la raíz",
+  LIMPIEZAS, [penwatch.APP_SUBDIR] * 2)
+c("  y apunta en el diario la que ha limpiado",
+  [d for d in F.DIARIO if "nombre y el icono" in d],
+  ["letra nueva: quito el nombre y el icono que quedaban en la letra H:"])
+HUERFANAS[0] = ["H", "J"]
+F.vueltas(ag, 5)
+c("  mientras sigue la misma letra no vuelve a limpiar", len(LIMPIEZAS), 2)
+F.RAICES.remove(LETRA)
+F.vueltas(ag, 2)
+c("  ni cuando se va", len(LIMPIEZAS), 2)
+F.RAICES.append(LETRA)
+F.DIARIO.clear()
+F.vueltas(ag, 1)
+c("  pero si vuelve a aparecer, sí, y las dice todas",
+  (len(LIMPIEZAS), [d for d in F.DIARIO if "nombre y el icono" in d]),
+  (3, ["letra nueva: quito el nombre y el icono que quedaban en las letras H:, J:"]))
+HUERFANAS[0] = None
+F.RAICES[:] = [Path("K:\\")]
+F.DIARIO.clear()
+F.vueltas(ag, 2)
+c("si limpiar lanza, el agente sigue y lo dice",
+  (len(LIMPIEZAS), any("no he podido limpiar" in d and "registro roto" in d for d in F.DIARIO)),
+  (4, True))
+HUERFANAS[0] = []
+F.RAICES.clear()
+F.vueltas(ag, 2)
 
 # abrir: se decide al verla
 montar()

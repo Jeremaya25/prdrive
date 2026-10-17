@@ -9,7 +9,7 @@ temporal), nada toca el registro ni una unidad de verdad. Se comprueba:
 - Lo que el fichero ya no dice se quita; una subclave de otro no se toca nunca.
 - Quitar se lleva solo las subclaves marcadas (las de ese id, si se dice) y las
   de encima si quedan vacías; limpiar, las huérfanas de letras cerradas o que
-  ya tiene otra unidad.
+  ya tiene otra unidad, y avisa al Explorador de cada letra que limpia.
 - Nada de esto lanza, ni con el registro roto.
 - Los que lo llaman: «Nombre e icono» al guardar, la ventana al expulsar, y la
   ventana y el servicio al arrancar.
@@ -206,11 +206,16 @@ try:
     VERACRYPT.discard("K")                      # cerrada desde VeraCrypt
     reg.escribir(clave("L"), "")                # una letra vacía que dejó alguien
     reg.claves[reg._k(clave("L"))] = {}
+    AVISADAS.clear()
     c("limpiar: la de una letra cerrada se va, las abiertas se quedan",
       (explorador.limpiar(APP), sorted(registro.subclaves(explorador.DRIVES))),
       (["K"], ["h", "j"]))
+    c("  y se le avisa al Explorador de la letra que se limpia, solo de ella", AVISADAS, [K])
     (J / APP / "PRDRIVE").write_text(f"id={'c' * 32}\n", encoding="utf-8")
     c("  y la de una letra que ya tiene otra unidad", explorador.limpiar(APP), ["J"])
+    c("  también se avisa de esa", AVISADAS, [K, J])
+    c("  sin nada que limpiar, no se avisa de nada más", (explorador.limpiar(APP), AVISADAS),
+      ([], [K, J]))
     c("  lo de H sigue", valores("H", explorador.ICONO)[1], ID_H)
 
     # nada lanza

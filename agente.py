@@ -1756,6 +1756,10 @@ class Agente:
         keepassxc_mirado: Cuándo se miró.
         navegador_mirado: Si ya se han mirado, al arrancar, las claves del
             navegador que dejó una unidad quitada sin expulsar.
+        letras_vistas: Las letras de unidad que vio el último recorrido, o
+            `None` antes del primero: una que aparece de nuevo hace limpiar el
+            nombre y el icono que quedaban de otra unidad en ella
+            (`_limpiar_letras()`).
         poner_motor: Crea lo que pone los atajos de teclado en este sistema
             (`poner_atajos()`), o `None` sin bandeja ni vigía (los tests).
         atajos_motor: Lo que pone los atajos (`poner(combos)`, `cerrar()`,
@@ -1847,6 +1851,7 @@ class Agente:
     oye_buzon: bool = False
     letras: int | None = None
     navegador_mirado: bool = False
+    letras_vistas: set[str] | None = None
     navegador_tras_cierre: dict[str, tuple[str, Path]] = field(default_factory=dict)
     poner_motor: Any = None
     atajos_motor: Any = None
@@ -1884,6 +1889,7 @@ class Agente:
             # Las de una unidad que se fue mientras el agente no estaba.
             self.navegador_mirado = True
             self._limpiar_navegador("al arrancar")
+            self._limpiar_letras("al arrancar")
         self._buzon(ahora)
         if recorrer:
             self._recorrer(ahora)
@@ -1935,8 +1941,12 @@ class Agente:
         # volúmenes, y el recorrido no las vería. Van como las raíces extra de
         # penwatch: el recorrido sigue siendo uno.
         propias = [u.ruta for u in self.ajustes.raices.values()]
+        letras: set[str] = set()
         for raiz in penwatch.candidate_roots(
                 {"extra_roots": propias + list(self.ajustes.extra_roots)}):
+            letra = explorador.letra_de(raiz)
+            if letra is not None:
+                letras.add(letra)
             try:
                 if (raiz / penwatch.CONTROL_FILE).is_file():
                     if not (raiz / penwatch.STRUCT_MARKER).is_file():
@@ -1953,6 +1963,12 @@ class Agente:
                     resto.append(raiz)
             except OSError:
                 resto.append(raiz)  # un volumen bloqueado contesta con error: ahora no
+        if self.letras_vistas is not None and letras - self.letras_vistas:
+            # Una letra que no estaba: la puede haber tomado una unidad a la que
+            # le quedaría el nombre y el icono de otra. La primera vez ya se
+            # limpió al arrancar.
+            self._limpiar_letras("letra nueva")
+        self.letras_vistas = letras
         self._fantasmas(abiertas)
         self.con_vestibulo = set(cerradas)
 
@@ -2412,6 +2428,28 @@ class Agente:
         if fallos:
             diario(f"{por}: no he podido dejar como estaban las claves del navegador: "
                    f"{fallos[0]}")
+
+    def _limpiar_letras(self, por: str) -> None:
+        """Hace `explorador.limpiar()` y apunta en el diario las letras que ha limpiado.
+
+        Quita el nombre y el icono que prdrive le puso a la letra de un volumen
+        VeraCrypt que se cerró sin que el agente lo viese (con el agente
+        parado, desde VeraCrypt, tras un fallo): si no, la unidad que tome esa
+        letra saldría en el Explorador con lo de otra. No toca las de un
+        volumen que sigue abierto. Nunca lanza.
+
+        Args:
+            por: Cuándo se hace, para el diario.
+        """
+        try:
+            letras = explorador.limpiar(APP_SUBDIR)
+        except Exception as e:                          # noqa: BLE001
+            diario(f"{por}: no he podido limpiar el nombre y el icono de las letras: {e}")
+            return
+        if letras:
+            que = (f"la letra {letras[0]}:" if len(letras) == 1
+                   else "las letras " + ", ".join(f"{letra}:" for letra in letras))
+            diario(f"{por}: quito el nombre y el icono que quedaban en {que}")
 
     def _vestibulos(self, cerradas: dict[str, Path], ahora: float) -> None:
         """Abre las unidades VeraCrypt de la lista que se ven cerradas.
