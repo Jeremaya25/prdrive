@@ -372,6 +372,12 @@ PAREJAS = {
          "flags": {"transfers": 8, "max-delete": 10}}, {"flags": {"checksum": True}}),
     "bisync con un resync-mode propio": (
         {**BASE[0], "flags": {"resync-mode": "newer"}}, {}),
+    "bisync con resync_mode, tal como se teclea": (
+        {**BASE[0], "flags": fe.parse('resync_mode = "newer"')}, {}),
+    "bisync con resync-mode en extra_flags": (
+        {**BASE[0], "extra_flags": ["--resync-mode=newer", "--bwlimit", "8M"]}, {}),
+    "bisync con versiones y conflict_loser": (
+        {**BASE[0], "versions": True, "flags": fe.parse('conflict_loser = "num"')}, {}),
     "up": ({**BASE[1], "extra_flags": ["--bwlimit", "8M"]}, {}),
     "down con filtros de [defaults]": (
         {**BASE[1], "mode": "down", "include": ["*.pdf"]}, {"exclude": ["*.bak"]}),
@@ -399,6 +405,18 @@ with sandbox():
         _, lineas, de_sync = vista(entrada, defaults)
         c(f"la vista previa es la orden de sync.py ({nombre})",
           [a for l in lineas for a in l.args], de_sync)
+
+    # Ninguna grafía de resync-mode llega a la vista previa de una pasada normal, y el
+    # conflict-loser del usuario no lleva detrás el `delete` del versionado.
+    for nombre in ("bisync con un resync-mode propio", "bisync con resync_mode, tal como se teclea",
+                   "bisync con resync-mode en extra_flags"):
+        c(f"la vista previa no lleva --resync-mode ({nombre})",
+          [a for l in vista(*PAREJAS[nombre])[1] for a in l.args if a.startswith("--resync")],
+          [])
+    lineas_loser = vista(*PAREJAS["bisync con versiones y conflict_loser"])[1]
+    c("y el conflict_loser del usuario sale una vez, con su valor",
+      [l.args for l in lineas_loser if l.args[0] == "--conflict-loser"],
+      [("--conflict-loser", "num")])
 
     _, lineas, _ = vista(*PAREJAS["bisync con versiones, filtros y flags"])
     puestas = {l.args[0] for l in lineas if l.lo_pone_prdrive}

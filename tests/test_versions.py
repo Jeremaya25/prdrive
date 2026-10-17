@@ -134,6 +134,44 @@ with sandbox() as root:
     c("  y sí en un --resync, donde dice qué lado gana",
       ("--resync-mode newer" in resync, "--resync " in resync + " "), (True, True))
 
+    # La grafía no cambia nada: `resync_mode` y `conflict_loser` llegan a rclone con
+    # guion (`model.flags_to_args`), y en `extra_flags` van tal cual.
+    def tiene_resync_mode(cmd):
+        """Si algún argumento de la orden es un `--resync-mode`, con su valor pegado o no."""
+        return any(a.split("=")[0] == "--resync-mode" for a in cmd)
+
+    for como, raw, defaults in (
+            ("con guion bajo", {"flags": {"resync_mode": "newer"}}, None),
+            ("en [defaults.flags]", {}, {"remote": "synology",
+                                          "flags": {"resync_mode": "newer"}}),
+            ("en extra_flags", {"extra_flags": ["--resync-mode", "newer"]}, None),
+            ("en extra_flags con =", {"extra_flags": ["--resync-mode=newer"]}, None)):
+        con_modo = pareja(raw, defaults)
+        normal = sync.build_command(ctx, con_modo, None, False)[0]
+        c(f"un resync-mode {como} no va en una pasada normal",
+          (tiene_resync_mode(normal), "--resync" in normal), (False, False))
+        resync = sync.build_command(ctx, con_modo, None, True)[0]
+        c(f"  y {como} sí en un --resync",
+          (tiene_resync_mode(resync), "--resync" in resync), (True, True))
+
+    # Lo que se escribe junto a un resync-mode no se lleva por delante.
+    con_otros = pareja({"extra_flags": ["--bwlimit", "8M", "--resync-mode", "newer",
+                                        "--transfers=2"]})
+    normal = sync.build_command(ctx, con_otros, None, False)[0]
+    c("los demás extra_flags se quedan",
+      (normal[-3:], tiene_resync_mode(normal)), (["--bwlimit", "8M", "--transfers=2"], False))
+
+    # 6c. conflict-loser escrito con guion bajo también es del usuario: no se le añade
+    # el `delete` del versionado, que iría detrás y ganaría.
+    mia = pareja({"versions": True, "flags": {"conflict_loser": "num"}})
+    cmd = sync.build_command(ctx, mia, None, False)[0]
+    c("un conflict_loser con guion bajo sale una sola vez, con su valor",
+      [cmd[i + 1] for i, a in enumerate(cmd) if a == "--conflict-loser"], ["num"])
+    en_extra = pareja({"versions": True, "extra_flags": ["--conflict-loser", "num"]})
+    cmd = sync.build_command(ctx, en_extra, None, False)[0]
+    c("y el de extra_flags, que va el último, es el que rclone se queda",
+      [cmd[i + 1] for i, a in enumerate(cmd) if a == "--conflict-loser"][-1], "num")
+
     # 7. sin versiones no aparece ninguno de los cinco
     cmd, _ = sync.build_command(ctx, pareja(), None, False)
     for flag in ("--backup-dir1", "--backup-dir2", "--suffix",

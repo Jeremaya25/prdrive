@@ -379,8 +379,8 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
         detalle += f" {_frase_racha(racha)}"
     nombre = _como_argumento(pair.name)
     if nombre is None:
-        forzar = (f"{frenos.COMO_FORZAR}, escribiendo tú el nombre: lleva caracteres que un "
-                  "intérprete de órdenes interpretaría, y por eso no se da la orden para pegar.")
+        forzar = (f"{frenos.COMO_FORZAR}, escribiendo tú el nombre: lleva caracteres que la "
+                  "consola cambiaría al pegarlo, y por eso no se da la orden escrita.")
     else:
         forzar = f"se puede forzar UNA pasada: `python sync.py {nombre} --force`."
     detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, "

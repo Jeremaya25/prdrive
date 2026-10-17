@@ -160,6 +160,35 @@ CASOS = {
 }
 """Por caso: la pareja, sus `[defaults]`, cómo se lanza y la orden de siempre."""
 
+# `resync-mode` (y `conflict-loser`) escritos de otra manera: la cascada guarda las
+# claves como están escritas y `flags_to_args()` cambia `_` por `-` al final, así que
+# `resync_mode` llegaba a rclone en una pasada normal, que la tomaba por un `--resync`.
+_NORMAL = CASOS["bisync"][3]
+_CON_TRANSFERS = CASOS["bisync-resync-mode"][3]
+_RESYNC = CASOS["bisync-resync"][3]
+_PROPIO = CASOS["bisync-versiones-propio"][3]
+CASOS.update({
+    "bisync-resync_mode": (
+        {**BISYNC, "flags": {"resync_mode": "newer", "transfers": 8}}, {},
+        dict(resync=False), _CON_TRANSFERS),
+    "bisync-resync_mode-defaults": (
+        BISYNC, {"flags": {"resync_mode": "newer"}}, dict(resync=False), _NORMAL),
+    "bisync-resync_mode-resync": (
+        {**BISYNC, "flags": {"resync_mode": "newer"}}, {}, dict(resync=True), _RESYNC),
+    "bisync-resync-mode-extra": (
+        {**BISYNC, "extra_flags": ["--resync-mode", "newer"]}, {}, dict(resync=False),
+        _NORMAL),
+    "bisync-resync-mode-extra-igual": (
+        {**BISYNC, "extra_flags": ["--resync-mode=newer", "--bwlimit", "8M"]}, {},
+        dict(resync=False), _NORMAL + ['--bwlimit', '8M']),
+    "bisync-resync-mode-extra-resync": (
+        {**BISYNC, "extra_flags": ["--resync-mode", "newer"]}, {}, dict(resync=True),
+        _NORMAL + ['--resync', '--resync-mode', 'newer']),
+    "bisync-versiones-conflict_loser": (
+        {**BISYNC, "versions": True, "flags": {"conflict_loser": "num"}}, {},
+        dict(resync=False), _PROPIO),
+})
+
 
 def normalizada(cmd, p, log):
     """La orden con los tres sitios que dependen del equipo cambiados por su nombre."""
