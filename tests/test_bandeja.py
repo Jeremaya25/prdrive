@@ -38,7 +38,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, vestibulo
+from common import equipo, store, vestibulo
 from ui import bandeja, icons
 
 c = Checks("la bandeja del agente: qué enseña y qué pide")
@@ -324,6 +324,7 @@ def montar() -> None:
     """Hace lo que VeraCrypt al abrirlo: aparece la raíz en su punto."""
     app = PUNTO / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True, exist_ok=True)
+    store.write_json(app / "state" / "fleet.json", {"nombre": "Mi portátil"})
     (app / "PRDRIVE").write_text(f"id={UID}\ntipo=equipo\n", encoding="utf-8")
     (app / "VERSION").write_text(F.VERSION + "\n", encoding="utf-8")
     for py in ("runsync.py", "sync.py"):

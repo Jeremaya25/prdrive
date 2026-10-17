@@ -317,7 +317,7 @@ def servida(uid: str, config: str | None = None, **kw):
         uid: El id de la unidad.
         config: El `sync_config.toml` que lleva en vez del de `F.unidad()`.
     """
-    r = F.unidad(uid, **kw)
+    r = F.unidad(uid, nombre="U", **kw)
     if config is not None:
         (r / ".prdrive" / "sync_config.toml").write_text(config, encoding="utf-8")
     equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
@@ -778,7 +778,7 @@ c("sin el agente, el de la unidad como siempre",
 
 # unidades de antes de la 0.5.0: no se atienden
 V = "6" * 32
-RV = F.unidad(V, parejas=("docs",))
+RV = F.unidad(V, parejas=("docs",), nombre="Vieja")
 (RV / ".prdrive" / "VERSION").write_text("0.4.3\n", encoding="utf-8")
 equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
     equipo.Unidad(V, equipo.UI, "Vieja", codigo=agente.huella(RV) or "")))

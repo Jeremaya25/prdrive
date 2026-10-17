@@ -410,7 +410,7 @@ class AvisosFalsos:
 
 
 UID = "e" * 32
-RAIZ = F.unidad(UID, parejas=("docs",))
+RAIZ = F.unidad(UID, parejas=("docs",), nombre="U")
 equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad(UID, equipo.DAEMON, "U")))
 F.RAICES[:] = [RAIZ]
 ag = F.nuevo()

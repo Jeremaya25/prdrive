@@ -189,7 +189,7 @@ F.RAICES[:] = [RAIZ]
 
 def fresco(uid, modo=equipo.DAEMON, **kw):
     """Un agente nuevo con una unidad nueva ya conectada y atendida."""
-    raiz = F.unidad(uid, **kw)
+    raiz = F.unidad(uid, nombre="U", **kw)
     aj = equipo.leer_ajustes().con_unidad(equipo.Unidad(uid, modo, "U"))
     equipo.guardar_ajustes(aj)
     F.RAICES[:] = [raiz]

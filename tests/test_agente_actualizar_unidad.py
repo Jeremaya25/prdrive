@@ -31,7 +31,7 @@ from _harness import Checks
 import _agente_falso as F
 import agente
 import penwatch
-from common import equipo, update
+from common import equipo, store, update
 from ui import bandeja
 
 c = Checks("«Actualizar a la vX» de una raíz")
@@ -42,7 +42,8 @@ NUEVA = "9.9.9"
 
 
 def lista(uid: str, raiz: Path, nombre: str = "U") -> None:
-    """Pone la unidad en la lista con la huella de su código de ahora."""
+    """Pone la unidad en la lista con la huella de su código de ahora, y su nombre en la unidad."""
+    store.write_json(raiz / ".prdrive" / "state" / "fleet.json", {"nombre": nombre})
     equipo.guardar_ajustes(equipo.leer_ajustes().con_unidad(
         equipo.Unidad(uid, equipo.DAEMON, nombre, codigo=agente.huella(raiz) or "")))
 

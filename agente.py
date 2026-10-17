@@ -871,7 +871,7 @@ def nombre_guardado(unidad: equipo.Unidad | None, uid: str) -> str:
     return (unidad.nombre if unidad is not None else "") or nombres.por_defecto(uid)
 
 
-def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = (),
+def nombre_de(raiz: Path, uid: str, otros: Iterable[str] = (),
               con_etiqueta: bool = True) -> str:
     """Devuelve el nombre con que se enseña la unidad conectada en `raiz`.
 
@@ -879,13 +879,13 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = 
     alguien puso, y sin él la etiqueta del volumen o «prdrive · <id>». Lo que
     se sabe de la unidad sale de su `state/fleet.json` (solo se lee): su
     `nombre` y los equipos desde los que ha publicado, que dicen si ese nombre es
-    de verdad suyo o el del ordenador que la aprovisionó.
+    de verdad suyo o el del ordenador que la aprovisionó. El que el agente
+    recuerda de ella (`Unidad.nombre`) no cuenta: lo calculó él, no lo puso
+    nadie, y darlo por propio lo congelaría.
 
     Args:
         raiz: Donde está montada.
         uid: Su id.
-        recordado: El nombre que el agente le conocía; vale si el fichero no
-            dice ninguno.
         otros: Los nombres de las demás unidades: con uno igual se añade el
             equipo (`nombres.distinguir()`).
         con_etiqueta: Si se lee la etiqueta del volumen; una carpeta del equipo
@@ -898,7 +898,7 @@ def nombre_de(raiz: Path, uid: str, recordado: str = "", otros: Iterable[str] = 
     equipos = publicado.get("equipos") if isinstance(publicado, dict) else None
     equipos = [e for e in equipos if isinstance(e, str)] if isinstance(equipos, list) else []
     etiqueta = nombres.etiqueta_de(raiz) if con_etiqueta else ""
-    elegido = nombres.elegir(uid, guardado or recordado, etiqueta, equipos)
+    elegido = nombres.elegir(uid, guardado, etiqueta, equipos)
     return nombres.distinguir(elegido, uid, otros)
 
 
@@ -2273,8 +2273,7 @@ class Agente:
         nada suyo. Si no, se atiende según su modo.
         """
         unidad = self.ajustes.unidades.get(uid)
-        nombre = nombre_de(raiz, uid, unidad.nombre if unidad else "",
-                           self._nombres_de_otras(uid),
+        nombre = nombre_de(raiz, uid, self._nombres_de_otras(uid),
                            con_etiqueta=not (unidad is not None and unidad.es_raiz))
         con = Conexion(uid, raiz, nombre, ahora)
         # Un lock con nuestro pid es de la conexión anterior (se desenchufó y

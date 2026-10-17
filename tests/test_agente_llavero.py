@@ -679,6 +679,7 @@ def montar() -> None:
     """Lo que hace VeraCrypt al abrirla: aparece la raíz, con llavero, en su punto."""
     app = PUNTO / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True, exist_ok=True)
+    store.write_json(app / "state" / "fleet.json", {"nombre": "Mi portátil"})
     (app / "PRDRIVE").write_text(f"id={UID_C}\ntipo=equipo\n", encoding="utf-8")
     (app / "VERSION").write_text(F.VERSION + "\n", encoding="utf-8")
     for py in ("runsync.py", "sync.py"):
