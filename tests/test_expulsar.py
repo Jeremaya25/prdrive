@@ -11,7 +11,10 @@ Nada toca el sistema de verdad:
 - Windows: la letra y el bus (USB, SD, MMC o declarado extraíble; nunca el
   disco del sistema, un volumen virtual ni una carpeta). La expulsión bloquea,
   desmonta y expulsa, y no desmonta si no consigue bloquear; si lo único que
-  falla es expulsar el medio, ya está desmontada y se puede quitar.
+  falla es expulsar el medio, ya está desmontada y se puede quitar. Si Windows
+  no puede retirar el dispositivo, el medio se expulsa con el volumen otra vez
+  bloqueado y desmontado, y si ya no hay volumen que abrir está bien; si se
+  abre y no se deja bloquear, no se expulsa nada y no se dice que se puede quitar.
 """
 
 import os
@@ -181,11 +184,16 @@ PEDIDO = []
 expulsar._abrir_volumen = lambda k, letra, acceso: 7
 
 
+RECHAZADAS_DESDE_LA_SEGUNDA: set[int] = set()
+
+
 def ioctl(k, h, codigo, entrada=b"", salida=0):
-    """Apunta la llamada y la rechaza si el test lo dice."""
+    """Apunta la llamada y la rechaza si el test lo dice (siempre o desde su segunda vez)."""
     LLAMADAS.append(codigo)
     if entrada:
         PEDIDO.append(entrada)
+    if codigo in RECHAZADAS_DESDE_LA_SEGUNDA and LLAMADAS.count(codigo) >= 2:
+        return None
     return None if codigo in RECHAZADAS else b""
 
 
@@ -311,8 +319,15 @@ Kernel.abiertos = 0
 cerrar_original = Kernel.CloseHandle
 
 
+APERTURAS = [0]
+NO_ABRIR_DESDE: list[int | None] = [None]
+
+
 def abrir_doble(k, letra, acceso):
-    """Abre un manejador de mentira y lo cuenta."""
+    """Abre un manejador de mentira y lo cuenta; desde la apertura `NO_ABRIR_DESDE`, no se abre."""
+    APERTURAS[0] += 1
+    if NO_ABRIR_DESDE[0] is not None and APERTURAS[0] >= NO_ABRIR_DESDE[0]:
+        return None
     Kernel.abiertos += 1
     return 7
 
@@ -343,11 +358,46 @@ r = expulsar.expulsar(Path("E:\\"))
 c("si Windows lo veta, no es ok y dice la causa",
   (r.ok, "winword.exe" in r.texto, "unidad E:" in r.texto), (False, True, True))
 
+SOLTAR = [expulsar.FSCTL_LOCK_VOLUME, expulsar.FSCTL_DISMOUNT_VOLUME,
+          expulsar.IOCTL_STORAGE_MEDIA_REMOVAL]
 LLAMADAS.clear()
+APERTURAS[0] = 0
 CONTESTA[0] = (0x0D, 0, "")                      # CR_NO_SUCH_DEVNODE: ni lo encuentra
 r = expulsar.expulsar(Path("E:\\"))
-c("si Windows ni puede pedirlo, se expulsa el medio como antes y se da por buena",
-  (r.ok, LLAMADAS.count(expulsar.IOCTL_STORAGE_EJECT_MEDIA), Kernel.abiertos), (True, 1, 0))
+c("si Windows ni puede pedirlo, expulsa el medio con el volumen otra vez bloqueado y desmontado",
+  LLAMADAS, SOLTAR + SOLTAR + [expulsar.IOCTL_STORAGE_EJECT_MEDIA])
+c("  y la da por buena, con los dos manejadores cerrados",
+  (r.ok, r.texto, Kernel.abiertos), (True, "Ya puedes quitarla.", 0))
+
+LLAMADAS.clear()
+APERTURAS[0] = 0
+CONTESTA[0] = (0x33, 0, "")                      # CR_ACCESS_DENIED
+RECHAZADAS_DESDE_LA_SEGUNDA.add(expulsar.FSCTL_LOCK_VOLUME)
+r = expulsar.expulsar(Path("E:\\"))
+c("si el segundo bloqueo falla (lo abrió el Explorador en el hueco), reintenta y NO expulsa el medio",
+  LLAMADAS, SOLTAR + [expulsar.FSCTL_LOCK_VOLUME] * expulsar.INTENTOS_BLOQUEO)
+c("  no es ok, dice el CONFIGRET y manda a «Quitar hardware de forma segura», nunca «Ya puedes»",
+  (r.ok, "0x33" in r.texto, "Quitar hardware de forma segura" in r.texto,
+   "Ya puedes quitarla" in r.texto), (False, True, True, False))
+c("  y suelta el manejador", Kernel.abiertos, 0)
+
+LLAMADAS.clear()
+APERTURAS[0] = 0
+RECHAZADAS_DESDE_LA_SEGUNDA.clear()
+RECHAZADAS_DESDE_LA_SEGUNDA.add(expulsar.FSCTL_DISMOUNT_VOLUME)
+r = expulsar.expulsar(Path("E:\\"))
+c("  igual si el segundo desmontaje falla: no expulsa el medio y no es ok",
+  (LLAMADAS.count(expulsar.IOCTL_STORAGE_EJECT_MEDIA), r.ok, Kernel.abiertos), (0, False, 0))
+RECHAZADAS_DESDE_LA_SEGUNDA.clear()
+
+LLAMADAS.clear()
+APERTURAS[0] = 0
+NO_ABRIR_DESDE[0] = 2                            # el dispositivo ya no está: la segunda apertura falla
+CONTESTA[0] = (0x0D, 0, "")
+r = expulsar.expulsar(Path("E:\\"))
+c("si Windows ni puede pedirlo y el volumen ya no se abre (se fue el dispositivo), está bien y no expulsa nada",
+  (r.ok, LLAMADAS, Kernel.abiertos), (True, SOLTAR, 0))
+NO_ABRIR_DESDE[0] = None
 
 RETIRADAS.clear()
 LLAMADAS.clear()
