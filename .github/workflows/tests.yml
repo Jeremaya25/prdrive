@@ -3,6 +3,8 @@ name: Tests
 # Los tests son scripts sueltos (sin framework ni dependencias): `run_all.py` lanza
 # cada uno en su proceso. Ninguno toca un dispositivo ni la red. Los de Tk se
 # saltan sin pantalla, así que en Linux se corre bajo xvfb para que se ejecuten.
+# Sin opciones, `run_all.py` no corre los que abren ventanas: el trabajo `tests`
+# pasa `--ventanas` para correrlos todos (`tests/test_run_all.py` lo vigila).
 #
 # Tk 9 es el único Tk que se admite (decisión del dueño, 09/10/2026): las ventanas se
 # prueban solo con el Python fijado del dispositivo (`common/pins.py`: 3.14.8 con
@@ -88,12 +90,12 @@ jobs:
       - name: Tests (Linux, con pantalla virtual)
         if: runner.os == 'Linux'
         run: |
-          "$PRDRIVE_PYTHON" tests/run_all.py -j auto --display xvfb
+          "$PRDRIVE_PYTHON" tests/run_all.py -j auto --display xvfb --ventanas
 
       - name: Tests (Windows)
         if: runner.os == 'Windows'
         run: |
-          & "$env:PRDRIVE_PYTHON" tests/run_all.py -j auto --gui-jobs 1
+          & "$env:PRDRIVE_PYTHON" tests/run_all.py -j auto --gui-jobs 1 --ventanas
 
       # El pintor de iconos de Python sigue (un dispositivo con el runtime 3.13 lo
       # necesita para llegar a «Actualizar…»): sus tests corren también con él.
