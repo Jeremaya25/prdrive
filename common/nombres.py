@@ -16,10 +16,13 @@ Lo que alguien puso en «Nombre e icono» (`drive-name-icon.md`) no se toca. No 
 guarda marca de que un nombre sea el de un equipo: se reconoce porque coincide
 con uno de los equipos desde los que la unidad ha publicado su nota
 (`state/fleet.json`, `publicado.equipos`), que es lo que ya hay en las unidades
-de siempre. Nada de esto cambia lo que se publica en el remoto.
+de siempre. Salvo si es también el `label=` del `autorun.inf` de su raíz: ese
+solo lo escribe «Nombre e icono», así que quien la llamó como su ordenador lo
+hizo a propósito. Nada de esto cambia lo que se publica en el remoto.
 
 Todo es puro salvo `etiqueta_de()`, que lee del sistema y es un punto de
-indirección que los tests sustituyen.
+indirección que los tests sustituyen. El `autorun.inf` lo lee quien llama
+(`agente.nombre_de()`).
 """
 
 from __future__ import annotations
@@ -96,7 +99,7 @@ def es_del_equipo(guardado: str, equipos: Iterable[str]) -> bool:
 
 
 def elegir(uid: str, guardado: str = "", etiqueta: str = "",
-           equipos: Iterable[str] = ()) -> Nombre:
+           equipos: Iterable[str] = (), rotulo: str = "") -> Nombre:
     """Decide el nombre de una unidad a partir de lo que se sabe de ella.
 
     Args:
@@ -104,13 +107,18 @@ def elegir(uid: str, guardado: str = "", etiqueta: str = "",
         guardado: Su nombre en `state/fleet.json`, vacío si no tiene.
         etiqueta: La etiqueta de su volumen, si se conoce.
         equipos: Los equipos desde los que ha publicado (`es_del_equipo()`).
+        rotulo: El `label=` del `autorun.inf` de su raíz, si tiene. Solo lo
+            escribe «Nombre e icono», con el mismo nombre que deja en
+            `state/fleet.json`: si coincide con `guardado`, ese nombre lo puso
+            alguien aunque se llame como un equipo.
 
     Returns:
         Un nombre propio si `guardado` lo es, y si no el de `por_defecto()` con
         el equipo que había guardado como dato para `distinguir()`.
     """
     guardado = guardado.strip()
-    if guardado and not es_del_equipo(guardado, equipos):
+    puesto = guardado.casefold() == rotulo.strip().casefold()
+    if guardado and (puesto or not es_del_equipo(guardado, equipos)):
         return Nombre(guardado, True)
     return Nombre(por_defecto(uid, etiqueta), False, guardado)
 
