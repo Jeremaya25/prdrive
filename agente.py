@@ -167,8 +167,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import penwatch  # noqa: E402
-from common import (APP_NAME, avisos, avisos_buzon, avisos_carpeta, bitlocker, catalog,  # noqa: E402
-                    cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
+from common import (APP_NAME, autorun, avisos, avisos_buzon, avisos_carpeta, bitlocker,  # noqa: E402
+                    catalog, cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
                     llavero, model, moderacion, nombres, parte, prioridad, store, update,
                     vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
@@ -879,9 +879,11 @@ def nombre_de(raiz: Path, uid: str, otros: Iterable[str] = (),
     alguien puso, y sin él la etiqueta del volumen o «prdrive · <id>». Lo que
     se sabe de la unidad sale de su `state/fleet.json` (solo se lee): su
     `nombre` y los equipos desde los que ha publicado, que dicen si ese nombre es
-    de verdad suyo o el del ordenador que la aprovisionó. El que el agente
-    recuerda de ella (`Unidad.nombre`) no cuenta: lo calculó él, no lo puso
-    nadie, y darlo por propio lo congelaría.
+    de verdad suyo o el del ordenador que la aprovisionó; y del `label=` de su
+    `autorun.inf`, que solo escribe «Nombre e icono»: con el mismo nombre, es
+    suyo aunque se llame como el ordenador. El que el agente recuerda de ella
+    (`Unidad.nombre`) no cuenta: lo calculó él, no lo puso nadie, y darlo por
+    propio lo congelaría.
 
     Args:
         raiz: Donde está montada.
@@ -898,7 +900,7 @@ def nombre_de(raiz: Path, uid: str, otros: Iterable[str] = (),
     equipos = publicado.get("equipos") if isinstance(publicado, dict) else None
     equipos = [e for e in equipos if isinstance(e, str)] if isinstance(equipos, list) else []
     etiqueta = nombres.etiqueta_de(raiz) if con_etiqueta else ""
-    elegido = nombres.elegir(uid, guardado, etiqueta, equipos)
+    elegido = nombres.elegir(uid, guardado, etiqueta, equipos, autorun.leer(raiz).etiqueta)
     return nombres.distinguir(elegido, uid, otros)
 
 

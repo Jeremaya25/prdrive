@@ -8,7 +8,9 @@ sitio. Sin Tk y sin tocar el sistema:
   («PRDRIVE») no distingue nada y cuenta como ninguna.
 - El nombre del equipo que aprovisionó la unidad (el que el instalador guardó
   en su `state/fleet.json`) no es un nombre propio: se reconoce porque es uno
-  de los equipos desde los que ha publicado.
+  de los equipos desde los que ha publicado. Salvo si es también el `label=`
+  de su `autorun.inf`, que solo escribe «Nombre e icono»: entonces alguien la
+  llamó así a propósito.
 - Lo que alguien puso nunca se toca.
 - Solo si aun así dos unidades se llaman igual se añade, como sufijo, el nombre
   del equipo; y el id si ni así.
@@ -64,6 +66,18 @@ c("  o la etiqueta", (n.texto, n.propio), ("SANDISK", False))
 n = nombres.elegir(UID, "Pendrive de Pere", "", ())
 c("un nombre guardado que no es de equipo alguno es propio (también el de un equipo viejo)",
   (n.texto, n.propio), ("Pendrive de Pere", True))
+
+# --- el que alguien puso igual que el equipo: lo dice el `label=` del autorun.inf
+n = nombres.elegir(UID, "PERETATIL", "PRDRIVE", ("Peretatil",), "PERETATIL")
+c("llamada como el equipo en «Nombre e icono», es propio", (n.texto, n.propio),
+  ("PERETATIL", True))
+n = nombres.elegir(UID, "Peretatil", "", ("Peretatil",), "  peretatil ")
+c("  sin importar mayúsculas ni sobrantes", (n.texto, n.propio), ("Peretatil", True))
+n = nombres.elegir(UID, "Peretatil", "", ("Peretatil",), "Pendrive azul")
+c("un `label=` distinto no dice nada del guardado", (n.texto, n.propio),
+  ("prdrive · a1b2", False))
+n = nombres.elegir(UID, "", "", ("Peretatil",), "Pendrive azul")
+c("  ni sin nombre guardado lo pone él", (n.texto, n.propio), ("prdrive · a1b2", False))
 
 # --- distinguir
 sin_choque = nombres.Nombre("SANDISK", False, "DESKTOP-PERE")

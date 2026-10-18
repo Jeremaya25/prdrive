@@ -18,6 +18,9 @@ test). Se comprueba que:
   conectarse (otra etiqueta, lo que guardaba la 0.7.4, una unidad que se quita,
   el nombre del ordenador repetido en dos). Uno de `fleet.json` que no es de un
   equipo sigue siendo propio.
+- Uno de `fleet.json` que se llama como el ordenador también es propio si es
+  el `label=` de su `autorun.inf` (lo puso «Nombre e icono»), también en una
+  raíz del equipo.
 """
 
 from dataclasses import replace
@@ -27,7 +30,7 @@ from _harness import Checks
 
 import _agente_falso as F
 import agente
-from common import equipo, nombres
+from common import autorun, equipo, nombres
 from ui import bandeja
 
 c = Checks("nombre por defecto de las unidades del agente")
@@ -179,6 +182,25 @@ c("un nombre de fleet.json que no es de un equipo sigue siendo propio",
   ag.conexiones["3" * 32].nombre, "Pen de Ana")
 c("  y es lo que el agente recuerda ahora", equipo.leer_ajustes().unidades["3" * 32].nombre,
   "Pen de Ana")
+
+# --- llamada como el ordenador a propósito: «Nombre e icono» lo deja también en el
+# `label=` de su autorun.inf, y eso dice que lo puso alguien
+F.ETIQUETAS.clear()
+RJ = F.unidad("4" * 32, nombre=PC.upper(), equipos=(PC.title(),))
+autorun.escribir(RJ, autorun.con("", PC.upper(), ""))
+equipo.guardar_ajustes(equipo.Ajustes())
+lista("4" * 32, RJ, "prdrive · 4444")                     # lo que el agente guardó antes
+F.ETIQUETAS[RJ] = "PRDRIVE"
+ag = poner(RJ)
+c("un nombre como el del ordenador que también está en su autorun.inf es propio",
+  ag.conexiones["4" * 32].nombre, PC.upper())
+c("  y es lo que el agente recuerda ahora", equipo.leer_ajustes().unidades["4" * 32].nombre,
+  PC.upper())
+c("  también en una raíz del equipo (sin etiqueta de volumen)",
+  agente.nombre_de(RJ, "4" * 32, con_etiqueta=False), PC.upper())
+autorun.escribir(RJ, autorun.con("", "Otro nombre", ""))
+c("  pero si el autorun.inf dice otro, el del ordenador no es propio",
+  agente.nombre_de(RJ, "4" * 32, con_etiqueta=False), "prdrive · 4444")
 
 # --- una unidad que no se ve: el mismo nombre por defecto, sin etiqueta
 c("sin nombre recordado, el del id (lo que llevan los avisos de una raíz que no está)",
