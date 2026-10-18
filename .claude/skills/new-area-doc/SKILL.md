@@ -37,6 +37,7 @@ Before changing these files, read `docs/agents/reference/<area>.md` (<what it co
 ```
 
 - Every pattern must match at least one existing file (a dead pattern fails the test).
+- Every `tests/test_*.py` of the area goes in its `paths` too: the rules decide what `tests/run_all.py --cambios` runs, and `tests/test_reglas_claude.py` fails for a test in no rule.
 - The body must name `docs/agents/reference/<area>.md` and stay ≤ 800 characters.
 - A module already covered by another rule is fine to repeat only if it truly belongs to both areas.
 
