@@ -9,5 +9,8 @@ paths:
   - "tests/test_auto.py"
   - "tests/test_instancia_unica.py"
   - "tests/test_daemon_aviso.py"
+  - "tests/test_resync_desatendido.py"
+  - "tests/test_servicio_ritmo.py"
+  - "tests/test_store_ocupado.py"
 ---
 Before changing these files, read `docs/agents/reference/service.md` (the periodic service, the locks in `state/`, the failure pop-up). If you already read it this session, skip it.

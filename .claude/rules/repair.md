@@ -10,5 +10,6 @@ paths:
   - "tests/test_forzar.py"
   - "tests/test_forzar_desatendido.py"
   - "tests/test_repair_forzar.py"
+  - "tests/test_resync_desatendido.py"
 ---
 Before changing these files, read `docs/agents/reference/repair.md` (the ONE diagnosis and «Reparación»). If you already read it this session, skip it.

@@ -12,6 +12,8 @@ vigila lo que fallaría sin hacer ruido:
 - Un patrón que ya no encaja con ningún fichero (un módulo renombrado) deja la
   regla muerta, y un módulo nuevo sin regla no avisa a nadie de su doc.
 - Un `@ruta` suelto en AGENTS.md se expande al arrancar y cargaría el doc entero.
+- Un test que no está en los `paths` de ninguna regla no tiene área, y
+  `run_all.py --cambios` no lo elegiría nunca.
 """
 
 import re
@@ -20,14 +22,12 @@ from glob import glob
 from pathlib import Path
 
 from _harness import REPO, Checks
+from _seleccion import areas, areas_de, fuentes, leer_regla
 
 c = Checks("reglas de Claude Code y mapa de docs de AGENTS.md")
 
 REGLAS = REPO / ".claude" / "rules"
 DOCS = REPO / "docs" / "agents" / "reference"
-
-CABECERA = re.compile(r'\A---\npaths:\n((?:  - "[^"\n]+"\n)+)---\n(\S.*)\Z', re.S)
-"""La única cabecera admitida: `paths` como lista, cada patrón entre comillas."""
 
 SIN_REGLA = {"common/__init__.py"}
 """Módulos que no necesitan regla: el paquete `common` no tiene contenido."""
@@ -38,18 +38,6 @@ MAX_CUERPO = 800
 Se inyecta entero cada vez que Claude Code toca uno de sus ficheros: es un
 puntero al doc, no el doc.
 """
-
-
-def leer(regla: Path):
-    """Lee una regla.
-
-    Returns:
-        `(patrones, cuerpo)`, o `None` si la cabecera no tiene la forma admitida.
-    """
-    m = CABECERA.match(regla.read_text(encoding="utf-8"))
-    if m is None:
-        return None
-    return re.findall(r'"([^"\n]+)"', m.group(1)), m.group(2)
 
 
 def ficheros(patron: str) -> list[str]:
@@ -66,7 +54,7 @@ c("y cada regla tiene su doc (salvo la de la documentación)",
 
 cubiertos: set[str] = set()
 for nombre, ruta in sorted(reglas.items()):
-    leida = leer(ruta)
+    leida = leer_regla(ruta)
     if not c(f"{nombre}: la cabecera tiene la única forma admitida", leida is not None, True):
         continue
     patrones, cuerpo = leida
@@ -77,10 +65,13 @@ for nombre, ruta in sorted(reglas.items()):
         c(f"{nombre}: remite a su doc", f"docs/agents/reference/{nombre}.md" in cuerpo, True)
     cubiertos.update(f for p in patrones for f in ficheros(p))
 
-fuente = {Path(f).as_posix()
-          for g in ("*.py", "common/*.py", "ui/*.py", "install/*.py")
-          for f in glob(g, root_dir=REPO)}
+fuente = set(fuentes())
 c("todo módulo del proyecto está en alguna regla", sorted(fuente - cubiertos - SIN_REGLA), [])
+
+mapa = areas()
+c("todo test está en los paths de alguna regla (decide qué corre run_all.py --cambios)",
+  sorted(p.name for p in (REPO / "tests").glob("test_*.py")
+         if not areas_de(f"tests/{p.name}", mapa)), [])
 
 agents = (REPO / "AGENTS.md").read_text(encoding="utf-8")
 tabla = set(re.findall(r"^\| `([\w-]+)\.md` \|", agents, re.M))

@@ -31,5 +31,13 @@ paths:
   - "tests/test_ultima_pasada.py"
   - "tests/test_principal.py"
   - "tests/test_watch.py"
+  - "tests/test_hijos.py"
+  - "tests/test_matar_arbol.py"
+  - "tests/test_perf.py"
+  - "tests/test_perf_ajustes.py"
+  - "tests/test_perf_anfitrion.py"
+  - "tests/test_perf_flota.py"
+  - "tests/test_perf_parejas.py"
+  - "tests/test_perf_principal.py"
 ---
 Before changing these files, read `docs/agents/reference/ui.md` (frontends, theme and window sizing, `working()` and background reads, «Ajustes»). If you already read it this session, skip it.

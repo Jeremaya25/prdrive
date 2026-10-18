@@ -4,6 +4,8 @@ paths:
   - "README.md"
   - "docs/agents/reference/*.md"
   - "docs/guia/*.md"
+  - "tests/test_reglas_claude.py"
+  - ".claude/rules/*.md"
 ---
 Documentation rules for this repo:
 - `AGENTS.md` loads every session, so keep it small: area detail goes in `docs/agents/reference/<area>.md`. A new area doc also needs a row in the `AGENTS.md` table and its own `.claude/rules/<area>.md`; `tests/test_reglas_claude.py` checks both.

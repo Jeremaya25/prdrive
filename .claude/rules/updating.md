@@ -15,5 +15,6 @@ paths:
   - "tests/test_descarga.py"
   - "tests/test_rclone_bin.py"
   - "tests/test_runtime_bin.py"
+  - "tests/test_precompilar.py"
 ---
 Before changing these files, read `docs/agents/reference/updating.md` (updating a device in place, components, `VERSION` and release, verified downloads). If you already read it this session, skip it.
