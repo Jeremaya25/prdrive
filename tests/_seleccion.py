@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import re
+import subprocess
 from dataclasses import dataclass
 from glob import glob
 from pathlib import Path
@@ -113,6 +114,49 @@ def areas_de(ruta: str, mapa: dict[str, list[str]]) -> set[str]:
 def fuentes(repo: Path = REPO) -> list[str]:
     """Los fuentes del proyecto (`FUENTES`), ordenados, relativos a la raíz y con `/`."""
     return sorted({Path(f).as_posix() for patron in FUENTES for f in glob(patron, root_dir=repo)})
+
+
+def _git(repo: Path, *args: str) -> str | None:
+    """La salida de una orden de git en `repo`, o `None` si git no está o la orden falla."""
+    try:
+        r = subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=repo,
+                           stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
+                           errors="replace")
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def cambiados(repo: Path = REPO) -> list[str] | None:
+    """Los ficheros que esta rama cambia respecto a `main`, según git.
+
+    Punto de sustitución: los tests lo cambian por una lista fija. La base es la
+    común con `origin/main` o, sin ella, con `main`. Cuenta lo confirmado en la
+    rama, lo preparado, lo modificado sin preparar y lo nuevo sin seguimiento; un
+    renombrado, por sus dos nombres. Git corre siempre en `repo`, se llame desde
+    donde se llame.
+
+    Args:
+        repo: La raíz del repositorio.
+
+    Returns:
+        Las rutas relativas a la raíz, con `/`, ordenadas y sin repetir; o `None`
+        si no hay git, no es un repositorio o no hay base común con ninguna de las
+        dos ramas.
+    """
+    base = None
+    for rama in ("origin/main", "main"):
+        salida = _git(repo, "merge-base", "HEAD", rama)
+        if salida is not None and salida.strip():
+            base = salida.strip()
+            break
+    if base is None:
+        return None
+    diferencias = _git(repo, "diff", "--name-only", "--no-renames", base)
+    nuevos = _git(repo, "ls-files", "--others", "--exclude-standard")
+    if diferencias is None or nuevos is None:
+        return None
+    return sorted({linea for linea in (diferencias + nuevos).splitlines() if linea})
 
 
 def _modulo(rel: str) -> str:

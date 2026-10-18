@@ -15,10 +15,18 @@ Sobre un repositorio de mentira (cinco reglas y unos pocos fuentes y tests):
 
 Y sobre el repositorio de verdad: `common/bisync.py` elige `engine` y ninguna
 ventana, y `LANZADO_POR` dice la verdad sobre quién lanza qué.
+
+`cambiados()` se prueba con un git de verdad en un repositorio temporal: lo de la
+rama, lo preparado, lo modificado y lo nuevo, un renombrado por sus dos nombres,
+un nombre con tildes y espacios, `origin/main` antes que `main`, y `None` fuera de
+un repositorio, se llame desde donde se llame.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -167,5 +175,47 @@ c("LANZADO_POR: cada script y cada lanzador existen",
 c("LANZADO_POR: cada lanzador nombra el script (entre comillas o por su constante de model)",
   [(s, g) for s, gs in _seleccion.LANZADO_POR.items() for g in gs
    if f'"{s}"' not in texto(g) and (s not in CONSTANTE or CONSTANTE[s] not in texto(g))], [])
+
+# cambiados(), con un git de verdad sobre un repositorio temporal.
+if shutil.which("git") is None:
+    print("  (saltado) sin git en este equipo")
+else:
+    G = tmpdir("prdrive-git-")
+
+    def git(*args: str) -> None:
+        """Una orden de git en el repositorio temporal, con autor de mentira."""
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=G,
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL)
+
+    def escribir(nombre: str, texto: str) -> None:
+        """Escribe un fichero del repositorio temporal."""
+        (G / nombre).write_text(texto, encoding="utf-8")
+
+    git("init", "-q", "-b", "main")
+    for nombre in ("a.txt", "b.py", "c.py"):
+        escribir(nombre, nombre)
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("checkout", "-q", "-b", "rama")
+    escribir("b.py", "cambiado")
+    git("mv", "c.py", "d.py")
+    git("commit", "-q", "-am", "rama")
+    escribir("a.txt", "sin preparar")
+    escribir("e.txt", "preparado")
+    git("add", "e.txt")
+    escribir("ñandú x.txt", "nuevo")
+    otra = tmpdir("prdrive-cwd-")
+    antes = os.getcwd()
+    os.chdir(otra)  # cambiados() no depende de dónde se esté
+    try:
+        c("cambiados: lo de la rama, lo preparado, lo modificado y lo nuevo; un renombrado por sus "
+          "dos nombres; con tildes y espacios",
+          _seleccion.cambiados(G), ["a.txt", "b.py", "c.py", "d.py", "e.txt", "ñandú x.txt"])
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        c("cambiados: origin/main manda sobre main",
+          _seleccion.cambiados(G), ["a.txt", "e.txt", "ñandú x.txt"])
+        c("cambiados: fuera de un repositorio, None", _seleccion.cambiados(otra), None)
+    finally:
+        os.chdir(antes)
 
 sys.exit(c.report())
