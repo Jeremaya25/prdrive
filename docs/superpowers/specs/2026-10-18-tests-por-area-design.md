@@ -80,10 +80,11 @@ de ficheros cambiados y devuelve la selección con sus motivos. `run_all.py` sol
 sustitución de `commands-testing.md`):
 
 - la base es `git merge-base HEAD origin/main`; sin `origin/main`, `main`;
-- `git diff --name-only <base>` (lo confirmado en la rama) más `git status --porcelain
-  --untracked-files=all` (lo preparado, lo modificado y lo nuevo sin seguimiento); un renombrado
-  cuenta por sus dos nombres;
-- rutas relativas a la raíz del repositorio, con `/`.
+- `git -c core.quotepath=off diff --name-only --no-renames <base>`: el árbol de trabajo contra
+  la base, o sea lo confirmado en la rama, lo preparado y lo modificado; con `--no-renames` un
+  renombrado cuenta por sus dos nombres;
+- más `git -c core.quotepath=off ls-files --others --exclude-standard`: lo nuevo sin seguimiento;
+- rutas relativas a la raíz del repositorio, con `/`, sin repetir.
 
 Si git no está, no es un repositorio o no hay base común, devuelve `None`, y la selección es
 «todo lo que no abre ventana», con una línea que lo dice. Nunca acaba en «verde sin probar nada»
@@ -103,7 +104,8 @@ importa: una sola lectura de las cabeceras.
   - más, si es un script que se lanza como proceso, las áreas de quien lo lanza (`LANZADO_POR`).
 - **Un `tests/test_*.py`**: ese test, sin más.
 - **Un ayudante `tests/_*.py`** (`_harness`, `_agente_falso`, `_vista`…): los tests que lo
-  importan (`import _x` / `from _x import`). `_harness.py` lo importan todos: todos.
+  importan (`import _x` / `from _x import`), y nada más (la regla `commands-testing` los cubre,
+  pero eso decide el doc, no los tests). `_harness.py` lo importan todos: todos.
 - **`tests/run_all.py`** y **`tests/_seleccion.py`**: las áreas que los cubren (`commands-testing`).
 - **`common/__init__.py`**: lo importan todos, sin área propia: todo lo que no abre ventana.
 - **Cualquier otro fichero** (docs, `.toml`, `.yml`, `.bat`): las áreas cuyos `paths` lo cubren.
@@ -115,17 +117,19 @@ importa `model`, `equipo`, `keepassxc` y `store`, y por ahí todo test alcanza 2
 ellos `bisync`. Por eso el salto va de fuente a fuente, y de fuente a área.
 
 `LANZADO_POR` es una tabla en `_seleccion.py`: script → los fuentes que lo lanzan como proceso
-(no lo importan, así que el grafo no los ve). Contenido inicial, a comprobar en el plan contra el
-código (las apariciones de `model.SYNC_PY`, `model.RUNSYNC_PY`, `model.PENWATCH`, y los
-lanzamientos de `agente.py` y `pregunta.py`):
+(no lo importan, así que el grafo no los ve). Comprobada contra el código el 18/10/2026 (las
+apariciones de `model.SYNC_PY`, `model.RUNSYNC_PY`, `model.PENWATCH_PY` y las rutas literales):
 
-| Script | Lo lanzan (a verificar) |
+| Script | Lo lanzan |
 |---|---|
-| `sync.py` | `runsync.py`, `ui/tk.py`, `ui/console.py`, `common/llavero.py`, `common/keepassxc.py`, `agente.py` |
-| `runsync.py` | `common/llavero.py`, `common/keepassxc.py`, `agente.py` |
-| `penwatch.py` | `ui/watch.py`, `agente.py` |
+| `sync.py` | `runsync.py`, `ui/tk.py`, `ui/console.py`, `common/llavero.py`, `agente.py` |
+| `runsync.py` | `penwatch.py`, `agente.py`, `common/keepassxc.py`, `common/llavero.py`, `common/update.py` |
+| `penwatch.py` | `ui/watch.py` (el agente lo importa: eso ya lo ve el grafo) |
 | `pregunta.py` | `agente.py` |
 | `agente.py` | `install/agente.py` |
+
+`--area A` usa la misma expansión: las áreas pedidas, más las de los fuentes que importan o
+lanzan algún fuente de esas áreas (un salto).
 
 ### 3. De las áreas, los tests
 
@@ -139,35 +143,35 @@ Una línea por área con su motivo, y los tests de ventanas que se quedan fuera,
 que quien quiera pueda pedirlos:
 
 ```
-Áreas (por los cambios contra origin/main):
+Áreas (por los cambios de esta rama):
   engine         ← common/bisync.py
   llavero        ← common/llavero.py importa common/bisync.py
   service        ← runsync.py lanza sync.py
 Fuera, por abrir ventanas (van en el CI; por nombre o con --ventanas): test_tk_pasada.py, …
 ```
 
-Si los cambios no tienen ningún test (solo `README.md`, por ejemplo): `Estos cambios no tienen
-tests: README.md`, y sale con **0**. «No hay tests que ejecutar.» y su 1 se quedan para cuando
+Si los cambios no tienen ningún test (solo `LICENSE`, que no cubre ninguna regla): `Estos
+cambios no tienen tests: LICENSE`, y sale con **0**. «No hay tests que ejecutar.» y su 1 se quedan para cuando
 no hay ningún fichero de test. Un nombre de área que no es una regla sale con 2, como hoy un
 nombre que no es un test.
 
 ## Las áreas de los 29 tests que no tienen
 
 151 de los 180 ya están en los `paths` de alguna regla. Los demás se añaden a la de lo que
-prueban; de paso, el agente que los edite recibe también el puntero a su doc. Propuesta, que el
-plan confirma leyendo cada test:
+prueban; de paso, el agente que los edite recibe también el puntero a su doc. Comprobado el
+18/10/2026 por su docstring y por qué doc los cita:
 
 | Área | Tests |
 |---|---|
-| `engine` | `test_logs_acotados`, `test_parseo_seguro`, `test_referencia_vacia`, `test_salida_utf8`, `test_ventana_hora` |
-| `service` | `test_hijos`, `test_resync_desatendido`, `test_servicio_ritmo`, `test_store_ocupado` |
+| `engine` | `test_logs_acotados`, `test_parseo_seguro`, `test_rclone_portable`, `test_referencia_vacia`, `test_salida_utf8`, `test_ventana_hora` |
+| `service` | `test_resync_desatendido` (y `repair`), `test_servicio_ritmo`, `test_store_ocupado` |
 | `agent` | `test_agente_bitlocker`, `test_store_creado` |
 | `agent-window` | `test_agente_actualizar_unidad`, `test_agente_pedir_al_conectar`, `test_buzon_carrera` |
 | `llavero` | `test_agente_registro` (y `agent`), `test_keepassxc_pin` |
-| `provisioning` | `test_precompilar`, `test_rclone_portable` |
-| `ui` | `test_matar_arbol`, `test_perf`, `test_perf_ajustes`, `test_perf_anfitrion`, `test_perf_flota`, `test_perf_parejas`, `test_perf_principal` |
+| `updating` | `test_precompilar` |
+| `ui` | `test_hijos`, `test_matar_arbol`, `test_perf`, `test_perf_ajustes`, `test_perf_anfitrion`, `test_perf_flota`, `test_perf_parejas`, `test_perf_principal` |
 | `commands-testing` | `test_run_all`, `test_rendimiento_informe`, `test_maquina_real_yml`, `test_seleccion` (nuevo) |
-| `docs-maintenance` | `test_reglas_claude` |
+| `docs-maintenance` | `test_reglas_claude`, y el patrón `.claude/rules/*.md` (cambiar una regla corre ese test) |
 
 Un test puede ir en más de un área si prueba la frontera entre dos (`test_agente_registro`:
 `llavero` y `agent`).
@@ -186,7 +190,7 @@ Un test puede ir en más de un área si prueba la frontera entre dos (`test_agen
   - un fuente del motor → su área y las de quien lo importa (un salto, no dos);
   - `sync.py` → las áreas de sus lanzadores;
   - un `test_*.py` → ese test; `_harness.py` → todos; otro ayudante → los que lo importan;
-  - `README.md` sin regla → ninguno, y sale con 0;
+  - `LICENSE` sin regla → ninguno, y sale con 0;
   - `cambiados()` devuelve `None` → todo lo que no abre ventana, con su línea;
   - `GUI` fuera, salvo con `--ventanas` o por nombre;
   - `--cambios` con nombres o con `--area` → error de argumentos.
@@ -236,6 +240,6 @@ Un test puede ir en más de un área si prueba la frontera entre dos (`test_agen
 - `tests/test_seleccion.py`, `tests/test_reglas_claude.py` y `tests/test_run_all.py` en verde.
 - En la máquina de desarrollo (Windows): `run_all.py --cambios -j auto` con un cambio solo en
   `common/bisync.py` no abre ninguna ventana y corre unos 40 tests (medido con las listas de hoy:
-  40 de 126); con un cambio solo en `README.md` no corre nada y sale con 0.
+  40 de 126); con un cambio solo en `LICENSE` no corre nada y sale con 0.
 - El CI de la PR corre los 180 en Linux y Windows (el resumen dice `Los 180 ficheros de test
   pasan.`, sin «sin correr»).
