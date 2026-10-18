@@ -53,9 +53,10 @@ que escribió la versión anterior sigue ahí. Contesta las que apliquen. -->
 sin pantalla; aquí cuenta cómo lo has comprobado tú. Los tests de Tk se saltan solos
 cuando no hay pantalla ni `tkinter`, así que un «todo verde» sin Tk no ha probado
 ninguna ventana. Solo cuenta un Tk 9: el Python fijado de `common/pins.py`, no el del
-sistema. -->
+sistema. Sin opciones, `run_all.py` no abre ventanas: `--ventanas` las abre, y
+`--cambios` corre solo lo que toca el cambio. -->
 
-- [ ] `python tests/run_all.py`: __ de __ ficheros · Tk 9: sí / no · sistema:
+- [ ] `python tests/run_all.py` (`--cambios`, sin opciones o `--ventanas`): __ de __ ficheros · ventanas con Tk 9: sí / no · sistema:
 - [ ] Tests nuevos o cambiados que fallan sin este cambio
 - [ ] Las pantallas nuevas, o las que crecen, están en la matriz de `tests/test_tk_medidas.py`
 - [ ] En un dispositivo de verdad (plataforma, cifrado, qué se ha hecho):

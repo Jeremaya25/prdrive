@@ -235,6 +235,24 @@ Un test puede ir en más de un área si prueba la frontera entre dos (`test_agen
 - **Quien corría `run_all.py` sin argumentos esperando todo** ya no abre ventanas: la última
   línea lo dice siempre, con el número que quedó fuera.
 
+## Cambios tras la revisión final (18/10/2026)
+
+La revisión de la rama entera vio que la selección se quedaba corta en casos que la decisión 2
+(«pillar en local casi todo lo que rompería el CI») no quería dejar fuera. Se añadió:
+
+- **Los tests que importan el fuente cambiado**, aunque estén en otra área: `test_frenos.py` y
+  `test_forzar.py` importan `sync` y son de `repair`; ahora los elige un cambio en `sync.py`.
+- **Los tests que nombran el fichero cambiado** por su nombre (`maquina-real.yml`,
+  `sync_config.example.toml`, un ayudante que se lanza como `"_runtime_ci.py"`): antes salían
+  como «Estos cambios no tienen tests».
+- **`test_reglas_claude.py`** cuando el cambio puede romperlo: un fuente o un test que no está
+  en ninguna regla, o un fichero borrado que una regla nombra.
+- **`python-minimo` también pasa `--ventanas`**: sin pantalla las partes de Tk se saltan, pero
+  esos ficheros prueban cosas sin ventana (la consola de respaldo, `matar_arbol`) que deben
+  seguir corriendo con el 3.11. «`python-minimo` no cambia» (arriba) ya no vale.
+- `tests/_seleccion.py` se trata como ayudante (los tests que lo importan), no por las áreas de
+  su regla como decía «2. De cada fichero, sus áreas».
+
 ## Cómo se comprueba
 
 - `tests/test_seleccion.py`, `tests/test_reglas_claude.py` y `tests/test_run_all.py` en verde.

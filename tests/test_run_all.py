@@ -1028,11 +1028,13 @@ c("--cambios con nombres: error (2) y no corre nada", (rc, cabeceras(salida)), (
 rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, plan, "--cambios", "--area", "x")
 c("--cambios con --area: error (2)", rc, 2)
 
-# 20. El CI abre las ventanas: el trabajo `tests` pasa --ventanas en Linux y en Windows.
+# 20. El CI corre todos los ficheros: el trabajo `tests` (Linux y Windows) abre las ventanas, y
+# `python-minimo` también pasa --ventanas: sin pantalla, las partes de Tk se saltan solas, y las
+# que no la necesitan de esos ficheros corren con el Python 3.11.
 yml = (TESTS_DIR.parent / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-lineas = [linea for linea in yml.split("\n  python-minimo:")[0].splitlines() if "tests/run_all.py" in linea]
-c("tests.yml: el trabajo tests corre run_all.py en Linux y en Windows", len(lineas), 2)
-c("tests.yml: los dos con --ventanas", [linea for linea in lineas if "--ventanas" not in linea], [])
+lineas = [linea for linea in yml.splitlines() if "tests/run_all.py" in linea]
+c("tests.yml: run_all.py corre en Linux, en Windows y con Python 3.11", len(lineas), 3)
+c("tests.yml: los tres con --ventanas", [linea.strip() for linea in lineas if "--ventanas" not in linea], [])
 
 # 17. Lo que los tests de verdad declaran: GUI, GUI_NO, SERIE y PESO.
 def _es_tk(modulo: str) -> bool:
