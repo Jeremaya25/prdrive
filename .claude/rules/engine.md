@@ -14,5 +14,11 @@ paths:
   - "tests/test_parte.py"
   - "tests/test_run_pair.py"
   - "tests/test_log_sin_dispositivo.py"
+  - "tests/test_logs_acotados.py"
+  - "tests/test_parseo_seguro.py"
+  - "tests/test_rclone_portable.py"
+  - "tests/test_referencia_vacia.py"
+  - "tests/test_salida_utf8.py"
+  - "tests/test_ventana_hora.py"
 ---
 Before changing these files, read `docs/agents/reference/engine.md` (config → command, bisync prefix/baseline/filters, logs and live progress, the TOML writer). If you already read it this session, skip it.

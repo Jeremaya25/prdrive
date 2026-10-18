@@ -23,7 +23,13 @@ Así se comprueba lo que la suite promete sin tocar el dispositivo ni la red:
 - el hilo principal espera con `join(plazo)`, para que Ctrl-C llegue en Windows;
 - un nombre que no es un test sale con error;
 - con GitHub Actions, la salida va en grupos plegables y los fallos se repiten
-  con `::error::`.
+  con `::error::`;
+- sin `--ventanas` no corre ningún test de `GUI` salvo por nombre, y la última
+  línea dice cuántos se quedaron fuera;
+- `--cambios` y `--area` corren lo que da la selección, lo explican (motivos,
+  cambios sin tests, ventanas fuera), salen con 0 si no hay nada que correr y
+  con 2 ante un área que no existe o junto a nombres de test;
+- el trabajo `tests` del CI pasa `--ventanas` en Linux y en Windows.
 
 Los casos que dependen de la suite y no del sistema usan un `correr()` falso en
 un `lanzador.py` que importa la copia de `run_all.py`: nada depende del tiempo
@@ -202,6 +208,34 @@ run_all.correr = correr
 raise SystemExit(run_all.main(sys.argv[1:]))
 """
 """Corre `run_all.py` con un `correr()` que da a cada test los segundos de `SEGUNDOS`."""
+
+LANZADOR_SELECCION = """\
+import sys
+import _seleccion
+import run_all
+
+PLAN = __PLAN__  # lo que dan cambiados(), elegir() y por_areas() falsos
+_seleccion.cambiados = lambda repo=None: PLAN["cambios"]
+
+
+def elegir(cambios, *, gui, ventanas, repo=None):
+    return _seleccion.Seleccion(**PLAN["seleccion"])
+
+
+def por_areas(nombres, *, gui, ventanas, repo=None):
+    if PLAN.get("desconocidas"):
+        raise ValueError(PLAN["desconocidas"])
+    return _seleccion.Seleccion(**PLAN["seleccion"])
+
+
+_seleccion.elegir = elegir
+_seleccion.por_areas = por_areas
+raise SystemExit(run_all.main(sys.argv[1:]))
+"""
+"""Corre `run_all.py` con una selección dada: la copia de `_seleccion.py` con sus funciones sustituidas."""
+
+SELECCION = (TESTS_DIR / "_seleccion.py").read_text(encoding="utf-8")
+"""El `_seleccion.py` de verdad, para copiarlo junto a la copia de `run_all.py`."""
 
 LANZADOR_INTERRUPCION = """\
 import _thread, json, sys, time
@@ -514,30 +548,31 @@ c("SERIE: ningún otro test corre a la vez que test_avisos_carpeta.py",
   [])
 
 # 5. --gui-jobs 1: dos ventanas nunca a la vez; sin el flag, con pantalla compartida, tampoco.
+# Los de GUI solo corren con --ventanas (sección 18).
 tests = {"test_tk_servicio.py": (1.0, 0), "test_tk_medidas.py": (1.0, 0)}
 tests.update({f"test_p{i}.py": (0.3, 0) for i in range(4)})
 carpeta = preparar(tests)
-lanzar(carpeta, "-j", "4", "--gui-jobs", "1")
+lanzar(carpeta, "-j", "4", "--gui-jobs", "1", "--ventanas")
 m = marcas(carpeta)
 c("--gui-jobs 1: dos ventanas nunca a la vez",
   solapan(m["test_tk_servicio.py"], m["test_tk_medidas.py"]), False)
-lanzar(carpeta, "-j", "4")
+lanzar(carpeta, "-j", "4", "--ventanas")
 m = marcas(carpeta)
 c("con pantalla compartida y sin el flag: también una a la vez",
   solapan(m["test_tk_servicio.py"], m["test_tk_medidas.py"]), False)
 
 # 5b. Con pantalla compartida, --gui-jobs 2 deja solapar dos ventanas. Con un Xvfb propio y sin el
 # flag, el límite es -j y se solapan; con --display xvfb --gui-jobs 1, no.
-lanzar(carpeta, "-j", "4", "--gui-jobs", "2")
+lanzar(carpeta, "-j", "4", "--gui-jobs", "2", "--ventanas")
 m = marcas(carpeta)
 c("--gui-jobs 2 con pantalla compartida: dos ventanas se solapan",
   solapan(m["test_tk_servicio.py"], m["test_tk_medidas.py"]), True)
 if shutil.which("Xvfb") and not IS_WIN:
-    lanzar(carpeta, "-j", "4", "--display", "xvfb")
+    lanzar(carpeta, "-j", "4", "--display", "xvfb", "--ventanas")
     m = marcas(carpeta)
     c("--display xvfb sin --gui-jobs: el límite es -j, y dos ventanas se solapan",
       solapan(m["test_tk_servicio.py"], m["test_tk_medidas.py"]), True)
-    lanzar(carpeta, "-j", "4", "--display", "xvfb", "--gui-jobs", "1")
+    lanzar(carpeta, "-j", "4", "--display", "xvfb", "--gui-jobs", "1", "--ventanas")
     m = marcas(carpeta)
     c("--display xvfb --gui-jobs 1: dos ventanas nunca a la vez",
       solapan(m["test_tk_servicio.py"], m["test_tk_medidas.py"]), False)
@@ -729,7 +764,7 @@ c("sin -j (1): orden alfabético, sin PESO", cabeceras(salida),
 tests = {"test_superficie.py": (0.4, 0), "test_tk_tabla.py": (0.4, 0)}
 tests.update({f"test_p{i}.py": (0.4, 0) for i in range(6)})
 carpeta = preparar(tests)
-lanzar(carpeta, "-j", "4")
+lanzar(carpeta, "-j", "4", "--ventanas")
 m = marcas(carpeta)
 for pantalla in ("test_superficie.py", "test_tk_tabla.py"):
     c(f"pantalla compartida: {pantalla} no se solapa con ningún otro",
@@ -930,6 +965,76 @@ try:
       sorted(p.name for p in raiz.glob("prt-*")), [])
 finally:
     shutil.rmtree(raiz, ignore_errors=True)
+
+# 18. Sin ventanas por defecto: los de GUI solo corren con --ventanas o por nombre, y la última
+# línea dice cuántos se quedaron fuera.
+SUFIJO = "de ventanas sin correr: van en el CI, o con --ventanas)"
+carpeta = preparar({"test_a.py": (0, 0), "test_tk_servicio.py": (0, 0), "test_tk_medidas.py": (0, 0)})
+rc, salida, _ = lanzar(carpeta)
+c("sin ventanas por defecto: solo corre el que no abre ventana", cabeceras(salida), ["test_a.py"])
+c("sin ventanas por defecto: la última línea dice cuántos quedan fuera",
+  ultima(salida), f"Los 1 ficheros de test pasan (2 {SUFIJO}.")
+rc, salida, _ = lanzar(carpeta, "--ventanas")
+c("--ventanas: corren todos", cabeceras(salida), ["test_a.py", "test_tk_medidas.py", "test_tk_servicio.py"])
+c("--ventanas: la última línea es la de siempre", ultima(salida), "Los 3 ficheros de test pasan.")
+rc, salida, _ = lanzar(carpeta, "test_tk_medidas.py")
+c("por nombre: el de ventanas corre, sin nada fuera",
+  (rc, cabeceras(salida), ultima(salida)), (0, ["test_tk_medidas.py"], "Los 1 ficheros de test pasan."))
+carpeta = preparar({"test_falla.py": (0, 1), "test_tk_servicio.py": (0, 0)})
+rc, salida, _ = lanzar(carpeta)
+c("sin ventanas por defecto: la línea de fallo también dice cuántos quedan fuera",
+  ultima(salida), f"FALLAN 1 de 1: test_falla.py (1 {SUFIJO}")
+
+# 19. --cambios y --area: corren lo que da la selección, lo explican, y sin nada que correr salen
+# con 0. La selección es falsa (LANZADOR_SELECCION): lo que elige se prueba en test_seleccion.py.
+carpeta = preparar({"test_a.py": (0, 0), "test_b.py": (0, 0), "test_tk_servicio.py": (0, 0)},
+                   otros={"_seleccion.py": SELECCION})
+
+
+def seleccion(tests=(), motivos=(), fuera=(), sin_tests=(), **extra) -> dict:
+    """El plan de `LANZADOR_SELECCION`: lo que devuelve la selección falsa."""
+    return {"cambios": ["common/bisync.py", "LICENSE"],
+            "seleccion": {"tests": list(tests), "motivos": list(motivos), "fuera": list(fuera),
+                          "sin_tests": list(sin_tests)}, **extra}
+
+
+plan = seleccion(["test_a.py"], ["engine ← common/bisync.py"], ["test_tk_servicio.py"], ["LICENSE"])
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, plan, "--cambios")
+c("--cambios: corre lo elegido", cabeceras(salida), ["test_a.py"])
+c.contains("--cambios: dice de dónde sale", salida, "Áreas (por los cambios de esta rama):")
+c.contains("--cambios: una línea por motivo", salida, "  engine ← common/bisync.py")
+c.contains("--cambios: dice qué cambios no tienen tests", salida, "Sin tests: LICENSE")
+c.contains("--cambios: nombra las ventanas que quedan fuera", salida,
+           "Fuera, por abrir ventanas (van en el CI; por nombre o con --ventanas): test_tk_servicio.py")
+c("--cambios: la última línea dice cuántas quedan fuera",
+  ultima(salida), f"Los 1 ficheros de test pasan (1 {SUFIJO}.")
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, plan, "--area", "engine")
+c("--area: corre lo elegido", cabeceras(salida), ["test_a.py"])
+c.contains("--area: dice de dónde sale", salida, "Áreas (por --area):")
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, seleccion(sin_tests=["LICENSE"]), "--cambios")
+c("--cambios sin tests: lo dice y sale con 0",
+  (rc, ultima(salida), cabeceras(salida)), (0, "Estos cambios no tienen tests: LICENSE", []))
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, seleccion(), "--cambios")
+c("--cambios sin cambios: lo dice y sale con 0", (rc, ultima(salida)), (0, "No hay cambios contra main."))
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION,
+                             seleccion([], ["servicio ← runsync.py"], ["test_tk_servicio.py"]), "--cambios")
+c("--cambios con solo ventanas: lo dice y sale con 0",
+  (rc, ultima(salida)), (0, "Estos cambios solo tienen tests de ventanas."))
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, seleccion(desconocidas=["nada"]), "--area", "nada")
+c("--area con un área que no existe: sale con 2", rc, 2)
+c.contains("--area con un área que no existe: la nombra", salida, "No hay ningún área que se llame: nada")
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, plan, "--cambios", "test_a.py")
+c("--cambios con nombres: error (2) y no corre nada", (rc, cabeceras(salida)), (2, []))
+rc, salida, _ = lanzar_falso(carpeta, LANZADOR_SELECCION, plan, "--cambios", "--area", "x")
+c("--cambios con --area: error (2)", rc, 2)
+
+# 20. El CI corre todos los ficheros: el trabajo `tests` (Linux y Windows) abre las ventanas, y
+# `python-minimo` también pasa --ventanas: sin pantalla, las partes de Tk se saltan solas, y las
+# que no la necesitan de esos ficheros corren con el Python 3.11.
+yml = (TESTS_DIR.parent / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+lineas = [linea for linea in yml.splitlines() if "tests/run_all.py" in linea]
+c("tests.yml: run_all.py corre en Linux, en Windows y con Python 3.11", len(lineas), 3)
+c("tests.yml: los tres con --ventanas", [linea.strip() for linea in lineas if "--ventanas" not in linea], [])
 
 # 17. Lo que los tests de verdad declaran: GUI, GUI_NO, SERIE y PESO.
 def _es_tk(modulo: str) -> bool:

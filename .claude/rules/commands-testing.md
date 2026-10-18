@@ -5,5 +5,9 @@ paths:
   - "tests/rendimiento/*"
   - ".github/workflows/tests.yml"
   - ".github/workflows/rendimiento.yml"
+  - "tests/test_run_all.py"
+  - "tests/test_rendimiento_informe.py"
+  - "tests/test_maquina_real_yml.py"
+  - "tests/test_seleccion.py"
 ---
 Before changing these files, read `docs/agents/reference/commands-testing.md` (the full CLI list, the test harness, the registry of test-replaceable indirection points). If you already read it this session, skip it.

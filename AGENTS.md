@@ -94,12 +94,13 @@ On a provisioned device the code lives in `.prdrive/` at the volume root (hidden
 python sync.py [pares...]   # all pairs, or only these. --list (read-only) · --doctor · --resync · -y · --keep-logs
 python sync.py --dry-run    # simulate; MANDATORY before any *-mirror run
 python runsync.py           # UI (Tk, console fallback) + periodic service; --auto, --auto --once
-python tests/run_all.py     # all tests, each in its own process; or run one script directly
+python tests/run_all.py --cambios -j auto  # while working: the tests of what the diff against main touches, and of what imports or launches it; never a window
+python tests/run_all.py -j auto            # every test that opens no window; --ventanas adds them (CI does); or run one script directly
 ```
 
 The full list (`penwatch.py`, `agente.py`, `prdrive-install.py`, `build_installer.py`) is in `commands-testing.md`.
 
-- Verification is `tests/run_all.py`, `--doctor`, `--dry-run`. Nothing to lint; CI (`.github/workflows/tests.yml`) runs `run_all.py` on every PR, on Linux under xvfb and on Windows, with the device's pinned runtime (Tk 9), plus one Linux pass on `setup-python` 3.11 with no display that holds the Python floor of everything that is not a window; `rendimiento.yml` times the windows against `main` (`commands-testing.md`). Tk tests skip without a display or without `tkinter`, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
+- Verification while working is `tests/run_all.py --cambios -j auto`, then `--doctor`, `--dry-run`. Tk tests never open a window locally unless named or `--ventanas`: CI runs all of them. A new test goes in the `paths` of its area's rule (`commands-testing.md`). Nothing to lint; CI (`.github/workflows/tests.yml`) runs every test (`run_all.py --ventanas`) on every PR, on Linux under xvfb and on Windows, with the device's pinned runtime (Tk 9), plus one Linux pass on `setup-python` 3.11 with no display that holds the Python floor of everything that is not a window; `rendimiento.yml` times the windows against `main` (`commands-testing.md`). Tk tests skip without a display or without `tkinter`, so green without Tk has tested no window. The suite passes on Windows **and** Linux: a check about the other system forces `IS_WIN` or prints `(saltado) …`.
 - **Tk 9 is the only supported Tk** (owner's decision, 09/10/2026): no Tk 8.6 test leg, and new code writes no Tk 8.6 workaround. The light install needs a host Python with Tk 9, and a device still on the 3.13 runtime (Tk 8.6 on Windows) is unsupported until it updates from «Ajustes → Actualizaciones». The Tk 8.6 paths that exist stay so such a device can still open its window and reach «Actualizar…»: do not delete them outside the stage-4 cleanup (`ui.md` «Which Tk»).
 - `runsync.py` with no args always **stops a previously started service** first.
 - Windows dev machine: the Bash tool is sandboxed. It redirects writes under `%LOCALAPPDATA%` (a `penwatch install` from there registers a task pointing at nothing) and hangs `tasklist | find`. Use PowerShell for both.

@@ -6,4 +6,4 @@ if ! python3 -c 'import sys, tomllib; sys.exit(sys.version_info < (3, 11))' 2>/d
   echo "AVISO: prdrive necesita Python 3.11+ (tomllib); python3 no lo cumple: $(python3 --version 2>&1)"
   exit 0
 fi
-echo "prdrive: Python $(python3 -c 'import platform; print(platform.python_version())') OK. Verificación: python tests/run_all.py (sin linter ni CI local)."
+echo "prdrive: Python $(python3 -c 'import platform; print(platform.python_version())') OK. Verificación: python tests/run_all.py --cambios -j auto (sin ventanas; las ventanas, en el CI)."

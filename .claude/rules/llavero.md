@@ -24,5 +24,7 @@ paths:
   - "tests/test_llavero_expulsar.py"
   - "tests/test_agente_llavero.py"
   - "tests/integracion/llavero_real.py"
+  - "tests/test_agente_registro.py"
+  - "tests/test_keepassxc_pin.py"
 ---
 Before changing these files, read `docs/agents/reference/llavero.md` (the keychain: KeePassXC on the device, its code-built pair, watching, opening, merging, ejecting). If you already read it this session, skip it.

@@ -7,6 +7,12 @@ sustituyen funciones del proyecto (el bucle de Tk, print, las rutas del modelo)
 y no deben contaminarse entre sí. Ninguno toca el dispositivo: todos trabajan
 sobre directorios temporales.
 
+Sin argumentos corren todos menos los de `GUI`, los que abren ventanas: `--ventanas`
+los añade, y uno pedido por su nombre corre siempre. `--cambios` corre solo los de
+las áreas que tocan los cambios de la rama contra `main`, y los de las áreas que
+dependen de ellas; `--area` los de unas áreas por su nombre. Los elige
+`_seleccion.py`, a partir de las reglas de `.claude/rules/`.
+
 Con `-j N` corren varios a la vez. Cada test tiene su propio TMPDIR y su propio
 HOME, que se borran al acabar. Con `--display xvfb` cada trabajador tiene su
 propio servidor X. Los tests de `GUI` (los que abren ventanas) no pasan de
@@ -481,8 +487,88 @@ def _analizar(argv: list[str] | None) -> argparse.Namespace:
                          "compartida, y sin límite con un servidor X propio")
     ap.add_argument("--timeout", type=_segundos, default=600.0, metavar="S",
                     help="segundos máximos por test; pasados, se mata su árbol de procesos")
-    ap.add_argument("nombres", nargs="*", help="solo estos tests (por defecto, todos)")
+    ap.add_argument("--ventanas", action="store_true",
+                    help="corre también los tests que abren ventanas (GUI); sin esto no se abre "
+                         "ninguna, salvo las de los tests pedidos por nombre")
+    grupo = ap.add_mutually_exclusive_group()
+    grupo.add_argument("--cambios", action="store_true",
+                       help="solo los tests de las áreas que tocan los cambios de esta rama contra "
+                            "main, y de las que dependen de ellas")
+    grupo.add_argument("--area", nargs="+", metavar="ÁREA",
+                       help="solo los tests de estas áreas (las reglas de .claude/rules), y de las "
+                            "que dependen de ellas")
+    ap.add_argument("nombres", nargs="*",
+                    help="solo estos tests, abran ventanas o no (por defecto, todos los que no las abren)")
     return ap.parse_args(argv)
+
+
+def _sufijo(n: int) -> str:
+    """Lo que añade la última línea cuando `n` tests de ventanas se quedaron sin correr."""
+    return f" ({n} de ventanas sin correr: van en el CI, o con --ventanas)" if n else ""
+
+
+def seleccionar(a: argparse.Namespace, todos: list[Path]) -> tuple[list[Path], int] | int:
+    """Qué tests corre esta pasada.
+
+    Sin nombres, `--cambios` ni `--area`: todos menos los de `GUI`, salvo con
+    `--ventanas`. Con nombres: exactamente esos, ventanas incluidas. Con
+    `--cambios` o `--area`: lo que elige `_seleccion`, con sus motivos impresos.
+
+    Args:
+        a: Los argumentos de la línea de órdenes, ya leídos.
+        todos: Todos los `test_*.py`, ordenados.
+
+    Returns:
+        Los tests y cuántos de ventanas se quedaron fuera; o el código de salida
+        si la pasada acaba aquí: 0 si `--cambios` o `--area` no dejan nada que
+        correr; 2 ante un nombre de test o de área que no existe, o nombres junto
+        a `--cambios` o `--area`.
+    """
+    if a.nombres and (a.cambios or a.area):
+        print("--cambios y --area no van con nombres de test")
+        return 2
+    if a.nombres:
+        pedidos = [Path(n).name for n in a.nombres]
+        existentes = {p.name for p in todos}
+        desconocidos = [n for n in pedidos if n not in existentes]
+        if desconocidos:
+            print(f"No hay ningún test que se llame: {', '.join(desconocidos)}")
+            return 2
+        return [p for p in todos if p.name in pedidos], 0
+    if not (a.cambios or a.area):
+        elegidos = todos if a.ventanas else [p for p in todos if p.name not in GUI]
+        return elegidos, len(todos) - len(elegidos)
+    import _seleccion  # solo aquí: las copias de run_all.py de test_run_all.py no lo llevan
+    if a.cambios:
+        sel = _seleccion.elegir(_seleccion.cambiados(), gui=GUI, ventanas=a.ventanas)
+        print("Áreas (por los cambios de esta rama):")
+    else:
+        try:
+            sel = _seleccion.por_areas(a.area, gui=GUI, ventanas=a.ventanas)
+        except ValueError as e:
+            print(f"No hay ningún área que se llame: {', '.join(e.args[0])}")
+            return 2
+        print("Áreas (por --area):")
+    for motivo in sel.motivos:
+        print(f"  {motivo}")
+    if sel.sin_tests:
+        print(f"Sin tests: {', '.join(sel.sin_tests)}")
+    if sel.fuera:
+        print("Fuera, por abrir ventanas (van en el CI; por nombre o con --ventanas): "
+              + ", ".join(sel.fuera))
+    if not sel.tests:
+        sujeto = "Estos cambios" if a.cambios else "Estas áreas"
+        if sel.fuera:
+            print(f"{sujeto} solo tienen tests de ventanas.")
+        elif not a.cambios:
+            print("Estas áreas no tienen tests.")
+        elif sel.sin_tests:
+            print(f"Estos cambios no tienen tests: {', '.join(sel.sin_tests)}")
+        else:
+            print("No hay cambios contra main.")
+        return 0
+    elegidos = set(sel.tests)
+    return [p for p in todos if p.name in elegidos], len(sel.fuera)
 
 
 def _esperar(hilos: list[threading.Thread]) -> None:
@@ -617,23 +703,19 @@ def main(argv: list[str] | None = None) -> int:
         argv: Los argumentos de la línea de órdenes; `None` toma los de verdad.
 
     Returns:
-        0 si todos pasan; 1 si alguno falla, no hay tests o no se pudo arrancar
-        Xvfb; 2 si se pide un nombre que no es un test; 130 si se interrumpe la
-        pasada (Ctrl-C o SIGTERM), sin resultado.
+        0 si todos pasan, o si `--cambios` o `--area` no dejan nada que correr;
+        1 si alguno falla, no hay tests o no se pudo arrancar Xvfb; 2 si se pide
+        un test o un área que no existe, o nombres junto a `--cambios` o
+        `--area`; 130 si se interrumpe la pasada (Ctrl-C o SIGTERM), sin resultado.
     """
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     a = _analizar(argv)
     todos = sorted(TESTS_DIR.glob("test_*.py"))
-    scripts = todos
-    if a.nombres:
-        pedidos = [Path(n).name for n in a.nombres]
-        existentes = {p.name for p in todos}
-        desconocidos = [n for n in pedidos if n not in existentes]
-        if desconocidos:
-            print(f"No hay ningún test que se llame: {', '.join(desconocidos)}")
-            return 2
-        scripts = [p for p in todos if p.name in pedidos]
+    elegidos = seleccionar(a, todos)
+    if isinstance(elegidos, int):
+        return elegidos
+    scripts, fuera = elegidos
     if not scripts:
         print("No hay tests que ejecutar.")
         return 1
@@ -775,9 +857,10 @@ def main(argv: list[str] | None = None) -> int:
     _escribir(f"Tiempo: {total:.1f} s (-j {a.jobs}, ventanas a la vez: {gui_jobs}, {modo})")
     _escribir("=" * 60)
     if fallidos:
-        _escribir(f"FALLAN {len(fallidos)} de {len(scripts)}: {', '.join(r.nombre for r in fallidos)}")
+        _escribir(f"FALLAN {len(fallidos)} de {len(scripts)}: {', '.join(r.nombre for r in fallidos)}"
+                  f"{_sufijo(fuera)}")
         return 1
-    _escribir(f"Los {len(scripts)} ficheros de test pasan.")
+    _escribir(f"Los {len(scripts)} ficheros de test pasan{_sufijo(fuera)}.")
     return 0
 
 

@@ -2,8 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python tests/run_all.py)",
+      "Bash(python tests/run_all.py *)",
       "Bash(python tests/test_*.py)",
       "Bash(python3 tests/run_all.py)",
+      "Bash(python3 tests/run_all.py *)",
       "Bash(python3 tests/test_*.py)",
       "Bash(python sync.py --list*)",
       "Bash(python sync.py --doctor*)",

@@ -56,7 +56,7 @@ Tk 8.6 still reaches three places, and the code for them stays on purpose:
 - Their tests: `tests/test_iconos_svg.py` (the `TkVersion < 9` branch and the painter parity), `tests/test_controles.py` (the gripcount check and the forced `TclError` on the placeholder), the painter PNG checks of `tests/test_tk_tabla.py`, and the Tk 8.6 fallback in `estilos()` of `tests/_vista.py`. `PRDRIVE_SIN_SVG` is also read by `tests/test_autoprueba.py`.
 - With its migration only: the Tk version in `prefs.clave_ancho`.
 
-Tk 8.6 is not a CI leg. To check a change to a file above against it, run the suite by hand on a Python with Tk 8.6 under a virtual display: `xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/python3.12 tests/run_all.py`.
+Tk 8.6 is not a CI leg. To check a change to a file above against it, run the suite by hand on a Python with Tk 8.6 under a virtual display: `xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/python3.12 tests/run_all.py --ventanas` (without `--ventanas` no window test runs).
 
 ## Main window and output
 
