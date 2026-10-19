@@ -29,9 +29,13 @@ Se usa como `python agente.py ORDEN`:
 - `atajo ACCION`: hace lo de ese atajo (`sincronizar`, `carpeta`, `pausar`,
   `ventana`) como si se hubiera pulsado: sirve para dárselo a un atajo del
   propio escritorio.
+- `desinstalar [--si]`: quita el agente de este equipo sin dejar rastro, tras
+  enseñar qué hará (el «Desinstalar» de «Aplicaciones instaladas» de Windows;
+  `common/presencia.py`).
 
-Las órdenes que no son `run` no hacen nada por sí mismas: dejan la petición en
-el buzón del agente (`equipo.pedir()`), que es quien escribe su configuración.
+Las órdenes que no son `run` ni `desinstalar` no hacen nada por sí mismas:
+dejan la petición en el buzón del agente (`equipo.pedir()`), que es quien
+escribe su configuración.
 
 Cómo trabaja, vuelta a vuelta (`Agente.vuelta()`):
 - **Detecta** las unidades con el mismo recorrido de siempre,
@@ -169,8 +173,8 @@ if str(SCRIPT_DIR) not in sys.path:
 import penwatch  # noqa: E402
 from common import (APP_NAME, autorun, avisos, avisos_buzon, avisos_carpeta, bitlocker,  # noqa: E402
                     catalog, cifrada, components, consumo, equipo, explorador, expulsar, keepassxc,
-                    llavero, model, moderacion, nombres, parte, prioridad, store, update,
-                    vestibulo)
+                    llavero, model, moderacion, nombres, parte, presencia, prioridad, store,
+                    update, vestibulo)
 from common import huella as huellas  # noqa: E402  (`huella()` es la del código de una raíz)
 from common import planificador as pl  # noqa: E402
 from ui import atajos, bandeja, prefs, volumen  # noqa: E402
@@ -516,26 +520,14 @@ def limpiar_navegador() -> tuple[int, list[str]]:
     """Quita lo del navegador que apunta a un KeePassXC de prdrive que ya no está.
 
     Es lo que no pudo hacer «Expulsar» con una unidad que se quitó sin
-    expulsarla. En Windows, las claves del registro: el navegador seguiría
-    buscando KeePassXC en una letra muerta; si hay uno instalado, la clave
-    vuelve a él (`keepassxc.cerrar_navegador(muertas=True)`). En Linux, los
-    manifiestos de prdrive, si ya no queda abierto ningún KeePassXC extraído
-    (`keepassxc.cerrar_navegador_linux(muertas=True)`). Lo de otros programas
-    no se toca. Punto de indirección: los tests no tocan el registro ni los
+    expulsarla: `presencia.limpiar_navegador()`, lo mismo que hace
+    desinstalar. Punto de indirección: los tests no tocan el registro ni los
     navegadores.
 
     Returns:
         Cuántas claves o manifiestos ha tocado y lo que no ha podido hacer.
     """
-    if not IS_WIN:
-        manifiestos = keepassxc.plan_cerrar_navegador_linux(muertas=True)
-        if not manifiestos:
-            return 0, []
-        return len(manifiestos), keepassxc.cerrar_navegador_linux(muertas=True)
-    plan = keepassxc.plan_cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
-    if not plan:
-        return 0, []
-    return len(plan), keepassxc.cerrar_navegador(carpeta_app=APP_SUBDIR, muertas=True)
+    return presencia.limpiar_navegador()
 
 
 def cerrar_keepassxc_huerfano(raiz: Path) -> int:
@@ -6387,6 +6379,77 @@ def cmd_pregunta(args: argparse.Namespace) -> int:
     return tk_agente.main(args.nombre, args.segundos, args.cambiada)
 
 
+def cmd_desinstalar(args: argparse.Namespace) -> int:
+    """Quita el agente de este equipo sin dejar rastro: el «Desinstalar» de Windows.
+
+    Lo lanza «Aplicaciones instaladas» con el Python sin consola del agente
+    (`presencia.registrar_ficha()`), así que lo normal es la ventana
+    (`ui/tk_desinstalar.py`), que enseña qué hará y espera un sí. Sin Tk o sin
+    pantalla, lo mismo por la consola. Con `--si` no pregunta: es la
+    desinstalación silenciosa. Este proceso corre desde la carpeta que borra,
+    así que lo último es `presencia.rematar()`, que la termina de borrar cuando
+    sale.
+
+    Returns:
+        0 si se ha desinstalado; 1 si se ha cancelado o no se ha podido; 2 si
+        no hay ni ventana ni consola a la que preguntar (no se ha tocado nada).
+    """
+    _enganchar_penwatch()
+    try:
+        os.chdir(tempfile.gettempdir())     # nunca dentro de la carpeta que se borra
+    except OSError:
+        pass
+    plan = presencia.plan_desinstalar()
+    try:
+        if not args.si:
+            from ui import tk_desinstalar
+            rc = tk_desinstalar.main(plan)
+            if rc != tk_desinstalar.SIN_VENTANA:
+                return rc
+        return desinstalar_por_consola(plan, preguntar=not args.si)
+    finally:
+        presencia.rematar()
+
+
+def desinstalar_por_consola(plan: presencia.Desinstalacion, preguntar: bool) -> int:
+    """Hace `cmd_desinstalar()` sin ventana: lo dice por la consola y pregunta en ella.
+
+    Sin consola (el Python sin ella, con `--si`) desinstala sin decir nada.
+
+    Args:
+        plan: El de `presencia.plan_desinstalar()`.
+        preguntar: Si hay que esperar un sí antes de tocar nada.
+
+    Returns:
+        Como `cmd_desinstalar()`.
+    """
+    def decir(texto: str = "") -> None:
+        """Escribe una línea, si hay dónde."""
+        if sys.stdout is not None:
+            print(texto)
+
+    decir(f"Desinstalar {APP_NAME} de este equipo:")
+    for linea in plan.consequences:
+        decir(f"  - {linea}")
+    for linea in plan.warnings:
+        decir(f"  ! {linea}")
+    if preguntar:
+        if sys.stdin is None or not sys.stdin.isatty():
+            decir("No hay a quién preguntar: con «desinstalar --si» se hace sin preguntar.")
+            return 2
+        if input("¿Desinstalar? [s/N] ").strip().lower() not in ("s", "si", "sí"):
+            decir("No se ha tocado nada.")
+            return 1
+    try:
+        hecho = plan.execute(presencia.decirlo(decir))
+    except presencia.DesinstalacionError as e:
+        decir(str(e))
+        return 1
+    for linea in hecho:
+        decir(f"  {linea}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Atiende la línea de comandos del agente."""
     for flujo in (sys.stdout, sys.stderr):
@@ -6448,6 +6511,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("clave", choices=equipo.AJUSTES_PEDIBLES)
     p.add_argument("valor")
     p.set_defaults(func=cmd_ajuste)
+    p = sub.add_parser("desinstalar", help="Quitar el agente de este equipo sin dejar "
+                                           "rastro; las unidades y la raíz no se tocan.")
+    p.add_argument("--si", action="store_true", help="Sin preguntar antes.")
+    p.set_defaults(func=cmd_desinstalar)
     p = sub.add_parser("pregunta", help=argparse.SUPPRESS)
     p.add_argument("--nombre", required=True)
     p.add_argument("--segundos", type=int, default=int(equipo.ESPERA_UNIDAD_NUEVA))

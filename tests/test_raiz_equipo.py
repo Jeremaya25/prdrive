@@ -26,7 +26,7 @@ from _harness import Checks, en_exec, tmpdir
 import tomllib
 
 import penwatch
-from common import equipo, fleet, model
+from common import equipo, fleet, model, presencia
 from install import InstallError, agente as ia, deploy, device, profile, raiz_equipo
 from install import rclone_bin, remote
 from ui import pair_editor, tk_fleet, watch
@@ -344,8 +344,8 @@ c("  una raíz que ya está igual no se vuelve a pedir", equipo.buzon().exists()
 
 # El acceso del menú (Linux: un .desktop visible, con el Exec escapado).
 MENU = tmpdir("prdrive-menu-") / "applications" / "prdrive.desktop"
-ia.acceso_menu = lambda: MENU
-ia.IS_WIN = False
+presencia.acceso_menu = lambda: MENU
+ia.IS_WIN = presencia.IS_WIN = False
 prep = ia.Preparado(equipo.DIR / "agente" / "0.4.0", Path("/opt/py dir/bin/python3"), "s")
 msg = ia.poner_menu(prep)
 texto = MENU.read_text(encoding="utf-8")
@@ -354,15 +354,14 @@ c("  abre con agente.py abrir, con el Python del agente",
   f'Exec="{en_exec(prep.python)}" "{en_exec(prep.codigo / "agente.py")}" "abrir"'
   in texto, True)
 c("  visible en el menú (sin NoDisplay)", "NoDisplay" in texto, False)
-c("quitar_menu lo borra", (ia.quitar_menu() is not None, MENU.exists()), (True, False))
-c("  y sin menú no dice nada", ia.quitar_menu(), None)
+c("quitar_menu lo borra", (presencia.quitar_menu() is not None, MENU.exists()), (True, False))
+c("  y sin menú no dice nada", presencia.quitar_menu(), None)
 
 # Desinstalar nunca borra la raíz, y lo dice.
-ia.desregistrar = lambda: "sin registro"
-ia.parar_agente = lambda avance=None: None
+presencia.parar_agente = lambda avance=None, **_k: None
 msgs = ia.desinstalar()
-c("desinstalar dice dónde sigue la raíz",
-  any(str(nueva) in m and "sigue" in m for m in msgs), True)
+c("desinstalar dice dónde se queda la raíz",
+  any(str(nueva) in m and "se queda" in m for m in msgs), True)
 c("  y no la toca", (nueva / ".prdrive" / "PRDRIVE").is_file(), True)
 
 # la línea de la ventana

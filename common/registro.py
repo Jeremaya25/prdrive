@@ -2,8 +2,9 @@
 """El registro de Windows de la persona (`HKEY_CURRENT_USER`), lo poco que toca prdrive.
 
 Lo usan el llavero, para las claves del navegador de KeePassXC
-(`common/keepassxc.py`), y el nombre y el icono de la letra de un volumen
-VeraCrypt (`common/explorador.py`). Solo `HKEY_CURRENT_USER`: nada de esto pide
+(`common/keepassxc.py`), el nombre y el icono de la letra de un volumen
+VeraCrypt (`common/explorador.py`), y el agente para arrancar al iniciar sesión
+y estar en «Aplicaciones instaladas» (`common/presencia.py`). Solo `HKEY_CURRENT_USER`: nada de esto pide
 un administrador. Las claves se dan sin la colmena y con `\\`
 (`Software\\Mozilla\\NativeMessagingHosts\\…`). El valor que se lee y se
 escribe es, si no se nombra otro, el predeterminado de la clave: el «Default»
@@ -60,6 +61,40 @@ def escribir(clave: str, valor: str, nombre: str = "") -> None:
     winreg = _winreg()
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, clave, 0, winreg.KEY_SET_VALUE) as k:
         winreg.SetValueEx(k, nombre, 0, winreg.REG_SZ, valor)
+
+
+def escribir_numero(clave: str, numero: int, nombre: str) -> None:
+    """Pone un valor numérico (`REG_DWORD`) en esa clave, creándola si falta.
+
+    Args:
+        clave: La clave, sin la colmena.
+        numero: Lo que se escribe, de 0 a 2³²−1.
+        nombre: El nombre del valor.
+
+    Raises:
+        OSError: Si no se ha podido.
+    """
+    winreg = _winreg()
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, clave, 0, winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, nombre, 0, winreg.REG_DWORD, int(numero))
+
+
+def borrar_valor(clave: str, nombre: str) -> bool:
+    """Borra un valor de esa clave, sea del tipo que sea; la clave se queda.
+
+    Returns:
+        False si no estaba (ni la clave ni el valor).
+
+    Raises:
+        OSError: Si está y no se ha podido.
+    """
+    winreg = _winreg()
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, clave, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.DeleteValue(k, nombre)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def borrar(clave: str) -> bool:

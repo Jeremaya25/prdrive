@@ -9,6 +9,10 @@ al agente; que penwatch se desinstala y se dice; el texto del registro (la
 tarea de Windows y el autostart de Linux); la poda de versiones viejas; y que
 desinstalar no deja nada del agente. Y dos reglas de dependencias: penwatch
 sigue sin importar nada del proyecto, y el agente no carga Tk.
+
+Lo que el agente deja fuera de su carpeta en Windows (el valor de `Run`, la
+ficha de «Aplicaciones instaladas») y desinstalarlo a fondo, en
+`tests/test_presencia.py`.
 """
 
 import ast
@@ -19,10 +23,10 @@ import sys
 import tarfile
 from pathlib import Path
 
-from _harness import REPO, Checks, en_exec, tmpdir
+from _harness import REGISTRO, REPO, Checks, en_exec, tmpdir
 
 import penwatch
-from common import components, equipo, pins, store
+from common import components, equipo, pins, presencia, store
 from common import model as agente_model
 from install import agente as ia
 from install import platforms, runtime_bin, version
@@ -34,9 +38,9 @@ PW = tmpdir("prdrive-pw-")
 penwatch.HOST_DIR = PW / "prdriveWatch"
 penwatch.CONFIG_FILE = penwatch.HOST_DIR / "watch.json"
 AUTOSTART = tmpdir("prdrive-autostart-") / "autostart" / "prdrive.desktop"
-ia.autostart_file = lambda: AUTOSTART
-ia.IS_WIN = False
-ia.PARAR_ESPERA = 0.5
+presencia.autostart_file = lambda: AUTOSTART
+ia.IS_WIN = presencia.IS_WIN = False
+presencia.PARAR_ESPERA = 0.5
 penwatch.candidate_roots = lambda cfg: list(RAICES)
 RAICES: list[Path] = []
 
@@ -242,17 +246,21 @@ c("Linux: autostart XDG que arranca el agente con su Python",
   f'Exec="{en_exec(prep.python)}" "{en_exec(prep.codigo / "agente.py")}" "run"' in texto,
   True)
 c("  oculto del menú", "NoDisplay=true" in texto, True)
-xml = penwatch.task_xml("EQUIPO\\ana", r"C:\Users\ana\AppData\Local\prdrive\runtime\x\pythonw.exe",
-                        r'"C:\Users\ana\AppData\Local\prdrive\agente\0.4.0\agente.py" run',
-                        r"C:\Users\ana\AppData\Local\prdrive", ia.DESCRIPCION)
-c("Windows: la tarea arranca el pythonw del agente",
-  r"<Command>C:\Users\ana\AppData\Local\prdrive\runtime\x\pythonw.exe</Command>" in xml, True)
-c("  con agente.py run", "agente.py&quot; run</Arguments>" in xml
-  or 'agente.py" run</Arguments>' in xml, True)
-c("  a batería también", "<DisallowStartIfOnBatteries>false" in xml, True)
-c("  y sin límite de tiempo", "<ExecutionTimeLimit>PT0S" in xml, True)
-c("  con su descripción", ia.DESCRIPCION in xml, True)
-c("  y la de penwatch sigue siendo la suya",
+presencia.IS_WIN = True
+try:
+    dicho = ia.registrar(prep)
+finally:
+    presencia.IS_WIN = False
+c("Windows: arranca desde el valor de Run de la persona, con su Python y agente.py run",
+  REGISTRO.leer(presencia.CLAVE_RUN, presencia.NOMBRE),
+  presencia.linea(presencia.orden(prep.python, prep.codigo)))
+c("  y sale en «Aplicaciones instaladas», con su «Desinstalar»",
+  (REGISTRO.leer(presencia.CLAVE_FICHA, "UninstallString"),
+   REGISTRO.leer(presencia.CLAVE_FICHA, "DisplayVersion")),
+  (presencia.linea(presencia.orden_desinstalar(prep.python, prep.codigo)), version()))
+c("  y lo dice", ("Aplicaciones de arranque" in dicho, "Aplicaciones instaladas" in dicho),
+  (True, True))
+c("  la tarea programada de penwatch sigue siendo la suya",
   penwatch.TASK_DESCRIPTION in penwatch.task_xml("u", "c", "a", "w",
                                                  penwatch.TASK_DESCRIPTION), True)
 c("Exec cita cada argumento (una ruta con espacios no se parte)",
@@ -264,7 +272,7 @@ c("  y escapa lo especial dos veces, como pide la especificación",
 (equipo.dir_codigo() / "0.0.1").mkdir()
 (equipo.dir_runtimes() / "viejo").mkdir()
 lanzados = []
-ia.lanzar = lambda args, **kw: lanzados.append((args, kw))
+presencia.lanzar = lambda args, **kw: lanzados.append((args, kw))
 msgs = ia.activar(prep, {"e" * 32: (equipo.DAEMON, "Azul")}, 120)
 inst = equipo.leer_instalacion()
 c("instalacion.json dice dónde está todo",
@@ -277,8 +285,8 @@ c("  y las del Python", sorted(p.name for p in equipo.dir_runtimes().iterdir()),
   [penwatch.stamp_id(prep.sello)])
 c("y se arranca con su orden, fuera de toda unidad",
   (lanzados[-1][0], lanzados[-1][1].get("cwd")),
-  (ia.orden(prep.python, prep.codigo), str(equipo.DIR)))
-solo = ia.acceso_menu()
+  (presencia.orden(prep.python, prep.codigo), str(equipo.DIR)))
+solo = presencia.acceso_menu()
 c("sin raíz, en Linux, también el acceso del menú: donde no hay bandeja hace sus veces",
   (solo.is_file(), ia.COMENTARIO_SOLO in solo.read_text(encoding="utf-8")), (True, True))
 c("  el de siempre, bajo XDG_DATA_HOME (en los tests, un temporal)",
@@ -295,7 +303,7 @@ lanzados.clear()
 equipo.recoger()
 tarea_antes = AUTOSTART.read_bytes()
 RAIZ_NUEVA = equipo.Unidad("r" * 32, equipo.DAEMON, "Casa", str(tmpdir("prdrive-casa-")))
-ia.acceso_menu = lambda: MENU
+presencia.acceso_menu = lambda: MENU
 MENU = tmpdir("prdrive-menu-") / "applications" / "prdrive.desktop"
 msgs = ia.anadir({}, 120, raiz=RAIZ_NUEVA)
 c("anadir(): la raíz nueva (y el plazo que cambia) se le piden por su buzón",
@@ -305,7 +313,7 @@ c("  ni se registra otra vez", AUTOSTART.read_bytes(), tarea_antes)
 c("  con raíz nueva, el acceso del menú", MENU.is_file(), True)
 c("  que ya abre su ventana", ia.COMENTARIO_MENU in MENU.read_text(encoding="utf-8"), True)
 c("  y como el agente no está en marcha, se arranca",
-  [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
+  [a for a, _ in lanzados], [presencia.orden(prep.python, prep.codigo)])
 
 # actualizar: la versión de este instalador en lugar de la puesta
 #
@@ -356,7 +364,7 @@ c("  el código viejo se recoge", sorted(p.name for p in equipo.dir_codigo().ite
 c("  el Python viejo también, pero NO el que corre este proceso",
   sorted(p.name for p in equipo.dir_runtimes().iterdir()),
   sorted([penwatch.stamp_id(prep.sello), "corriendo"]))
-c("  y se arranca", [a for a, _ in lanzados], [ia.orden(prep.python, prep.codigo)])
+c("  y se arranca", [a for a, _ in lanzados], [presencia.orden(prep.python, prep.codigo)])
 c("  agente.json no se toca",
   sorted(u.nombre for u in equipo.leer_ajustes().raices.values()), ["Abierta", "Cifrada"])
 c("  con una raíz cifrada y sin VeraCrypt instalado, se lleva el suyo",

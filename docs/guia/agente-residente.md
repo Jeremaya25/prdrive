@@ -13,7 +13,7 @@ pasa a su lista la unidad que vigilaba penwatch y lo desinstala, y lo dice).
 ```bash
 python prdrive-install.py                      # el asistente → «En este equipo»
 python prdrive-install.py --instalar-agente    # lo mismo, sin ventanas
-python prdrive-install.py --desinstalar-agente # quitarlo (no toca ninguna unidad)
+python prdrive-install.py --desinstalar-agente # quitarlo sin dejar rastro; no toca unidades ni la raíz
 ```
 
 Puede sincronizar además **una carpeta del propio equipo**, la raíz del equipo
@@ -144,7 +144,8 @@ agente»**. El diseño completo está en
   **Atajos de teclado…**, **Desbloquear**
   y **Bloquear** la raíz cifrada con la casilla «Pedir la contraseña al iniciar
   sesión», **Atender…** una unidad a la que dijiste «Ahora no» mientras siga
-  enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión).
+  enchufada, y **Cerrar el agente** (vuelve a arrancar al iniciar sesión; para
+  quitarlo del todo, «Desinstalar», arriba).
   Abajo del todo dice qué versión lleva el agente y, dentro del desplegable de
   cada dispositivo, la de su programa. En
   Linux es un StatusNotifierItem (KDE, y GNOME con la extensión «AppIndicator
@@ -244,9 +245,11 @@ agente»**. El diseño completo está en
   puedes crear el atajo en los ajustes de teclado del escritorio con la orden
   `python agente.py atajo sincronizar` (o `carpeta`, `pausar`, `ventana`,
   `llavero`).
-- **Se registra por usuario, sin administrador**: en Windows con una tarea
-  programada; en Linux con un autostart del escritorio (y no con systemd: los
-  avisos y la pregunta por una unidad nueva necesitan la sesión gráfica).
+- **Se registra por usuario, sin administrador**: en Windows en el arranque de
+  tu sesión («Aplicaciones de arranque», sin tarea programada) y en
+  «Aplicaciones instaladas»; en Linux con un autostart del escritorio (y no con
+  systemd: los avisos y la pregunta por una unidad nueva necesitan la sesión
+  gráfica). Abajo, [qué deja y cómo se quita](#qué-deja-en-el-equipo-y-cómo-se-quita).
 
 ```bash
 python agente.py status               # qué atiende y cómo (en su carpeta del equipo)
@@ -262,15 +265,50 @@ python agente.py actualizar <id>      # esa unidad, a la versión del agente
 python agente.py expulsar <id>        # soltar esa unidad extraíble, como «Expulsar» de la bandeja
 python agente.py atajos               # la ventana que graba los atajos de teclado
 python agente.py atajo sincronizar    # lo de ese atajo, como si lo pulsaras (carpeta, pausar, ventana, llavero)
+python agente.py desinstalar [--si]   # quitarlo sin dejar rastro, como «Desinstalar» de Windows
 ```
 
-Esas órdenes no tocan nada por sí mismas: dejan la petición en el buzón del
-agente (`agente.pide`), y él escribe su configuración. **Sin probar todavía en un
-Windows real**: la tarea programada, la bandeja y los avisos (`Shell_NotifyIconW`), la batería y el ahorro de energía,
+Esas órdenes (menos `desinstalar`) no tocan nada por sí mismas: dejan la
+petición en el buzón del agente (`agente.pide`), y él escribe su configuración.
+**Sin probar todavía en un Windows real**: el arranque desde «Aplicaciones de
+arranque», «Desinstalar» desde «Aplicaciones instaladas», la bandeja y los avisos
+(`Shell_NotifyIconW`), la batería y el ahorro de energía,
 la red de uso medido (`INetworkCostManager`), el acceso del menú Inicio
 (`IShellLinkW`) y «Actualizar»; ni en un escritorio Linux de verdad la
 bandeja (StatusNotifierItem y dbusmenu) ni los atajos de teclado (los de X11 y
 Windows se han visto en máquinas de prueba; los del portal de Wayland, en ninguna).
+
+## Qué deja en el equipo, y cómo se quita
+
+Todo lo suyo va en su carpeta (abajo). Fuera de ella deja solo lo justo, de tu
+usuario y sin pedir administrador:
+
+- **Arrancar al iniciar sesión.** En Windows sale en **Configuración →
+  Aplicaciones → Inicio** (y en la pestaña «Aplicaciones de arranque» del
+  Administrador de tareas), donde lo puedes apagar; no es una tarea programada.
+  Si lo apagas ahí, sigue apagado aunque se actualice. En Linux, un fichero en
+  `~/.config/autostart/`.
+- **Su ficha en «Aplicaciones instaladas»** (Windows): **Configuración →
+  Aplicaciones → Aplicaciones instaladas → prdrive → Desinstalar**.
+- **El acceso «prdrive» del menú**, si lo lleva (abajo).
+
+**Desinstalar** enseña antes qué va a pasar y espera a que digas que sí. Para el
+agente (si está sincronizando, deja que acabe la pareja en curso), quita lo de
+arriba, lo que el agente puso por las unidades (el nombre y el icono de la letra
+de una unidad VeraCrypt en el Explorador, lo del navegador de un llavero que ya
+no está), la caché (`~/.cache/prdrive/` en Linux) y su carpeta entera: no queda
+nada del agente. La carpeta se borra en cuanto cierras la ventana; si algo la
+sigue usando (el VeraCrypt del agente, hasta reiniciar), se termina de borrar sola
+la próxima vez que inicies sesión. Si la ventana de prdrive de este equipo está
+abierta, no desinstala nada y te pide que la cierres antes.
+
+**Nunca toca una unidad ni la raíz del equipo**: dice dónde se queda la raíz,
+para que la borres a mano si ya no la quieres. Las unidades siguen funcionando
+solas, desde su propio programa; lo que dejan de hacer es sincronizarse al
+enchufarlas en este equipo.
+
+Sin ventana, `python agente.py desinstalar` pregunta por la consola, y con
+`--si` lo hace sin preguntar (es lo que usa una desinstalación silenciosa).
 
 ## La raíz del equipo
 

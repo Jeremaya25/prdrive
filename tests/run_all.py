@@ -55,7 +55,8 @@ GUI = {
     "test_perf_flota.py", "test_perf_parejas.py", "test_perf_principal.py", "test_start.py",
     "test_superficie.py", "test_tema.py", "test_theme_combobox.py", "test_tk_ajustes_vista.py",
     "test_tk_apartados_lectura.py", "test_tk_asistente.py", "test_tk_asistente_reencaje.py",
-    "test_tk_atajos.py", "test_tk_densidad.py", "test_tk_dialogos.py", "test_tk_ensenar.py",
+    "test_tk_atajos.py", "test_tk_densidad.py", "test_tk_desinstalar.py", "test_tk_dialogos.py",
+    "test_tk_ensenar.py",
     "test_tk_equipo_lecturas.py", "test_tk_espera.py", "test_tk_flags_ayuda.py",
     "test_tk_flags_guia.py", "test_tk_flota_vista.py", "test_tk_letra.py",
     "test_tk_llavero.py",
@@ -76,6 +77,7 @@ a nivel de módulo, o que crea un `Tk()`, está aquí o en `GUI_NO`.
 GUI_NO = {
     "test_build_installer.py": "importa tkinter a nivel de módulo solo para leer la versión de Tcl",
     "test_install_components.py": "importa `ui.tk_relevo` y sustituye su ventanita: ningún test la abre",
+    "test_presencia.py": "importa `ui.tk_desinstalar` y sustituye su ventana: la abre test_tk_desinstalar",
     "test_instancia_unica.py": "importa `ui.tk_update`, pero no abre ventanas",
     "test_keepassxc.py": "importa `ui.tk` para sus constantes, pero no abre ventanas",
     "test_raiz_equipo.py": "importa `ui.tk_fleet` para la ficha de texto, pero no abre ventanas",

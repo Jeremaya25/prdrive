@@ -40,6 +40,8 @@ on:
       - "common/avisos_carpeta.py"
       - "common/equipo.py"
       - "common/expulsar.py"
+      - "common/presencia.py"
+      - "common/registro.py"
       - "ui/bandeja_windows.py"
       - "ui/atajos.py"
       - "ui/atajos_linux.py"

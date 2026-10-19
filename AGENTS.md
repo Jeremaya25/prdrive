@@ -28,7 +28,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 | `veracrypt.md` | `install/crypto.py`, `veracrypt_bin.py`, `traveler.py` |
 | `vestibule.md` | `vestibulo.py`, `Abrir/Expulsar PRDRIVE`, Linux open/close without VeraCrypt |
 | `updating.md` | `update.py`, `components.py`, `--update*`, `VERSION`/release, downloads |
-| `agent.md` | `agente.py`, `install/agente.py`, `equipo.py`, `avisos.py`, `dbus.py` |
+| `agent.md` | `agente.py`, `install/agente.py`, `presencia.py` (startup, «Aplicaciones instaladas», uninstall), `equipo.py`, `avisos.py`, `dbus.py` |
 | `agent-scheduling.md` | `planificador.py`, `red.py`, `huella.py`, `avisos_carpeta.py`, `moderacion.py`, `watch = true` |
 | `agent-window.md` | window ↔ agent: «Pausar/Reanudar», mailboxes, `ui/watch.py`, agent self-update |
 | `host-root.md` | `raiz_equipo.py`, `tk_equipo.py`, encrypted host root, «En este equipo» wizard |
@@ -57,7 +57,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 │   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
 │   revision (the ONE diagnosis) · frenos (the delete brakes in a log: `sync.py` and `revision` both read it) · progress · config_file (reads AND writes TOML) · catalog · fleet · update · components (stamps vs pins, no network)
 │   pins (pinned rclone/Python/VeraCrypt + platforms) · pairing (rclone.conf, QR payload) · vestibulo · autorun · explorador (a VeraCrypt letter's name and icon, HKCU) · store (JSON state, `pid_alive()`, atomic writes, `hide()`) · prioridad (unattended passes yield the CPU and disk)
-│   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive) · nombres (a drive's default name)
+│   agent side: planificador (PURE scheduler) · huella · avisos_carpeta (inotify) · equipo (host dir, mailbox) · presencia (what it leaves outside that dir; uninstall) · moderacion · red · dbus · avisos · expulsar (unmount a removable drive) · nombres (a drive's default name)
 │   keychain: llavero (its pass and its watch) · kdbx (is a base whole) · keepassxc (KeePassXC on this host) · registro (HKCU)
 ├── ui/             asking the user, showing results
 │   __init__ (`Choice`, `Frontend`, `start()`…) · theme · icons · qr · prefs · segundo_plano · cifrado · console · tk (TkFrontend, `modal()`/`mostrar()`/`working()`) · tk_*.py (draw only; `tk_principal` the main window, `tk_tabla` the one-canvas table)

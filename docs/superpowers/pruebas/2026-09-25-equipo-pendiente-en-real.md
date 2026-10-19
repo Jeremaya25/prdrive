@@ -39,7 +39,7 @@ Equipos que hacen falta:
 
 | Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
 |---|---|---|---|---|
-| A1 | W | Instalar «En este equipo → Ninguna» desde el `.exe`. Cerrar sesión y volver a entrar. | Queda una tarea programada por usuario con el agente (`pythonw.exe … agente.py run`), sin administrador. Tras volver a entrar, `agente.py status` lo da vivo. | `penwatch.task_xml()` / `register_task()`, `install/agente.registrar()` |
+| A1 | W | Instalar «En este equipo → Ninguna» desde el `.exe`. Cerrar sesión y volver a entrar. | Ninguna tarea programada: el valor `prdrive` de `HKCU\…\CurrentVersion\Run` con `pythonw.exe … agente.py run`, sin administrador (y U1). Tras volver a entrar, `agente.py status` lo da vivo. | `presencia.registrar_arranque()`, `install/agente.registrar()` |
 | A2 | W | Con penwatch ya instalado y apuntando a una unidad, instalar el agente. | penwatch desinstalado (sin tarea, sin `%LOCALAPPDATA%\prdriveWatch`), su unidad en `agente.json` con su modo, y el asistente lo dice. | `install/agente.quitar_penwatch()`, `de_penwatch()` |
 | A3 | L | Lo mismo que A1 en Linux. | `~/.config/autostart/prdrive-agente.desktop` con `Exec=` bien entrecomillado; el agente arranca al entrar en la sesión gráfica. | `penwatch.autostart_desktop()` |
 | A4 | W, L | Enchufar una unidad prdrive que no está en la lista. | Un aviso del sistema («Se ha conectado …») y la ventanita con cuenta atrás. «Atender» la añade en `daemon`. Sin contestar, se cierra sola a los 2 min y cuenta como «Ahora no» hasta desenchufarla. | `Agente._preguntar()`, `ui/tk_agente.py` |
@@ -52,7 +52,7 @@ Equipos que hacen falta:
 | A11 | L | Enchufar una unidad y medir cuánto tarda en verla. | Unos segundos, no los 30 del respaldo: `POLLPRI` de `/proc/self/mountinfo`. | `agente.Vigia` |
 | A12 | W, L | Con la unidad atendida, abrir su ventana (`runsync.py`) desde la unidad. | El agente se pausa (`status`: «en pausa: hay una ventana…»). Al cerrarla, vuelve a atenderla. «Iniciar servicio» en la ventana: ver V1 y V2 (fase 5). | contrato de la sección 3, `Agente._contrato()` |
 | A13 | W | Unidad VeraCrypt de la lista, enchufada cerrada. | VeraCrypt pide la contraseña **una** vez por conexión. Tras «Expulsar» con la unidad puesta no la vuelve a pedir. | `Agente._vestibulos()`, `penwatch.open_container()` |
-| A14 | W, L | Desinstalar el agente (`prdrive-install.py --desinstalar-agente`). | Sin tarea ni autostart, sin `%LOCALAPPDATA%\prdrive`; ninguna unidad tocada. | `install/agente.desinstalar()` |
+| A14 | W, L | Desinstalar el agente (`prdrive-install.py --desinstalar-agente`). | Sin valor en `Run` ni ficha en «Aplicaciones instaladas» (Windows), sin autostart (Linux), sin `%LOCALAPPDATA%\prdrive`; ninguna unidad tocada. Desde «Aplicaciones instaladas»: U3–U6. | `install/agente.desinstalar()`, `presencia.desinstalar()` |
 | A15 | WA | A1 en Windows ARM64. | El runtime del agente es el arm64. | `install/agente.poner_runtime()` |
 
 ## Fase 2 — La raíz del equipo sin cifrar
@@ -68,7 +68,7 @@ Equipos que hacen falta:
 | R7 | W, L | Renombrar la carpeta de la raíz con el agente en marcha, y devolverle el nombre. | Un solo aviso «no encuentro su carpeta» y nada lanzado mientras falta. Al volver, sigue sola. | `Agente._raices_ausentes()` |
 | R8 | W, L | Editar a mano `sync_config.toml` de la raíz con `local = "."` y lanzar una pasada. | `sync.py` se niega con el `ConfigError` de la raíz del equipo; el agente avisa una vez. | `model.problema_local_equipo()` |
 | R9 | W, L | Volver a pasar el asistente «En este equipo» con el agente ya instalado y añadir la raíz. | El agente no se reinstala (V7). La raíz entra por el buzón (`añadir_raiz`) y se atiende sin reiniciar. | `install/agente.aplicar_unidades(raiz=)`, `anadir()`, `PIDE_RAIZ` |
-| R10 | W | Desinstalar el agente con la raíz puesta. | La raíz sigue en su sitio, el asistente dice dónde, y la entrada del menú Inicio desaparece. | `install/agente.desinstalar()`, `quitar_menu()` |
+| R10 | W | Desinstalar el agente con la raíz puesta. | La raíz sigue en su sitio, el asistente dice dónde, y la entrada del menú Inicio desaparece. | `install/agente.desinstalar()`, `presencia.quitar_menu()` |
 | R11 | W, L | Mirar la ventana de la flota desde una unidad tras una pasada de la raíz. | La raíz aparece como «Nombre (equipo)» y «En un equipo» en su ficha. | `fleet` `tipo`, `ui/tk_fleet.py` |
 
 ## Fase 3 — La raíz del equipo cifrada con VeraCrypt
@@ -520,3 +520,20 @@ portal no se ha visto en ningún escritorio: ni Plasma, ni GNOME 48, ni Hyprland
 | K10 | L | Wayland con el portal: guardar, y dejar la ventana de confirmación del escritorio abierta más de 3 minutos sin contestar. Luego volver a «Atajos de teclado…» y guardar otra vez. | Pasado el plazo, la de prdrive dice que el agente tarda y luego «No se ha guardado nada» (el sistema no ha contestado). El segundo «Guardar» no se queda esperando detrás del primero: la ventana vieja del escritorio se cierra y sale la nueva. | `Portal._abandonar()` (`Request.Close`), `ESPERA_ATAJOS` |
 | K11 | L | Wayland con el portal (o X11), con atajos guardados: cerrar la sesión y volver a entrar, con el agente arrancando con la sesión. Mirar su diario. | Si el portal (o la pantalla) no estaba listo al primer intento, el diario dice «no se pueden poner aquí (…); lo vuelvo a intentar en 30 s» y, al rato, «atajos de teclado: con …»; los atajos funcionan sin reiniciar el agente. | `Agente._motor_de_atajos()` (`REINTENTO_ATAJOS`) |
 | K12 | W, L | Dos unidades atendidas, solo una con llavero: grabar un atajo en «Abrir el llavero». Usar la otra («Configurar» en la bandeja), poner el navegador delante y pulsarlo con KeePassXC cerrado; luego, con KeePassXC abierto detrás de otra ventana, otra vez. Después «Pausar» en la bandeja, cerrar KeePassXC y pulsarlo. | Se abre el KeePassXC de la unidad con llavero (no dice «no lleva llavero») y sale **delante**, pidiendo desbloquear la base; abierto, la base se le pasa y la ventana sube delante. Apuntar si Windows se la deja detrás del navegador (parpadea en la barra de tareas): el agente recibe un `WM_HOTKEY`, no un clic, y lanza `runsync.py --llavero`, que lanza KeePassXC. En pausa se abre igual, sin aviso, y el diario del agente dice «se trae lo último de su llavero aunque no se sincroniza (en pausa)» (KR1). | `atajos._llavero()`, `Agente._lanzar_llavero()`, `Agente._traer_al_abrir()`, `keepassxc.abrir()` |
+
+## Arranque y desinstalación sin rastro
+
+El agente ya no arranca con una tarea programada sino con el valor `prdrive` de
+la clave `Run` de la persona, y está en «Aplicaciones instaladas», desde donde se
+desinstala sin dejar nada suyo (`common/presencia.py`, `ui/tk_desinstalar.py`,
+`agente.py desinstalar`). Los tests lo hacen con un registro de mentira.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| U1 | W | Tras A1, abrir Configuración → Aplicaciones → Inicio y la pestaña «Aplicaciones de arranque» del Administrador de tareas. | Sale el agente, encendido, y se puede apagar. **Apuntar con qué nombre sale** (el de la clave, «prdrive», o el del ejecutable, «Python»). Apagado, no arranca al volver a entrar; tras «Actualizar», sigue apagado. | `presencia.registrar_arranque()`, `CLAVE_APAGADO` |
+| U2 | W | Con un agente de una versión anterior (con su tarea programada «prdrive»), «Actualizar» desde la bandeja. | La tarea desaparece del Programador de tareas, el valor de `Run` apunta a la versión nueva y el agente nuevo arranca sin ventana. Tras volver a entrar, arranca una sola vez. | `presencia.quitar_tarea_vieja()`, `presencia.arrancar()`, `entorno_limpio()` |
+| U3 | W | Configuración → Aplicaciones → Aplicaciones instaladas. Y el «Programas y características» clásico. | Una ficha «prdrive», con su versión, su icono, su tamaño y la fecha de instalación; sin «Modificar». | `presencia.registrar_ficha()` |
+| U4 | W | En esa ficha, «Desinstalar», con el agente en marcha y sincronizando. | Sale la ventana de prdrive con lo que va a pasar (lo de Windows antes, si lo enseña). «Cancelar» no toca nada. «Desinstalar» espera a la pareja en curso, dice qué ha hecho y, al cerrarla, en unos segundos no queda `%LOCALAPPDATA%\prdrive`, ni el valor de `Run`, ni la ficha, ni el acceso del menú Inicio, ni ninguna entrada en `RunOnce`. La raíz del equipo sigue donde estaba. | `agente.cmd_desinstalar()`, `presencia.desinstalar()`, `rematar()`, `orden_borrado()` |
+| U5 | W | U4 con la ventana de la raíz del equipo abierta. | No quita nada: dice que la cierres antes. Cerrándola y volviendo a «Desinstalar», sí. | `presencia.esperar_ajenos()` |
+| U6 | W | U4 con la raíz cifrada abierta con el VeraCrypt del agente (sin VeraCrypt instalado). | Lo que quede en uso de `%LOCALAPPDATA%\prdrive\veracrypt` se queda, con su entrada en `RunOnce`; al reiniciar y volver a entrar, la carpeta y la entrada ya no están. Apuntar si se ve una consola un instante al entrar. | `presencia.apuntar_borrado()` |
+| U7 | L | `python agente.py desinstalar` desde un terminal, con el Python del agente. | Pregunta en la consola; con «s», no quedan `~/.local/share/prdrive`, `~/.config/autostart/prdrive.desktop`, el acceso del menú ni `~/.cache/prdrive`. | `agente.desinstalar_por_consola()`, `presencia.borrar_cache()` |
