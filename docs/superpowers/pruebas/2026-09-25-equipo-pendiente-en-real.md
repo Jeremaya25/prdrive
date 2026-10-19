@@ -526,14 +526,17 @@ portal no se ha visto en ningún escritorio: ni Plasma, ni GNOME 48, ni Hyprland
 El agente ya no arranca con una tarea programada sino con el valor `prdrive` de
 la clave `Run` de la persona, y está en «Aplicaciones instaladas», desde donde se
 desinstala sin dejar nada suyo (`common/presencia.py`, `ui/tk_desinstalar.py`,
-`agente.py desinstalar`). Los tests lo hacen con un registro de mentira.
+`agente.py desinstalar`). Los tests lo hacen con un registro de mentira. Visto en la
+nube: F33 (Windows), el registro, la tarea vieja, el «Desinstalar» silencioso de la ficha y
+la carpeta que se borra al salir, también con un fichero ocupado; no la ventana ni lo que
+enseña Configuración.
 
 | Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
 |---|---|---|---|---|
 | U1 | W | Tras A1, abrir Configuración → Aplicaciones → Inicio y la pestaña «Aplicaciones de arranque» del Administrador de tareas. | Sale el agente, encendido, y se puede apagar. **Apuntar con qué nombre sale** (el de la clave, «prdrive», o el del ejecutable, «Python»). Apagado, no arranca al volver a entrar; tras «Actualizar», sigue apagado. | `presencia.registrar_arranque()`, `CLAVE_APAGADO` |
 | U2 | W | Con un agente de una versión anterior (con su tarea programada «prdrive»), «Actualizar» desde la bandeja. | La tarea desaparece del Programador de tareas, el valor de `Run` apunta a la versión nueva y el agente nuevo arranca sin ventana. Tras volver a entrar, arranca una sola vez. | `presencia.quitar_tarea_vieja()`, `presencia.arrancar()`, `entorno_limpio()` |
 | U3 | W | Configuración → Aplicaciones → Aplicaciones instaladas. Y el «Programas y características» clásico. | Una ficha «prdrive», con su versión, su icono, su tamaño y la fecha de instalación; sin «Modificar». | `presencia.registrar_ficha()` |
-| U4 | W | En esa ficha, «Desinstalar», con el agente en marcha y sincronizando. | Sale la ventana de prdrive con lo que va a pasar (lo de Windows antes, si lo enseña). «Cancelar» no toca nada. «Desinstalar» espera a la pareja en curso, dice qué ha hecho y, al cerrarla, en unos segundos no queda `%LOCALAPPDATA%\prdrive`, ni el valor de `Run`, ni la ficha, ni el acceso del menú Inicio, ni ninguna entrada en `RunOnce`. La raíz del equipo sigue donde estaba. | `agente.cmd_desinstalar()`, `presencia.desinstalar()`, `rematar()`, `orden_borrado()` |
+| U4 · nube: ok (F33) | W | En esa ficha, «Desinstalar», con el agente en marcha y sincronizando. | Sale la ventana de prdrive con lo que va a pasar (lo de Windows antes, si lo enseña). «Cancelar» no toca nada. «Desinstalar» espera a la pareja en curso, dice qué ha hecho y, al cerrarla, en unos segundos no queda `%LOCALAPPDATA%\prdrive`, ni el valor de `Run`, ni la ficha, ni el acceso del menú Inicio, ni ninguna entrada en `RunOnce`. La raíz del equipo sigue donde estaba. | `agente.cmd_desinstalar()`, `presencia.desinstalar()`, `rematar()`, `orden_borrado()` |
 | U5 | W | U4 con la ventana de la raíz del equipo abierta. | No quita nada: dice que la cierres antes. Cerrándola y volviendo a «Desinstalar», sí. | `presencia.esperar_ajenos()` |
-| U6 | W | U4 con la raíz cifrada abierta con el VeraCrypt del agente (sin VeraCrypt instalado). | Lo que quede en uso de `%LOCALAPPDATA%\prdrive\veracrypt` se queda, con su entrada en `RunOnce`; al reiniciar y volver a entrar, la carpeta y la entrada ya no están. Apuntar si se ve una consola un instante al entrar. | `presencia.apuntar_borrado()` |
+| U6 · nube: ok (F33) | W | U4 con la raíz cifrada abierta con el VeraCrypt del agente (sin VeraCrypt instalado). | Lo que quede en uso de `%LOCALAPPDATA%\prdrive\veracrypt` se queda, con su entrada en `RunOnce`; al reiniciar y volver a entrar, la carpeta y la entrada ya no están. Apuntar si se ve una consola un instante al entrar. | `presencia.apuntar_borrado()` |
 | U7 | L | `python agente.py desinstalar` desde un terminal, con el Python del agente. | Pregunta en la consola; con «s», no quedan `~/.local/share/prdrive`, `~/.config/autostart/prdrive.desktop`, el acceso del menú ni `~/.cache/prdrive`. | `agente.desinstalar_por_consola()`, `presencia.borrar_cache()` |
