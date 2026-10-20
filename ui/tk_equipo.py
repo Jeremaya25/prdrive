@@ -36,7 +36,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from . import theme, watch
+from . import theme
 from .tk import Indicador, Resultado, Sondeo, bloque_aviso, tabla_estado, working
 
 ANCHO = 780
@@ -1009,7 +1009,9 @@ def paso_arranque(cuerpo, wiz) -> None:
     import penwatch
     from install import agente
 
-    como = ("una tarea programada de tu usuario, que arranca al iniciar sesión"
+    como = ("el arranque de tu sesión (sin tarea programada: sale en «Aplicaciones "
+            "de arranque», donde se puede apagar) y una ficha en «Aplicaciones "
+            "instaladas», desde la que se desinstala sin dejar rastro"
             if agente.IS_WIN else
             "un autostart del escritorio (~/.config/autostart), porque los avisos y "
             "la pregunta por una unidad nueva necesitan la sesión gráfica")
@@ -1098,7 +1100,7 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
     agente con esa ruta.
     """
     import penwatch
-    from common import equipo
+    from common import equipo, presencia
     from install import agente, device, raiz_equipo
 
     filas = []
@@ -1122,7 +1124,7 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
                       "pedido: el agente la añade al leer su buzón" if pedida else
                       "no está: registra y arranca el agente"))
     if agente.quiere_menu(donde is not None):
-        menu = agente.acceso_menu()
+        menu = presencia.acceso_menu()
         filas.append(("Acceso del menú", menu.exists(), str(menu) if menu.exists()
                       else "no está: «agente.py abrir» hace lo mismo"))
     inst = agente.instalado()
@@ -1131,15 +1133,14 @@ def comprobaciones(donde: Path | None = None, esperadas: list[str] | None = None
                   else "no hay instalacion.json con código"))
     if inst:
         filas.append(("Su Python", _existe(inst.get("python")), str(inst.get("python"))))
-    if agente.IS_WIN:
-        res = watch.consulta(["schtasks", "/Query", "/TN", agente.TAREA])
-        registro = res.returncode == 0
-        sin_decir = ("el sistema no contesta" if res.returncode == watch.CODIGO_TIEMPO
-                     else "no está registrado")
-    else:
-        registro, sin_decir = agente.autostart_file().is_file(), "no está registrado"
+    registro = presencia.arranque_registrado()
     filas.append(("Arranca al iniciar sesión", registro,
-                  "registrado" if registro else sin_decir))
+                  ("en «Aplicaciones de arranque»" if agente.IS_WIN else "registrado")
+                  if registro else "no está registrado"))
+    if agente.IS_WIN:
+        ficha = presencia.ficha_registrada()
+        filas.append(("En «Aplicaciones instaladas»", ficha,
+                      "desde ahí se desinstala" if ficha else "no está"))
     vivo = equipo.agente_vivo()
     filas.append(("En marcha", vivo is not None,
                   f"pid {vivo.get('pid')}" if vivo else
@@ -1203,7 +1204,7 @@ def paso_final(cuerpo, wiz) -> None:
     """Pinta el paso de verificación: lo que ha quedado puesto en este equipo.
 
     Se pinta primero y comprueba después: `comprobaciones()` pregunta al
-    sistema (`schtasks`, el bus de sesión) y lee la raíz, así que va en otro
+    sistema (el registro, el bus de sesión) y lee la raíz, así que va en otro
     hilo, con un indicador mientras y «Volver a comprobar» apagado. La tabla
     aparece cuando llega.
     """

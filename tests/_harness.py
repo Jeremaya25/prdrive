@@ -205,6 +205,22 @@ from common import store as _store  # noqa: E402
 REAL_SIN_EXE = _store.sin_exe
 _store.sin_exe = lambda: {}
 
+# El registro de Windows, y lo que el instalador y la desinstalación del agente
+# lanzan, de mentira para TODOS los tests: en el Windows de quien los ejecuta
+# puede haber un agente instalado de verdad, y un test que se olvide de
+# sustituirlo no puede quitarle su arranque, su ficha de «Aplicaciones
+# instaladas» ni su tarea, ni arrancarle otro agente o borrarle su carpeta. Un
+# test que quiera mirar el registro usa `REGISTRO`.
+import subprocess as _subprocess  # noqa: E402
+
+import _registro_falso  # noqa: E402
+from common import presencia as _presencia  # noqa: E402
+
+REGISTRO = _registro_falso.poner()
+_presencia.ejecutar = lambda orden: _subprocess.CompletedProcess(orden, 1, "", "")
+_presencia.lanzar = lambda args, **kwargs: None
+_presencia.lanzar_suelto = lambda linea: None
+
 # Varios tests fuerzan `IS_WIN = False` para pasar por la rama de Linux, y ahí
 # «¿vive este pid?» es `os.kill(pid, 0)`. En Windows eso NO pregunta: 0 es
 # CTRL_C_EVENT y le manda un Ctrl+C a toda la consola (el test, run_all y el

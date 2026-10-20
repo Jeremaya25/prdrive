@@ -27,9 +27,9 @@ Y lo que pedía cambiar el diseño, en una segunda vuelta:
   lock al agente a mitad de pareja, y el agente mira que el lock sigue siendo
   suyo justo antes de lanzar.
 - **Parar el agente espera a su pasada**: la pasada queda apuntada
-  (`pasada.json`), `parar_agente()` espera a que acabe y, pasado el plazo, la
-  corta con su rclone; un agente nuevo no lanza nada mientras siga viva la del
-  anterior.
+  (`pasada.json`), `presencia.parar_agente()` espera a que acabe y, pasado el
+  plazo, la corta con su rclone; un agente nuevo no lanza nada mientras siga
+  viva la del anterior.
 - **El id no es una credencial**: al decir que sí se apunta la huella del
   código de la unidad (`agente.huella()`), y con otra se vuelve a preguntar.
 
@@ -52,7 +52,7 @@ from _harness import Checks, tmpdir
 import _agente_falso as F
 import agente
 import install
-from common import equipo, model, store
+from common import equipo, model, presencia, store
 from install import agente as ia, raiz_equipo
 
 c = Checks("el agente, endurecido tras la revisión")
@@ -549,7 +549,7 @@ c("  acabada, vuelve a lo suyo", (ag2.heredada, len(F.pasadas(RP))), (None, ante
 F.acabar(F.pasadas(RP)[-1])
 F.vueltas(ag2, 1)
 
-ia.ESPERA_PASADA = 0.8
+presencia.ESPERA_PASADA = 0.8
 avances: list = []
 hijo = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"],
                         start_new_session=os.name != "nt")
@@ -557,7 +557,7 @@ hijo = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"],
 # quedaría zombi, y un zombi sigue «vivo» para pid_alive().
 threading.Thread(target=hijo.wait, daemon=True).start()
 equipo.apuntar_pasada({**viva, "pid": hijo.pid})
-dicho = ia.parar_agente(lambda f, t: avances.append(t))
+dicho = presencia.parar_agente(lambda f, t: avances.append(t))
 c("parar_agente() espera a que acabe la pasada", "tras acabar su pasada" in (dicho or ""),
   True)
 c("  y dice a qué espera", any("«docs»" in t for t in avances), True)
@@ -565,7 +565,7 @@ hijo = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                         start_new_session=os.name != "nt")
 equipo.apuntar_pasada({**viva, "pid": hijo.pid})
 t0 = time.monotonic()
-dicho = ia.parar_agente()
+dicho = presencia.parar_agente()
 try:
     hijo.wait(5)
 except subprocess.TimeoutExpired:
@@ -583,13 +583,13 @@ equipo.pasada_json().unlink(missing_ok=True)
 # Primero el agente, luego la pasada: al revés, el agente vería acabar su pasada,
 # la contaría como fallo (con su aviso) y borraría pasada.json antes del corte.
 orden: list = []
-matar_de_verdad, kill_de_verdad = ia.matar_arbol, penwatch.kill_pid
-ia.matar_arbol = lambda pid: orden.append("pasada")
+matar_de_verdad, kill_de_verdad = presencia.matar_arbol, penwatch.kill_pid
+presencia.matar_arbol = lambda pid: orden.append("pasada")
 penwatch.kill_pid = lambda pid: orden.append("agente")
 store.write_json(equipo.lock_json(), {"pid": os.getppid(), "host": equipo.HOST})
 equipo.apuntar_pasada(viva)
-ia.parar_agente()
-ia.matar_arbol, penwatch.kill_pid = matar_de_verdad, kill_de_verdad
+presencia.parar_agente()
+presencia.matar_arbol, penwatch.kill_pid = matar_de_verdad, kill_de_verdad
 c("  corta primero al agente y luego la pasada", orden, ["agente", "pasada"])
 equipo.lock_json().unlink(missing_ok=True)
 equipo.pasada_json().unlink(missing_ok=True)
@@ -619,7 +619,7 @@ equipo.pasada_json().unlink(missing_ok=True)
 # con una pasada más larga que el plazo, el agente que sale solo un instante después
 # se terminaba «a la fuerza» (visto en real: una pasada de 5 min, y el agente cortado
 # 2 s después de acabarla, sin apuntarla ni soltar `daemon.lock.json`).
-ia.ESPERA_PASADA, ia.PARAR_ESPERA = 10.0, 1.0
+presencia.ESPERA_PASADA, presencia.PARAR_ESPERA = 10.0, 1.0
 pasada_larga = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.6)"],
                                 start_new_session=os.name != "nt")
 agente_lento = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2.2)"],
@@ -628,13 +628,13 @@ for h in (pasada_larga, agente_lento):
     threading.Thread(target=h.wait, daemon=True).start()
 store.write_json(equipo.lock_json(), {"pid": agente_lento.pid, "host": equipo.HOST})
 equipo.apuntar_pasada({**viva, "pid": pasada_larga.pid})
-dicho = ia.parar_agente()
+dicho = presencia.parar_agente()
 if agente_lento.poll() is None:
     agente_lento.kill()
 c("parar_agente(): el agente que sale solo tras una pasada larga no se corta",
   ("detenido tras acabar su pasada" in (dicho or ""), "a la fuerza" in (dicho or "")),
   (True, False))
-ia.ESPERA_PASADA = 0.8
+presencia.ESPERA_PASADA = 0.8
 equipo.lock_json().unlink(missing_ok=True)
 equipo.pasada_json().unlink(missing_ok=True)
 
@@ -649,7 +649,7 @@ agente_lento = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(
 threading.Thread(target=agente_lento.wait, daemon=True).start()
 store.write_json(equipo.lock_json(), {"pid": agente_lento.pid, "host": equipo.HOST})
 try:
-    ia.parar_agente()
+    presencia.parar_agente()
 finally:
     equipo.pedir = pedir_de_verdad
     if agente_lento.poll() is None:

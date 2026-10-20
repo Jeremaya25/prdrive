@@ -5,8 +5,10 @@ Es la instalación «solo agente» del diseño
 (`docs/superpowers/specs/2026-09-25-instalacion-en-el-equipo-design.md`): ni
 raíz, ni conexión, ni clave. Deja en la carpeta del equipo (`common/equipo.py`)
 el código del agente, su propio Python y su configuración, lo registra para que
-arranque al iniciar sesión y le quita el sitio a penwatch, que es a quien
-sustituye.
+arranque al iniciar sesión (y, en Windows, para que salga en «Aplicaciones
+instaladas») y le quita el sitio a penwatch, que es a quien sustituye. Lo que
+deja fuera de su carpeta, y cómo se quita, lo sabe `common/presencia.py`, que
+viaja con el agente: el «Desinstalar» de Windows corre sin este instalador.
 - `preparar()`: el código en `agente/<versión>/` y el Python en
   `runtime/<id>/`.
 - `candidatas()`: qué unidades se le pueden dar ya (las de penwatch, las
@@ -17,7 +19,8 @@ sustituye.
   su buzón, sin pararlo ni reinstalarlo.
 - `actualizar()`: la versión que trae este instalador en lugar de la puesta
   (`--update-agente`, lo que lanza «Actualizar» de la bandeja).
-- `desinstalar()`: todo lo anterior al revés; nunca toca una unidad ni la raíz.
+- `desinstalar()`: todo lo anterior al revés, sin dejar rastro
+  (`presencia.desinstalar()`); nunca toca una unidad ni la raíz.
 
 La raíz del equipo (`install/raiz_equipo.py`) la pone el asistente antes; aquí
 solo entra en la lista del agente, con su ruta, y trae consigo el acceso
@@ -41,14 +44,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
-import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import penwatch
-from common import APP_NAME, components, equipo, model, pins, store, vestibulo
+from common import APP_NAME, components, equipo, model, pins, presencia, store, vestibulo
 from common.pins import Plataforma
 
 from . import (InstallError, bundle_dir, pintar, platforms, rclone_bin, runtime_bin,
@@ -69,30 +70,6 @@ CODIGO_ARBOLES = ("common", "ui")
 """Paquetes que se copian al equipo."""
 NO_COPIAR = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 """Patrones de ficheros que se ignoran al copiar el código."""
-
-TAREA = APP_NAME  # Windows: la tarea programada
-DESCRIPCION = (f"{APP_NAME} residente: sincroniza las unidades {APP_NAME} que se "
-               f"enchufan en este equipo.")
-"""Descripción con la que se registra el agente."""
-PARAR_ESPERA = 12.0
-"""Segundos que se espera a que el agente se vaya si no tiene pasada en marcha."""
-ESPERA_PASADA = 600.0
-"""Segundos que se espera a que acabe la pasada en marcha, antes de cortarla."""
-
-
-def autostart_file() -> Path:
-    """Devuelve el autostart XDG de Linux.
-
-    Es función para que los tests lo lleven a un temporal.
-    """
-    base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
-    return Path(base) / "autostart" / f"{APP_NAME}.desktop"
-
-
-def orden(python: str | Path, codigo: Path) -> list[str]:
-    """Devuelve con qué se arranca el agente: su Python y su `agente.py run`."""
-    return [str(python), str(codigo / "agente.py"), "run"]
-
 
 @dataclass(frozen=True)
 class Preparado:
@@ -597,58 +574,23 @@ def quitar_penwatch() -> list[str]:
 
 
 def registrar(prep: Preparado) -> str:
-    """Registra el agente para que arranque al iniciar sesión.
+    """Registra el agente para que arranque al iniciar sesión y, en Windows, su ficha.
 
-    En Windows es la tarea por usuario de penwatch, con sus trampas resueltas.
-    En Linux, autostart XDG y no una unidad systemd, porque los avisos, la
-    pregunta de «unidad nueva» y la contraseña de VeraCrypt necesitan la sesión
-    gráfica y `enable-linger` no la da.
+    El arranque es `presencia.registrar_arranque()` (en Windows el valor de
+    `Run` de la persona, y fuera la tarea programada de antes; en Linux el
+    autostart XDG) y la ficha de «Aplicaciones instaladas»,
+    `presencia.registrar_ficha()`. Los dos apuntan a la versión del código,
+    así que se rehacen en cada instalación y actualización.
 
     Raises:
         InstallError: Si no se puede registrar.
     """
-    if IS_WIN:
-        try:
-            return penwatch.register_task(
-                TAREA, str(prep.python), f'"{prep.codigo / "agente.py"}" run',
-                equipo.DIR, DESCRIPCION)
-        except (OSError, RuntimeError) as e:
-            raise InstallError(f"No he podido registrar el agente: {e}") from e
-    destino = autostart_file()
     try:
-        destino.parent.mkdir(parents=True, exist_ok=True)
-        destino.write_text(penwatch.autostart_desktop(
-            APP_NAME, orden(prep.python, prep.codigo), DESCRIPCION), encoding="utf-8")
+        msgs = presencia.registrar_arranque(prep.python, prep.codigo)
+        ficha = presencia.registrar_ficha(prep.python, prep.codigo, version())
     except OSError as e:
-        raise InstallError(f"No he podido escribir {destino}: {e}") from e
-    return f"Autostart instalado en {destino}: arranca al iniciar el escritorio."
-
-
-def desregistrar() -> str:
-    """Quita el registro de arranque del agente y dice qué había."""
-    if IS_WIN:
-        res = penwatch.run_quiet(["schtasks", "/Delete", "/TN", TAREA, "/F"])
-        return (f"Tarea '{TAREA}' eliminada." if res.returncode == 0
-                else f"No había tarea '{TAREA}'.")
-    destino = autostart_file()
-    if destino.exists():
-        destino.unlink(missing_ok=True)
-        return f"Autostart {destino} eliminado."
-    return "No había autostart."
-
-
-def acceso_menu() -> Path:
-    """Devuelve dónde va el acceso «prdrive» del menú del sistema.
-
-    Es función para que los tests lo lleven a un temporal, como
-    `autostart_file()`.
-    """
-    if IS_WIN:
-        base = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
-        return (Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-                / f"{APP_NAME}.lnk")
-    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(base) / "applications" / f"{APP_NAME}.desktop"
+        raise InstallError(f"No he podido registrar el agente: {e}") from e
+    return " ".join(msgs + ([ficha] if ficha else []))
 
 
 COMENTARIO_MENU = f"La ventana de {APP_NAME} de este equipo: sus parejas y su estado."
@@ -777,7 +719,7 @@ def poner_menu(prep: Preparado, con_raiz: bool | None = None) -> str:
     """
     if con_raiz is None:
         con_raiz = bool(equipo.leer_ajustes().raices)
-    destino = acceso_menu()
+    destino = presencia.acceso_menu()
     icono = prep.codigo / "runsync.ico"
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
@@ -798,167 +740,13 @@ def poner_menu(prep: Preparado, con_raiz: bool | None = None) -> str:
             f"cómo va (donde el escritorio no tiene bandeja).")
 
 
-def quitar_menu() -> str | None:
-    """Quita el acceso del menú y dice qué ha hecho.
-
-    Returns:
-        La frase, o `None` si no había acceso.
-    """
-    destino = acceso_menu()
-    if not destino.exists():
-        return None
-    try:
-        destino.unlink()
-    except OSError as e:
-        return f"No he podido borrar {destino}: {e}"
-    return f"Acceso del menú {destino} eliminado."
-
-
-def lanzar(args: list[str], **kwargs):
-    """Arranca el agente sin esperar a la sesión siguiente.
-
-    Es un punto de indirección.
-    """
-    return subprocess.Popen(args, **kwargs)
-
-
 def arrancar(prep: Preparado) -> str:
-    """Arranca el agente ya, sin esperar a la sesión siguiente, y dice cómo ha ido."""
-    if IS_WIN:
-        res = penwatch.run_quiet(["schtasks", "/Run", "/TN", TAREA])
-        if res.returncode == 0:
-            return "Agente arrancado."
-        return (f"No he podido arrancarlo ahora ({res.stderr.strip()}); arrancará "
-                f"al iniciar sesión.")
-    try:
-        lanzar(orden(prep.python, prep.codigo), stdin=subprocess.DEVNULL,
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-               cwd=str(equipo.DIR), start_new_session=True, close_fds=True)
-        return "Agente arrancado."
-    except OSError as e:
-        return f"No he podido arrancarlo ahora ({e}); arrancará al iniciar sesión."
+    """Arranca el agente ya, sin esperar a la sesión siguiente, y dice cómo ha ido.
 
-
-def matar_arbol(pid: int) -> None:
-    """Termina un proceso Y sus hijos.
-
-    Una pasada es `sync.py` más su rclone y matar solo el primero deja el
-    segundo escribiendo. En POSIX la pasada es jefa de su propia sesión (el
-    agente la lanza con `start_new_session`), así que su grupo es su pid; en
-    Windows `taskkill /T` sigue el árbol. Es de módulo para que los tests lo
-    sustituyan.
+    Es `presencia.arrancar()`: suelto, sin consola y sin lo que deja en el
+    entorno el instalador compilado.
     """
-    try:
-        if IS_WIN:
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                           capture_output=True, creationflags=penwatch.CREATE_NO_WINDOW)
-            return
-        import signal
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            os.kill(pid, signal.SIGTERM)    # no era jefe de grupo: al menos él
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-
-def decirlo(progreso):
-    """Devuelve el `avance` de `parar_agente()` para quien solo sabe decir líneas.
-
-    (`progreso(texto)`, un `print`).
-
-    Cada texto se dice una vez, no dos veces por segundo.
-    """
-    if progreso is None:
-        return None
-    dicho: list[str] = []
-
-    def avance(_fraccion: float, texto: str) -> None:
-        """Dice el texto si no es el último que se dijo."""
-        if not dicho or dicho[-1] != texto:
-            dicho.append(texto)
-            progreso(texto)
-    return avance
-
-
-def parar_agente(avance=None) -> str | None:
-    """Pide al agente que termine y espera a que se vaya él Y su pasada.
-
-    El agente acaba la pareja en curso antes de irse, y lo que venga después
-    (el código nuevo, un agente nuevo, borrar su Python) no puede pasarle por
-    encima. Se espera `ESPERA_PASADA` con una pasada en marcha, diciéndolo por
-    `avance(fracción, texto)` si se da; sin pasada, `PARAR_ESPERA`. Pasado el
-    plazo se corta: primero el agente (que no vea acabar la pasada, la cuente
-    como fallo y borre su registro) y luego la pasada con su rclone
-    (`matar_arbol()`). Una bisync cortada deja su `.lck`, que caduca solo en
-    dos minutos: se apunta el corte (`equipo.apuntar_corte()`) y el agente que
-    venga deja esa pareja hasta entonces en vez de fallar contra él.
-
-    Un «parar» que no se ha podido dejar en el buzón se vuelve a pedir en cada
-    vuelta de la espera: sin él el agente no sabe que tiene que irse, lanza la
-    pareja siguiente y acaba cortado a la fuerza con ella.
-
-    Returns:
-        Qué ha pasado, o `None` si no había nada en marcha.
-    """
-    vivo = equipo.agente_vivo()
-    pasada = equipo.pasada_viva()
-    if vivo is None and pasada is None:
-        return None
-    pid = int((vivo or {}).get("pid", -1))
-    pedido = vivo is None or equipo.pedir({"pide": equipo.PIDE_PARAR})
-    inicio = time.monotonic()
-    esperado = False
-    sin_pasada = None       # desde cuándo no hay pasada: `PARAR_ESPERA` cuenta desde ahí
-    while True:
-        vivo, pasada = equipo.agente_vivo(), equipo.pasada_viva()
-        if vivo is None and pasada is None:
-            break
-        if not pedido and vivo is not None:
-            pedido = equipo.pedir({"pide": equipo.PIDE_PARAR})
-        ahora = time.monotonic()
-        pasado = ahora - inicio
-        if pasada is None:
-            # Desde que la pasada acabó y no desde que se empezó a esperar:
-            # tras una pasada larga el agente aún necesita unos segundos para
-            # apuntarla y soltar el lock, y contar el total lo cortaba en
-            # cuanto ella terminaba (visto en real: una pasada de 5 min,
-            # cortado a los 2 s).
-            sin_pasada = ahora if sin_pasada is None else sin_pasada
-            if ahora - sin_pasada >= PARAR_ESPERA:
-                break
-        else:
-            sin_pasada = None
-            if pasado >= ESPERA_PASADA:
-                break
-        if pasada is not None:
-            esperado = True
-            if avance is not None:
-                minutos = max(1, round((ESPERA_PASADA - pasado) / 60))
-                avance(pasado / ESPERA_PASADA,
-                       f"Esperando a que acabe la pasada de «{pasada.get('pareja')}» en "
-                       f"{pasada.get('unidad')}; como mucho {minutos} min más.")
-        time.sleep(0.5)
-    quien = f"Agente anterior (pid {pid})" if pid > 0 else "El agente anterior"
-    if vivo is None and pasada is None:
-        return f"{quien} detenido" + (" tras acabar su pasada." if esperado else ".")
-    partes = []
-    if vivo is not None:
-        penwatch.kill_pid(pid)
-        partes.append(f"{quien} terminado a la fuerza.")
-    if pasada is not None:
-        try:
-            matar_arbol(int(pasada.get("pid")))
-        except (TypeError, ValueError):
-            pass
-        equipo.apuntar_corte(pasada)
-        partes.append(f"La pasada de «{pasada.get('pareja')}» en {pasada.get('unidad')} "
-                      f"no acababa en {ESPERA_PASADA / 60:g} min y se ha cortado; el "
-                      f"agente la retoma en unos minutos, cuando caduque su bloqueo. "
-                      f"Si copiaba un fichero grande, puede quedar a medias como "
-                      f"«….partial» en uno de los lados, y la próxima pasada lo "
-                      f"sincroniza como uno más: bórralo en cualquiera de los dos.")
-    return " ".join(partes)
+    return presencia.arrancar(prep.python, prep.codigo)
 
 
 def _runtime_de(interprete: Path | str) -> str | None:
@@ -1015,7 +803,7 @@ def activar(prep: Preparado, elegidas: dict[str, tuple[str, str]], espera: float
         avance: El de `parar_agente()`.
     """
     msgs = []
-    parado = parar_agente(avance)
+    parado = presencia.parar_agente(avance)
     if parado:
         msgs.append(parado)
     msgs.append(aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar))
@@ -1093,7 +881,7 @@ def anadir(elegidas: dict[str, tuple[str, str]], espera: float,
     msgs = [aplicar_unidades(elegidas, espera, raiz, pedir_al_iniciar)]
     msgs += quitar_penwatch()
     con_raiz = raiz is not None or bool(equipo.leer_ajustes().raices)
-    if quiere_menu(con_raiz) and (raiz is not None or not acceso_menu().exists()):
+    if quiere_menu(con_raiz) and (raiz is not None or not presencia.acceso_menu().exists()):
         msgs.append(poner_menu(prep, con_raiz))
     if equipo.agente_vivo() is None:
         msgs.append(arrancar(prep))
@@ -1120,9 +908,9 @@ def actualizar_raices(origen: Path | None = None) -> list[str]:
         # el id al lado de un `.hc` libre es el fantasma que sirve lo que tenía
         # en caché, y escribir ahí daría la raíz por actualizada sin haberla
         # tocado.
-        fantasma = u.cifrada and _presente(raiz) and \
+        fantasma = u.cifrada and presencia.presente(raiz) and \
             vestibulo.retenido(u.contenedor) is False
-        if fantasma or not _presente(raiz):
+        if fantasma or not presencia.presente(raiz):
             msgs.append(f"{nombre}: " + ("bloqueada; su ventana ofrecerá la versión "
                                          "nueva al desbloquearla." if u.cifrada else
                                          f"no está en {raiz}; no se actualiza."))
@@ -1146,9 +934,11 @@ def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
     descargado, como `--update` en una unidad: la versión nueva se instala a sí
     misma. Nunca se cambia en sitio lo que corre: el código nuevo y, si cambia,
     el Python nuevo van a su carpeta al lado; se para el agente, se vuelve a
-    registrar (la tarea apunta a la versión), se cambia `instalacion.json`, se
-    ponen al día las raíces del equipo abiertas, se recoge lo viejo y se
-    arranca. `agente.json` no se toca: su lista y sus ajustes siguen.
+    registrar (el arranque y la ficha apuntan a la versión; en un equipo que
+    arrancaba con la tarea programada, se quita), se cambia
+    `instalacion.json`, se ponen al día las raíces del equipo abiertas, se
+    recoge lo viejo y se arranca. `agente.json` no se toca: su lista y sus
+    ajustes siguen.
 
     Raises:
         InstallError: Si no hay agente instalado.
@@ -1158,7 +948,7 @@ def actualizar(progreso=None, origen: Path | None = None) -> list[str]:
                            "nada que actualizar. Instálalo con el asistente.")
     prep = preparar(progreso, origen)
     msgs = [f"Código del agente en {prep.codigo}", f"Su Python: {prep.python}"]
-    parado = parar_agente(decirlo(progreso))
+    parado = presencia.parar_agente(presencia.decirlo(progreso))
     if parado:
         msgs.append(parado)
     msgs.append(registrar(prep))
@@ -1186,55 +976,22 @@ def instalar(elegidas: dict[str, tuple[str, str]] | None = None,
 
 
 def desinstalar(progreso=None) -> list[str]:
-    """Quita el registro, el acceso del menú, el agente y su Python.
+    """Quita el agente de este equipo sin dejar rastro (`--desinstalar-agente`).
 
-    Nunca toca una unidad ni la raíz del equipo: lo que tuviera a medias el
-    agente sigue en ellas, como lo dejó (y la pasada en marcha se espera,
-    `parar_agente()`).
+    Es `presencia.desinstalar()` y, como este proceso no corre desde la
+    carpeta del agente, su carpeta se borra ya. Nunca toca una unidad ni la
+    raíz del equipo: dice dónde se queda.
+
+    Raises:
+        InstallError: Si algo de prdrive sigue usando la carpeta del agente.
     """
-    msgs = []
-    parado = parar_agente(decirlo(progreso))
-    if parado:
-        msgs.append(parado)
-    msgs.append(desregistrar())
-    menu = quitar_menu()
-    if menu:
-        msgs.append(menu)
-    raices = list(equipo.leer_ajustes().raices.values())
-    if equipo.DIR.exists():
-        shutil.rmtree(equipo.DIR, ignore_errors=True)
-        msgs.append(f"Eliminado {equipo.DIR}" if not equipo.DIR.exists()
-                    else f"Queda algo en {equipo.DIR} (en uso); se puede borrar a mano.")
-    msgs.append("Las unidades no se han tocado.")
-    for u in raices:
-        # Nunca se borra: tiene las carpetas del usuario y la clave. Se dice
-        # dónde está para que no parezca que se ha ido con el agente.
-        if u.cifrada:
-            # Tampoco se cierra: si está abierta es porque alguien la usa, y
-            # desmontar con algo abierto dentro es decisión de la persona.
-            abierta = _presente(Path(u.ruta))
-            instalado_vc = penwatch.installed_veracrypt() is not None
-            cerrar = ("ciérrala desde VeraCrypt cuando quieras" if instalado_vc else
-                      "se cierra sola al reiniciar el equipo (el VeraCrypt que la "
-                      "abría era el del agente, y se ha ido con él)")
-            msgs.append(f"La raíz cifrada de este equipo sigue en {u.contenedor}"
-                        + (f", y ABIERTA en {u.ruta}: {cerrar}." if abierta else ".")
-                        + ("" if instalado_vc else
-                           " Para volver a abrirla hace falta VeraCrypt: vuelve a "
-                           "instalar el agente o instala VeraCrypt.")
-                        + " Bórrala a mano si ya no la quieres.")
-            continue
-        msgs.append(f"La raíz de este equipo sigue en {u.ruta}, con sus carpetas y su "
-                    f".prdrive/ (la clave incluida): bórrala a mano si ya no la quieres.")
-    return msgs
-
-
-def _presente(raiz: Path) -> bool:
-    """Indica si esa raíz tiene su fichero de control a la vista."""
     try:
-        return (raiz / penwatch.CONTROL_FILE).is_file()
-    except OSError:
-        return False
+        msgs = presencia.desinstalar(presencia.decirlo(progreso))
+    except presencia.DesinstalacionError as e:
+        raise InstallError(str(e)) from e
+    finally:
+        presencia.rematar()
+    return msgs
 
 
 def instalado() -> dict | None:

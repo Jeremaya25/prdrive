@@ -454,7 +454,7 @@ def cmd_relevo(raiz: str, esperar: list[int], reabrir: str | None) -> int:
 
 MODULOS_ASISTENTE = (
     "common.avisos", "common.cifrada", "common.dbus", "common.equipo", "common.pins",
-    "common.vestibulo", "install", "install.agente", "install.crypto", "install.deploy",
+    "common.presencia", "common.vestibulo", "install", "install.agente", "install.crypto", "install.deploy",
     "install.device", "install.llavero", "install.raiz_equipo", "install.traveler",
     "install.veracrypt_bin", "penwatch", "shutil", "tkinter", "tkinter.filedialog",
     "tkinter.messagebox", "tkinter.ttk", "ui.bandeja_linux", "ui.lecturas_asistente",

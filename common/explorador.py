@@ -281,7 +281,7 @@ def quitar(raiz: Path | str, dispositivo: str | None = None) -> bool:
         return False
 
 
-def limpiar(app: str | None = None) -> list[str]:
+def limpiar(app: str | None = None, todas: bool = False) -> list[str]:
     """Borra las claves de prdrive cuya letra ya no tiene ese dispositivo abierto.
 
     Son las que se quedan cuando el volumen se cierra sin pasar por prdrive
@@ -295,6 +295,8 @@ def limpiar(app: str | None = None) -> list[str]:
 
     Args:
         app: El nombre de la carpeta del programa en una raíz, como en `poner()`.
+        todas: También las de un volumen que sigue abierto: es desinstalar el
+            agente, y nadie volverá a quitarlas.
 
     Returns:
         Las letras de las que se ha borrado algo.
@@ -307,7 +309,7 @@ def limpiar(app: str | None = None) -> list[str]:
             letra = letra.upper()
             marcas = {registro.leer(_clave(letra, sub), MARCA) for sub in (ICONO, NOMBRE)}
             marcas.discard(None)
-            vivo = de_veracrypt(letra) and _id(raiz_de(letra), app)
+            vivo = not todas and de_veracrypt(letra) and _id(raiz_de(letra), app)
             huerfanas = [m for m in marcas if m != vivo]
             if not huerfanas:
                 _podar(letra)
