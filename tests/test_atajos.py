@@ -3,7 +3,8 @@
 
 Cómo se lee y se escribe una combinación, qué necesita cada sistema, cuál vale,
 sobre qué unidad actúa un atajo (la última usada; si no, la última conectada;
-el del llavero, solo entre las que lo llevan), qué peticiones del buzón hace
+el del llavero, solo entre las que lo llevan; los de abrir su carpeta y su
+ventana, también entre las bloqueadas, que se desbloquean antes), qué peticiones del buzón hace
 cada acción y qué aviso da, lo que la ventana va
 viendo mientras graba, y cómo se guardan en `agente.json` (ninguno de fábrica).
 """
@@ -119,6 +120,49 @@ c("  y sin saber cuándo, la última de la lista",
   a.objetivo({"unidades": [A, B]}, {}, {})["id"], "B")
 c("la raíz de este equipo cuenta como un dispositivo más",
   a.objetivo({"unidades": [R, A]}, {"R": 7.0}, {})["id"], "R")
+
+# --- una unidad bloqueada: abrir su carpeta o su ventana la desbloquea antes
+CERRADA = {"id": "C", "nombre": "CASA", "ruta": "/casa", "cifrada": True, "estado": "bloqueada"}
+BITLOCKER = {"id": "L", "nombre": "TRABAJO", "raiz": "E:\\", "desbloqueando": False}
+VESTIBULO = {"id": "V", "nombre": "VIAJE", "raiz": "F:\\"}
+BLOQUEADAS = {"equipo": [CERRADA], "bitlocker": [BITLOCKER], "vestibulos": [VESTIBULO]}
+c("las que abren la unidad son la carpeta y la ventana", a.ABREN_BLOQUEADA, (a.CARPETA, a.VENTANA))
+c("sin pedirlo, una bloqueada no cuenta", a.objetivo(BLOQUEADAS, {}, {}), None)
+c("pidiéndolo, cuentan la raíz cifrada cerrada, la de BitLocker y la de VeraCrypt cerrada",
+  sorted((f["id"], f.get("bloqueada")) for f in a.candidatas(BLOQUEADAS, bloqueadas=True)),
+  [("C", True), ("L", True), ("V", True)])
+c("  la raíz cifrada también mientras VeraCrypt pide su contraseña",
+  [f["id"] for f in a.candidatas({"equipo": [{**CERRADA, "estado": "desbloqueando"}]},
+                                 bloqueadas=True)], ["C"])
+c("  pero no abierta (ya es una conectada), ausente, fantasma, bloqueándose ni sin cifrar",
+  [f["id"] for f in a.candidatas({"equipo": [{**CERRADA, "estado": e} for e in (
+      "abierta", "ausente", "fantasma", "bloqueando")] + [
+      {**CERRADA, "cifrada": False, "estado": "buscando"}]}, bloqueadas=True)], [])
+c("  y las conectadas van como siempre, sin la marca",
+  [(f["id"], f.get("bloqueada")) for f in a.candidatas({**BLOQUEADAS, "unidades": [A]},
+                                                       bloqueadas=True)][:1], [("A", None)])
+c("una bloqueada usada la última va antes que una conectada",
+  a.objetivo({**BLOQUEADAS, "unidades": [A]}, {"L": 9.0, "A": 5.0}, {"A": 1.0},
+             bloqueadas=True)["id"], "L")
+c("sin usar ninguna, la última enchufada, aunque esté bloqueada",
+  a.objetivo({"bitlocker": [BITLOCKER], "unidades": [A]}, {}, {"A": 1.0, "L": 50.0},
+             bloqueadas=True)["id"], "L")
+c("  con lo mismo de una y de otra, la conectada",
+  a.objetivo({"equipo": [CERRADA], "unidades": [A]}, {}, {}, bloqueadas=True)["id"], "A")
+r = a.pulsado(a.CARPETA, {"bitlocker": [BITLOCKER]}, {}, {})
+c("abrir su carpeta con ella bloqueada: la misma petición, que la desbloquea antes, sin aviso",
+  (r.peticiones, r.aviso, r.unidad), (({"pide": equipo.PIDE_EXPLORAR, "id": "L"},), None, "L"))
+r = a.pulsado(a.VENTANA, {"vestibulos": [VESTIBULO]}, {}, {})
+c("abrir su ventana con ella cerrada, igual", (r.peticiones, r.aviso, r.unidad),
+  (({"pide": equipo.PIDE_ABRIR, "id": "V"},), None, "V"))
+r = a.pulsado(a.CARPETA, {"equipo": [CERRADA]}, {}, {})
+c("  y la raíz cifrada de este equipo", r.peticiones, ({"pide": equipo.PIDE_EXPLORAR, "id": "C"},))
+for accion in (a.SINCRONIZAR, a.PAUSAR):
+    r = a.pulsado(accion, BLOQUEADAS, {"L": 9.0}, {})
+    c(f"«{a.NOMBRES[accion]}» no desbloquea nada: sin unidad a mano, lo dice",
+      (r.peticiones, "no hay ninguna unidad" in r.aviso[0]), ((), True))
+r = a.pulsado(a.LLAVERO, {**BLOQUEADAS, "abre_llavero": True}, {"L": 9.0}, {})
+c("  ni el llavero: bloqueada no se sabe si lo lleva", (r.peticiones, r.unidad), ((), ""))
 
 # --- qué hace cada acción
 usos = {"A": 10.0}
