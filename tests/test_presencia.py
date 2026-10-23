@@ -52,14 +52,28 @@ CORRE_DESDE = {"si": False}
 components.corre_desde = lambda carpeta: CORRE_DESDE["si"]
 
 
-def con_windows(funcion):
-    """Ejecuta `funcion()` por la rama de Windows de `presencia` y devuelve lo que dé."""
+def con_sistema(windows: bool, funcion):
+    """Ejecuta `funcion()` por la rama de ese sistema de `presencia` y devuelve lo que dé.
+
+    Así cada rama se prueba en cualquier sistema: la suite pasa en Windows y en
+    Linux.
+    """
     antes = presencia.IS_WIN
-    presencia.IS_WIN = True
+    presencia.IS_WIN = windows
     try:
         return funcion()
     finally:
         presencia.IS_WIN = antes
+
+
+def con_windows(funcion):
+    """Ejecuta `funcion()` por la rama de Windows de `presencia` y devuelve lo que dé."""
+    return con_sistema(True, funcion)
+
+
+def con_linux(funcion):
+    """Ejecuta `funcion()` por la rama de Linux de `presencia` y devuelve lo que dé."""
+    return con_sistema(False, funcion)
 
 
 def instalado() -> tuple[Path, Path]:
@@ -126,7 +140,8 @@ c("  al actualizar cambia la versión y se queda la fecha de instalación",
   (REGISTRO.leer(ficha, "DisplayVersion"), REGISTRO.leer(ficha, "InstallDate")),
   ("0.9.1", "20250101"))
 c("  y cuenta como registrada", presencia.ficha_registrada(), True)
-c("fuera de Windows no hay ficha", presencia.registrar_ficha(PY, COD, "0.9.0"), None)
+c("fuera de Windows no hay ficha",
+  con_linux(lambda: presencia.registrar_ficha(PY, COD, "0.9.0")), None)
 
 # --- arrancar: su orden, fuera de toda unidad, con el entorno de un inicio de sesión
 LANZADOS: list = []
@@ -243,16 +258,18 @@ CORRE_DESDE["si"] = False
 # --- Linux: autostart, menú, caché y carpeta
 equipo.DIR = tmpdir("prdrive-equipo-pres3-")
 PY, COD = instalado()
-presencia.registrar_arranque(PY, COD)
+con_linux(lambda: presencia.registrar_arranque(PY, COD))
 MENU.write_text("[Desktop Entry]\n", encoding="utf-8")
 CACHE = presencia.cache_usuario()
 (CACHE / "keepassxc").mkdir(parents=True, exist_ok=True)
 (CACHE / "rclone-1-2").write_bytes(b"x")
 c("Linux: el arranque es el autostart XDG", (AUTOSTART.is_file(),
-                                             presencia.arranque_registrado()), (True, True))
+                                             con_linux(presencia.arranque_registrado)),
+  (True, True))
 c("  el plan dice que se borra la caché", any(str(CACHE) in m for m in
-                                              presencia.plan_desinstalar().consequences), True)
-msgs = presencia.desinstalar()
+                                              con_linux(presencia.plan_desinstalar).consequences),
+  True)
+msgs = con_linux(presencia.desinstalar)
 c("desinstalar en Linux: fuera el autostart, el menú, la caché y la carpeta",
   (AUTOSTART.exists(), MENU.exists(), CACHE.exists(), equipo.DIR.exists()),
   (False, False, False, False))
@@ -261,16 +278,16 @@ equipo.DIR = tmpdir("prdrive-equipo-pres4-")
 instalado()
 CACHE.mkdir(parents=True, exist_ok=True)
 store.procesos_desde = lambda carpeta: {77: "/x/keepassxc"} if Path(carpeta) == CACHE else {}
-msgs = presencia.desinstalar()
+msgs = con_linux(presencia.desinstalar)
 c("  una caché en uso (un KeePassXC abierto) se queda, y lo dice",
   (CACHE.exists(), any("sigue en uso" in m for m in msgs)), (True, True))
 store.procesos_desde = lambda carpeta: dict(AJENOS) if Path(carpeta) == equipo.DIR else {}
 CORRE_DESDE["si"] = True
 equipo.DIR = tmpdir("prdrive-equipo-pres5-")
 instalado()
-presencia.desinstalar()
+con_linux(presencia.desinstalar)
 c("  desde su carpeta, también en Linux espera al final", equipo.DIR.exists(), True)
-presencia.rematar()
+con_linux(presencia.rematar)
 c("  y rematar la borra", equipo.DIR.exists(), False)
 CORRE_DESDE["si"] = False
 

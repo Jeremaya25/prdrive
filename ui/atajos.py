@@ -17,7 +17,11 @@ Lo que se decide aquí:
 - **Sobre qué unidad** (`objetivo()`): la última usada (la última cuya ventana
   se abrió o sobre la que se usó una acción de la bandeja) y, si no se ha usado
   ninguna, la última que se conectó. Con una sola, esa. La del llavero elige
-  solo entre las que lo llevan.
+  solo entre las que lo llevan. Las de abrir su carpeta y su ventana
+  (`ABREN_BLOQUEADA`) eligen también entre las bloqueadas: la raíz cifrada de
+  este equipo cerrada, una unidad de la lista bloqueada con BitLocker o una de
+  VeraCrypt con el contenedor cerrado. Piden lo mismo que con ella abierta, y
+  el agente la desbloquea antes (`Agente._abrir()`).
 - **Cómo se escribe una combinación.** Por dentro, en minúsculas y en un orden
   fijo (`ctrl+alt+s`), que es lo que guarda `agente.json`; de cara al usuario,
   con los nombres de su teclado (`texto()`: «Ctrl+Alt+S», «Mayús», «Win» o
@@ -49,10 +53,18 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from common import APP_NAME, equipo
+from ui import bandeja
 
 ACCIONES = equipo.ACCIONES_DE_ATAJO
 """Las acciones que pueden llevar atajo, en el orden en que se enseñan."""
 SINCRONIZAR, CARPETA, PAUSAR, VENTANA, LLAVERO = ACCIONES
+
+ABREN_BLOQUEADA = (CARPETA, VENTANA)
+"""Las acciones que, sobre una unidad bloqueada, la desbloquean antes.
+
+Las demás no: sincronizar o pausar una unidad bloqueada no tiene sentido, y de
+una bloqueada no se sabe si lleva llavero.
+"""
 
 NOMBRES = {SINCRONIZAR: "Sincronizar ahora", CARPETA: "Abrir su carpeta",
            PAUSAR: "Pausar o reanudar", VENTANA: "Abrir su ventana",
@@ -392,46 +404,74 @@ def mecanismo(es_windows: bool, entorno: Mapping[str, str]) -> tuple[str | None,
 
 # --- Sobre qué unidad
 
-def candidatas(resumen: Mapping[str, Any], llavero: bool = False) -> list[Mapping[str, Any]]:
-    """Devuelve los dispositivos conectados sobre los que puede actuar un atajo.
+RAIZ_BLOQUEADA = (bandeja.BLOQUEADA, bandeja.DESBLOQUEANDO)
+"""Los estados de una raíz cifrada de este equipo que se pueden desbloquear desde un atajo.
 
-    Son los de la lista con su código aceptado y de una versión que se atiende
-    (`en_lista`): a los demás la bandeja tampoco les ofrece nada.
+Cerrada, o con VeraCrypt ya pidiendo su contraseña (el agente no pide otra).
+Ausente, fantasma o bloqueándose, no.
+"""
+
+
+def candidatas(resumen: Mapping[str, Any], llavero: bool = False,
+               bloqueadas: bool = False) -> list[Mapping[str, Any]]:
+    """Devuelve los dispositivos sobre los que puede actuar un atajo.
+
+    Son los conectados de la lista con su código aceptado y de una versión que
+    se atiende (`en_lista`): a los demás la bandeja tampoco les ofrece nada.
 
     Args:
         resumen: El resumen del agente.
         llavero: Solo los que llevan llavero.
+        bloqueadas: Añadir detrás los que están bloqueados y el agente sabe
+            desbloquear: la raíz cifrada de este equipo cerrada (`equipo`, en
+            `RAIZ_BLOQUEADA`), las unidades de la lista bloqueadas con
+            BitLocker (`bitlocker`) y las de VeraCrypt con el contenedor
+            cerrado (`vestibulos`). Van con `bloqueada` puesto.
+
+    Returns:
+        Sus filas del resumen, primero las conectadas.
     """
-    return [u for u in resumen.get("unidades") or []
-            if u.get("en_lista") and (u.get("llavero") or not llavero)]
+    filas = [u for u in resumen.get("unidades") or []
+             if u.get("en_lista") and (u.get("llavero") or not llavero)]
+    if bloqueadas and not llavero:
+        cerradas = [r for r in resumen.get("equipo") or []
+                    if r.get("cifrada") and r.get("estado") in RAIZ_BLOQUEADA]
+        filas += [{**f, "bloqueada": True}
+                  for f in [*cerradas, *(resumen.get("bitlocker") or []),
+                            *(resumen.get("vestibulos") or [])]]
+    return filas
 
 
 def objetivo(resumen: Mapping[str, Any], usadas: Mapping[str, float],
-             conectadas: Mapping[str, float], llavero: bool = False) -> Mapping[str, Any] | None:
+             conectadas: Mapping[str, float], llavero: bool = False,
+             bloqueadas: bool = False) -> Mapping[str, Any] | None:
     """Devuelve la fila del dispositivo sobre el que actúa un atajo.
 
     Es la última unidad usada: la última cuya ventana se abrió o sobre la que
-    se usó una acción de la bandeja. Si no se ha usado ninguna de las que están
-    conectadas, la última que se conectó. Con una sola, esa.
+    se usó una acción de la bandeja. Si no se ha usado ninguna de las que hay,
+    la última que se conectó (o que se vio enchufada y bloqueada); a la par,
+    una conectada antes que una bloqueada. Con una sola, esa.
 
     Args:
         resumen: El resumen del agente (`Agente.resumen()`).
         usadas: Cuándo se usó por última vez cada dispositivo, por id.
-        conectadas: Cuándo se conectó cada uno, por id.
+        conectadas: Cuándo se conectó cada uno, o desde cuándo se ve enchufado
+            y bloqueado, por id.
         llavero: Elegir solo entre las que llevan llavero: que la última usada
             no lo lleve no deja sin abrir el de otra enchufada al lado.
+        bloqueadas: Elegir también entre las bloqueadas (`candidatas()`).
 
     Returns:
         Su fila del resumen, o `None` si no hay ninguno.
     """
-    filas = candidatas(resumen, llavero)
+    filas = candidatas(resumen, llavero, bloqueadas)
     if len(filas) <= 1:
         return filas[0] if filas else None
     usada = [f for f in filas if f.get("id") in usadas]
     if usada:
         return max(usada, key=lambda f: usadas[f.get("id")])
     return max(enumerate(filas), key=lambda par: (conectadas.get(par[1].get("id"), 0.0),
-                                                  par[0]))[1]
+                                                  not par[1].get("bloqueada"), par[0]))[1]
 
 
 @dataclass(frozen=True)
@@ -455,9 +495,11 @@ def pulsado(accion: str, resumen: Mapping[str, Any], usadas: Mapping[str, float]
     """Decide qué hace un atajo pulsado.
 
     Sincronizar y pausar no se ven, así que lo dice un aviso corto con el
-    nombre de la unidad. Abrir su carpeta o su ventana no avisa: se ve. Sin
-    ninguna unidad sobre la que actuar, o si la acción no se puede hacer, el
-    aviso dice por qué y no se pide nada.
+    nombre de la unidad. Abrir su carpeta o su ventana no avisa: se ve. Con
+    ella bloqueada se pide lo mismo y el agente la desbloquea antes: lo que se
+    ve es la ventana que pide su contraseña. Sin ninguna unidad sobre la que
+    actuar, o si la acción no se puede hacer, el aviso dice por qué y no se
+    pide nada.
 
     La pausa es la de esa unidad (la del «Pausar» de su ventana, que se
     guarda): con ella puesta, el atajo la quita; con la pausa de todo el agente
@@ -468,13 +510,14 @@ def pulsado(accion: str, resumen: Mapping[str, Any], usadas: Mapping[str, float]
         accion: Una de `ACCIONES`.
         resumen: El resumen del agente.
         usadas: Cuándo se usó por última vez cada dispositivo, por id.
-        conectadas: Cuándo se conectó cada uno, por id.
+        conectadas: Cuándo se conectó cada uno, o desde cuándo se ve enchufado
+            y bloqueado, por id.
     """
     if accion not in ACCIONES:
         return Respuesta()
     if accion == LLAVERO:
         return _llavero(resumen, usadas, conectadas)
-    fila = objetivo(resumen, usadas, conectadas)
+    fila = objetivo(resumen, usadas, conectadas, bloqueadas=accion in ABREN_BLOQUEADA)
     if fila is None:
         return Respuesta(aviso=(f"{APP_NAME}: no hay ninguna unidad a mano",
                                 f"El atajo de «{NOMBRES[accion]}» actúa sobre la última "

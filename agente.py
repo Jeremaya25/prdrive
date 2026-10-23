@@ -1437,6 +1437,26 @@ class Desbloqueo:
 
 
 @dataclass
+class AlAbrirse:
+    """Lo que se ha pedido de una unidad bloqueada para cuando se vea abierta.
+
+    Es «Abrir su carpeta» o «Abrir su ventana» (un atajo) sobre una unidad de
+    la lista bloqueada con BitLocker o con el contenedor de VeraCrypt cerrado:
+    se pide su contraseña y, al conectarse, se abre. Lo mismo de la raíz cifrada
+    de este equipo va en su `Desbloqueo`.
+
+    Args:
+        desde: Cuándo se pidió por última vez; pasado `ESPERA_ABRIR` sin
+            abrirse, se olvida.
+        abrir: Abrir su ventana.
+        explorar: Abrirla en el explorador de archivos.
+    """
+    desde: float
+    abrir: bool = False
+    explorar: bool = False
+
+
+@dataclass
 class Bloqueo:
     """«Bloquear», pedido y todavía no hecho.
 
@@ -1705,6 +1725,14 @@ class Agente:
         con_vestibulo: Los ids de las unidades cuya marca de vestíbulo vio el
             último recorrido, con el contenedor cerrado o abierto: son las de
             VeraCrypt (`_cifrado_de()`).
+        vestibulos_pedidos: Cuándo se le pidió a VeraCrypt por última vez que
+            abriera el contenedor de cada unidad cerrada, por id: un atajo no
+            lo vuelve a pedir durante `GRACIA_ABRIR`.
+        al_abrirse: Lo que se abre de cada unidad bloqueada en cuanto se
+            conecte (un atajo con ella bloqueada), por id.
+        bloqueadas_desde: Desde cuándo se ve enchufada y bloqueada cada unidad
+            de la lista (BitLocker, o VeraCrypt con el contenedor cerrado), por
+            id: para un atajo cuenta como cuándo se conectó.
         bitlocker_presentes: Las unidades de la lista con BitLocker cuyo
             volumen está enchufado según el último recorrido, bloqueadas o no.
         bitlocker_tratadas: Las unidades con BitLocker que ya tuvieron su
@@ -1780,8 +1808,9 @@ class Agente:
             `rechazados`, `guardados`), para la ventana que espera.
         ventana_atajos: La ventana que graba los atajos, mientras está abierta.
         usadas: Cuándo se usó por última vez cada raíz, por id: su ventana se
-            abrió, o se pidió algo de ella desde la bandeja, su ventana o un
-            atajo. Es lo que decide sobre qué unidad actúa un atajo.
+            abrió, o se pidió algo de ella (conectada, o a la vista y
+            bloqueada) desde la bandeja, su ventana o un atajo. Es lo que
+            decide sobre qué unidad actúa un atajo.
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1818,6 +1847,9 @@ class Agente:
     bitlocker: dict[str, Path] = field(default_factory=dict)
     desbloqueos_bitlocker: dict[str, Any] = field(default_factory=dict)
     con_vestibulo: set[str] = field(default_factory=set)
+    vestibulos_pedidos: dict[str, float] = field(default_factory=dict)
+    al_abrirse: dict[str, AlAbrirse] = field(default_factory=dict)
+    bloqueadas_desde: dict[str, float] = field(default_factory=dict)
     bitlocker_presentes: set[str] = field(default_factory=set)
     bitlocker_tratadas: set[str] = field(default_factory=set)
     recorridos: int = 0
@@ -1987,6 +2019,9 @@ class Agente:
         self._raices_ausentes(abiertas)
         self._mirar_bitlocker(resto)
         self._pedir_bitlocker(ahora)
+        bloqueadas = set(self.bitlocker) | {uid for uid in self.vestibulos
+                                            if self._cerrada_veracrypt(uid) is not None}
+        self.bloqueadas_desde = {uid: self.bloqueadas_desde.get(uid, ahora) for uid in bloqueadas}
         # Con lo que se acaba de ver: una unidad bloqueada con BitLocker lo acorta.
         self.proximo_recorrido = ahora + self.cada_recorrido()
         self.recorridos += 1
@@ -2110,7 +2145,7 @@ class Agente:
         proc = self.desbloqueos_bitlocker.get(uid)
         return proc is not None and proc.poll() is None
 
-    def _desbloquear_bitlocker(self, uid: str, ahora: float) -> None:
+    def _desbloquear_bitlocker(self, uid: str, ahora: float) -> bool:
         """Le pide a Windows la ventana que desbloquea una unidad con BitLocker. No espera.
 
         Solo si se ve bloqueada ahora y su ventana no está ya abierta.
@@ -2121,14 +2156,17 @@ class Agente:
         Args:
             uid: El id de una unidad de la lista (`_es_de_bitlocker()`).
             ahora: La hora del reloj del agente.
+
+        Returns:
+            `True` si la ventana de Windows está abierta: pedida ahora o antes.
         """
         nombre = nombre_guardado(self.ajustes.unidades[uid], uid)
         raiz = self._bloqueada_bitlocker(uid)
         if raiz is None:
             diario(f"{nombre}: no está bloqueada con BitLocker ahora")
-            return
+            return False
         if self._desbloqueando_bitlocker(uid):
-            return
+            return True
         self.desbloqueos_bitlocker.pop(uid, None)
         try:
             proc = desbloquear_bitlocker(raiz)
@@ -2139,10 +2177,11 @@ class Agente:
             diario(f"{nombre}: Windows no abre la ventana de desbloqueo de {raiz} ({motivo})")
             avisar(f"{nombre}: no he podido abrir el desbloqueo de Windows",
                    "Desbloquéala desde el Explorador.", True)
-            return
+            return False
         self.desbloqueos_bitlocker[uid] = proc
         self.rafaga_hasta = max(self.rafaga_hasta, ahora + RAFAGA)
         diario(f"{nombre}: pedida a Windows la ventana que desbloquea {raiz}")
+        return True
 
     def cada_recorrido(self) -> float:
         """Devuelve cada cuántos segundos toca recorrer aunque nadie avise de un montaje.
@@ -2277,6 +2316,10 @@ class Agente:
         con.soltando = unidad is not None and self._lock_es_nuestro(con)
         self.conexiones[uid] = con
         desbloqueo = self.desbloqueos.pop(uid, None)
+        # Lo que un atajo pidió con ella bloqueada, si no ha caducado.
+        pedido = self.al_abrirse.pop(uid, None)
+        if pedido is not None and ahora - pedido.desde >= ESPERA_ABRIR:
+            pedido = None
         # Cada conexión empieza de cero, como el servicio que se arrancaba al
         # enchufar: se sincroniza enseguida y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
@@ -2321,12 +2364,18 @@ class Agente:
         explorador.poner(raiz, APP_SUBDIR)
         diario(f"{nombre}: " + ("raíz de este equipo" if unidad.es_raiz else "conectada")
                + f" en {raiz} (modo {unidad.modo})")
+        abrir = (desbloqueo is not None and desbloqueo.abrir) or (pedido is not None
+                                                                   and pedido.abrir)
+        explorar = (desbloqueo is not None and desbloqueo.explorar) or (pedido is not None
+                                                                         and pedido.explorar)
         if unidad.modo == equipo.UI:
             self._abrir_ventana(con)
-        elif desbloqueo is not None and desbloqueo.abrir:
+        elif abrir:
             self._lanzar_ventana(con)       # «Abrir» con ella bloqueada
-        if desbloqueo is not None and desbloqueo.explorar:
+        if explorar:
             self._explorar(con)             # «Abrir en explorador» con ella bloqueada
+        if pedido is not None:
+            self._usada(uid, ahora)
 
     def _desconectar(self, uid: str, ahora: float, cerradas: dict[str, Path]) -> None:
         """Olvida la conexión de una unidad que ya no está.
@@ -2455,6 +2504,7 @@ class Agente:
         """
         for uid in list(self.vestibulos):
             if uid not in cerradas:
+                self.vestibulos_pedidos.pop(uid, None)
                 if self.vestibulos.pop(uid):
                     diario("entrada de una unidad cifrada retirada; apertura rearmada")
         for uid in list(self.cerradas):
@@ -2478,7 +2528,58 @@ class Agente:
                        f"«Pedir la contraseña al conectarla» está apagado)")
                 continue
             diario(f"{nombre}: cifrada y cerrada en {raiz}")
-            abrir_contenedor(raiz)
+            if abrir_contenedor(raiz):
+                self.vestibulos_pedidos[uid] = ahora
+
+    def _cerrada_veracrypt(self, uid: str) -> Path | None:
+        """Devuelve la raíz física de esa unidad de VeraCrypt si se ve con el contenedor cerrado.
+
+        Es una unidad de la lista, no en modo `nada`, cuyo vestíbulo el
+        recorrido ya ha dado por estable (`vestibulos`), y que ni está
+        conectada ni se acaba de ver abierta (`vistas`).
+
+        Returns:
+            La raíz donde está su vestíbulo, o `None`.
+        """
+        unidad = self.ajustes.unidades.get(uid)
+        raiz = self.vestibulos.get(uid)
+        if (not raiz or unidad is None or unidad.es_raiz or unidad.modo == equipo.NADA
+                or uid in self.conexiones or uid in self.vistas):
+            return None
+        return Path(raiz)
+
+    def _abrir_vestibulo(self, uid: str, ahora: float) -> bool:
+        """Le pide a VeraCrypt que abra el contenedor de una unidad cerrada. No espera.
+
+        Es lo que hace el agente al enchufarla (`_vestibulos()`), pedido por la
+        persona con un atajo: va aunque su «Pedir la contraseña al conectarla»
+        esté apagado. Si se le acaba de pedir (`GRACIA_ABRIR`, también al
+        enchufarla), no se pide otra vez: su ventana estará todavía abierta.
+
+        Args:
+            uid: El id de la unidad (`_cerrada_veracrypt()` no es `None`).
+            ahora: La hora del reloj del agente.
+
+        Returns:
+            `True` si VeraCrypt está pidiendo su contraseña: lanzado ahora o
+            hace nada.
+        """
+        raiz = self._cerrada_veracrypt(uid)
+        if raiz is None:
+            return False
+        nombre = nombre_guardado(self.ajustes.unidades[uid], uid)
+        if ahora - self.vestibulos_pedidos.get(uid, -math.inf) < GRACIA_ABRIR:
+            diario(f"{nombre}: VeraCrypt acaba de pedir su contraseña")
+            return True
+        if not abrir_contenedor(raiz):
+            diario(f"{nombre}: no hay VeraCrypt con el que abrir su contenedor en {raiz}")
+            avisar(f"{nombre}: no puedo pedir su contraseña",
+                   "Ábrela desde la propia unidad, con "
+                   + ("«Abrir PRDRIVE»." if IS_WIN else "abrir-prdrive.sh."), True)
+            return False
+        self.vestibulos_pedidos[uid] = ahora
+        diario(f"{nombre}: pedida a VeraCrypt la contraseña de su contenedor en {raiz}")
+        return True
 
     def _preguntar(self, con: Conexion, ahora: float) -> None:
         """Pregunta por una unidad que no está en la lista, o cuyo código ha cambiado.
@@ -4010,7 +4111,17 @@ class Agente:
         VeraCrypt ha salido y, pasado un rato, no se ve. Se olvida para que la
         bandeja vuelva a ofrecerlo. Con un VeraCrypt que no sale (el de
         escritorio de Linux se queda abierto), al acabarse `ESPERA_ABRIR`.
+        Lo que un atajo pidió abrir de una unidad bloqueada (`al_abrirse`) se
+        olvida también al acabarse `ESPERA_ABRIR`: desbloqueada mucho después,
+        abrirla sola sorprendería.
         """
+        for uid, pedido in list(self.al_abrirse.items()):
+            if ahora - pedido.desde >= ESPERA_ABRIR:
+                del self.al_abrirse[uid]
+                que = " ni ".join(q for q, si in (("su ventana", pedido.abrir),
+                                                  ("su carpeta", pedido.explorar)) if si)
+                diario(f"{nombre_guardado(self.ajustes.unidades.get(uid), uid)}: no se ha "
+                       f"desbloqueado a tiempo; ya no abro {que}")
         for uid, d in list(self.desbloqueos.items()):
             if uid in self.conexiones or uid in self.vistas:
                 continue
@@ -4617,12 +4728,29 @@ class Agente:
         self.peticiones.put(dict(peticion))
 
     def _usada(self, uid: Any, ahora: float) -> None:
-        """Apunta que se acaba de usar esa raíz, si es una conectada.
+        """Apunta que se acaba de usar esa raíz, si está conectada o a la vista y bloqueada.
 
-        Es lo que decide sobre qué unidad actúa un atajo (`atajos.objetivo()`).
+        Es lo que decide sobre qué unidad actúa un atajo (`atajos.objetivo()`):
+        tras un atajo con ella bloqueada, volver a pulsarlo (si se cerró la
+        ventana de la contraseña) vuelve a ella.
         """
-        if isinstance(uid, str) and uid in self.conexiones:
+        if isinstance(uid, str) and (uid in self.conexiones or self._bloqueada(uid)):
             self.usadas[uid] = ahora
+
+    def _bloqueada(self, uid: str) -> bool:
+        """Indica si esa raíz de la lista está a la vista y bloqueada, y el agente sabe abrirla.
+
+        Es la raíz cifrada de este equipo cerrada (`atajos.RAIZ_BLOQUEADA`), o
+        una unidad bloqueada con BitLocker o con el contenedor de VeraCrypt
+        cerrado: lo que un atajo de abrir su carpeta o su ventana desbloquea.
+        """
+        unidad = self.ajustes.unidades.get(uid)
+        if unidad is None or uid in self.conexiones:
+            return False
+        if unidad.cifrada:
+            return self._estado_raiz(uid, unidad) in atajos.RAIZ_BLOQUEADA
+        return (self._bloqueada_bitlocker(uid) is not None
+                or self._cerrada_veracrypt(uid) is not None)
 
     def _buzon(self, ahora: float) -> None:
         """Atiende las peticiones del buzón de `agente.pide` y las de la bandeja.
@@ -5072,9 +5200,10 @@ class Agente:
         """Hace lo de un atajo pulsado sobre la última unidad usada (`atajos.pulsado()`).
 
         Lo que hace son las peticiones de la bandeja de siempre, atendidas aquí
-        mismo; si la acción no se ve sola, un aviso lo dice. Con la ventana que
-        graba los atajos abierta no hace nada: es la combinación que se está
-        grabando.
+        mismo; si la acción no se ve sola, un aviso lo dice. Abrir la carpeta o
+        la ventana de una unidad bloqueada la desbloquea antes (`_abrir()`).
+        Con la ventana que graba los atajos abierta no hace nada: es la
+        combinación que se está grabando.
         """
         if accion not in atajos.ACCIONES:
             diario(f"atajo desconocido: {accion!r}")
@@ -5083,10 +5212,17 @@ class Agente:
             diario(f"atajo «{atajos.NOMBRES[accion]}» con la ventana de los atajos abierta: "
                    f"no hago nada")
             return
-        r = atajos.pulsado(accion, self.resumen(), self.usadas,
-                           {uid: con.desde for uid, con in self.conexiones.items()})
+        desde = {**self.bloqueadas_desde,
+                 **{uid: con.desde for uid, con in self.conexiones.items()}}
+        r = atajos.pulsado(accion, self.resumen(), self.usadas, desde)
         con = self.conexiones.get(r.unidad)
-        diario(f"atajo «{atajos.NOMBRES[accion]}»: {con.nombre if con else 'ninguna unidad'}")
+        if con is not None:
+            sobre = con.nombre
+        elif r.unidad in self.ajustes.unidades:
+            sobre = f"{nombre_guardado(self.ajustes.unidades[r.unidad], r.unidad)} (bloqueada)"
+        else:
+            sobre = "ninguna unidad"
+        diario(f"atajo «{atajos.NOMBRES[accion]}»: {sobre}")
         for p in r.peticiones:
             self._atender_peticion(dict(p), ahora)
         self._usada(r.unidad, ahora)
@@ -5159,9 +5295,11 @@ class Agente:
 
         Una unidad que no está en la lista no: sería ejecutar su código sin el
         sí, y tampoco se abre su carpeta (la misma regla, sin excepciones). Ni
-        una que se está actualizando, hasta que acabe. Una raíz cifrada
-        bloqueada se desbloquea antes, y su ventana o su carpeta salen al verla
-        abierta; su llavero no, porque bloqueada no se sabe si lo lleva.
+        una que se está actualizando, hasta que acabe. Bloqueada (la raíz
+        cifrada de este equipo, una unidad con BitLocker o una de VeraCrypt con
+        el contenedor cerrado) se pide antes su contraseña, y su ventana o su
+        carpeta salen al verla abierta, si su código sigue siendo el aceptado;
+        su llavero no, porque bloqueada no se sabe si lo lleva.
 
         Args:
             uid: El id de la raíz.
@@ -5194,8 +5332,34 @@ class Agente:
         elif unidad.cifrada and uid not in self.ausentes:
             self._desbloquear(unidad, ahora, "para abrirla en el explorador" if explorador
                               else "para abrirla", abrir=not explorador, explorar=explorador)
+        elif self._bloqueada_bitlocker(uid) is not None:
+            if self._desbloquear_bitlocker(uid, ahora):
+                self._abrir_al_abrirse(uid, ahora, explorador)
+        elif self._cerrada_veracrypt(uid) is not None:
+            if self._abrir_vestibulo(uid, ahora):
+                self._abrir_al_abrirse(uid, ahora, explorador)
         else:
             diario(f"{que} {nombre_guardado(unidad, uid)}: no está aquí ahora")
+
+    def _abrir_al_abrirse(self, uid: str, ahora: float, explorador: bool) -> None:
+        """Apunta que, al conectarse esa unidad bloqueada, se abra su carpeta o su ventana.
+
+        Pedirlo otra vez renueva el plazo (`ESPERA_ABRIR`) y suma lo pedido:
+        carpeta y ventana pueden ir las dos.
+
+        Args:
+            uid: El id de la unidad.
+            ahora: La hora del reloj del agente.
+            explorador: Su carpeta; si no, su ventana.
+        """
+        pedido = self.al_abrirse.setdefault(uid, AlAbrirse(ahora))
+        pedido.desde = ahora
+        if explorador:
+            pedido.explorar = True
+        else:
+            pedido.abrir = True
+        diario(f"{nombre_guardado(self.ajustes.unidades.get(uid), uid)}: al abrirse, se abre "
+               + ("su carpeta" if explorador else "su ventana"))
 
     def _explorar(self, con: Conexion) -> None:
         """Abre esa raíz en el explorador de archivos (`explorar()`)."""
@@ -5420,6 +5584,14 @@ class Agente:
                      for uid, raiz in self.bitlocker.items()
                      if self._bloqueada_bitlocker(uid) is not None),
                     key=lambda b: (b["nombre"], b["id"])),
+                # Las unidades de VeraCrypt de la lista enchufadas y con el
+                # contenedor cerrado: un atajo de abrir su carpeta las abre.
+                "vestibulos": sorted(
+                    ({"id": uid, "nombre": nombre_guardado(self.ajustes.unidades[uid], uid),
+                      "raiz": str(raiz)}
+                     for uid in self.vestibulos
+                     if (raiz := self._cerrada_veracrypt(uid)) is not None),
+                    key=lambda v: (v["nombre"], v["id"])),
                 # Las raíces de este equipo, con su estado: lo que pinta la bandeja.
                 "equipo": [{"id": uid, "nombre": nombre_guardado(u, uid), "ruta": u.ruta,
                             "cifrada": u.cifrada, "estado": self._estado_raiz(uid, u)}

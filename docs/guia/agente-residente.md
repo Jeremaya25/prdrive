@@ -225,7 +225,12 @@ agente»**. El diseño completo está en
   programa delante y actúan sobre **la última unidad que has usado**: la última
   cuya ventana abriste o que elegiste en la bandeja; si no has usado ninguna,
   la última que conectaste. Sincronizar y pausar lo cuentan con un aviso con el
-  nombre de la unidad; abrir su carpeta o su ventana se ve sola. La pausa es la
+  nombre de la unidad; abrir su carpeta o su ventana se ve sola. **Abrir su
+  carpeta** y **Abrir su ventana** sirven también con la unidad **bloqueada**
+  (la raíz cifrada de este equipo, una unidad con BitLocker o una de VeraCrypt
+  sin abrir): primero sale la ventana que pide su contraseña y, en cuanto la
+  escribes, se abre su carpeta o su ventana. Si no la desbloqueas en unos tres
+  minutos, se olvida: desbloqueada después, no se abre sola. La pausa es la
   de esa unidad, la misma que el «Pausar» de su ventana: el atajo la pone y la
   quita. **Abrir el llavero** es el «Abrir llavero» de la bandeja sobre la
   última que has usado **de las que llevan llavero** (aunque después usaras
