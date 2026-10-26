@@ -197,6 +197,9 @@ c("  también las del backend, que los flags no llevan",
   (cortos["L"], "copy-links" in flags), ({"flag": "copy-links", "valor": False}, False))
 c("  y el -h de cada orden no entra", "h" in cortos, False)
 c("  ordenadas", list(cortos), sorted(cortos))
+c("los flags con valor de los grupos que no entran se nombran aparte",
+  datos["con_valor_fuera"], ["rc-addr", "s3-region"])
+c("  y uno booleano del backend no", "copy-links" in datos["con_valor_fuera"], False)
 c("una letra con tipo se come un valor",
   gen.cortos("Flags for filtering directory listings (flag group Filter):\n"
              "  -f, --filter stringArray   Add a file filtering rule\n", {}),
@@ -267,6 +270,9 @@ c("  y sus letras son las de la v1.75.2: -1 de bisync y -L/-x del backend local,
    "P": "progress", "c": "checksum", "d": "dir-slash", "f": "filter", "i": "interactive",
    "l": "links", "n": "dry-run", "q": "quiet", "s": "separator", "t": "timeformat",
    "u": "update", "v": "verbose", "x": "one-file-system"})
+c("  y nombra los flags del backend que se comen un valor, no los booleanos",
+  [n in gen.leer_texto(fichero)["con_valor_fuera"]
+   for n in ("s3-upload-cutoff", "crypt-password", "local-no-sparse")], [True, True, False])
 c("el fichero del repositorio no lleva rutas de quien lo generó",
   [t for t in ("/root/", "/home/", "/Users/", "C:\\", "/tmp/") if t in fichero], [])
 c("  ni un valor de fábrica que sea una ruta absoluta",

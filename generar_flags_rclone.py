@@ -34,6 +34,8 @@ Las **letras**, en cambio, salen de todas las secciones, el backend incluido
 (`-L` es `--copy-links` y `-x` `--one-file-system`, del backend `local`): van
 aparte, en `cortos`, y son lo que usa `model.problema_extra()` para leer un `-vn1`
 como lo lee rclone (pflag, `parseSingleShortArg`). El `-h` de cada orden no entra.
+Por lo mismo, `con_valor_fuera` nombra los flags de los grupos que no entran que se
+comen un valor (`--s3-region`): rclone se los da aunque empiecen por `-`.
 
 Solo biblioteca estándar. Sin `--rclone`, usa el rclone fijado de
 `install/rclone_bin.py` (caché o descarga, comprobado contra su SHA256SUMS).
@@ -163,15 +165,21 @@ def construir(version: str, ayuda_flags: str, ayudas_ordenes: dict[str, str],
         `defecto`, `ayuda`, `grupo`, `propio` (si es de la orden y no global: fuera
         de ella rclone se queja de que no existe) y `comandos` (las órdenes de
         `VERBOS` donde existe: las tres si es global); los de `duraciones_go` llevan
-        además `formato: "go"`. De cada letra (`cortos()`): `flag` y `valor`.
+        además `formato: "go"`. De cada letra (`cortos()`): `flag` y `valor`. Y
+        `con_valor_fuera`: los nombres, ordenados, de los flags de `GRUPOS_FUERA`
+        que se comen un valor.
 
     Raises:
         ErrorDeAyuda: Si la ayuda no trae ningún flag (rclone ha cambiado el formato)
             o una letra es de dos flags.
     """
     globales: dict[str, tuple[str, Entrada]] = {}
+    fuera: set[str] = set()
     for seccion, entradas in leer_secciones(ayuda_flags):
-        if seccion == LOCAL or seccion in GRUPOS_FUERA:
+        if seccion in GRUPOS_FUERA:
+            fuera.update(e.nombre for e in entradas if e.tipo not in TIPOS_SIN_VALOR)
+            continue
+        if seccion == LOCAL:
             continue                             # el `Flags:` de `help flags` es de esa orden
         for e in entradas:
             globales.setdefault(e.nombre, (seccion, e))
@@ -198,7 +206,8 @@ def construir(version: str, ayuda_flags: str, ayudas_ordenes: dict[str, str],
         if flags.get(nombre, {}).get("tipo") == "Duration":
             flags[nombre]["formato"] = "go"
     return {"rclone": version, "flags": dict(sorted(flags.items())),
-            "cortos": cortos(ayuda_flags, ayudas_ordenes)}
+            "cortos": cortos(ayuda_flags, ayudas_ordenes),
+            "con_valor_fuera": sorted(fuera - set(flags))}
 
 
 def cortos(ayuda_flags: str, ayudas_ordenes: dict[str, str]) -> dict[str, dict]:
@@ -266,9 +275,10 @@ def a_texto(datos: dict) -> str:
     def bloque(tabla: dict) -> str:
         return ",\n".join("    " + json.dumps(n, ensure_ascii=False) + ": "
                           + json.dumps(f, ensure_ascii=False) for n, f in tabla.items())
+    nombres = ",\n".join("    " + json.dumps(n) for n in datos["con_valor_fuera"])
     return ('{\n  "rclone": ' + json.dumps(datos["rclone"]) + ',\n  "flags": {\n'
             + bloque(datos["flags"]) + '\n  },\n  "cortos": {\n' + bloque(datos["cortos"])
-            + "\n  }\n}\n")
+            + '\n  },\n  "con_valor_fuera": [\n' + nombres + "\n  ]\n}\n")
 
 
 def leer_texto(texto: str) -> dict:

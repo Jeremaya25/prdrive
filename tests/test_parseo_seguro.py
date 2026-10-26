@@ -97,6 +97,35 @@ c("un -1 que es el valor de un flag no es un --resync",
                                           ["--exclude-if-present", "-n"])], [""] * 3)
 c("  ni en un valor, aunque sea texto", rechaza(una(flags={"max-delete": "-1"})), "")
 c("un guion suelto no es un flag", rechaza(una(extra_flags=["-"])), "")
+# Lo que sigue a un flag con valor es su valor, empiece como empiece (pflag, `parseLongArg`):
+# con rclone v1.75.2, `--exclude-if-present --max-delete -1` hace un resync, porque
+# `--max-delete` es el valor de `--exclude-if-present` y el `-1` queda suelto.
+c.contains("un flag con valor se come el siguiente aunque empiece por --",
+           rechaza(una(extra_flags=["--exclude-if-present", "--max-delete", "-1"])),
+           "'-1' ('--resync')")
+c.contains("  y ese valor se mira igual como un flag, por si acaso",
+           rechaza(una(extra_flags=["--exclude-if-present", "--sftp-ssh=sh -c id"])),
+           "sftp-ssh")
+c("un flag del backend con valor se come el suyo, aunque empiece por - (una contraseña "
+  "ofuscada puede)",
+  [rechaza(una(extra_flags=e)) for e in (["--s3-upload-cutoff", "-1"],
+                                          ["--crypt-password", "-n1abc"])], ["", ""])
+c.contains("  y uno booleano del backend, no", rechaza(una(extra_flags=["--local-no-sparse", "-1"])),
+           "'-1' ('--resync')")
+
+# Sin `common/flags_rclone.json` se rechaza de más, nunca de menos.
+datos_de_verdad = model.DATOS_RCLONE
+try:
+    model._RCLONE.clear()
+    model.DATOS_RCLONE = Path("no-existe") / "flags_rclone.json"
+    c("sin los datos de rclone, -1, -n y -v1 se siguen rechazando",
+      [bool(model.problema_extra(e)) for e in (["-1"], ["-n"], ["-v1"])], [True] * 3)
+    c("  y --max-delete -1 también: sin saber quién se come un valor, todo es un flag",
+      bool(model.problema_extra(["--max-delete", "-1"])), True)
+    c("  pero -v sigue valiendo", model.problema_extra(["-v"]), None)
+finally:
+    model._RCLONE.clear()
+    model.DATOS_RCLONE = datos_de_verdad
 
 # --- el valor de un flag no puede llevar otro flag ---------------------------
 # `flags_to_args` emite `--checksum --sftp-ssh=sh -c id`: un flag booleano no

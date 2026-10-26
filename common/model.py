@@ -731,12 +731,22 @@ class _Rclone(NamedTuple):
 
 _RCLONE: list[_Rclone] = []
 
+CORTOS_MINIMOS: Mapping[str, tuple[str, bool]] = {"1": ("resync", False),
+                                                   "n": ("dry-run", False)}
+"""Las letras de flags reservados, por si `DATOS_RCLONE` no se puede leer.
+
+Con ellas sola, toda otra letra se lee como un booleano y se sigue mirando lo
+que viene detrás (`_problema_cortos()`): `-v1` se sigue rechazando.
+"""
+
 
 def _rclone() -> _Rclone:
     """Devuelve las letras y los flags con valor de `DATOS_RCLONE`, leídos una sola vez.
 
-    Sin el fichero (o ilegible) no se sabe ninguna letra y ningún flag lleva
-    valor: todo argumento se mira como flag, que rechaza de más y nunca de menos.
+    Los flags con valor son los de la tabla `flags` que no son booleanos ni
+    contadores, más los de fuera de ella (`con_valor_fuera`: el backend, `rc`, las
+    métricas). Sin el fichero (o ilegible) las letras son `CORTOS_MINIMOS` y ningún
+    flag lleva valor: rechaza de más (`--max-delete -1` incluido) y nunca de menos.
     """
     if not _RCLONE:
         import json
@@ -749,8 +759,9 @@ def _rclone() -> _Rclone:
                 cortos[str(letra)] = (str(dato["flag"]), bool(dato["valor"]))
             con_valor = {str(n) for n, f in crudo["flags"].items()
                          if f.get("tipo") not in ("bool", "count")}
+            con_valor.update(str(n) for n in crudo["con_valor_fuera"])
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            pass
+            cortos, con_valor = dict(CORTOS_MINIMOS), set()
         _RCLONE.append(_Rclone(cortos, frozenset(con_valor)))
     return _RCLONE[0]
 
@@ -793,10 +804,13 @@ def problema_extra(args: Iterable[str]) -> str | None:
     que va entre los guiones y el `=`), con las reglas de `problema_flag()`. Uno
     de un solo guion son flags de una letra (`_problema_cortos()`): `-1` es
     `--resync` en bisync (`cmd/bisync/cmd.go`) y `-n` `--dry-run`, y se agrupan
-    (`-vn1`). El valor de un flag que lo lleva no se mira como flag si no
-    empieza por `--`: `--max-delete -1` es un tope, no un `--resync`, porque rclone
-    se lo da a `--max-delete`; detrás de un booleano (`--checksum -1`), en cambio,
-    es un flag más. Un `-` suelto y un valor que no empieza por `-` (`8M`,
+    (`-vn1`). Lo que sigue a un flag con valor sin `=` es su valor, empiece
+    como empiece, como en pflag (`parseLongArg`): `--max-delete -1` es un tope,
+    no un `--resync`, y en `--exclude-if-present --max-delete -1` el `-1` sí es un
+    flag, porque `--max-delete` es el valor de `--exclude-if-present`. Un valor
+    que empieza por `--` se mira además como un flag, por si acaso: rechaza de
+    más, nunca de menos. Detrás de un booleano (`--checksum -1`) lo que sigue es
+    un flag más. Un `-` suelto y un valor que no empieza por `-` (`8M`,
     `sh -c id`) no son flags.
 
     Returns:
@@ -806,9 +820,13 @@ def problema_extra(args: Iterable[str]) -> str | None:
     come = False
     for arg in args:
         arg = str(arg)
-        if come and not arg.startswith("--"):
-            come = False
-            continue                       # el valor del flag de antes
+        if come:
+            come = False                   # el valor del flag de antes
+            if arg.startswith("--"):
+                motivo = problema_flag(arg[2:].split("=", 1)[0])
+                if motivo:
+                    return f"'{arg.split('=', 1)[0]}' no se admite: {motivo}. {QUITALO}"
+            continue
         if arg.startswith("--"):
             nombre = arg[2:].split("=", 1)[0]
             motivo = problema_flag(nombre)
@@ -832,7 +850,8 @@ def problema_valor_flag(clave: str, valor: Any) -> str | None:
     como `--checksum --sftp-ssh=sh -c id`, y `checksum = "-1"` como
     `--checksum -1`, que es un `--resync`. Se mira lo que emite `flags_to_args()`
     con `problema_extra()`, que sabe qué flag se come su valor: `max-delete = -1`
-    o `filter = "- *.tmp"` valen, y un valor que empieza por `--` no vale nunca.
+    o `exclude-if-present = "-x"` valen, y un valor que empieza por `--` se mira
+    además como un flag, sea cual sea la clave.
 
     Args:
         clave: El flag, como en la tabla (vale con `_`); ya ha pasado por
