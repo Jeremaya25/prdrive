@@ -40,13 +40,20 @@ MISSING_LISTINGS = "cannot find prior Path1 or Path2 listings"
 """Mensaje con el que rclone se queja de que no encuentra el baseline."""
 
 
-_NON_CANONICAL = re.compile(r"[\s\\/:?*]")
+_NON_CANONICAL = re.compile(r"[\t\n\f\r \\/:?*]")
+r"""El `[\s\\/:?*]` de `canonical.go`, escrito como lo lee Go.
+
+En RE2 `\s` es solo `[\t\n\f\r ]`; el de Python es Unicode y casaría también
+con `\x0b`, `\x1c`-`\x1f`, `\x85`, `\xa0` o el espacio de ancho completo, que
+rclone deja tal cual en el nombre de la sesión.
+"""
 
 
 def canonical_path(remote: str) -> str:
-    r"""Réplica de `CanonicalPath` (cmd/bisync/bilib/canonical.go, rclone master).
+    r"""Réplica de `CanonicalPath` (cmd/bisync/bilib/canonical.go, rclone v1.75.2).
 
-    Quita `/` y `\` de los extremos y sustituye `[\s\\/:?*]` por `_`.
+    Quita `/` y `\` de los extremos y sustituye `[\s\\/:?*]` por `_`, con el
+    `\s` de Go (`_NON_CANONICAL`).
     """
     return _NON_CANONICAL.sub("_", remote.strip("\\/"))
 
@@ -265,16 +272,92 @@ def _unir_raiz(base: str, ruta: str, con_nombre: bool) -> str:
     return "" if con_nombre and unida == "." else unida
 
 
+_CITA = "\u201b"
+"""El `QuoteRune` de lib/encoder (‛): delante de un símbolo, dice que es el símbolo y no lo que codifica."""
+_SIMBOLO = 0x2400
+"""El `symbolOffset` de lib/encoder (␀): un carácter de control `c` se escribe `chr(_SIMBOLO + c)`."""
+
+
+def _codificar(nombre: str, estandar: bool) -> str:
+    """Réplica de `MultiEncoder.Encode` (lib/encoder/encoder.go) para un tramo.
+
+    Solo con las dos máscaras que pasan por el `Root()` del backend local en
+    POSIX: `encoder.Standard` (`estandar`: `EncodeZero | EncodeSlash | EncodeCtl
+    | EncodeDel | EncodeDot`) y `encoder.Base`, el `encoder.OS` de POSIX
+    (`EncodeZero | EncodeSlash | EncodeDot`).
+    """
+    if nombre in (".", ".."):
+        return "\uff0e" * len(nombre)
+    if nombre in ("\uff0e", "\uff0e\uff0e"):
+        return (_CITA + "\uff0e") * len(nombre)
+    salida = []
+    for ch in nombre:
+        o = ord(ch)
+        if ch == "\0":
+            salida.append(chr(_SIMBOLO))
+        elif ch in (chr(_SIMBOLO), _CITA, "\uff0f"):
+            salida.append(_CITA + ch)
+        elif ch == "/":
+            salida.append("\uff0f")
+        elif estandar and ch == "\x7f":
+            salida.append("\u2421")
+        elif estandar and 1 <= o <= 0x1F:
+            salida.append(chr(_SIMBOLO + o))
+        elif estandar and (ch == "\u2421" or _SIMBOLO < o <= _SIMBOLO + 0x1F):
+            salida.append(_CITA + ch)
+        else:
+            salida.append(ch)
+    return "".join(salida)
+
+
+def _decodificar(nombre: str, estandar: bool) -> str:
+    """Réplica de `MultiEncoder.Decode` (lib/encoder/encoder.go) para un tramo.
+
+    Deshace `_codificar()` con la misma máscara. Una `‛` que no va delante de un
+    símbolo se queda como está.
+    """
+    if nombre in ("\uff0e", "\uff0e\uff0e"):
+        return "." * len(nombre)
+    if nombre in (_CITA + "\uff0e", (_CITA + "\uff0e") * 2):
+        return "\uff0e" * (len(nombre) // 2)
+    salida = []
+    citar = False
+    for ch in nombre:
+        citado, citar = citar, False
+        o = ord(ch)
+        if ch == _CITA and not citado:
+            citar = True
+            continue
+        if ch == chr(_SIMBOLO):
+            salida.append(ch if citado else "\0")
+        elif ch == "\uff0f":
+            salida.append(ch if citado else "/")
+        elif estandar and ch == "\u2421":
+            salida.append(ch if citado else "\x7f")
+        elif estandar and _SIMBOLO < o <= _SIMBOLO + 0x1F:
+            salida.append(ch if citado else chr(o - _SIMBOLO))
+        else:
+            salida.append(_CITA + ch if citado and ch != _CITA else ch)
+    if citar:
+        salida.append(_CITA)
+    return "".join(salida)
+
+
 def raiz_local(ruta: str, nounc: bool = False) -> str:
     r"""Réplica del `Root()` del backend local de rclone (backend/local/local.go).
 
-    Es `cleanRootPath()` con `/`, contrastado con rclone v1.75.1: en Linux la
-    ruta limpia (`filepath.Clean`: `a//b` y `a/./b` son `a/b`), y un segmento
-    `.` o `..` sale como `．`/`．．` por el codificador de nombres
-    (`ToStandardPath`). En Windows, absoluta (`filepath.Abs`, y rclone corre
-    con cwd en `model.APP_DIR`) y con `\\?\` delante (`file.UNCPath()`,
-    lib/file/unc_windows.go) salvo con `nounc = true`: `D:\datos` es
-    `//?/D:/datos`, y `\\nas\datos`, `//?/UNC/nas/datos`.
+    Es `cleanRootPath()` y después `Root()`, contrastado con rclone v1.75.2. En
+    POSIX, cada tramo que no es `.` ni `..` pasa a la codificación del sistema
+    (`encoder.OS.FromStandardName`), la ruta se limpia (`filepath.Clean`: `a//b`
+    y `a/./b` son `a/b`), y `Root()` devuelve cada tramo en la codificación
+    estándar (`ToStandardPath`): un `.` o `..` suelto sale como `．`/`．．`, un
+    carácter de control como su símbolo (`\x0b` → `␋`, `\x7f` → `␡`) y una `‛`
+    suelta, doble (`it‛s` → `it‛‛s`). En Windows, absoluta (`filepath.Abs`, y
+    rclone corre con cwd en `model.APP_DIR`) y con `\\?\` delante
+    (`file.UNCPath()`, lib/file/unc_windows.go) salvo con `nounc = true`:
+    `D:\datos` es `//?/D:/datos`, y `\\nas\datos`, `//?/UNC/nas/datos`. Allí el
+    codificador es otro (lib/encoder/os_windows.go) y no se replica: no se ha
+    contrastado con un rclone de Windows.
     """
     if IS_WIN:
         limpia = ntpath.normpath(ntpath.join(str(model.APP_DIR), ruta.replace("/", "\\")))
@@ -284,11 +367,12 @@ def raiz_local(ruta: str, nounc: bool = False) -> str:
             elif _UNIDAD.match(limpia):
                 limpia = "\\\\?\\" + limpia
         return limpia.replace("\\", "/")
-    limpia = posixpath.normpath(ruta or ".")
+    tramos = [t if t in (".", "..") else _codificar(_decodificar(t, True), False)
+              for t in (ruta or "").split("/")]
+    limpia = posixpath.normpath("/".join(tramos) or ".")
     if limpia.startswith("//"):
         limpia = limpia[1:]          # `filepath.Clean` no guarda las dos barras de POSIX
-    return "/".join("\uff0e" * len(trozo) if trozo in (".", "..") else trozo
-                    for trozo in limpia.split("/"))
+    return "/".join(_codificar(_decodificar(t, False), True) for t in limpia.split("/"))
 
 
 def session_name(path1: str, path2: str) -> str:
@@ -311,7 +395,9 @@ def expected_prefix(pair: Pair, tipos: dict[str, TipoRemote] | None = None) -> s
         """Devuelve el extremo tal como lo escribe rclone al nombrar la sesión."""
         endpoint = pair.endpoint(kind)
         if kind == "local" and not pair.device_remote:
-            return fs_path_local(endpoint)
+            # El backend `local` sin nombre: su `Root()` también codifica los tramos
+            # (`raiz_local()`). En Windows no se ha contrastado y va tal cual.
+            return fs_path_local(endpoint if IS_WIN else raiz_local(endpoint))
         return fs_path_remote(endpoint, tipos)
 
     return session_name(render(pair.mode.source), render(pair.mode.dest))
