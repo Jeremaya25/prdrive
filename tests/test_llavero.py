@@ -558,6 +558,18 @@ with sandbox() as root:
     c("las de un conflicto sí", [r.name for r in llavero.bases(carpeta)],
       ["personal.conflicto-remoto1.kdbx", "personal.kdbx"])
 
+# Las mayúsculas cuentan en todos los sistemas, como en los filtros de rclone (#174): en
+# Windows `rglob("*.kdbx")` también devuelve `A.KDBX`, que no viaja nunca.
+with sandbox() as root:
+    carpeta = root / ".keychain"
+    carpeta.mkdir()
+    (carpeta / "A.KDBX").write_bytes(b"x")
+    (carpeta / "b.kdbx").write_bytes(b"x")
+    (carpeta / "c.OLD.kdbx").write_bytes(b"x")
+    (carpeta / "d.old.kdbx").write_bytes(b"x")
+    c("una `.KDBX` en mayúsculas no es base, y `.OLD.kdbx` sí viaja, como en rclone",
+      [r.name for r in llavero.bases(carpeta)], ["b.kdbx", "c.OLD.kdbx"])
+
 # El compañero fijo lleva la misma hora en todos los dispositivos (#115). Lo crea cada uno, y
 # con la hora de ese momento el segundo en llegar parecía «más nuevo»: su primer --resync
 # (resync-mode = newer) le cambiaba la hora al del remoto y el primer dispositivo veía sus dos

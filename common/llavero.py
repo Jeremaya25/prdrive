@@ -95,7 +95,8 @@ def bases(donde: Path) -> list[Path]:
 
     Son los `*.kdbx` de la carpeta y de sus subcarpetas, salvo `.prversions/` y
     las copias de antes de guardar (`*.old.kdbx`), que no viajan
-    (`model.LLAVERO_REGLAS`).
+    (`model.LLAVERO_REGLAS`). Las mayúsculas cuentan en todos los sistemas, como
+    en los filtros de rclone: una `X.KDBX` no viaja, así que no es una base.
     """
     try:
         candidatas = sorted(donde.rglob("*.kdbx"))
@@ -103,8 +104,10 @@ def bases(donde: Path) -> list[Path]:
         return []
     salida = []
     for ruta in candidatas:
-        relativa = ruta.relative_to(donde).parts
-        if model.VERSIONS_DIR in relativa or ruta.name.lower().endswith(".old.kdbx"):
+        # En Windows `rglob` no distingue mayúsculas; rclone, sí.
+        if not ruta.name.endswith(".kdbx") or ruta.name.endswith(".old.kdbx"):
+            continue
+        if model.VERSIONS_DIR in ruta.relative_to(donde).parts:
             continue
         salida.append(ruta)
     return salida
@@ -255,7 +258,11 @@ _HORA = re.compile(r"^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))?
 
 
 def _nanosegundos(texto: str) -> int | None:
-    """Convierte la hora de un listado en nanosegundos desde 1970, o `None` si no se lee."""
+    """Convierte la hora de un listado en nanosegundos desde 1970, o `None` si no se lee.
+
+    Una fecha imposible (el año 0000, el mes 13) tampoco se lee: rclone no la
+    escribe, pero un listado dañado o escrito a mano puede traerla.
+    """
     m = _HORA.match(texto)
     if m is None:
         return None
@@ -263,7 +270,10 @@ def _nanosegundos(texto: str) -> int | None:
     fraccion = int((m.group(7) or "0").ljust(9, "0"))
     signo = -1 if m.group(8) == "-" else 1
     zona = signo * (int(m.group(9)) * 3600 + int(m.group(10)) * 60)
-    segundos = calendar.timegm((ano, mes, dia, hh, mm, ss)) - zona
+    try:
+        segundos = calendar.timegm((ano, mes, dia, hh, mm, ss)) - zona
+    except (ValueError, OverflowError):
+        return None
     return segundos * 1_000_000_000 + fraccion
 
 
