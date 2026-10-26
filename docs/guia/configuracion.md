@@ -204,11 +204,11 @@ absoluta reaparece.
 
 | modo | subcomando | dirección | borra en | freno |
 |---|---|---|---|---|
-| `bisync` | `bisync` | ↔ | — | `--max-delete 25` |
+| `bisync` | `bisync` | ↔ | — | `--max-delete 25`: el 25 % del listado anterior |
 | `up` | `copy` | dispositivo → remoto | nada | — |
 | `down` | `copy` | remoto → dispositivo | nada | — |
-| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50` |
-| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50` |
+| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50`: 50 ficheros |
+| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50`: 50 ficheros |
 
 `bisync` viene además con `--conflict-resolve newer`, `--resilient`, `--recover` y
 `--max-lock 2m`: un error menor no obliga a rehacer la referencia, una

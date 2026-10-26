@@ -119,11 +119,13 @@ interval_minutes = 30
 # ---------------------------------------------------------------------------
 # modo        qué hace                              borra en
 # ----------  ------------------------------------  ---------------------
-# bisync      dos direcciones, detecta cambios      — (freno --max-delete 25)
+# bisync      dos direcciones, detecta cambios      — (freno --max-delete 25:
+#                                                     el 25 % del listado anterior)
 # up          copia dispositivo -> remoto           nada
 # down        copia remoto -> dispositivo           nada
-# up-mirror   espejo dispositivo -> remoto          EL REMOTO
-# down-mirror espejo remoto -> dispositivo          EL DISPOSITIVO
+# up-mirror   espejo dispositivo -> remoto          EL REMOTO (freno --max-delete 50:
+#                                                     50 ficheros)
+# down-mirror espejo remoto -> dispositivo          EL DISPOSITIVO (freno igual)
 
 [[pair]]
 name = "docs"
