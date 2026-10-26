@@ -73,6 +73,9 @@ c("el prefijo v no cuenta", update.is_newer("v0.1.0", "0.0.9"), True)
 c("sin versión instalada, todo es nuevo", update.is_newer("0.0.1", ""), True)
 c("sin release no hay nada nuevo", update.is_newer("", "0.0.1"), False)
 c("un tag raro no revienta", update.parse_version("1.2.3-rc1"), (1, 2, 3))
+# `str.isdigit()` acepta `²`, pero `int()` no la lee (#174)
+c("una cifra que no es ASCII corta el tramo, sin lanzar", update.parse_version("v1.2²"), (1, 2))
+c("  y una de otra escritura, igual", update.parse_version("1.٣"), (1, 0))
 
 # Un dispositivo instalado antes de que existiera VERSION no tiene el fichero, y
 # eso no es un fallo: es uno que tiene que actualizarse.
@@ -115,6 +118,19 @@ with sandbox():
     rel, motivo = update.check()
     c("una respuesta sin tag_name no lanza", rel, None)
     c.contains("y se explica", motivo or "", "tag_name")
+
+# una respuesta que no es un objeto JSON (#174): `.get()` lanzaba AttributeError
+for crudo in ([], "x", None):
+    with sandbox():
+        responder(json.dumps(crudo).encode())
+        rel, motivo = update.check()
+        c(f"una respuesta {json.dumps(crudo)} no lanza", rel, None)
+        c.contains("  y se explica", motivo or "", "no es un objeto")
+with sandbox():
+    responder(api(), json.dumps([]).encode())
+    update.check()
+    rel, motivo = update.check(force=True)
+    c("  y con caché se enseña lo último que se supo", rel.tag if rel else None, "v9.9.9")
 
 
 # el primer pintado de la ventana: caché y solo caché

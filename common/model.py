@@ -713,46 +713,159 @@ def problema_flag(nombre: str) -> str | None:
     return None
 
 
+DATOS_RCLONE = Path(__file__).resolve().parent / "flags_rclone.json"
+"""Los flags de la rclone fijada (`generar_flags_rclone.py`): sus letras y qué flag lleva valor."""
+
+
+class _Rclone(NamedTuple):
+    """Lo que `problema_extra()` necesita saber de la rclone fijada para leer como ella.
+
+    Args:
+        cortos: `{letra: (flag largo, si se come un valor)}`: `1` es `resync`.
+        con_valor: Los flags largos que se comen el argumento siguiente si no
+            llevan `=` (`max-delete`, `filter`…): los que no son booleanos ni contadores.
+    """
+    cortos: Mapping[str, tuple[str, bool]]
+    con_valor: frozenset[str]
+
+
+_RCLONE: list[_Rclone] = []
+
+CORTOS_MINIMOS: Mapping[str, tuple[str, bool]] = {"1": ("resync", False),
+                                                   "n": ("dry-run", False)}
+"""Las letras de flags reservados, por si `DATOS_RCLONE` no se puede leer.
+
+Con ellas sola, toda otra letra se lee como un booleano y se sigue mirando lo
+que viene detrás (`_problema_cortos()`): `-v1` se sigue rechazando.
+"""
+
+
+def _rclone() -> _Rclone:
+    """Devuelve las letras y los flags con valor de `DATOS_RCLONE`, leídos una sola vez.
+
+    Los flags con valor son los de la tabla `flags` que no son booleanos ni
+    contadores, más los de fuera de ella (`con_valor_fuera`: el backend, `rc`, las
+    métricas). Sin el fichero (o ilegible) las letras son `CORTOS_MINIMOS` y ningún
+    flag lleva valor: rechaza de más (`--max-delete -1` incluido) y nunca de menos.
+    """
+    if not _RCLONE:
+        import json
+
+        cortos: dict[str, tuple[str, bool]] = {}
+        con_valor: set[str] = set()
+        try:
+            crudo = json.loads(DATOS_RCLONE.read_text(encoding="utf-8"))
+            for letra, dato in crudo["cortos"].items():
+                cortos[str(letra)] = (str(dato["flag"]), bool(dato["valor"]))
+            con_valor = {str(n) for n, f in crudo["flags"].items()
+                         if f.get("tipo") not in ("bool", "count")}
+            con_valor.update(str(n) for n in crudo["con_valor_fuera"])
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            cortos, con_valor = dict(CORTOS_MINIMOS), set()
+        _RCLONE.append(_Rclone(cortos, frozenset(con_valor)))
+    return _RCLONE[0]
+
+
+def _problema_cortos(arg: str) -> tuple[str | None, bool]:
+    """Mira un argumento de flags de una letra (`-1`, `-vn1`) como lo lee rclone.
+
+    Es el `parseSingleShortArg` de pflag: cada letra es un flag (`_rclone().cortos`),
+    las de un booleano o un contador se agrupan (`-vn1` son tres), y la primera que
+    lleva valor se queda con el resto (`-f+ *.md`, `-f=…`) o, si no queda nada, con
+    el argumento siguiente. Un `=` tras un booleano (`-c=false`) también acaba el
+    argumento. Una letra que la tabla no tiene se lee como un booleano: si rclone
+    no la conoce rechazará el argumento él solo, y si la conoce (otra versión, un
+    backend) las que la siguen se siguen mirando.
+
+    Returns:
+        `(motivo, come)`: la frase del rechazo (o `None` si vale) y si el
+        argumento siguiente es el valor de su última letra.
+    """
+    letras = arg[1:]
+    cortos = _rclone().cortos
+    for i, letra in enumerate(letras):
+        largo, con_valor = cortos.get(letra, ("", False))
+        motivo = problema_flag(largo) if largo else None
+        if motivo:
+            donde = "" if arg == f"-{letra}" else f", en '{arg}'"
+            return f"'-{letra}' ('--{largo}'{donde}) no se admite: {motivo}. {QUITALO}", False
+        resto = letras[i + 1:]
+        if con_valor:
+            return None, not resto
+        if resto.startswith("="):
+            return None, False
+    return None, False
+
+
 def problema_extra(args: Iterable[str]) -> str | None:
     """Dice por qué una lista de argumentos de rclone no puede ir en el config.
 
-    Se mira cada argumento que empieza por `--` por su nombre (lo que va entre
-    los guiones y el `=`, si lo hay), con las mismas reglas que `problema_flag()`.
-    Los cortos de un guion pasan: ninguno lanza un programa. Un valor suelto
-    (`8M`, `sh -c id`) tampoco se mira: no es un flag.
+    Se leen como los lee rclone. Un `--nombre[=valor]` se mira por su nombre (lo
+    que va entre los guiones y el `=`), con las reglas de `problema_flag()`. Uno
+    de un solo guion son flags de una letra (`_problema_cortos()`): `-1` es
+    `--resync` en bisync (`cmd/bisync/cmd.go`) y `-n` `--dry-run`, y se agrupan
+    (`-vn1`). Lo que sigue a un flag con valor sin `=` es su valor, empiece
+    como empiece, como en pflag (`parseLongArg`): `--max-delete -1` es un tope,
+    no un `--resync`, y en `--exclude-if-present --max-delete -1` el `-1` sí es un
+    flag, porque `--max-delete` es el valor de `--exclude-if-present`. Un valor
+    que empieza por `--` se mira además como un flag, por si acaso: rechaza de
+    más, nunca de menos. Detrás de un booleano (`--checksum -1`) lo que sigue es
+    un flag más. Un `-` suelto y un valor que no empieza por `-` (`8M`,
+    `sh -c id`) no son flags.
 
     Returns:
-        La frase entera, que nombra el primer argumento rechazado y acaba
-        diciendo que se quite, o `None` si todos valen.
+        La frase entera, que nombra el primer argumento rechazado (la letra y su
+        flag largo si es corto) y acaba diciendo que se quite, o `None` si todos valen.
     """
+    come = False
     for arg in args:
         arg = str(arg)
-        if not arg.startswith("--"):
+        if come:
+            come = False                   # el valor del flag de antes
+            if arg.startswith("--"):
+                motivo = problema_flag(arg[2:].split("=", 1)[0])
+                if motivo:
+                    return f"'{arg.split('=', 1)[0]}' no se admite: {motivo}. {QUITALO}"
             continue
-        nombre = arg[2:].split("=", 1)[0]
-        motivo = problema_flag(nombre)
-        if motivo:
-            return f"'--{nombre}' no se admite: {motivo}. {QUITALO}"
+        if arg.startswith("--"):
+            nombre = arg[2:].split("=", 1)[0]
+            motivo = problema_flag(nombre)
+            if motivo:
+                return f"'--{nombre}' no se admite: {motivo}. {QUITALO}"
+            come = "=" not in arg and normalizar_flag(nombre) in _rclone().con_valor
+        elif arg.startswith("-") and len(arg) > 1:
+            motivo, come = _problema_cortos(arg)
+            if motivo:
+                return motivo
+        else:
+            come = False
     return None
 
 
-def problema_valor_flag(valor: Any) -> str | None:
+def problema_valor_flag(clave: str, valor: Any) -> str | None:
     """Dice por qué el valor de un flag no puede ir en el config.
 
     `flags_to_args()` emite `--clave valor`, y un flag booleano no consume el
     argumento siguiente: `checksum = "--sftp-ssh=sh -c id"` llegaría a rclone
-    como `--checksum --sftp-ssh=sh -c id`. Cada texto del valor (el propio, o
-    los de su lista) pasa por `problema_extra()`; lo que no empieza por `--`
-    (`8M`, `25`, `newer`, `-1`) no se toca.
+    como `--checksum --sftp-ssh=sh -c id`, y `checksum = "-1"` como
+    `--checksum -1`, que es un `--resync`. Se mira lo que emite `flags_to_args()`
+    con `problema_extra()`, que sabe qué flag se come su valor: `max-delete = -1`
+    o `exclude-if-present = "-x"` valen, y un valor que empieza por `--` se mira
+    además como un flag, sea cual sea la clave.
+
+    Args:
+        clave: El flag, como en la tabla (vale con `_`); ya ha pasado por
+            `problema_flag()`.
+        valor: Su valor, tal como sale del TOML.
 
     Returns:
         La misma frase que `problema_extra()`, o `None` si el valor vale.
     """
-    if isinstance(valor, str):
-        return problema_extra((valor,))
     if isinstance(valor, (list, tuple)):
-        return problema_extra(v for v in valor if isinstance(v, str))
-    return None
+        valor = [v for v in valor if isinstance(v, (str, int, float))]
+    elif not isinstance(valor, (str, int, float)):
+        return None
+    return problema_extra(flags_to_args({clave: valor}))
 
 
 NOMBRE_REMOTE = re.compile(r"(?!-)[\w.+@-]+(?: [\w.+@-]+)*")
@@ -819,7 +932,7 @@ def _comprobar_capas(donde: str, tabla: str, flags: Any, extra: Any) -> None:
             if motivo:
                 raise ConfigError(
                     f"{donde} {tabla} '{clave}' no se admite: {motivo}. {QUITALO}")
-            motivo = problema_valor_flag(valor)
+            motivo = problema_valor_flag(clave, valor)
             if motivo:
                 raise ConfigError(f"{donde} {tabla} '{clave}': en su valor, {motivo}")
     # Lo que emite `_as_tuple()` y nada menos: una tabla en línea da sus claves.

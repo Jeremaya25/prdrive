@@ -208,7 +208,7 @@ def _validar(key: str, value: Any) -> None:
     elif not isinstance(value, ESCALARES):
         raise ConfigError(f"'{key}': valor no admitido ({type(value).__name__}). "
                           f"Textos entre comillas, números, o true/false.")
-    motivo = model.problema_valor_flag(value)
+    motivo = model.problema_valor_flag(key, value)
     if motivo:
         raise ConfigError(f"'{key}': en su valor, {motivo}")
     motivo = flags_ayuda.problema_valor(key, value)

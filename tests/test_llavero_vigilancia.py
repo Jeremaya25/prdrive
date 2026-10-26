@@ -74,6 +74,22 @@ with sandbox() as root:
     (carpeta / "otra.kdbx").write_bytes(b"z")
     c("y una base que el listado no tiene", llavero.pendiente(par), True)
 
+# una hora imposible en el listado se salta esa línea, no el listado entero (#174)
+with sandbox() as root:
+    par = pareja()
+    carpeta = root / ".keychain"
+    carpeta.mkdir()
+    base = carpeta / "personal.kdbx"
+    base.write_bytes(b"x" * 10)
+    escribir_listado(par, {"personal.kdbx": base})
+    listado = par.workdir / f"{bisync.expected_prefix(par)}{bisync.PATH1_SUFFIX}"
+    with listado.open("a", encoding="utf-8") as f:
+        f.write('-        3 - - 0000-01-01T00:00:00.000000000+0000 "cero.kdbx"\n')
+        f.write('-        3 - - 2026-13-01T00:00:00.000000000+0000 "trece.kdbx"\n')
+    c("con un año 0000 y un mes 13, el listado da las demás líneas",
+      sorted(llavero.listado_local(par)), ["personal.kdbx"])
+    c("  y pendiente() no lanza", llavero.pendiente(par), False)
+
 # las reglas, con un reloj de mentira
 v = llavero.Vigilancia()
 v.observar(("a",), 0.0)

@@ -212,6 +212,65 @@ with sandbox():
     c("sin rclone.conf, como cualquier remote", nombre("nas:/tmp/p/w//x"), "nas__tmp_p_w__x")
 
 
+# los espacios raros y los caracteres de control, como rclone (#174)
+#
+# Los valores de la derecha no están escritos a mano: los dio el código de rclone v1.75.2
+# (`bilib.CanonicalPath`, el `Root()` de un remote `type = local` por `fs.NewFs` y
+# `bilib.SessionName`), llamado desde un programa en Go contra ese módulo. El `\s` de Go es
+# `[\t\n\f\r ]`, no el de Python; y el `Root()` del backend local pasa cada tramo por el
+# codificador de nombres (lib/encoder): un carácter de control sale como su símbolo y una
+# `‛` suelta, doble. Solo en POSIX: en Windows el codificador es otro y no se ha contrastado.
+ORACULO_V1_75_2 = (
+    # (ruta, CanonicalPath(ruta), Root() de `nas:` + ruta)
+    ("a　b", "a　b", "a　b"),
+    ("a\u000bb", "a\u000bb", "a␋b"),
+    ("a\u0085b", "a\u0085b", "a\u0085b"),
+    ("a b", "a b", "a b"),
+    ("a\u001cb", "a\u001cb", "a␜b"),
+    ("it‛s", "it‛s", "it‛‛s"),
+    ("‛", "‛", "‛‛"),
+    ("a\u007fb", "a\u007fb", "a␡b"),
+    ("a\u0001b", "a\u0001b", "a␁b"),
+    ("a\u0000b", "a\u0000b", "a␀b"),
+    ("a\tb", "a_b", "a␉b"),
+    ("␁", "␁", "␁"),
+    ("␡", "␡", "␡"),
+    ("‛␀", "‛␀", "‛␀"),
+    ("sync-data/．/x", "sync-data_．_x", "sync-data/．/x"),
+    ("／", "／", "／"),
+    ("．", "．", "．"),
+    ("‛．", "‛．", "‛．"),
+    ("a/./b", "a_._b", "a/b"),
+    ("..", "..", "．．"),
+)
+real_win = bisync.IS_WIN
+try:
+    bisync.IS_WIN = False
+    for ruta, canonica, raiz in ORACULO_V1_75_2:
+        c(f"CanonicalPath como rclone: {ruta!r}", bisync.canonical_path(ruta), canonica)
+        c(f"  y el Root() de un remote local: {ruta!r}", bisync.raiz_local(ruta), raiz)
+    with sandbox():
+        model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+        for local, remote_path, sesion in (
+                ("sync-data/notas　mías", "/datos/a\u000bb c/it‛s/\u007f",
+                 "disp_sync-data_notas　mías..nas__datos_a␋b_c_it‛‛s_␡"),
+                ("sync-data/x\u0085y", "/datos/x y",
+                 "disp_sync-data_x\u0085y..nas__datos_x y")):
+            par = model.parse_config({"defaults": {"remote": "nas", "device_remote": "disp"},
+                                      "pair": [{"name": "p", "local": local,
+                                                "remote_path": remote_path}]}).pairs[0]
+            c(f"el prefijo es el SessionName de rclone: {local!r} y {remote_path!r}",
+              bisync.expected_prefix(par), sesion)
+        # Sin `device_remote` el lado local es el backend `local` a secas: su `Root()` también.
+        suelta = model.parse_config({"defaults": {"remote": "nube"},
+                                     "pair": [{"name": "p", "local": "it‛s\u000b",
+                                               "remote_path": "/x"}]}).pairs[0]
+        c("sin device_remote, la ruta local también va codificada",
+          bisync.expected_prefix(suelta).split("..")[0].endswith("_it‛‛s␋"), True)
+finally:
+    bisync.IS_WIN = real_win
+
+
 # un remote `alias`: rclone nombra los listados con el destino YA resuelto
 #
 # `alias` no es un envoltorio con nombre propio. Su `NewFs` devuelve el `Fs` del

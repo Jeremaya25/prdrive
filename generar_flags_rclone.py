@@ -2,7 +2,8 @@
 """Regenera `common/flags_rclone.json`: los flags de la rclone fijada en `common/pins.py`.
 
 Es lo que lee el editor de flags de una pareja (`ui/flags_ayuda.py`) para
-autocompletar y comprobar el tipo de un valor sin red. Hay que volver a correrlo
+autocompletar y comprobar el tipo de un valor sin red, y lo que usa el config
+(`model.problema_extra()`) para leer los flags de una letra como rclone. Hay que volver a correrlo
 cada vez que se mueve `pins.RCLONE_VERSION` (`tests/test_flags_rclone_datos.py`
 falla si el fichero es de otra versión):
 
@@ -28,6 +29,13 @@ De dónde sale, comprobado con la v1.75.2:
 Los flags del backend (`--s3-region`…), los del control remoto (`--rc-*`) y los de
 las métricas no entran: viven en `rclone.conf` o los rechaza el config, y un flag
 que no está aquí se admite igual (no hay lista blanca).
+
+Las **letras**, en cambio, salen de todas las secciones, el backend incluido
+(`-L` es `--copy-links` y `-x` `--one-file-system`, del backend `local`): van
+aparte, en `cortos`, y son lo que usa `model.problema_extra()` para leer un `-vn1`
+como lo lee rclone (pflag, `parseSingleShortArg`). El `-h` de cada orden no entra.
+Por lo mismo, `con_valor_fuera` nombra los flags de los grupos que no entran que se
+comen un valor (`--s3-region`): rclone se los da aunque empiecen por `-`.
 
 Solo biblioteca estándar. Sin `--rclone`, usa el rclone fijado de
 `install/rclone_bin.py` (caché o descarga, comprobado contra su SHA256SUMS).
@@ -79,6 +87,10 @@ class Entrada(NamedTuple):
     tipo: str
     defecto: str
     ayuda: str
+
+
+TIPOS_SIN_VALOR = ("bool", "count")
+"""Los tipos de flag que no se comen el argumento siguiente (pflag les da `NoOptDefVal`)."""
 
 
 _ENCABEZADO = re.compile(r"^(?:(Flags)|.+ \(flag group (\w+)\)):$")
@@ -148,18 +160,26 @@ def construir(version: str, ayuda_flags: str, ayudas_ordenes: dict[str, str],
             rclone (`sondear_duraciones()`): la ayuda dice `Duration` de los dos.
 
     Returns:
-        `{"rclone": versión, "flags": {nombre: {...}}}`, con los flags ordenados.
-        De cada uno: `corto`, `tipo`, `defecto`, `ayuda`, `grupo`, `propio` (si es
-        de la orden y no global: fuera de ella rclone se queja de que no existe) y
-        `comandos` (las órdenes de `VERBOS` donde existe: las tres si es global); los
-        de `duraciones_go` llevan además `formato: "go"`.
+        `{"rclone": versión, "flags": {nombre: {...}}, "cortos": {letra: {...}}}`,
+        con los flags y las letras ordenados. De cada flag: `corto`, `tipo`,
+        `defecto`, `ayuda`, `grupo`, `propio` (si es de la orden y no global: fuera
+        de ella rclone se queja de que no existe) y `comandos` (las órdenes de
+        `VERBOS` donde existe: las tres si es global); los de `duraciones_go` llevan
+        además `formato: "go"`. De cada letra (`cortos()`): `flag` y `valor`. Y
+        `con_valor_fuera`: los nombres, ordenados, de los flags de `GRUPOS_FUERA`
+        que se comen un valor.
 
     Raises:
-        ErrorDeAyuda: Si la ayuda no trae ningún flag (rclone ha cambiado el formato).
+        ErrorDeAyuda: Si la ayuda no trae ningún flag (rclone ha cambiado el formato)
+            o una letra es de dos flags.
     """
     globales: dict[str, tuple[str, Entrada]] = {}
+    fuera: set[str] = set()
     for seccion, entradas in leer_secciones(ayuda_flags):
-        if seccion == LOCAL or seccion in GRUPOS_FUERA:
+        if seccion in GRUPOS_FUERA:
+            fuera.update(e.nombre for e in entradas if e.tipo not in TIPOS_SIN_VALOR)
+            continue
+        if seccion == LOCAL:
             continue                             # el `Flags:` de `help flags` es de esa orden
         for e in entradas:
             globales.setdefault(e.nombre, (seccion, e))
@@ -185,7 +205,43 @@ def construir(version: str, ayuda_flags: str, ayudas_ordenes: dict[str, str],
     for nombre in duraciones_go:
         if flags.get(nombre, {}).get("tipo") == "Duration":
             flags[nombre]["formato"] = "go"
-    return {"rclone": version, "flags": dict(sorted(flags.items()))}
+    return {"rclone": version, "flags": dict(sorted(flags.items())),
+            "cortos": cortos(ayuda_flags, ayudas_ordenes),
+            "con_valor_fuera": sorted(fuera - set(flags))}
+
+
+def cortos(ayuda_flags: str, ayudas_ordenes: dict[str, str]) -> dict[str, dict]:
+    """Devuelve las letras que rclone acepta en `sync`, `copy` o `bisync`, y de qué flag son.
+
+    Salen de todas las secciones de las ayudas, también de las que `construir()`
+    deja fuera (el backend): rclone las acepta igual. El `Flags:` propio de `help
+    flags` es de esa orden y no entra, ni el `-h` de cada una.
+
+    Args:
+        ayuda_flags: La salida de `rclone help flags`.
+        ayudas_ordenes: La salida de `rclone <orden> --help`, por orden (`VERBOS`).
+
+    Returns:
+        `{letra: {"flag": nombre largo, "valor": si se come un valor}}`, por orden
+        de letra. Una letra con valor se queda con el resto del argumento o con el
+        siguiente (`TIPOS_SIN_VALOR`).
+
+    Raises:
+        ErrorDeAyuda: Si una letra es de dos flags distintos: no se sabría cuál lee rclone.
+    """
+    secciones = [(s, e) for s, e in leer_secciones(ayuda_flags) if s != LOCAL]
+    for verbo in VERBOS:
+        secciones += leer_secciones(ayudas_ordenes.get(verbo, ""))
+    letras: dict[str, dict] = {}
+    for _seccion, entradas in secciones:
+        for e in entradas:
+            if not e.corto or e.nombre == "help":
+                continue
+            registro = {"flag": e.nombre, "valor": e.tipo not in TIPOS_SIN_VALOR}
+            if letras.setdefault(e.corto, registro)["flag"] != e.nombre:
+                raise ErrorDeAyuda(f"La letra -{e.corto} es de --{letras[e.corto]['flag']} y "
+                                   f"de --{e.nombre}: no se sabe cuál lee rclone.")
+    return dict(sorted(letras.items()))
 
 
 def sondear_duraciones(datos: dict, acepta) -> set[str]:
@@ -216,11 +272,13 @@ def a_texto(datos: dict) -> str:
     Un flag por línea hace que lo que cambia de una rclone a otra se vea en el
     diff de la PR; ni fecha ni nada que dependa de quién lo regenera.
     """
-    lineas = [json.dumps(n, ensure_ascii=False) + ": " + json.dumps(f, ensure_ascii=False)
-              for n, f in datos["flags"].items()]
-    cuerpo = ",\n".join("    " + l for l in lineas)
-    return ('{\n  "rclone": ' + json.dumps(datos["rclone"]) + ',\n  "flags": {\n' + cuerpo
-            + "\n  }\n}\n")
+    def bloque(tabla: dict) -> str:
+        return ",\n".join("    " + json.dumps(n, ensure_ascii=False) + ": "
+                          + json.dumps(f, ensure_ascii=False) for n, f in tabla.items())
+    nombres = ",\n".join("    " + json.dumps(n) for n in datos["con_valor_fuera"])
+    return ('{\n  "rclone": ' + json.dumps(datos["rclone"]) + ',\n  "flags": {\n'
+            + bloque(datos["flags"]) + '\n  },\n  "cortos": {\n' + bloque(datos["cortos"])
+            + '\n  },\n  "con_valor_fuera": [\n' + nombres + "\n  ]\n}\n")
 
 
 def leer_texto(texto: str) -> dict:

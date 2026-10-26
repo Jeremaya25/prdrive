@@ -71,6 +71,9 @@ leerlo si trae:
   `sync.py PAREJA --force` ([Diagnóstico](diagnostico.md#cuando-salta-el-freno-de-borrados)).
   `max-delete = -1` sí se admite, porque es tu decisión: en un espejo quita el tope y
   en bisync no lo quita, vuelve al 50 % de fábrica de bisync.
+  Tampoco valen en su forma de una letra, que rclone lee igual: `-1` es `--resync` y
+  `-n` es `--dry-run`, también juntas con otras (`-vn1`) o como valor de un flag que
+  no lleva valor (`checksum = "-1"`). `-v`, `-c` o `--max-delete -1` siguen valiendo.
 - **Un `remote` que no sea un nombre**: el de un remote de tu `rclone.conf`, con
   letras, números, espacios entre palabras y `. _ + @ -`. Si lleva `,`, `:`, `=`
   o comillas, rclone lo leería como una conexión con sus propias opciones
@@ -204,11 +207,11 @@ absoluta reaparece.
 
 | modo | subcomando | dirección | borra en | freno |
 |---|---|---|---|---|
-| `bisync` | `bisync` | ↔ | — | `--max-delete 25` |
+| `bisync` | `bisync` | ↔ | — | `--max-delete 25`: el 25 % del listado anterior |
 | `up` | `copy` | dispositivo → remoto | nada | — |
 | `down` | `copy` | remoto → dispositivo | nada | — |
-| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50` |
-| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50` |
+| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50`: 50 ficheros |
+| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50`: 50 ficheros |
 
 `bisync` viene además con `--conflict-resolve newer`, `--resilient`, `--recover` y
 `--max-lock 2m`: un error menor no obliga a rehacer la referencia, una

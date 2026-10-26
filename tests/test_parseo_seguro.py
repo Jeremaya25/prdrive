@@ -71,6 +71,62 @@ for extra in (["--sftp-ssh", "sh -c id"], ["--sftp-ssh=sh -c id"], ["--config", 
     nombre = extra[0][2:].split("=", 1)[0]
     c.contains(f"extra_flags {extra[0]} no se admite", rechaza(una(extra_flags=extra)), nombre)
 
+# --- los flags de una letra (#174) -----------------------------------------------
+# rclone los lee como pflag (`parseSingleShortArg`): `-1` es `--resync` en bisync
+# (cmd/bisync/cmd.go), `-n` `--dry-run`, y se agrupan. Comprobado con rclone v1.75.2:
+# `rclone bisync a b -1`, `-vn1`, `-L1` y `--checksum -1` hacen un resync, y
+# `--max-delete -1` no (el `-1` es el valor de `--max-delete`).
+for extra, letra, largo in ((["-1"], "-1", "--resync"), (["-n"], "-n", "--dry-run"),
+                            (["-vn1"], "-n", "--dry-run"), (["-v1"], "-1", "--resync"),
+                            (["-L1"], "-1", "--resync"), (["--checksum", "-1"], "-1", "--resync"),
+                            (["--max-delete=5", "-1"], "-1", "--resync")):
+    texto = rechaza(una(extra_flags=extra))
+    c.contains(f"extra_flags {extra} no se admite: nombra la letra", texto, f"'{letra}'")
+    c.contains("  y su flag largo", texto, f"'{largo}'")
+c.contains("  y, agrupada, en qué argumento", rechaza(una(extra_flags=["-vn1"])), "en '-vn1'")
+for flags in ({"checksum": "-1"}, {"checksum": ["-1"]}, {"checksum": -1}):
+    texto = rechaza(una(flags=flags))
+    c.contains(f"[pair.flags] {flags} no se admite: tras un booleano es un --resync",
+               texto, "'-1' ('--resync')")
+    c.contains("  y dice de qué clave", texto, "[p] [pair.flags] 'checksum'")
+c("los cortos de siempre siguen valiendo (-v, -c, -vv, -P, -c=false)",
+  [rechaza(una(extra_flags=e)) for e in (["-v"], ["-c"], ["-vv"], ["-P"], ["-c=false"])],
+  [""] * 5)
+c("un -1 que es el valor de un flag no es un --resync",
+  [rechaza(una(extra_flags=e)) for e in (["--max-delete", "-1"], ["--bwlimit", "-1"],
+                                          ["--exclude-if-present", "-n"])], [""] * 3)
+c("  ni en un valor, aunque sea texto", rechaza(una(flags={"max-delete": "-1"})), "")
+c("un guion suelto no es un flag", rechaza(una(extra_flags=["-"])), "")
+# Lo que sigue a un flag con valor es su valor, empiece como empiece (pflag, `parseLongArg`):
+# con rclone v1.75.2, `--exclude-if-present --max-delete -1` hace un resync, porque
+# `--max-delete` es el valor de `--exclude-if-present` y el `-1` queda suelto.
+c.contains("un flag con valor se come el siguiente aunque empiece por --",
+           rechaza(una(extra_flags=["--exclude-if-present", "--max-delete", "-1"])),
+           "'-1' ('--resync')")
+c.contains("  y ese valor se mira igual como un flag, por si acaso",
+           rechaza(una(extra_flags=["--exclude-if-present", "--sftp-ssh=sh -c id"])),
+           "sftp-ssh")
+c("un flag del backend con valor se come el suyo, aunque empiece por - (una contraseña "
+  "ofuscada puede)",
+  [rechaza(una(extra_flags=e)) for e in (["--s3-upload-cutoff", "-1"],
+                                          ["--crypt-password", "-n1abc"])], ["", ""])
+c.contains("  y uno booleano del backend, no", rechaza(una(extra_flags=["--local-no-sparse", "-1"])),
+           "'-1' ('--resync')")
+
+# Sin `common/flags_rclone.json` se rechaza de más, nunca de menos.
+datos_de_verdad = model.DATOS_RCLONE
+try:
+    model._RCLONE.clear()
+    model.DATOS_RCLONE = Path("no-existe") / "flags_rclone.json"
+    c("sin los datos de rclone, -1, -n y -v1 se siguen rechazando",
+      [bool(model.problema_extra(e)) for e in (["-1"], ["-n"], ["-v1"])], [True] * 3)
+    c("  y --max-delete -1 también: sin saber quién se come un valor, todo es un flag",
+      bool(model.problema_extra(["--max-delete", "-1"])), True)
+    c("  pero -v sigue valiendo", model.problema_extra(["-v"]), None)
+finally:
+    model._RCLONE.clear()
+    model.DATOS_RCLONE = datos_de_verdad
+
 # --- el valor de un flag no puede llevar otro flag ---------------------------
 # `flags_to_args` emite `--checksum --sftp-ssh=sh -c id`: un flag booleano no
 # se come el argumento siguiente.

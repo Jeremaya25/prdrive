@@ -136,16 +136,18 @@ def installed_version(root: Path | str | None = None) -> str:
 def parse_version(texto: str) -> tuple[int, ...]:
     """Convierte `v0.0.10` en `(0, 0, 10)`.
 
-    Es tolerante porque compara, no valida: lo que no sea un número cuenta como
-    0 en vez de reventar, y un tag raro tiene que dar «no hay nada nuevo»,
-    nunca una excepción en mitad del arranque.
+    Es tolerante porque compara, no valida: cada tramo vale las cifras ASCII
+    con que empieza (`2rc1` es 2), un tramo sin ellas cuenta como 0, y un tag
+    raro tiene que dar «no hay nada nuevo», nunca una excepción en mitad del
+    arranque. Un `²` o una cifra de otra escritura no es una cifra aquí:
+    `str.isdigit()` las acepta, pero `int()` no las lee.
     """
     limpio = texto.strip().lstrip("vV")
     partes: list[int] = []
     for trozo in limpio.split("."):
         digitos = ""
         for ch in trozo:
-            if not ch.isdigit():
+            if not "0" <= ch <= "9":
                 break
             digitos += ch
         partes.append(int(digitos) if digitos else 0)
@@ -257,12 +259,14 @@ def fetch(url: str, timeout: int) -> bytes:
         return resp.read()
 
 
-def _parse_release(crudo: dict) -> Release:
+def _parse_release(crudo: object) -> Release:
     """Convierte la respuesta de la API en una `Release`.
 
     Raises:
-        ValueError: Si no trae `tag_name`.
+        ValueError: Si no es un objeto JSON o no trae `tag_name`.
     """
+    if not isinstance(crudo, dict):
+        raise ValueError("la respuesta de GitHub no es un objeto JSON")
     tag = str(crudo.get("tag_name") or "").strip()
     if not tag:
         raise ValueError("la respuesta de GitHub no trae tag_name")

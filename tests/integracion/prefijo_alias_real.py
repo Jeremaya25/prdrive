@@ -78,7 +78,18 @@ type = combine
 upstreams = "r={remoto}"
 """
     (raiz / "rclone.conf").write_text(conf, encoding="utf-8", newline="\n")
-    return [
+    propios = []
+    if not IS_WIN:
+        # El `Root()` de un remote local codifica los caracteres de control, y el `\s` de
+        # Go no es el de Python (#174). Sin `‛`: rclone la dobla también al abrir la ruta,
+        # y no encuentra la carpeta. Solo en POSIX: en Windows el codificador es otro y
+        # prdrive no lo replica.
+        raro = remoto / "raros" / "a\u3000b \u000bc\u0085d\u00a0e\u001cf"
+        raro.mkdir(parents=True)
+        (raro / "a.txt").write_text("a", encoding="utf-8")
+        propios.append(("en Linux, un remote local con espacios raros y control", "nas",
+                        raro.as_posix()))
+    return propios + [
         ("un alias a una carpeta", "a_carpeta", "datos/prueba"),
         ("  con la ruta del remoto absoluta", "a_carpeta", "/datos/prueba"),
         ("  con la ruta sucia (// y ./)", "a_carpeta", "/datos//./prueba/"),
