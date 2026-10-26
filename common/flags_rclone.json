@@ -194,5 +194,25 @@
     "user-agent": {"corto": "", "tipo": "string", "defecto": "rclone/v1.75.2", "ayuda": "Set the user-agent to a specified string", "grupo": "Networking", "propio": false, "comandos": ["bisync", "copy", "sync"]},
     "verbose": {"corto": "v", "tipo": "count", "defecto": "", "ayuda": "Print lots more stuff (repeat for more)", "grupo": "Important", "propio": false, "comandos": ["bisync", "copy", "sync"]},
     "workdir": {"corto": "", "tipo": "string", "defecto": "", "ayuda": "Use custom working dir - useful for testing.", "grupo": "local", "propio": true, "comandos": ["bisync"]}
+  },
+  "cortos": {
+    "1": {"flag": "resync", "valor": false},
+    "F": {"flag": "format", "valor": true},
+    "I": {"flag": "ignore-times", "valor": false},
+    "L": {"flag": "copy-links", "valor": false},
+    "M": {"flag": "metadata", "valor": false},
+    "P": {"flag": "progress", "valor": false},
+    "c": {"flag": "checksum", "valor": false},
+    "d": {"flag": "dir-slash", "valor": false},
+    "f": {"flag": "filter", "valor": true},
+    "i": {"flag": "interactive", "valor": false},
+    "l": {"flag": "links", "valor": false},
+    "n": {"flag": "dry-run", "valor": false},
+    "q": {"flag": "quiet", "valor": false},
+    "s": {"flag": "separator", "valor": true},
+    "t": {"flag": "timeformat", "valor": true},
+    "u": {"flag": "update", "valor": false},
+    "v": {"flag": "verbose", "valor": false},
+    "x": {"flag": "one-file-system", "valor": false}
   }
 }

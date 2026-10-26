@@ -54,6 +54,7 @@ Flags to control the Remote Control API (flag group RC):
       --rc-addr stringArray   IPaddress:Port or :Port to bind server to (default localhost:5572)
 
 Backend-only flags (these can be set in the config file also) (flag group Backend):
+  -L, --copy-links          Follow symlinks and copy the pointed to item
       --s3-region string   Region to connect to
 """
 
@@ -185,6 +186,29 @@ c("y los propios, «local»", flags["resync"]["grupo"], "local")
 c("el tipo y el valor de fábrica llegan al fichero",
   (flags["max-lock"]["tipo"], flags["max-lock"]["defecto"]), ("Duration", "0s"))
 
+# Las letras: de todas las secciones, el backend incluido, para que `model.problema_extra()`
+# lea un `-vn1` como rclone (#174).
+cortos = datos["cortos"]
+c("las letras salen con su flag y si llevan valor",
+  (cortos["1"], cortos["n"], cortos["v"]),
+  ({"flag": "resync", "valor": False}, {"flag": "dry-run", "valor": False},
+   {"flag": "verbose", "valor": False}))
+c("  también las del backend, que los flags no llevan",
+  (cortos["L"], "copy-links" in flags), ({"flag": "copy-links", "valor": False}, False))
+c("  y el -h de cada orden no entra", "h" in cortos, False)
+c("  ordenadas", list(cortos), sorted(cortos))
+c("una letra con tipo se come un valor",
+  gen.cortos("Flags for filtering directory listings (flag group Filter):\n"
+             "  -f, --filter stringArray   Add a file filtering rule\n", {}),
+  {"f": {"flag": "filter", "valor": True}})
+try:
+    gen.cortos(AYUDA_FLAGS, {"copy": "Flags:\n  -n, --no-traverse   Otro\n"})
+    dicho = ""
+except gen.ErrorDeAyuda as e:
+    dicho = str(e)
+c("una letra de dos flags no vale: no se sabría cuál lee rclone",
+  ("-n" in dicho, "dry-run" in dicho, "no-traverse" in dicho), (True, True, True))
+
 # `Duration` esconde dos gramáticas: la de rclone (`30`, `1d`, `off`) y la de Go
 # (`30s`, y nada más). Solo se distinguen preguntándole al binario.
 datos_go = gen.construir("v1.75.2", AYUDA_FLAGS,
@@ -237,6 +261,12 @@ c("  las duraciones de Go son las que sondeó rclone (nueve en la v1.75.2)",
    "fs-cache-expire-interval", "kv-lock-time", "max-duration", "modify-window",
    "retries-sleep", "timeout"])
 
+c("  y sus letras son las de la v1.75.2: -1 de bisync y -L/-x del backend local, también",
+  {l: f["flag"] for l, f in gen.leer_texto(fichero)["cortos"].items()},
+  {"1": "resync", "F": "format", "I": "ignore-times", "L": "copy-links", "M": "metadata",
+   "P": "progress", "c": "checksum", "d": "dir-slash", "f": "filter", "i": "interactive",
+   "l": "links", "n": "dry-run", "q": "quiet", "s": "separator", "t": "timeformat",
+   "u": "update", "v": "verbose", "x": "one-file-system"})
 c("el fichero del repositorio no lleva rutas de quien lo generó",
   [t for t in ("/root/", "/home/", "/Users/", "C:\\", "/tmp/") if t in fichero], [])
 c("  ni un valor de fábrica que sea una ruta absoluta",

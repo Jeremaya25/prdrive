@@ -71,6 +71,33 @@ for extra in (["--sftp-ssh", "sh -c id"], ["--sftp-ssh=sh -c id"], ["--config", 
     nombre = extra[0][2:].split("=", 1)[0]
     c.contains(f"extra_flags {extra[0]} no se admite", rechaza(una(extra_flags=extra)), nombre)
 
+# --- los flags de una letra (#174) -----------------------------------------------
+# rclone los lee como pflag (`parseSingleShortArg`): `-1` es `--resync` en bisync
+# (cmd/bisync/cmd.go), `-n` `--dry-run`, y se agrupan. Comprobado con rclone v1.75.2:
+# `rclone bisync a b -1`, `-vn1`, `-L1` y `--checksum -1` hacen un resync, y
+# `--max-delete -1` no (el `-1` es el valor de `--max-delete`).
+for extra, letra, largo in ((["-1"], "-1", "--resync"), (["-n"], "-n", "--dry-run"),
+                            (["-vn1"], "-n", "--dry-run"), (["-v1"], "-1", "--resync"),
+                            (["-L1"], "-1", "--resync"), (["--checksum", "-1"], "-1", "--resync"),
+                            (["--max-delete=5", "-1"], "-1", "--resync")):
+    texto = rechaza(una(extra_flags=extra))
+    c.contains(f"extra_flags {extra} no se admite: nombra la letra", texto, f"'{letra}'")
+    c.contains("  y su flag largo", texto, f"'{largo}'")
+c.contains("  y, agrupada, en qué argumento", rechaza(una(extra_flags=["-vn1"])), "en '-vn1'")
+for flags in ({"checksum": "-1"}, {"checksum": ["-1"]}, {"checksum": -1}):
+    texto = rechaza(una(flags=flags))
+    c.contains(f"[pair.flags] {flags} no se admite: tras un booleano es un --resync",
+               texto, "'-1' ('--resync')")
+    c.contains("  y dice de qué clave", texto, "[p] [pair.flags] 'checksum'")
+c("los cortos de siempre siguen valiendo (-v, -c, -vv, -P, -c=false)",
+  [rechaza(una(extra_flags=e)) for e in (["-v"], ["-c"], ["-vv"], ["-P"], ["-c=false"])],
+  [""] * 5)
+c("un -1 que es el valor de un flag no es un --resync",
+  [rechaza(una(extra_flags=e)) for e in (["--max-delete", "-1"], ["--bwlimit", "-1"],
+                                          ["--exclude-if-present", "-n"])], [""] * 3)
+c("  ni en un valor, aunque sea texto", rechaza(una(flags={"max-delete": "-1"})), "")
+c("un guion suelto no es un flag", rechaza(una(extra_flags=["-"])), "")
+
 # --- el valor de un flag no puede llevar otro flag ---------------------------
 # `flags_to_args` emite `--checksum --sftp-ssh=sh -c id`: un flag booleano no
 # se come el argumento siguiente.
