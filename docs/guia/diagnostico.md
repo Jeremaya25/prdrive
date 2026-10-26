@@ -138,7 +138,9 @@ es uno de los conocidos.
 
 Casos habituales:
 
-- **«Must run --resync».** Los filtros han cambiado. `python sync.py <pareja> --resync`.
+- **«Must run --resync».** bisync se ha parado con un error crítico (el motivo va
+  en las líneas de antes) y ha invalidado la referencia; si dice «filters file», es
+  que los filtros han cambiado. `python sync.py <pareja> --resync`.
 - **No encuentra la referencia.** `--resync`. Un dispositivo instalado con esta
   versión no debería llegar ahí por cambiar de equipo o de letra de unidad (ver
   [`device_remote`](configuracion.md#device_remote)); si cambiaste rutas a mano, sí.

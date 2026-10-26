@@ -459,6 +459,26 @@ c.contains("el known_hosts que no se puede leer, sí", explicar(SIN_KNOWN_HOSTS)
 c.contains("con las rutas relativas contra .prdrive/", explicar(SIN_KNOWN_HOSTS),
            ".prdrive/")
 
+# el aborto crítico de bisync, que rclone v1.75.2 escribe con mayúscula
+# (cmd/bisync/operations.go); la aguja en minúscula no casaba nunca (#174)
+ABORTO = "2026/10/25 10:00:00 ERROR : Bisync aborted. Must run --resync to recover.\n"
+INTERRUMPIDO = ("2026/10/25 10:00:00 ERROR : Bisync interrupted. Must run --resync "
+                "to recover.\n")
+FILTROS = ("2026/10/25 10:00:00 ERROR : Bisync critical error: filters file has changed "
+           "(must run --resync)\n") + ABORTO
+EXPLICACIONES = dict((aguja, texto) for aguja, texto in sync.KNOWN_ERRORS
+                     if isinstance(aguja, str))
+c.contains("«Bisync aborted. Must run --resync» solo en el log se explica",
+           explicar(ABORTO), EXPLICACIONES["Must run --resync"])
+c.contains("  y «Bisync interrupted», igual", explicar(INTERRUMPIDO),
+           EXPLICACIONES["Must run --resync"])
+c.contains("con los filtros cambiados sale la explicación de los filtros",
+           explicar(FILTROS), EXPLICACIONES["filters file has changed"])
+c("  y no la genérica del aborto",
+  EXPLICACIONES["Must run --resync"] in explicar(FILTROS), False)
+c.contains("una causa reconocida gana al aborto que la sigue",
+           explicar(NO_LISTO + ABORTO), EXPLICACIONES["Failed to create file system"])
+
 # --- el parte para el agente (`common/parte.py`): la última línea de cada pareja
 NADA_QUE_MOVER = "2026/10/11 10:00:00 INFO  : There was nothing to transfer\n"
 with sandbox():

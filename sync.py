@@ -101,8 +101,6 @@ KNOWN_ERRORS = [
      "ficheros excluidos existían antes)."),
     ("filters file md5 hash not found",
      "Primer uso de este fichero de filtros. Solución: --resync."),
-    ("must run --resync",
-     "bisync ha invalidado el baseline y exige rehacerlo. Solución: --resync."),
     # Los frenos de borrado, que reconoce `common/frenos.py` (lo comparte con el
     # diagnóstico de «Reparación»). Son dos y no se miden igual: el de bisync es un
     # PORCENTAJE del listado anterior (`excessDeletes()`, cmd/bisync/deltas.go) y el
@@ -135,6 +133,14 @@ KNOWN_ERRORS = [
      "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
      "credencial mal resuelta en rclone.conf (revisa key_file y "
      "known_hosts_file), o el remoto inalcanzable."),
+    # El aborto crítico de bisync (cmd/bisync/operations.go: «Bisync aborted.
+    # Must run --resync to recover.» y «Bisync interrupted. Must run --resync
+    # to recover.», con mayúscula). Suele seguir a una causa que ya explica una
+    # aguja de arriba, y la de los filtros lleva su propio «(must run --resync)»
+    # en minúscula: por eso va detrás de todas las de causas concretas.
+    ("Must run --resync",
+     "bisync se ha parado con un error crítico (está en las líneas de arriba) y "
+     "ha invalidado el baseline: exige rehacerlo. Solución: --resync."),
     # Errores de ARRANQUE: rclone rechaza la orden antes de instalar
     # `--log-file`. Van al final para que gane cualquier error ocurrido durante
     # la sincronización.
