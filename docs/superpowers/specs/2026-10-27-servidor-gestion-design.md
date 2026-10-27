@@ -1,6 +1,6 @@
 # «Servidor…»: nueva carpeta, renombrar, mover y borrar en el servidor — diseño
 
-Fecha: 27/10/2026. Estado: **aprobado, por construir**. Es la pieza 3 de tres del explorador
+Fecha: 27/10/2026. Estado: **construida** (código, pruebas automáticas y guía); las pruebas en máquina real (filas G1 a G5 de `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`) están por hacer. Es la pieza 3 de tres del explorador
 del servidor. La pieza 1 (explorar, solo lectura) está en la 0.8.0
 (`docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`) y la pieza 2 (bajar y subir)
 en la 0.8.1 (`docs/superpowers/specs/2026-10-27-servidor-transferencias-design.md`); las dos
@@ -110,17 +110,21 @@ sigue:
   varios, el primero y cuántos más). Nunca se pisa.
 
 En otro remote «Pegar aquí» está apagado y la línea dice «Solo se puede pegar en el mismo
-servidor.». Cambiar de remote, pegar o «Cancelar» quita lo cortado. Un pegado que acaba (bien,
-mal o cancelado) también.
+servidor.». Cambiar de remote **no** quita lo cortado (al volver al remote del corte, «Pegar
+aquí» se enciende otra vez); lo quitan «Cancelar», cortar otra cosa y un pegado que llegó a
+lanzar alguna orden (acabe bien, mal o cancelado). Un pegado cuyo destino no se pudo leer deja lo
+cortado, y su «Reintentar» solo actúa si lo cortado sigue igual. «Cancelar» de la línea está
+apagado mientras corre un cambio.
 
 **Borrar…** primero cuenta lo de dentro (en segundo plano, «Mirando qué hay dentro…» en la
 línea de la ventana; un `tamano()` por carpeta elegida) y luego abre la pantalla de
-confirmación (`tk_pairs.confirmar_plan()`): «Se borrará para siempre (el servidor no tiene
-papelera): «fotos» con 1 234 archivos (3,4 GB) y «leeme.txt» (12 KB).». Si contar falla, se
+confirmación (`tk_pairs.confirmar_plan()`, título «Borrar del servidor», nota «El servidor no
+tiene papelera.») con una línea por elemento: «Se borrará para siempre «fotos», con 1 234
+archivos (3,4 GB).» y «Se borrará para siempre «leeme.txt» (12 KB).». Si contar falla, se
 dice en el panel con «Reintentar» y no se borra nada.
 
 **Mientras corre.** El panel de la pieza 2, con su título («Borrando en /datos…», «Moviendo a
-/x…», «Renombrando «a» a «b»…», «Creando carpeta «n»…») y «Cancelar». El panel solo sale si el
+/x…», «Renombrando «a» a «b»…», «Creando la carpeta «n»») y «Cancelar». El panel solo sale si el
 trabajo sigue vivo tras el primer sondeo; si acabó antes, el resultado va a la línea de la
 ventana («Renombrado a «Foto.jpg».») sin enseñar el panel. Al acabar (bien, mal o cancelado) se
 relee la carpeta que se ve y, si sigue a la vista, queda elegido lo nuevo (la carpeta creada,
@@ -328,3 +332,16 @@ pieza 2: un diálogo corre un bucle anidado y un listado puede cambiar `nav` mie
 
 Nada cambia hasta que se usan los botones nuevos: no hay datos nuevos en el dispositivo ni en
 el servidor, ni cambios de config o de estado. Llega con la actualización normal.
+
+## Cómo quedó al construirla
+
+Donde el código y este texto difieren, manda el código (`docs/agents/reference/servidor.md`,
+«Management»). Lo que cambió al construir: cambiar de remote no quita lo cortado (ver arriba); los
+paneles se titulan «Borrando en {carpeta}», «Moviendo a {destino}», «Renombrando «a» a «b»» y
+«Creando la carpeta «n»»; el seguimiento de varias órdenes vive en `ui/tk_lote.py` (`Seguimiento`),
+no en `tk_servidor.py`; y las órdenes de gestión salen solo por `rcd.lanzar_orden()`, con la lista
+cerrada `rcd.ORDENES_PERMITIDAS`. Lo que sigue sin resolver está en «Known, not fixed» de esa
+documentación: la carrera entre mirar y lanzar, las parejas de otros dispositivos, los servidores
+sin mover por dentro, el renombrado que solo cambia mayúsculas, el límite de
+`remote_picker.normalizar()` (una carpeta con un espacio al final o una barra invertida) y que el
+menú del botón derecho no toma los colores en Windows.
