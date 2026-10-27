@@ -971,7 +971,7 @@ with sandbox():
     c("el progreso avanza en el panel",
       bombear(lambda: str(dlg.panel.cuenta.cget("text")).startswith("3 de 10 archivos")), True)
     c("  con el archivo en curso", str(dlg.panel.archivo.cget("text")), "datos/b.txt")
-    c("al acabar, «Copiados … · omitidos …» (comprobados mayor que copiados)",
+    c("al acabar, «Copiados … · omitidos …» (los dos choques que se omitieron)",
       bombear(lambda: frase_panel(dlg) == "Copiados 3 · omitidos 2"), True)
     c("  el progreso se esconde y no hay «Reintentar»",
       (bool(dlg.panel.titulo.winfo_manager()), bool(dlg.panel.reintentar.winfo_manager())),
@@ -1018,6 +1018,28 @@ with sandbox():
             c("  «Cancelar» no deja nada en el panel y devuelve los botones",
               (panel_a_la_vista(dlg), botones_de(dlg)[0]), (False, "normal"))
         cerrar(dlg)
+
+    # «omitidos» es el número de choques que se omitieron, no lo que cuente `checks`
+    for respuesta, esperado in (("sobrescribir", "Copiados 3"), ("omitir", "Copiados 3 · omitidos 1")):
+        dialogos(destino=str(unico), choques=respuesta)
+        falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),))
+        dlg = abrir(falso)
+        elegir_varias(dlg, "leeme.txt")
+        dlg.bajar.invoke()
+        c(f"el resultado con {respuesta!r} y 5 comprobados: la cuenta no sale de `checks`",
+          bombear(lambda: frase_panel(dlg) == esperado), True)
+        cerrar(dlg)
+    dialogos(destino=str(unico), choques="omitir")
+    falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),), estados=(FALLADO,))
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    dlg.bajar.invoke()
+    bombear(lambda: bool(dlg.panel.reintentar.winfo_manager()))
+    falso.respuestas[("job/status", None)] = ACABADO
+    dlg.panel.reintentar.invoke()
+    c("«Reintentar» tras «Omitir» conserva los omitidos del lote",
+      bombear(lambda: frase_panel(dlg) == "Copiados 3 · omitidos 1"), True)
+    cerrar(dlg)
 
     # --- 13c. Un nombre con caracteres de patrón llega escapado a sync/copy -----
     dialogos(destino=str(tmpdir()))

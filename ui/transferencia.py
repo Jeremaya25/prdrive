@@ -370,7 +370,8 @@ class Resultado:
     reintentar: bool
 
 
-def resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: str) -> Resultado:
+def resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: str,
+                 omitidos: int = 0) -> Resultado:
     """Convierte el `job/status` y el `core/stats` finales en el resultado del lote.
 
     Args:
@@ -378,6 +379,9 @@ def resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: st
         stats: El último `core/stats` del lote.
         cancelado: Si el usuario canceló (manda sobre lo que diga rclone).
         destino_visible: El destino tal como lo ve el usuario.
+        omitidos: Cuántos archivos se dejaron sin tocar por elegir «Omitir» (los choques
+            contados antes de copiar); 0 si se sobrescribió. rclone no cuenta lo omitido
+            de forma fiable (`checks` mezcla idénticos y archivos que no chocaban).
 
     Returns:
         El texto, su tono y si se ofrece reintentar.
@@ -388,8 +392,6 @@ def resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: st
             f"Cancelado: copiados {copiados} de {int(_numero(stats, 'totalTransfers'))}",
             "aviso", False)
     if estado.get("success"):
-        # Con `IgnoreExisting` y con archivos idénticos, rclone cuenta lo omitido en `checks`.
-        omitidos = int(_numero(stats, "checks")) - copiados
         texto = f"Copiados {copiados}" + (f" · omitidos {omitidos}" if omitidos > 0 else "")
         return Resultado(texto, "ok", False)
     error = rcd.ErrorRc(str(estado.get("error") or "no se ha podido copiar"), 0)

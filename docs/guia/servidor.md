@@ -99,7 +99,8 @@ cualquier cambio. Por eso:
 
 **Cancelar**, en el panel, para la copia. Lo que ya se había copiado se queda. El archivo que iba
 a medias no deja restos: si era una subida que iba a reemplazar un archivo del servidor, el
-servidor conserva la versión que tenía.
+servidor conserva la versión que tenía. Así salió en las pruebas con un servidor SFTP; con otros
+tipos de servidor aún no está comprobado.
 
 Si cierras la ventana mientras se copia, prdrive pregunta si quieres cancelar la copia y cerrar.
 «Seguir» no cierra nada.

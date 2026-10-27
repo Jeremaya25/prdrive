@@ -217,10 +217,18 @@ c("valores nulos no lanzan", P({"transfers": None, "totalBytes": None, "speed": 
   "0 de 0 archivos · 0 B de 0 B")
 
 R = transferencia.resultado_de
-c("ok con omitidos", R({"success": True}, {"transfers": 38, "checks": 41}, False, "/datos"),
+c("ok con omitidos: los choques que se omitieron",
+  R({"success": True}, {"transfers": 38}, False, "/datos", 3),
   transferencia.Resultado("Copiados 38 · omitidos 3", "ok", False))
-c("ok sin omitidos", R({"success": True}, {"transfers": 5, "checks": 5}, False, "/datos"),
+c("ok sin omitidos", R({"success": True}, {"transfers": 5}, False, "/datos"),
   transferencia.Resultado("Copiados 5", "ok", False))
+c("ok con 0 omitidos no dice nada", R({"success": True}, {"transfers": 5}, False, "/datos", 0).texto,
+  "Copiados 5")
+c("`checks` ya no cuenta: sobrescribiendo, idénticos comprobados no son omitidos",
+  R({"success": True}, {"transfers": 2, "checks": 2}, False, "/datos").texto, "Copiados 2")
+c("  ni con «Omitir» mandan los checks (aquí 2 choques, 5 comprobados)",
+  R({"success": True}, {"transfers": 1, "checks": 5}, False, "/datos", 2).texto,
+  "Copiados 1 · omitidos 2")
 c("ok sin stats", R({"success": True}, {}, False, "/datos"),
   transferencia.Resultado("Copiados 0", "ok", False))
 c("cancelado", R({"success": False}, {"transfers": 12, "totalTransfers": 41}, True, "/datos"),

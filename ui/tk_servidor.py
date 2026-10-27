@@ -654,7 +654,7 @@ def open_dialog(parent, config: Config) -> None:
         estado["reintento"] = None
         activo = {"lote": lote, "destino": _destino_visible(lote), "rcd": estado["rcd"],
                   "grupo": f"lote-{estado['n_lote']}", "jobid": None, "cancelado": False,
-                  "cerrando": False, "fallos": 0}
+                  "cerrando": False, "fallos": 0, "omitidos": 0}
         estado["lote"] = activo
         panel.ocultar()
         actualizar_botones()
@@ -769,11 +769,18 @@ def open_dialog(parent, config: Config) -> None:
                 soltar_lote()
                 return
             omitir = respuesta == "omitir"
-        copiar(activo, omitir)
+        copiar(activo, omitir, encargo.resultado if omitir else 0)
 
-    def copiar(activo: dict, omitir: bool) -> None:
-        """Lanza el `sync/copy` del lote en segundo plano."""
+    def copiar(activo: dict, omitir: bool, omitidos: int = 0) -> None:
+        """Lanza el `sync/copy` del lote en segundo plano.
+
+        Args:
+            activo: El lote en marcha.
+            omitir: Si los archivos que ya existen se dejan como están.
+            omitidos: Cuántos son (los choques contados); es lo que dirá el resultado.
+        """
         estado["reintento"] = None
+        activo["omitidos"] = omitidos
         sondeo_lote.esperar(
             segundo_plano.lanzar(partial(_lanzar_copia, activo["rcd"], activo["lote"], omitir,
                                          activo["grupo"])),
@@ -785,7 +792,7 @@ def open_dialog(parent, config: Config) -> None:
             return
         if encargo.error is not None:
             acabar_con_error(activo, encargo.error,
-                             partial(reintentar_copia, activo["lote"], omitir))
+                             partial(reintentar_copia, activo["lote"], omitir, activo["omitidos"]))
             return
         activo["jobid"] = encargo.resultado
         activo["omitir"] = omitir
@@ -817,7 +824,8 @@ def open_dialog(parent, config: Config) -> None:
         stats, st = encargo.resultado
         if st.get("finished"):
             cancelado = activo["cancelado"] and not st.get("success")
-            acabar(activo, transferencia.resultado_de(st, stats, cancelado, activo["destino"]))
+            acabar(activo, transferencia.resultado_de(
+                st, stats, cancelado, activo["destino"], activo["omitidos"]))
             return
         if activo["cancelado"]:
             panel.mostrar_cancelando()
@@ -853,7 +861,8 @@ def open_dialog(parent, config: Config) -> None:
         lote = activo["lote"]
         panel.mostrar_resultado(resultado)
         if resultado.reintentar:
-            estado["reintento"] = partial(reintentar_copia, lote, activo.get("omitir", False))
+            estado["reintento"] = partial(reintentar_copia, lote, activo.get("omitir", False),
+                                          activo["omitidos"])
         soltar_lote()
         reajustar()
         if (releer and lote.sentido == transferencia.SUBIR and lote.remote == nav.remote
@@ -883,9 +892,9 @@ def open_dialog(parent, config: Config) -> None:
         panel.mostrar_cancelando()
         segundo_plano.lanzar(partial(rcd.cancelar, activo["rcd"], activo["jobid"]))
 
-    def reintentar_copia(lote: transferencia.Lote, omitir: bool) -> None:
+    def reintentar_copia(lote: transferencia.Lote, omitir: bool, omitidos: int) -> None:
         """Repite el lote con la misma decisión de choques: lo ya copiado e idéntico se salta."""
-        copiar(nuevo_activo(lote), omitir)
+        copiar(nuevo_activo(lote), omitir, omitidos)
 
     def reintentar_conteo(lote: transferencia.Lote) -> None:
         """Repite el lote desde el principio (no llegó a copiar nada)."""
