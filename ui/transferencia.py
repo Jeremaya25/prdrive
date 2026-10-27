@@ -99,7 +99,12 @@ def fs_de(lote: Lote) -> tuple[str, str]:
 
 
 def choques(rutas_origen: set[str], rutas_destino: set[str]) -> int:
-    """Cuenta los archivos de origen que ya existen en el destino.
+    """Cuenta los archivos de origen que ya existen en el destino, sin mirar mayúsculas.
+
+    Las dos mitades se comparan con `casefold()`: `Fotos/a.JPG` y `fotos/a.jpg` son el
+    mismo archivo en NTFS, exFAT, FAT32 y en muchos servidores (SMB, WebDAV, OpenSSH
+    en Windows). En un sistema que distingue mayúsculas puede contar de más; eso solo
+    hace salir el aviso, nunca sobrescribe en silencio.
 
     Args:
         rutas_origen: Rutas relativas de los archivos a copiar, separadas por `/`.
@@ -109,7 +114,7 @@ def choques(rutas_origen: set[str], rutas_destino: set[str]) -> int:
     Returns:
         Cuántas rutas de origen están también en el destino.
     """
-    return len(rutas_origen & rutas_destino)
+    return len({r.casefold() for r in rutas_origen} & {r.casefold() for r in rutas_destino})
 
 
 def texto_choques(n: int, destino: str) -> str:

@@ -82,6 +82,7 @@ GUI_NO = {
     "test_instancia_unica.py": "importa `ui.tk_update`, pero no abre ventanas",
     "test_keepassxc.py": "importa `ui.tk` para sus constantes, pero no abre ventanas",
     "test_raiz_equipo.py": "importa `ui.tk_fleet` para la ficha de texto, pero no abre ventanas",
+    "test_transferencia.py": "importa `ui.tk_servidor` para sus funciones de módulo (`_rutas_*`, `_contar_choques`), sin abrir ventanas",
     "test_tk_xft.py": "importa tkinter solo para comprobar que ya está cargado; no abre ventanas",
 }
 """Tests que importan tkinter o `ui.tk*` a nivel de módulo sin abrir ventanas, con la razón."""

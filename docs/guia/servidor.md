@@ -76,10 +76,11 @@ Si en la carpeta de destino hay archivos con el mismo nombre y en el mismo sitio
 - **Omitir**: lo que ya existe se queda como está. Solo se copia lo que no había.
 - **Cancelar**: no se copia nada.
 
-**Cuidado con los nombres que solo cambian de mayúsculas**, en Windows y en unidades FAT32 o
-exFAT: `Foto.JPG` y `foto.jpg` son el mismo archivo para el equipo, pero prdrive no los toma por
-iguales y **no pregunta**: sobrescribe. Mira los nombres antes de bajar a una carpeta que ya tiene
-archivos parecidos.
+**Nombres que solo cambian de mayúsculas.** En Windows y en unidades FAT32 o exFAT, `Foto.JPG` y
+`foto.jpg` son el mismo archivo. prdrive los cuenta como iguales para el aviso (también dentro de
+las carpetas), así que **pregunta** antes de sobrescribir. En un equipo que sí distingue
+mayúsculas (Linux) puede avisar de más: es solo una pregunta, nunca sobrescribe sin que lo
+decidas.
 
 ### Carpetas de una pareja
 

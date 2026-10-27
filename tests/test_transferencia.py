@@ -11,10 +11,10 @@ archivos que ya estaban en el destino, no las carpetas que se fusionan.
 
 import sys
 
-from _harness import Checks, mkcfg
+from _harness import Checks, mkcfg, tmpdir
 
-from common import model
-from ui import transferencia
+from common import model, rcd
+from ui import tk_servidor, transferencia
 
 c = Checks("transferencias: qué copia un lote")
 
@@ -49,6 +49,14 @@ c("una ruta sin barra inicial sigue siendo absoluta",
 
 c("choques: solo archivos que coinciden",
   transferencia.choques({"a.txt", "c/d.txt", "c/e.txt"}, {"a.txt", "c/e.txt", "z.txt"}), 2)
+c("choques: mayúsculas y minúsculas son el mismo archivo",
+  transferencia.choques({"Fotos/a.JPG", "Fotos/b.txt"}, {"fotos/a.jpg", "fotos/c.txt"}), 1)
+c("  en los dos sentidos", transferencia.choques({"fotos/a.jpg"}, {"FOTOS/A.JPG"}), 1)
+c("  con acentos y «ß» (casefold)",
+  transferencia.choques({"Música/Straße.txt"}, {"música/STRASSE.txt"}), 1)
+c("  dos orígenes que difieren en mayúsculas contra un destino cuentan una vez",
+  transferencia.choques({"a.TXT", "a.txt"}, {"a.txt"}), 1)
+c("  nombres distintos no chocan", transferencia.choques({"a.txt"}, {"b.txt"}), 0)
 c("nada en el destino", transferencia.choques({"a"}, set()), 0)
 c("nada que copiar", transferencia.choques(set(), {"a"}), 0)
 
@@ -225,5 +233,86 @@ c("otro error, en llano", R({"success": False, "error": "i/o timeout"}, {}, Fals
   "El servidor no ha contestado a tiempo.")
 c("un error se puede reintentar", R({"success": False, "error": "i/o timeout"}, {}, False, "/datos").reintentar, True)
 c("error sin texto no lanza", R({"success": False}, {}, False, "/datos").tono, "aviso")
+
+# --- Qué hay ya en el destino: las rutas que alimentan `choques` (sin ventana) ----------
+class RcdMudo:
+    """Un `Rcd` que contesta `operations/stat` y `operations/list` desde un diccionario."""
+
+    def __init__(self, respuestas: dict) -> None:
+        self.respuestas = respuestas        # (método, remote) → respuesta o excepción
+        self.llamadas: list[tuple[str, dict]] = []
+
+    def llamar(self, metodo, params=None, timeout=None):
+        self.llamadas.append((metodo, params))
+        r = self.respuestas.get((metodo, params["remote"]),
+                                rcd.ErrorRc("object not found", 404))
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def entrada(ruta: str, carpeta: bool = False) -> dict:
+    return {"Path": ruta, "Name": ruta.rsplit("/", 1)[-1], "IsDir": carpeta}
+
+
+arbol = tmpdir()
+(arbol / "Fotos" / "viajes").mkdir(parents=True)
+(arbol / "Fotos" / "vacia").mkdir()
+(arbol / "Fotos" / "a.jpg").write_text("x", encoding="utf-8")
+(arbol / "Fotos" / "viajes" / "b.jpg").write_text("x", encoding="utf-8")
+(arbol / "leeme.txt").write_text("x", encoding="utf-8")
+(arbol / "otra").mkdir()
+loc = tk_servidor._rutas_locales
+c("locales: una carpeta da sus archivos, con la subcarpeta y sin contar carpetas",
+  loc(str(arbol), [E("Fotos", True)]), {"Fotos/a.jpg", "Fotos/viajes/b.jpg"})
+c("locales: un archivo suelto", loc(str(arbol), [E("leeme.txt", False)]), {"leeme.txt"})
+c("locales: lo que no existe no cuenta", loc(str(arbol), [E("nada.txt", False), E("Nada", True)]), set())
+c("locales: una carpeta elegida como archivo no cuenta", loc(str(arbol), [E("otra", False)]), set())
+c("locales: solo lo elegido, no el resto de la carpeta",
+  loc(str(arbol), [E("leeme.txt", False)]) & {"Fotos/a.jpg"}, set())
+
+nube = RcdMudo({
+    ("operations/list", "datos/Fotos"): {"list": [entrada("a.JPG"), entrada("viajes", True),
+                                                  entrada("viajes/b.jpg")]},
+    ("operations/stat", "datos/leeme.txt"): {"item": entrada("leeme.txt")},
+    ("operations/stat", "datos/otra"): {"item": entrada("otra", True)},
+})
+rem = tk_servidor._rutas_remotas
+c("remotas: una carpeta lista recursivo y da sus archivos, sin carpetas",
+  rem(nube, "nas", "/datos", [E("Fotos", True)]), {"Fotos/a.JPG", "Fotos/viajes/b.jpg"})
+c("  pidiendo solo esa carpeta, recursiva, al remote entero",
+  nube.llamadas[0], ("operations/list", {"fs": "nas:/", "remote": "datos/Fotos",
+                                         "opt": {"recurse": True, "noMimeType": True}}))
+c("remotas: un archivo se mira con stat", rem(nube, "nas", "/datos", [E("leeme.txt", False)]),
+  {"leeme.txt"})
+c("remotas: una carpeta que se pide como archivo no cuenta",
+  rem(nube, "nas", "/datos", [E("otra", False)]), set())
+c("remotas: lo que no existe (404) no cuenta ni lanza",
+  rem(nube, "nas", "/datos", [E("falta.txt", False), E("Falta", True)]), set())
+c("remotas: desde la raíz del servidor la ruta no lleva barra",
+  (rem(RcdMudo({("operations/stat", "leeme.txt"): {"item": entrada("leeme.txt")}}),
+       "nas", "/", [E("leeme.txt", False)])), {"leeme.txt"})
+c("remotas: «not found» sin 404 tampoco es un fallo",
+  rem(RcdMudo({("operations/stat", "x"): rcd.ErrorRc("directory not found", 500)}),
+      "nas", "/", [E("x", False)]), set())
+error = None
+try:
+    rem(RcdMudo({("operations/stat", "x"): rcd.ErrorRc("permission denied", 403)}),
+        "nas", "/", [E("x", False)])
+except rcd.ErrorRc as e:
+    error = e
+c("remotas: otro error sí se lanza", error is not None and error.estado, 403)
+
+# El caso que el aviso no veía: mismo archivo, distinta capitalización.
+bajar = L("bajar", "nas", "/datos", str(arbol), (E("Fotos", True),))
+# El servidor tiene «a.JPG» y «viajes/b.jpg»; el equipo, «a.jpg» y «viajes/b.jpg».
+c("bajar «Fotos/a.JPG» sobre «Fotos/a.jpg»: choca aunque difiera la capitalización (y «b.jpg»)",
+  tk_servidor._contar_choques(nube, bajar), 2)
+subir = L("subir", "nas", "/datos", str(arbol), (E("Fotos", True),))
+c("subir «Fotos/a.jpg» sobre «Fotos/a.JPG»: también",
+  tk_servidor._contar_choques(nube, subir), 2)
+solo_caso = RcdMudo({("operations/list", "datos/Fotos"): {"list": [entrada("A.JPG")]}})
+c("  y si lo único que coincide es el archivo con otra capitalización, cuenta 1",
+  tk_servidor._contar_choques(solo_caso, subir), 1)
 
 sys.exit(c.report())
