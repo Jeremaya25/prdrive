@@ -695,7 +695,7 @@ finally:
     deploy.copiar_fichero = copiar_real
 
 # En Windows, `open()` (el CRT) da un fichero en uso como errno 13 sin winerror:
-# es lo que vio la nube (F34) con el Python 3.11.
+# es lo que vio la nube (F35) con el Python 3.11.
 deploy.IS_WIN, era_win = True, deploy.IS_WIN
 try:
     c.contains("un PermissionError sin winerror en Windows también apunta a otro programa",

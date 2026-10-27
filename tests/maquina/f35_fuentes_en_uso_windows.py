@@ -1,4 +1,4 @@
-"""F34 (Windows): `deploy_code()` con una fuente de `ui/fuentes/` registrada por otro proceso (#179).
+"""F35 (Windows): `deploy_code()` con una fuente de `ui/fuentes/` registrada por otro proceso (#179).
 
 La ventana registra sus fuentes con `AddFontResourceExW(…, FR_PRIVATE)` y sigue
 viva mientras corre el aplicador de «Actualizar…». Aquí otro proceso hace lo
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import comun
 
-CODIGO = "F34"
+CODIGO = "F35"
 SISTEMA = "W"
 QUE = ("deploy_code() con una fuente registrada por otro proceso con AddFontResourceExW: "
        "lo idéntico se salta y lo distinto se apunta sin marcar VERSION")
@@ -39,7 +39,7 @@ sys.stdin.read()
 def _origen(version: str) -> Path:
     """Un origen con el programa del repositorio y `VERSION` = `version`."""
     from install import deploy
-    base = comun.carpeta("f34-origen")
+    base = comun.carpeta("f35-origen")
     for nombre in deploy.DEPLOY_FILES:
         shutil.copy2(comun.REPO / nombre, base / nombre)
     for nombre in deploy.DEPLOY_TREES:
@@ -54,7 +54,7 @@ def probar(p: comun.Prueba) -> None:
         raise comun.Saltada("es de Windows")
     from install import InstallError, deploy
 
-    raiz = comun.carpeta("f34-unidad")
+    raiz = comun.carpeta("f35-unidad")
     deploy.deploy_code(raiz, origen=_origen("0.0.1"), con_pyc=False)
     app = deploy.app_dir(raiz)
     fuente = app / "ui" / "fuentes" / FUENTE
