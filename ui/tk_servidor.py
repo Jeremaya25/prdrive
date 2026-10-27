@@ -20,19 +20,32 @@ muere el hilo que lo lanzó); lo que espera a la red (`esperar()`, el
 última, y una respuesta tardía no pinta nada.
 
 Cerrar la ventana para el `rcd` también en segundo plano, una sola vez, sin
-esperarlo. Nada de lo que hay aquí escribe en el remoto.
+esperarlo.
+
+Bajar y subir (pieza 2): la lista admite varias filas y el pie lleva «Bajar…»,
+«Subir archivos…» y «Subir carpeta…». Un lote es UN `sync/copy` asíncrono del
+`rcd` (`common/rcd.py`); qué se copia, los avisos por pareja y los textos los
+decide `ui/transferencia.py` y el panel que lo enseña es `ui/tk_transferencia.py`.
+Aquí se encadena el flujo: elegir → avisar/bloquear → contar choques en segundo
+plano → preguntar → copiar → seguir el progreso cada `INTERVALO_PROGRESO_MS` →
+resultado. Lo que espera a la red (contar, lanzar, sondear, cancelar) va en
+segundo plano con funciones de módulo; el `Sondeo` del lote es distinto del de
+los listados para que navegar no pise a la transferencia. Copiar nunca borra.
 """
 
 from __future__ import annotations
 
+import os
+import time
 from functools import partial
 from typing import NamedTuple
 
 from common import config_file, model, rcd
 from common.model import Config, ConfigError
 
-from . import icons, remote_picker, segundo_plano, servidor, theme
-from .tk import Indicador, Sondeo, centrar, cuerpo_visible, modal, mostrar
+from . import (icons, remote_picker, segundo_plano, servidor, theme, tk_transferencia,
+               transferencia)
+from .tk import Indicador, Sondeo, avisar, centrar, cuerpo_visible, modal, mostrar, preguntar
 
 COLUMNAS = [
     ("Nombre", 260, True),
@@ -50,6 +63,16 @@ FILAS_VISIBLES = 12
 VACIA = "Esta carpeta está vacía."
 CONECTANDO = "Conectando con el servidor…"
 SIN_REMOTES = "Este dispositivo no tiene conexión con ningún servidor."
+INTERVALO_PROGRESO_MS = 500
+"""Milisegundos entre dos peticiones de `core/stats` y `job/status` de un lote."""
+MIRANDO = "Mirando el destino…"
+PERDIDA = "Se perdió la conexión con rclone."
+SIN_RESPUESTA = "Sin respuesta de rclone… la copia sigue en marcha; se vuelve a intentar."
+FALLOS_PARA_AVISAR = 3
+"""Cuántos seguimientos seguidos sin respuesta hacen falta para decirlo en la ventana."""
+TITULO_CIERRE = "Transferencia en marcha"
+TEXTO_CIERRE = "Hay una transferencia en marcha. ¿Cancelarla y cerrar?"
+SIN_RAIZ = "Elige una carpeta, no la raíz de una unidad."
 MARCA_PAREJA = "  · pareja «{}»"
 """Lo que se añade al nombre de una carpeta que es la de una pareja; `{}` es el nombre de la pareja.
 
@@ -165,6 +188,151 @@ def _leer_conf() -> str:
         return ""
 
 
+def elegir_destino(parent, inicial: str) -> str | None:
+    """Pide al sistema la carpeta del equipo donde guardar lo que se baja.
+
+    Es de módulo para que los tests lo sustituyan.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        inicial: La carpeta en la que empieza el diálogo.
+
+    Returns:
+        La carpeta elegida, o `None` si se cancela.
+    """
+    from tkinter import filedialog
+
+    ruta = filedialog.askdirectory(parent=parent, title="Elige dónde guardar",
+                                   initialdir=inicial or None)
+    return str(ruta) if ruta else None
+
+
+def elegir_archivos(parent, inicial: str) -> list[str]:
+    """Pide al sistema los archivos del equipo que se suben; vacío si se cancela."""
+    from tkinter import filedialog
+
+    rutas = filedialog.askopenfilenames(parent=parent, title="Elige los archivos que subir",
+                                        initialdir=inicial or None)
+    return [str(r) for r in rutas] if rutas else []
+
+
+def elegir_carpeta(parent, inicial: str) -> str | None:
+    """Pide al sistema la carpeta del equipo que se sube; `None` si se cancela."""
+    from tkinter import filedialog
+
+    ruta = filedialog.askdirectory(parent=parent, title="Elige la carpeta que subir",
+                                   initialdir=inicial or None)
+    return str(ruta) if ruta else None
+
+
+def _no_esta(error: rcd.ErrorRc) -> bool:
+    """Si rclone contesta que lo pedido no existe (no es un fallo: es «no está»)."""
+    return error.estado == 404 or "not found" in error.mensaje.lower()
+
+
+def _rutas_remotas(r: rcd.Rcd, remote: str, base: str, elementos) -> set[str]:
+    """Devuelve las rutas de los ARCHIVOS que hay en el servidor para esos elementos; corre en un hilo.
+
+    Una carpeta se lista entera (`operations/list` recursivo, solo de ella y no de
+    `base`, que puede ser enorme); un archivo se mira con `operations/stat`. Lo que
+    no existe no cuenta. Las rutas son relativas a `base`, con `/`.
+
+    Args:
+        r: El `rcd` al que se habla.
+        remote: El remote de `rclone.conf`.
+        base: La carpeta del servidor en la que están (o estarían) los elementos.
+        elementos: Los `transferencia.Elemento` elegidos.
+
+    Raises:
+        rcd.ErrorRc: Si rclone contesta con un error que no es «no existe».
+        rcd.RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    raiz = remote_picker.normalizar(base).lstrip("/")
+    fs = f"{remote}:/"
+    rutas: set[str] = set()
+    for e in elementos:
+        ruta = f"{raiz}/{e.nombre}" if raiz else e.nombre
+        try:
+            if e.es_carpeta:
+                respuesta = r.llamar("operations/list", {
+                    "fs": fs, "remote": ruta, "opt": {"recurse": True, "noMimeType": True}})
+                for item in respuesta.get("list") or []:
+                    if isinstance(item, dict) and not item.get("IsDir"):
+                        rutas.add(f"{e.nombre}/{item.get('Path') or item.get('Name')}")
+            else:
+                item = r.llamar("operations/stat", {"fs": fs, "remote": ruta}).get("item")
+                if isinstance(item, dict) and not item.get("IsDir"):
+                    rutas.add(e.nombre)
+        except rcd.ErrorRc as error:
+            if not _no_esta(error):
+                raise
+    return rutas
+
+
+def _rutas_locales(carpeta: str, elementos) -> set[str]:
+    """Devuelve las rutas de los ARCHIVOS que hay en el equipo para esos elementos.
+
+    Lo mismo que `_rutas_remotas` con `os.walk` y `os.path.isfile`: relativas a
+    `carpeta`, con `/`, solo de lo elegido y sin contar las carpetas.
+    """
+    rutas: set[str] = set()
+    for e in elementos:
+        base = os.path.join(carpeta, e.nombre)
+        if e.es_carpeta:
+            for dirpath, _carpetas, ficheros in os.walk(base):
+                rel = os.path.relpath(dirpath, base)
+                tramos = [] if rel == os.curdir else rel.split(os.sep)
+                rutas.update("/".join([e.nombre, *tramos, f]) for f in ficheros)
+        elif os.path.isfile(base):
+            rutas.add(e.nombre)
+    return rutas
+
+
+def _contar_choques(r: rcd.Rcd, lote: transferencia.Lote) -> int:
+    """Cuenta los archivos del lote que ya están en el destino; corre en un hilo."""
+    if lote.sentido == transferencia.SUBIR:
+        origen = _rutas_locales(lote.carpeta_local, lote.elementos)
+        destino = _rutas_remotas(r, lote.remote, lote.ruta_remota, lote.elementos)
+    else:
+        origen = _rutas_remotas(r, lote.remote, lote.ruta_remota, lote.elementos)
+        destino = _rutas_locales(lote.carpeta_local, lote.elementos)
+    return transferencia.choques(origen, destino)
+
+
+def _lanzar_copia(r: rcd.Rcd, lote: transferencia.Lote, omitir: bool, grupo: str) -> int:
+    """Lanza el `sync/copy` del lote y devuelve su `jobid`; corre en un hilo."""
+    origen, destino = transferencia.fs_de(lote)
+    return rcd.copiar(r, origen, destino, transferencia.reglas_de(lote.elementos), omitir, grupo)
+
+
+def _sondear(r: rcd.Rcd, jobid: int, grupo: str) -> tuple[dict, dict]:
+    """Pide `(core/stats, job/status)` de un lote; corre en un hilo.
+
+    El estado va primero: si dice `finished`, las estadísticas que se piden
+    después ya son las finales.
+    """
+    st = rcd.estado(r, jobid)
+    return rcd.progreso(r, grupo), st
+
+
+def _cancelar_y_esperar(r: rcd.Rcd, jobid: int) -> None:
+    """Cancela el trabajo y espera a que acabe, hasta `rcd.ESPERA_QUIT`; corre en un hilo."""
+    rcd.cancelar(r, jobid)
+    limite = time.monotonic() + rcd.ESPERA_QUIT
+    while time.monotonic() < limite:
+        try:
+            if rcd.estado(r, jobid).get("finished"):
+                return
+        except (rcd.ErrorRc, rcd.RcdCaido):
+            return
+        time.sleep(0.1)
+
+
+def _destino_visible(lote: transferencia.Lote) -> str:
+    """Devuelve el destino tal como lo ve la persona: la carpeta del servidor al subir, la del equipo al bajar."""
+    return lote.ruta_remota if lote.sentido == transferencia.SUBIR else lote.carpeta_local
+
+
 def open_dialog(parent, config: Config) -> None:
     """Abre la ventana «Servidor»; no devuelve nada.
 
@@ -180,6 +348,7 @@ def open_dialog(parent, config: Config) -> None:
 
     dlg = modal(parent, "Servidor")
     sondeo = Sondeo(dlg)
+    sondeo_lote = Sondeo(dlg)       # el del lote: navegar no pisa a la transferencia
     try:
         raw = config_file.load_raw()
     except ConfigError:
@@ -188,7 +357,9 @@ def open_dialog(parent, config: Config) -> None:
                                   config.device_remote)
     nav = servidor.Navegacion(next(iter(remotes), ""))
     estado: dict = {"rcd": None, "ultima": ("ruta", servidor.RAIZ), "abierto": False,
-                    "cerrado": False, "puerto_reintentado": False, "entradas": {}}
+                    "cerrado": False, "puerto_reintentado": False, "entradas": {},
+                    "lote": None, "n_lote": 0, "reintento": None, "tras": None,
+                    "carpeta": os.path.expanduser("~")}
     sondeos: dict[str, tuple[bool, int | None]] = {}
 
     marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
@@ -228,7 +399,7 @@ def open_dialog(parent, config: Config) -> None:
     tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     lista = ttk.Treeview(tarjeta, columns=("tamano", "modificado", "permisos"),
-                         show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="browse")
+                         show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="extended")
     for columna, (titulo, ancho, estira) in zip(("#0", "tamano", "modificado", "permisos"),
                                                 COLUMNAS):
         lista.heading(columna, text=titulo, anchor="w")
@@ -246,13 +417,31 @@ def open_dialog(parent, config: Config) -> None:
     dlg.lista, dlg.vacia, dlg.accion, dlg.elegido = lista, vacia, accion, elegido
     dlg.ruta, dlg.arriba = ruta, arriba
 
+    # El panel de un lote, entre la lista y el pie: sin lote no ocupa sitio.
+    panel = tk_transferencia.Panel(marco)
+    panel.marco.grid(row=3, column=0, sticky="ew")
+    panel.ocultar()
+    panel.al_cancelar = lambda: cancelar_lote()
+    panel.al_reintentar = lambda: reintentar_lote()
+
     pie = ttk.Frame(marco)
-    pie.grid(row=3, column=0, sticky="ew", pady=(theme.E3, 0))
+    pie.grid(row=4, column=0, sticky="ew", pady=(theme.E3, 0))
     pie.columnconfigure(0, weight=1)
     cuenta = ttk.Label(pie, text="", style="MonoPista.TLabel")
     cuenta.grid(row=0, column=0, sticky="w")
-    ttk.Button(pie, text="Cerrar", command=lambda: cerrar_ventana()).grid(row=0, column=1)
-    dlg.cuenta = cuenta
+    boton_bajar = ttk.Button(pie, text="Bajar…", state="disabled",
+                             command=lambda: bajar_elegidos())
+    boton_bajar.grid(row=0, column=1, padx=(theme.E3, 0))
+    boton_archivos = ttk.Button(pie, text="Subir archivos…", state="disabled",
+                                command=lambda: subir_archivos())
+    boton_archivos.grid(row=0, column=2, padx=(theme.E2, 0))
+    boton_carpeta = ttk.Button(pie, text="Subir carpeta…", state="disabled",
+                               command=lambda: subir_carpeta())
+    boton_carpeta.grid(row=0, column=3, padx=(theme.E2, 0))
+    ttk.Button(pie, text="Cerrar", command=lambda: cerrar_ventana()).grid(
+        row=0, column=4, padx=(theme.E4, 0))
+    dlg.cuenta, dlg.panel, dlg.sondeo_lote = cuenta, panel, sondeo_lote
+    dlg.bajar, dlg.subir_archivos, dlg.subir_carpeta = boton_bajar, boton_archivos, boton_carpeta
 
     # ------------------------------------------------------------- lo que se ve
     def decir(texto: str, tono: str = "Peligro.", boton: str | None = None) -> None:
@@ -278,6 +467,7 @@ def open_dialog(parent, config: Config) -> None:
             vacia.place(relx=0.5, rely=0.5, anchor="center")
         else:
             vacia.place_forget()
+        actualizar_botones()
 
     def retocar() -> None:
         """Cambia el icono y el tono de las filas que ya están, sin rehacer la lista.
@@ -303,9 +493,24 @@ def open_dialog(parent, config: Config) -> None:
         else:
             decir("", "Pista.")
         cuenta.configure(text=servidor.cuantos(len(nav.entradas)))
-        # La ventana nace con la lista vacía: al llegar el listado puede crecer (nunca mengua).
+        reajustar()
+
+    def reajustar() -> None:
+        """Agranda la ventana si lo que se ve ahora pide más (nunca mengua) y la recoloca.
+
+        La ventana nace con la lista vacía: al llegar el listado, o al salir el
+        panel de un lote, puede crecer.
+        """
         if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
             centrar(dlg, parent)
+
+    def actualizar_botones() -> None:
+        """Enciende o apaga «Bajar…» y las dos «Subir…» según la selección, el `rcd` y el lote."""
+        libre = estado["rcd"] is not None and estado["lote"] is None
+        hay = bool(lista.selection())
+        boton_bajar.configure(state="normal" if libre and hay else "disabled")
+        for b in (boton_archivos, boton_carpeta):
+            b.configure(state="normal" if libre else "disabled")
 
     # ------------------------------------------------------------- el rcd
     def conectar(forzar: bool = False) -> bool:
@@ -324,7 +529,9 @@ def open_dialog(parent, config: Config) -> None:
             estado["rcd"] = rcd.arrancar()
         except ConfigError as e:
             decir(str(e), boton="Reintentar")
+            actualizar_botones()
             return False
+        actualizar_botones()
         return True
 
     def lanzar_peticion(pedida: tuple[str, str], esperar: bool | None = None) -> None:
@@ -399,9 +606,9 @@ def open_dialog(parent, config: Config) -> None:
 
     # ------------------------------------------------------------- navegar
     def entrar(_evento=None) -> str:
-        """Entra en la carpeta elegida; un archivo, nada."""
+        """Entra en la carpeta elegida; un archivo, o varias filas, nada."""
         elegida = lista.selection()
-        e = estado["entradas"].get(str(elegida[0])) if elegida else None
+        e = estado["entradas"].get(str(elegida[0])) if len(elegida) == 1 else None
         if e is not None and e.es_carpeta:
             lanzar_peticion(("ruta", nav.hijo(e.nombre)))
         return "break"
@@ -432,11 +639,281 @@ def open_dialog(parent, config: Config) -> None:
         if nuevo and nuevo != nav.remote:
             lanzar_peticion(("remote", nuevo))
 
+    lista.bind("<<TreeviewSelect>>", lambda _e: actualizar_botones())
     lista.bind("<Double-Button-1>", doble_clic)
     lista.bind("<Return>", entrar)
     lista.bind("<KP_Enter>", entrar)
     lista.bind("<BackSpace>", subir)
     elegido.bind("<<ComboboxSelected>>", cambiar_remote)
+
+
+    # ------------------------------------------------------------- bajar y subir
+    def nuevo_activo(lote: transferencia.Lote) -> dict:
+        """Abre el lote en marcha: lo que lo sigue hasta que acaba. Apaga los tres botones."""
+        estado["n_lote"] += 1
+        estado["reintento"] = None
+        activo = {"lote": lote, "destino": _destino_visible(lote), "rcd": estado["rcd"],
+                  "grupo": f"lote-{estado['n_lote']}", "jobid": None, "cancelado": False,
+                  "cerrando": False, "fallos": 0, "omitidos": 0}
+        estado["lote"] = activo
+        panel.ocultar()
+        actualizar_botones()
+        return activo
+
+    def quitar_espera() -> None:
+        """Deja de esperar la siguiente petición de progreso."""
+        sondeo_lote.cancelar()
+        if estado["tras"] is not None:
+            try:
+                dlg.after_cancel(estado["tras"])
+            except Exception:                # noqa: BLE001 — ya no está
+                pass
+            estado["tras"] = None
+
+    def vigente(activo: dict) -> bool:
+        """Si `activo` sigue siendo el lote que se sigue y la ventana lo puede pintar."""
+        return not estado["cerrado"] and estado["lote"] is activo and not activo["cerrando"]
+
+    def elementos_elegidos() -> tuple[transferencia.Elemento, ...]:
+        """Devuelve las filas elegidas como elementos de un lote."""
+        elegidas = (estado["entradas"].get(str(iid)) for iid in lista.selection())
+        return tuple(transferencia.Elemento(e.nombre, e.es_carpeta) for e in elegidas if e)
+
+    def bajar_elegidos() -> None:
+        """«Bajar…»: pide la carpeta del equipo y baja lo elegido, con su estructura."""
+        elementos = elementos_elegidos()
+        if estado["lote"] is not None or estado["rcd"] is None or not elementos:
+            return
+        # Lo que se ve ahora se apunta antes del diálogo: su bucle de eventos deja
+        # llegar un listado que cambiaría `nav` y los nombres elegidos ya no serían de esa carpeta.
+        remote, ruta_remota = nav.remote, nav.ruta
+        destino = elegir_destino(dlg, estado["carpeta"])
+        if not destino:
+            return
+        estado["carpeta"] = destino
+        empezar(transferencia.Lote(transferencia.BAJAR, remote, ruta_remota, destino, elementos))
+
+    def subir_a(remote: str, ruta_remota: str, carpeta: str,
+                elementos: tuple[transferencia.Elemento, ...]) -> None:
+        """Sube esos elementos de `carpeta` (del equipo) a esa carpeta del servidor."""
+        estado["carpeta"] = carpeta
+        empezar(transferencia.Lote(transferencia.SUBIR, remote, ruta_remota, carpeta, elementos))
+
+    def subir_archivos() -> None:
+        """«Subir archivos…»: pide archivos del equipo y los sube a la carpeta que se ve."""
+        if estado["lote"] is not None or estado["rcd"] is None:
+            return
+        remote, ruta_remota = nav.remote, nav.ruta      # antes del diálogo, como en «Bajar…»
+        rutas = elegir_archivos(dlg, estado["carpeta"])
+        if rutas:
+            nombres = dict.fromkeys(os.path.basename(r) for r in rutas)
+            subir_a(remote, ruta_remota, os.path.dirname(rutas[0]),
+                    tuple(transferencia.Elemento(n, False) for n in nombres))
+
+    def subir_carpeta() -> None:
+        """«Subir carpeta…»: pide una carpeta del equipo y la sube, entera, a la que se ve."""
+        if estado["lote"] is not None or estado["rcd"] is None:
+            return
+        remote, ruta_remota = nav.remote, nav.ruta      # antes del diálogo, como en «Bajar…»
+        ruta = elegir_carpeta(dlg, estado["carpeta"])
+        if not ruta:
+            return
+        padre, nombre = os.path.split(ruta.rstrip("/\\") or ruta)
+        if not nombre:
+            avisar(dlg, "No se puede", SIN_RAIZ, "Ambar.")
+            return
+        subir_a(remote, ruta_remota, padre, (transferencia.Elemento(nombre, True),))
+
+    def empezar(lote: transferencia.Lote) -> None:
+        """Avisa o bloquea según las parejas alcanzadas y, si sigue, empieza a contar choques."""
+        if lote.sentido == transferencia.SUBIR:
+            afectadas = transferencia.afectadas_subida(
+                config, lote.remote, lote.ruta_remota, lote.elementos)
+        else:
+            afectadas = transferencia.afectadas_bajada(
+                config, lote.carpeta_local, lote.elementos)
+        texto = transferencia.bloqueo(lote.sentido, afectadas)
+        if texto:
+            avisar(dlg, "No se puede", texto, "Ambar.")
+            return
+        texto = transferencia.aviso(lote.sentido, afectadas)
+        if texto and not preguntar(dlg, "Carpeta de una pareja", texto, "Seguir", "Cancelar"):
+            return
+        if estado["cerrado"] or estado["lote"] is not None or estado["rcd"] is None:
+            return
+        contar(nuevo_activo(lote))
+
+    def contar(activo: dict) -> None:
+        """Cuenta en segundo plano los archivos del lote que ya están en el destino."""
+        indicador.poner(MIRANDO, True)
+        accion.grid_remove()
+        sondeo_lote.esperar(
+            segundo_plano.lanzar(partial(_contar_choques, activo["rcd"], activo["lote"])),
+            partial(choques_contados, activo))
+
+    def choques_contados(activo: dict, encargo) -> None:
+        """Con la cuenta hecha, pregunta qué hacer con los choques (si los hay) y copia."""
+        if not vigente(activo):
+            return
+        decir("", "Pista.")
+        if encargo.error is not None:
+            acabar_con_error(activo, encargo.error, partial(reintentar_conteo, activo["lote"]))
+            return
+        omitir = False
+        if encargo.resultado > 0:
+            respuesta = tk_transferencia.preguntar_choques(
+                dlg, transferencia.texto_choques(encargo.resultado, activo["destino"]))
+            if not vigente(activo):
+                return
+            if respuesta is None:
+                soltar_lote()
+                return
+            omitir = respuesta == "omitir"
+        copiar(activo, omitir, encargo.resultado if omitir else 0)
+
+    def copiar(activo: dict, omitir: bool, omitidos: int = 0) -> None:
+        """Lanza el `sync/copy` del lote en segundo plano.
+
+        Args:
+            activo: El lote en marcha.
+            omitir: Si los archivos que ya existen se dejan como están.
+            omitidos: Cuántos son (los choques contados); es lo que dirá el resultado.
+        """
+        estado["reintento"] = None
+        activo["omitidos"] = omitidos
+        sondeo_lote.esperar(
+            segundo_plano.lanzar(partial(_lanzar_copia, activo["rcd"], activo["lote"], omitir,
+                                         activo["grupo"])),
+            partial(copia_lanzada, activo, omitir))
+
+    def copia_lanzada(activo: dict, omitir: bool, encargo) -> None:
+        """Con el `jobid` en la mano, enseña el panel y empieza a seguir el trabajo."""
+        if not vigente(activo):
+            return
+        if encargo.error is not None:
+            acabar_con_error(activo, encargo.error,
+                             partial(reintentar_copia, activo["lote"], omitir, activo["omitidos"]))
+            return
+        activo["jobid"] = encargo.resultado
+        activo["omitir"] = omitir
+        panel.mostrar_progreso(transferencia.progreso_de({}, activo["lote"], activo["destino"]))
+        reajustar()
+        sondear(activo)
+
+    def sondear(activo: dict) -> None:
+        """Pide en segundo plano el progreso y el estado del trabajo."""
+        estado["tras"] = None
+        if not vigente(activo):
+            return
+        sondeo_lote.esperar(
+            segundo_plano.lanzar(partial(_sondear, activo["rcd"], activo["jobid"],
+                                         activo["grupo"])),
+            partial(progreso_llega, activo))
+
+    def progreso_llega(activo: dict, encargo) -> None:
+        """Pinta el progreso que llegó, o el resultado si el trabajo acabó."""
+        if not vigente(activo):
+            return
+        if encargo.error is not None:
+            sin_respuesta(activo, encargo.error)
+            return
+        if activo["fallos"]:
+            if activo["fallos"] >= FALLOS_PARA_AVISAR:
+                decir("", "Pista.")
+            activo["fallos"] = 0
+        stats, st = encargo.resultado
+        if st.get("finished"):
+            cancelado = activo["cancelado"] and not st.get("success")
+            acabar(activo, transferencia.resultado_de(
+                st, stats, cancelado, activo["destino"], activo["omitidos"]))
+            return
+        if activo["cancelado"]:
+            panel.mostrar_cancelando()
+        else:
+            panel.mostrar_progreso(
+                transferencia.progreso_de(stats, activo["lote"], activo["destino"]))
+        estado["tras"] = dlg.after(INTERVALO_PROGRESO_MS, partial(sondear, activo))
+
+    def sin_respuesta(activo: dict, error: Exception) -> None:
+        """Un seguimiento falló: con el `rcd` vivo se sigue intentando; si murió, el lote acabó.
+
+        Mientras el proceso vive, la copia puede seguir corriendo aunque rclone no
+        conteste (una petición perdida, un tiempo de espera), así que el lote
+        sigue activo y los botones apagados: solo acaba cuando `job/status` dice
+        `finished`, cuando el proceso muere o cuando se cierra. Nunca se ofrece
+        «Reintentar» con una copia que puede estar en marcha.
+
+        Excepción: «job not found». rclone olvida un trabajo unos 60 s después de
+        acabar, así que ya no hay copia que esperar: el lote acaba aquí, sin
+        «Reintentar» (no se sabe cómo acabó).
+        """
+        if isinstance(error, rcd.ErrorRc) and "job not found" in error.mensaje.lower():
+            if activo["fallos"] >= FALLOS_PARA_AVISAR:
+                decir("", "Pista.")                 # se quita la línea de «Sin respuesta…»
+            acabar(activo, transferencia.Resultado(
+                "No se sabe cómo acabó: revisa la carpeta.", "aviso", False))
+            return
+        if not activo["rcd"].vivo:
+            acabar_con_error(activo, rcd.RcdCaido(str(error)), None)
+            return
+        activo["fallos"] += 1
+        if activo["fallos"] == FALLOS_PARA_AVISAR:
+            decir(SIN_RESPUESTA, "Aviso.")
+        estado["tras"] = dlg.after(INTERVALO_PROGRESO_MS, partial(sondear, activo))
+
+    def soltar_lote() -> None:
+        """Da el lote por acabado: vuelven los botones."""
+        estado["lote"] = None
+        actualizar_botones()
+
+    def acabar(activo: dict, resultado: transferencia.Resultado, releer: bool = True) -> None:
+        """Enseña cómo acabó el lote; si se subió a la carpeta que se ve, la relee."""
+        lote = activo["lote"]
+        panel.mostrar_resultado(resultado)
+        if resultado.reintentar:
+            estado["reintento"] = partial(reintentar_copia, lote, activo.get("omitir", False),
+                                          activo["omitidos"])
+        soltar_lote()
+        reajustar()
+        if (releer and lote.sentido == transferencia.SUBIR and lote.remote == nav.remote
+                and lote.ruta_remota == nav.ruta):
+            repetir()                       # también tras un fallo o una cancelación: algo subió
+
+    def acabar_con_error(activo: dict, error: Exception, reintento) -> None:
+        """Dice por qué no pudo seguir el lote; con la conexión perdida, ofrece «Reconectar»."""
+        if isinstance(error, rcd.RcdCaido):
+            decir(servidor.frase_error(error), boton="Reconectar")
+            acabar(activo, transferencia.Resultado(PERDIDA, "aviso", False), releer=False)
+            return
+        if isinstance(error, rcd.ErrorRc):
+            resultado = transferencia.resultado_de(
+                {"success": False, "error": error.mensaje}, {}, False, activo["destino"])
+        else:
+            resultado = transferencia.Resultado(servidor.frase_error(error), "aviso", True)
+        acabar(activo, resultado)
+        estado["reintento"] = reintento if resultado.reintentar else None
+
+    def cancelar_lote() -> None:
+        """«Cancelar»: pide parar el trabajo, una sola vez, y dice «Cancelando…» en el acto."""
+        activo = estado["lote"]
+        if activo is None or activo["jobid"] is None or activo["cancelado"]:
+            return
+        activo["cancelado"] = True
+        panel.mostrar_cancelando()
+        segundo_plano.lanzar(partial(rcd.cancelar, activo["rcd"], activo["jobid"]))
+
+    def reintentar_copia(lote: transferencia.Lote, omitir: bool, omitidos: int) -> None:
+        """Repite el lote con la misma decisión de choques: lo ya copiado e idéntico se salta."""
+        copiar(nuevo_activo(lote), omitir, omitidos)
+
+    def reintentar_conteo(lote: transferencia.Lote) -> None:
+        """Repite el lote desde el principio (no llegó a copiar nada)."""
+        contar(nuevo_activo(lote))
+
+    def reintentar_lote() -> None:
+        """«Reintentar» del panel: repite el último lote que falló."""
+        if estado["lote"] is None and estado["rcd"] is not None and estado["reintento"]:
+            estado["reintento"]()
 
     # ------------------------------------------------------------- cerrar
     def cerrar(evento=None) -> None:
@@ -446,10 +923,44 @@ def open_dialog(parent, config: Config) -> None:
         if estado["cerrado"]:
             return
         estado["cerrado"] = True
+        if estado["tras"] is not None:
+            try:
+                dlg.after_cancel(estado["tras"])
+            except Exception:                # noqa: BLE001 — ya no está
+                pass
+            estado["tras"] = None
         if estado["rcd"] is not None:
             segundo_plano.lanzar(partial(estado["rcd"].parar))
 
     def cerrar_ventana() -> None:
+        """Cierra; con un lote en marcha pregunta y, si se acepta, lo cancela antes.
+
+        Se espera a que rclone acabe el trabajo (hasta `rcd.ESPERA_QUIT`, en
+        segundo plano) y solo entonces se cierra como siempre, parando el `rcd`.
+        """
+        activo = estado["lote"]
+        if activo is not None and activo["jobid"] is not None:
+            if activo["cerrando"]:
+                return                      # ya se está cancelando para cerrar
+            if not preguntar(dlg, TITULO_CIERRE, TEXTO_CIERRE, "Cancelar y cerrar", "Seguir"):
+                return
+            if estado["cerrado"]:
+                return
+            if estado["lote"] is activo:    # el trabajo pudo acabar mientras se preguntaba
+                activo["cerrando"] = activo["cancelado"] = True
+                quitar_espera()
+                panel.mostrar_cancelando()
+                sondeo_lote.esperar(
+                    segundo_plano.lanzar(partial(_cancelar_y_esperar, activo["rcd"],
+                                                 activo["jobid"])),
+                    lambda _encargo: cierre_final())
+                return
+        cierre_final()
+
+    def cierre_final() -> None:
+        """Cierra la ventana: para el `rcd` y la destruye."""
+        if estado["cerrado"]:
+            return
         cerrar()
         dlg.destroy()
 
@@ -461,6 +972,7 @@ def open_dialog(parent, config: Config) -> None:
         decir(SIN_REMOTES, "Pista.")
         for control in (elegido, arriba, releer):
             control.configure(state="disabled")
+        actualizar_botones()
     else:
         elegido.set(nav.remote)
         indicador.poner(CONECTANDO, True)

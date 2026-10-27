@@ -45,6 +45,7 @@ from .model import ConfigError
 ESPERA_ARRANQUE = 10.0  # segundos hasta que `rc/noop` contesta
 ESPERA_QUIT = 3.0       # segundos que se le dan a salir tras `core/quit` antes de matarlo
 TIMEOUT_PETICION = 60.0  # segundos por llamada
+TIMEOUT_SONDEO = 5.0     # segundos por llamada de seguimiento (`progreso`, `estado`)
 SONDEO = 0.1            # segundos entre dos `rc/noop` mientras arranca
 
 _FRASES_PUERTO_OCUPADO = ("address already in use", "only one usage of each socket address")
@@ -380,12 +381,15 @@ class Rcd:
                 raise ConfigError(f"rclone no ha contestado en {tope:g} s.")
             time.sleep(SONDEO)
 
-    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+    def llamar(self, metodo: str, params: dict | None = None,
+               timeout: float | None = None) -> dict:
         """Llama a un método de la API de `rcd`.
 
         Args:
             metodo: El método, p. ej. `operations/list`.
             params: Sus parámetros.
+            timeout: Segundos antes de darla por perdida (`RcdCaido`); por defecto
+                `TIMEOUT_PETICION`.
 
         Returns:
             La respuesta, ya como diccionario.
@@ -396,7 +400,7 @@ class Rcd:
         """
         estado, texto = peticion(
             f"{self.url}{metodo}", json.dumps(params or {}).encode("utf-8"),
-            self._cabeceras, TIMEOUT_PETICION)
+            self._cabeceras, TIMEOUT_PETICION if timeout is None else timeout)
         try:
             datos = json.loads(texto) if texto.strip() else {}
         except ValueError:
@@ -482,3 +486,88 @@ def arrancar() -> Rcd:
         store.write_json(fichero_estado(), {"pid": pid, "creado": store.creado(pid)})
     store.apuntar_hijo(proceso)
     return Rcd(proceso, f"http://127.0.0.1:{puerto}/", usuario, clave, stderr)
+
+
+def copiar(r: Rcd, origen: str, destino: str, reglas: list[str], omitir: bool, grupo: str) -> int:
+    """Lanza en segundo plano una copia de `origen` a `destino` limitada a `reglas`.
+
+    Usa siempre `sync/copy`: nunca borra nada en el origen ni en el destino. Las
+    carpetas vacías del origen también se crean en el destino.
+
+    Args:
+        r: El `rcd` que ejecuta la copia.
+        origen: El `fs` de origen, en la forma `<remoto>:/<ruta>` desde la raíz absoluta.
+        destino: El `fs` de destino.
+        reglas: Las reglas `IncludeRule` de rclone; solo se copia lo que casa con ellas.
+        omitir: Si se da, no toca los ficheros que ya existen en el destino.
+        grupo: El nombre del grupo de estadísticas, para seguir el lote con `progreso`.
+
+    Returns:
+        El `jobid` del trabajo, para `estado` y `cancelar`.
+
+    Raises:
+        ValueError: Si no hay reglas, o alguna está vacía o en blanco. Sin reglas,
+            rclone copiaría el origen entero; no se llama a `rcd`.
+        ErrorRc: Si rclone no acepta la copia.
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    if not reglas or any(not regla.strip() for regla in reglas):
+        raise ValueError("copiar necesita al menos una regla")
+    params: dict[str, Any] = {
+        "srcFs": origen, "dstFs": destino, "createEmptySrcDirs": True,
+        "_filter": {"IncludeRule": list(reglas)}, "_async": True, "_group": grupo}
+    if omitir:
+        params["_config"] = {"IgnoreExisting": True}
+    return int(r.llamar("sync/copy", params)["jobid"])
+
+
+def progreso(r: Rcd, grupo: str) -> dict:
+    """Devuelve las estadísticas acumuladas de un grupo de transferencias.
+
+    Args:
+        r: El `rcd` que ejecuta el lote.
+        grupo: El grupo que se pasó a `copiar`.
+
+    Returns:
+        La respuesta de `core/stats`. Sus campos pueden faltar o ser nulos mientras
+        rclone aún cuenta (p. ej. `totalBytes` antes del listado).
+
+    Raises:
+        ErrorRc: Si rclone contesta con un error.
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    return r.llamar("core/stats", {"group": grupo}, timeout=TIMEOUT_SONDEO)
+
+
+def estado(r: Rcd, jobid: int) -> dict:
+    """Devuelve el estado de un trabajo lanzado con `copiar`.
+
+    Args:
+        r: El `rcd` que ejecuta el trabajo.
+        jobid: El identificador que devolvió `copiar`.
+
+    Returns:
+        La respuesta de `job/status`.
+
+    Raises:
+        ErrorRc: Si rclone contesta con un error (p. ej. un trabajo ya caducado).
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    return r.llamar("job/status", {"jobid": jobid}, timeout=TIMEOUT_SONDEO)
+
+
+def cancelar(r: Rcd, jobid: int) -> None:
+    """Pide a rclone que detenga un trabajo; no hace nada si ya terminó.
+
+    Args:
+        r: El `rcd` que ejecuta el trabajo.
+        jobid: El identificador que devolvió `copiar`.
+
+    Raises:
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    try:
+        r.llamar("job/stop", {"jobid": jobid})
+    except ErrorRc:
+        # rclone responde con error si el trabajo ya terminó o caducó: no es un fallo.
+        pass

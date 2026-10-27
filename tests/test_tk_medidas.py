@@ -111,6 +111,8 @@ class RcdMedidas:
     """Un `Rcd` que contesta siempre el mismo listado, sin lanzar rclone."""
 
     vivo = True
+    acaba_mal = False
+    """Si el trabajo de un lote acaba con un error (el resultado con «Reintentar»)."""
 
     def esperar(self, tope=None) -> None:
         pass
@@ -118,7 +120,20 @@ class RcdMedidas:
     def parar(self) -> None:
         pass
 
-    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+    def llamar(self, metodo: str, params: dict | None = None,
+               timeout: float | None = None) -> dict:
+        # Un lote: el trabajo no acaba (el panel a medias) o falla (su resultado).
+        if metodo == "sync/copy":
+            return {"jobid": 1}
+        if metodo == "job/status":
+            if self.acaba_mal:
+                return {"finished": True, "success": False,
+                        "error": "permission denied: " + SERVIDOR_LARGO}
+            return {"finished": False}
+        if metodo == "core/stats":
+            return {"transfers": 12, "totalTransfers": 41, "bytes": 123456789,
+                    "totalBytes": 9876543210, "speed": 5242880, "eta": 4000,
+                    "transferring": [{"name": SERVIDOR_LARGO + "/" + SERVIDOR_LARGO + ".txt"}]}
         if metodo == "operations/fsinfo":
             return {"Features": {"ReadMetadata": True}}
         if metodo == "operations/stat":
@@ -292,18 +307,23 @@ def usar_conexion(wiz) -> None:
     wiz.root.update_idletasks()
 
 
-def medir_dialogo(fabricar, ancho, alto, escala, modulo=None) -> tuple[bool, bool]:
+def medir_dialogo(fabricar, ancho, alto, escala, modulo=None,
+                  preparar=None) -> tuple[bool, bool]:
     """Abre un diálogo sin enseñarlo y devuelve (cabe, recortado).
 
     `modulo` es aquel cuyo `mostrar` hay que interceptar: cada pantalla importa
     el suyo con `from .tk import mostrar`, así que sustituirlo en una no lo
-    sustituye en las demás."""
+    sustituye en las demás. `preparar(dlg)`, si se da, lleva el diálogo al
+    estado que se quiere medir justo antes de medirlo (un panel con un lote en
+    marcha, por ejemplo)."""
     pantalla(ancho, alto, escala)
     medida: dict = {}
     modulo = modulo or tk_pairs
 
     def falso_mostrar(dlg, parent=None):
         """Encaja el diálogo y apunta si cabe y si queda recortado."""
+        if preparar is not None:
+            preparar(dlg)
         dlg.visor.encajar(dlg)
         medida["cabe"] = cabe(dlg)
         medida["recortado"] = recortado(dlg.visor)
@@ -892,6 +912,45 @@ try:
                    bool(str(abierta.indicador.texto.cget("text")))),
                   (True, True, True, True))
                 abierta.destroy()
+
+                # «Servidor» con un lote: el panel a medias (título con una carpeta larga,
+                # archivo en curso, cuenta, barra y velocidad) y, aparte, el de un trabajo
+                # que falla (el aviso del resultado y «Reintentar»). Los dos añaden alto.
+                destino_largo = str(tmpdir("prdrive-medidas-bajada-")
+                                    / ("carpeta de destino " * 4).strip())
+                previo_destino = tk_servidor.elegir_destino
+                tk_servidor.elegir_destino = lambda parent, inicial: destino_largo
+
+                def con_lote(dlg):
+                    dlg.lista.selection_set(dlg.lista.get_children()[:3])
+                    dlg.update()                # el evento de la selección enciende «Bajar…»
+                    dlg.bajar.invoke()
+
+                for que, acaba_mal in (("el panel de un lote en marcha", False),
+                                       ("el resultado de un lote que falla", True)):
+                    RcdMedidas.acaba_mal = acaba_mal
+                    rcd.arrancar = RcdMedidas
+                    segundo_plano.lanzar = segundo_plano.en_el_acto
+                    config_file.load_raw = lambda path=None: {
+                        "defaults": {"remote": SERVIDOR_REMOTE}}
+                    antes = set(raiz.winfo_children())
+                    try:
+                        entra, corta = medir_dialogo(
+                            lambda: tk_servidor.open_dialog(raiz, config_servidor),
+                            ancho, alto, escala, modulo=tk_servidor, preparar=con_lote)
+                    finally:
+                        rcd.arrancar, segundo_plano.lanzar, config_file.load_raw = previos_servidor
+                        RcdMedidas.acaba_mal = False
+                    abierta = [w for w in raiz.winfo_children() if w not in antes][0]
+                    c(f"{nombre}: el explorador con {que} cabe", entra, True)
+                    c(f"{nombre}: el explorador con {que} no queda recortado", corta, False)
+                    c(f"{nombre}: (y se ha medido con el panel puesto)",
+                      (bool(abierta.panel.marco.winfo_manager()),
+                       bool(abierta.panel.titulo.winfo_manager()),
+                       bool(abierta.panel.reintentar.winfo_manager())),
+                      (True, not acaba_mal, acaba_mal))
+                    abierta.destroy()
+                tk_servidor.elegir_destino = previo_destino
 
                 # La guía de flags (#126): una tabla de un lienzo, tres filtros y un texto con
                 # barra. Su caso más alto es el de más filas (sin buscar nada), con la pareja

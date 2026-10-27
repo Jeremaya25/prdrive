@@ -65,6 +65,7 @@ GUI = {
     "test_tk_principal.py", "test_tk_principal_ancho.py", "test_tk_principal_vista.py",
     "test_tk_reparacion.py", "test_tk_salida.py", "test_tk_screens.py",
     "test_tk_segundo_plano.py", "test_tk_servicio.py", "test_tk_servidor.py", "test_tk_tabla.py",
+    "test_tk_transferencia.py",
     "test_tk_visor.py", "test_tk_vista.py", "test_ui.py", "test_unidad_nueva.py", "test_volumen.py",
 }
 """Los tests que abren una ventana de Tk. Dos a la vez en un mismo escritorio se pisan
@@ -81,6 +82,7 @@ GUI_NO = {
     "test_instancia_unica.py": "importa `ui.tk_update`, pero no abre ventanas",
     "test_keepassxc.py": "importa `ui.tk` para sus constantes, pero no abre ventanas",
     "test_raiz_equipo.py": "importa `ui.tk_fleet` para la ficha de texto, pero no abre ventanas",
+    "test_transferencia.py": "importa `ui.tk_servidor` para sus funciones de módulo (`_rutas_*`, `_contar_choques`), sin abrir ventanas",
     "test_tk_xft.py": "importa tkinter solo para comprobar que ya está cargado; no abre ventanas",
 }
 """Tests que importan tkinter o `ui.tk*` a nivel de módulo sin abrir ventanas, con la razón."""

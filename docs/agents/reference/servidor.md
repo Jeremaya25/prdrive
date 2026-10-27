@@ -2,13 +2,15 @@
 
 Formerly none: a new area. Why and what (three pieces, the user's decisions): `docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`. The catalogue it browses: `catalogue.md`; the window pattern it follows: `ui.md`; the user's page: `docs/guia/servidor.md`.
 
-**Status: piece 1 of 3, built, read-only.** It recurses the whole remote from `/` and never writes to it. Pieces 2 (transfers) and 3 (manage) are not built; see the last section. The checks that need a real machine (a real SFTP, a window killed by force, an eject) are in `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`, not yet run.
+**Status: pieces 1 and 2 of 3 built.** Piece 1 browses the remote one folder at a time and never writes to it. Piece 2 («Bajar…», «Subir archivos…», «Subir carpeta…») copies between the remote and the device; it never deletes, moves or renames anything on either side. Piece 3 (manage) is not built; see the last section. The checks that need a real machine (a real SFTP, a window killed by force, an eject, FAT32/exFAT, 10 000 files) are in `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`, not yet run.
 
 The files:
 
-- `common/rcd.py`: the resident `rclone rcd` (its process, its HTTP calls, its anti-orphan belts). No Tk; it knows nothing of what is asked.
+- `common/rcd.py`: the resident `rclone rcd` (its process, its HTTP calls, its anti-orphan belts) and the jobs on it: `copiar()` (`sync/copy`), `progreso()`, `estado()`, `cancelar()`. No Tk; it knows nothing of what is asked.
 - `ui/servidor.py`: the decision half. No Tk, no disk, no network: how a listing is read, what is requested, navigation, the pair marks, permissions, the error phrases.
-- `ui/tk_servidor.py`: the window. It only draws; `open_dialog(parent, config)`.
+- `ui/transferencia.py`: the decision half of the transfers. No Tk, no network, no disk: the rules, the folders, the collision count, the pair warnings and blocks, the progress and result texts.
+- `ui/tk_servidor.py`: the window. It draws, and it chains a batch's steps (see «Transfers»); `open_dialog(parent, config)`.
+- `ui/tk_transferencia.py`: the transfer panel and the collision prompt. Draw only.
 - The button: `VentanaPrincipal.abrir_servidor()` in `ui/tk.py`, drawn by `ui/tk_principal.py`.
 
 ## The resident `rclone rcd` (`common/rcd.py`)
@@ -18,7 +20,7 @@ The explorer talks to ONE `rclone rcd` over HTTP on `127.0.0.1` for as long as t
 - **Local and authenticated, always.** `--rc-addr 127.0.0.1:<port>` with a port from `puerto_libre()`; never `--rc-no-auth`, never `--rc-web-gui`. User and password are `secrets.token_urlsafe(24)` each, per start, and travel in the child's **environment** (`RCLONE_RC_USER`/`RCLONE_RC_PASS`), never in argv, where any local process can read them. Probe (rclone v1.75.2): with them set, every method, `rc/noop` included, answers 401 without the header. The child's environment is the process's **minus every `RCLONE_RC_*` variable** (case-insensitive, for Windows), then our two: rclone reads each `rc` flag from its variable too, so a user's `RCLONE_RC_NO_AUTH`, `RCLONE_RC_WEB_GUI`, `RCLONE_RC_SERVE`, `RCLONE_RC_ADDR` or `RCLONE_RC_HTPASSWD` would undo these guarantees, and `--rc-no-auth` has no negation on argv.
 - Flags: `catalog.NET_FLAGS` (imported, so a bad Wi-Fi fails in seconds, as in `lsjson`), `--config model.RCLONE_CONF`, `cwd = model.APP_DIR` (`rclone.conf` resolves `key_file` and `known_hosts_file` there), `stdin`/`stdout` to `DEVNULL`, `CREATE_NO_WINDOW` on Windows.
 - **stderr goes to a host temp file, never a pipe**: `rcd` writes NOTICE lines continuously and a pipe nobody reads eventually blocks it. `Rcd.esperar()` reads that file when the process dies at start-up. «address already in use» (Windows: «Only one usage of each socket address»; probe: exit code 1) is `PuertoOcupado`, a `ConfigError` subclass: the port was free when chosen and taken before `rcd` opened it. Anything else is a `ConfigError` carrying that stderr.
-- **`peticion()` bypasses the system proxy** (`ProxyHandler({})`): an `HTTP_PROXY` would send loopback traffic to a proxy. An HTTP error status is returned, not raised; only a failure to talk raises `RcdCaido`. Each call waits up to `TIMEOUT_PETICION` (60 s).
+- **`peticion()` bypasses the system proxy** (`ProxyHandler({})`): an `HTTP_PROXY` would send loopback traffic to a proxy. An HTTP error status is returned, not raised; only a failure to talk raises `RcdCaido`. Each call waits up to `TIMEOUT_PETICION` (60 s). `Rcd.llamar(..., timeout=)` overrides it; the batch's polls (`rcd.progreso()`, `rcd.estado()`) use `TIMEOUT_SONDEO` (5 s).
 - **`Rcd.llamar()`** turns a non-200 into `ErrorRc(mensaje, estado)`: `mensaje` is the JSON `error` field (probe: 404 `{"error": "error in ListJSON: directory not found"}`), the body text if it is not JSON.
 - **`arrancar()` does not wait** and must be called on the Tk thread (see the belts). `esperar(tope=ESPERA_ARRANQUE = 10 s)` polls `rc/noop` every `SONDEO = 0.1 s` and is what goes to a worker thread. A 401 or a refused connection both keep it waiting; only the process dying or the deadline ends it.
 - **`parar()` never raises**: `core/quit`, then `ESPERA_QUIT = 3 s`, then `kill()`. Probe: `core/quit` answers 200 and the process exits ≈1.5 s later; 2 s is too tight: it would kill a process that is already quitting. It leaves `store` and deletes `state/rcd.json` only if the file still names its pid.
@@ -84,6 +86,54 @@ No Tk, no disk, no network. The window calls it and draws what it returns.
 - **No remotes**: «Este dispositivo no tiene conexión con ningún servidor.», and the controls are disabled.
 - **Closing** (`WM_DELETE_WINDOW` and `<Destroy>`) runs `parar()` once, in the background, guarded by a flag. `Sondeo` cancels with the window, so a late answer finds nobody. `tests/test_tk_servidor.py` covers this with real threads.
 
+## Transfers («Bajar…», «Subir archivos…», «Subir carpeta…»)
+
+The three buttons are in the window's **footer, beside «Cerrar»**, not in a top bar as the spec said (a deviation accepted during the build, not in the spec). The transfer panel sits between the list and the footer (grid row 3, `Panel.marco`; hidden when no batch is running).
+
+**Rules.** A batch is ONE asynchronous `sync/copy` (`rcd.copiar()`), with `createEmptySrcDirs: true`, `_filter: {"IncludeRule": [...]}` and `_group` = `lote-<n>`. It never calls `sync/sync`, `sync/move`, purge or delete; that is a grep-able invariant. `copiar()` refuses an empty rule list (`ValueError`, before any call: without rules rclone copies the whole source).
+
+- `transferencia.reglas_de(elementos)`: a file `x` → `/x`; a folder `x` → `/x/**`. The rclone pattern characters `* ? [ ] { } \` are escaped with `\` first. A wrong escape copies something else, so it is the most delicate function of the module.
+- `transferencia.fs_de(lote)`: a batch's `fs` is the folder it copies from or to, `<remote>:/<ruta>` on the remote side, and the local folder on the other. The rules are relative to that folder. **This is the one place the fixed-`fs` rule above does not apply**: the listings use `<remote>:/` so one cached connection serves every click; a batch uses its own folder, so its first call opens one more cached connection for that folder. Its cost on a real SFTP server is not measured yet.
+- Download: the selected rows are copied **with their structure** into the chosen folder. Upload to «Subir archivos…»: the selected files are copied by name into the folder shown; «Subir carpeta…» copies the chosen folder entire, under its own name, into the folder shown.
+- Selection is `selectmode="extended"`. «Bajar…» is on with a connection, no batch running and at least one row chosen (a folder or a file). The two «Subir…» are on with a connection (`rcd` not `None`) and no batch running. Enter enters the chosen row when exactly one row is chosen and it is a folder; a double-click selects its row first and then enters it when it is a folder.
+- The three dialogs are module functions that tests replace: `tk_servidor.elegir_destino(parent, inicial)` (`askdirectory`, «Elige dónde guardar»), `elegir_archivos` (`askopenfilenames`), `elegir_carpeta` (`askdirectory`). They open at the local folder last used in this window (the home folder when the window opens). Nothing is stored on disk.
+
+**Pair warnings, both directions** (`transferencia.afectadas_subida`/`afectadas_bajada`, `bloqueo()`, `aviso()`). Pairs are matched by the deepest folder: the pairs that share the deepest matching path count, not the first in config order. Outside every pair folder, nothing is said.
+
+| Direction | Mode | Result |
+|---|---|---|
+| Upload into a pair's remote folder (or a chosen item lands on one, or contains one) | `up-mirror` | **blocked**: the pair's next pass would delete what was uploaded |
+| Upload | `bisync`, `down`, `down-mirror`, `up` | warning with «Seguir» / «Cancelar» (the mode's text) |
+| Download into a pair's local folder (same matching, against `Pair.local_abs`) | `down-mirror` | **blocked** |
+| Download | `bisync`, `up`, `up-mirror`, `down` | warning with «Seguir» / «Cancelar» |
+
+With several pairs affected: any blocking one blocks; otherwise one warning names them all. The blocking text is shown in an ordinary notice; the warning's title is «Carpeta de una pareja».
+
+**The flow** (`tk_servidor.empezar()` → `contar()` → `choques_contados()` → `copiar()` → `copia_lanzada()` → `sondear()`; each step on the Tk thread, each network step in `segundo_plano` with its own `Sondeo`, so navigating does not disturb a batch):
+
+1. Pair check: block, or warn and ask.
+2. Count the collisions in background, with «Mirando el destino…» in the indicator. Upload: a recursive `operations/list` of each chosen item under the destination (`_rutas_remotas`, not the whole destination) against a local `os.walk` (`_rutas_locales`). Download: the reverse. Only **files** count; a folder that exists is merged, not a collision.
+3. With collisions, ONE prompt (`tk_transferencia.preguntar_choques`): «N elementos ya existen en {destino}. ¿Sobrescribirlos u omitirlos?» (singular for one) with «Sobrescribir», «Omitir», «Cancelar». Focus starts on «Cancelar»; Return on a focused button presses it, Escape and the window's X cancel. The prompt is the confirmation `AGENTS.md` asks for overwriting user data: it says how many and where.
+4. `rcd.copiar()` with `_config: {"IgnoreExisting": true}` only for «Omitir». «Sobrescribir» gives no `_config`: differing files are overwritten, identical ones skipped. «Cancelar» copies nothing and returns the buttons.
+5. The panel: `progreso_de()` every `INTERVALO_PROGRESO_MS` (500 ms), from `core/stats` and `job/status` together (`_sondear`; `status` first, so a `finished` status is followed by final stats).
+
+**Collisions are compared case-insensitively.** `transferencia.choques()` intersects the two sets of relative paths after `casefold()` on **both** sides, so `Fotos/a.JPG` on the remote and `fotos/a.jpg` on the device count as one file on any OS: NTFS, exFAT, FAT32 and many servers (SMB, WebDAV, OpenSSH on Windows) treat them as one, and a miss would overwrite without the prompt. On a case-sensitive filesystem this can over-count (two names that differ only in case); that only shows the prompt, it never overwrites silently. The comparison is symmetric; do not fold only one side. Pending row T5 records what a real device does.
+
+**The target is captured before the file dialog.** `bajar_elegidos()`, `subir_archivos()` and `subir_carpeta()` read `nav.remote`, `nav.ruta` and (when downloading) the selected rows BEFORE calling `elegir_destino`/`elegir_archivos`/`elegir_carpeta`: the system dialog runs a nested event loop, so a listing answer can land and change `nav` while it is open. The `Lote` is built from the captured values.
+
+**The panel** (`ui/tk_transferencia.Panel`): title «Subiendo a …» / «Bajando a …», the current file, «N de M archivos · X de Y» (bytes), a `ttk.Progressbar` (indeterminate while the total is unknown), speed and time left, and «Cancelar». Figures come from `progreso_de()` and tolerate missing, null or zero fields.
+
+- **Cancel**: `cancelar_lote()` sets `cancelado`, shows «Cancelando…» at once, and calls `rcd.cancelar()` (`job/stop`, which does not raise if the job already ended). The panel ends «Cancelado: copiados X de N» with no «Reintentar». What was copied stays. Probe (27/10, rclone v1.75.2, `serve sftp` only): cancelling mid-file leaves no partial on the download side, and an upload over an existing file keeps the old version. That is verified on SFTP only; other backends (WebDAV, SMB, S3, a real OpenSSH) are a pending real-machine check (rows T1, T2).
+- **Result**: `resultado_de()`: «Copiados N · omitidos M» (ok; M is the collision count when the user chose «Omitir», passed in as `omitidos` by the batch and kept across «Reintentar»; with «Sobrescribir» there is no «omitidos» clause, and M is not derived from `checks`: measured with rclone v1.75.2, `checks` counts identical files when overwriting and also files that never collided when omitting) · «Cancelado …» · an error (aviso, with «Reintentar»). A write refused by the server reads «No tienes permiso para escribir en {destino}.». Any other error is `servidor.frase_error()`, or rclone's own text when it is not one of the known phrases.
+- **«Reintentar»** repeats the batch with the same collision decision (`reintentar_copia`). Already copied and identical files are skipped, so it carries on where it stopped.
+- **A failed progress poll** (`_sondear`: `job/status` + `core/stats`, each with `rcd.TIMEOUT_SONDEO` = 5 s instead of 60 s; any `ErrorRc`, and any `RcdCaido`, a timeout included). What it means depends on the process, not on the exception: while `Rcd.vivo` the copy may still be running, so `sin_respuesta()` keeps the batch active (buttons off, no «Reintentar», close still asks) and polls again; after `FALLOS_PARA_AVISAR` (3) consecutive failures the window's line says «Sin respuesta de rclone…» and it goes away when a poll answers. The batch ends only on `job/status` `finished`, on a dead process, or on the close flow below. Hence two concurrent copies are impossible. With the process dead the copy died with it: the line says «Se perdió la conexión con rclone.» with «Reconectar», the panel shows the same, no «Reintentar», and the batch does not resume by itself. A launch or count that fails with `RcdCaido` ends the same way.
+- **«job not found»** (`ErrorRc` whose message contains it, from `job/status`): rclone forgets a job about 60 s after it ends, so a poll that no longer finds it means the copy is over and nothing is left to wait for. `sin_respuesta()` ends the batch at once through `acabar()` with «No se sabe cómo acabó: revisa la carpeta.» (aviso, no «Reintentar»), clears the «Sin respuesta…» line if it was up, and re-reads the listing after an upload. Checked with the `rcd` alive (`tests/test_tk_servidor.py`, 13h4).
+- After an upload into the folder on screen, the listing is read again, also after a failure or a cancel (`acabar()`: anything may have been written).
+- **Closing with a batch running** (`cerrar_ventana()`): asks «Hay una transferencia en marcha. ¿Cancelarla y cerrar?» with «Cancelar y cerrar» / «Seguir». Yes: `cancelar` and wait up to `rcd.ESPERA_QUIT` (3 s) for `finished` in the background (`_cancelar_y_esperar`), then close and stop the `rcd` as always. Closing while the batch is still counting, or between `copiar` and the `jobid`, does not ask: the batch ends with the `rcd`.
+- Buttons are enabled from `estado["rcd"] is not None`, not from `Rcd.vivo`: a dead `rcd` leaves them on, and the first call fails into the error path (`RcdCaido`, above).
+
+**A window that dies abruptly** (see the belts above): the `rcd` is killed, and the file being copied may leave its temporary on the server. Nothing cleans it here (deleting is piece 3). The temporary's name is what rclone's SFTP backend writes before its final rename; the exact name is not confirmed in this tree and the pending row T6 records it. The user's guide says so.
+
 ## The button in the main window
 
 - **«Servidor…»** sits in the `pantallas` row between «Parejas…» (column 0) and «Ajustes…» (column 2), `Quiet.TButton` with the `nas` icon. `VentanaPrincipal.abrir_servidor()` calls `tk_servidor.open_dialog(self.root, self.config)` and reads nothing again on return, since the window changes neither config nor state. `ui.tk_servidor` is in `ui.tk.PRECARGA`.
@@ -98,15 +148,18 @@ These were found in review and left on purpose; none changes what the user sees 
 - `remote_picker.normalizar()` (inherited) turns `\` into `/` and strips the ends of a name: on Linux, a folder called `a\b` or with a trailing space navigates to the wrong path.
 - `_JOBS` keeps one handle per `arrancar()` (one per opened window). `_olvidar()` reads then deletes, so a race can drop a newer `rcd.json` (belt 3 only).
 - `Instantanea` treats an unreadable `rclone.conf` as a failed read; the window treats it as empty. `rclone.conf` is not in `Instantanea.huella`, so an edit shows on the next read only.
+- **Transfers** (found in the piece 2 review, left for the final review):
+  - A batch whose polls keep failing while the `rcd` lives stays active until the process dies, `job/status` answers, or the window is closed: «Cancelar» sends `job/stop`, but the panel stays at «Cancelando…» until a poll answers.
+  - Closing during the count or between `copiar` and its `jobid` does not ask «¿Cancelarla y cerrar?».
+  - The buttons test `rcd is not None`, not `Rcd.vivo`, so a dead `rcd` leaves them enabled until the first call fails.
 
 ## Dependencies to keep in step
 
 - `tests/test_precompilar.py` checks that every standard-library module the program imports is in `install/deploy.BIBLIOTECA` (the set precompiled for the device). `common/rcd.py` imports `http.client` and `urllib.error`, so both are there; a new stdlib import in these files goes there too.
 - `ui/tk_principal.py` `FILAS`/`BANDAS` are the layout the button sits in (`ui.md`, «The band below the list»).
 
-## Pieces 2 and 3 (not built)
+## Piece 3 (not built)
 
-- **Piece 2, transfers** (its own spec, plan and PR): download («Guardar en…») and upload (choose files), with progress and cancel. The reason for choosing a resident `rcd` is that it can run these as asynchronous jobs, so piece 2 is expected to use them. The `fs` rule above should hold for transfers too.
 - **Piece 3, manage** (its own spec, plan and PR): rename, move, delete, each through an `EditPlan` shown by `tk_pairs.confirmar_plan()`, as everything that deletes or rewrites data (`AGENTS.md`). Pair folders are the danger: a hand edit on the remote side of a bisync pair looks like a change or a delete on the next pass. In piece 1 the pair marks and «Estás dentro de la pareja» only inform; in piece 3 they are what protects those folders.
 
 ## Tests
@@ -117,7 +170,8 @@ No test starts rclone or touches the network: `rcd.lanzar()` and `rcd.peticion()
 - `tests/test_servidor.py` (no screen): entries, order and dates; the pair mark only on the same remote, and the «dentro de la pareja» notice; the root pair and nesting; the picker without `combine`/`alias`; stale responses dropped; error phrases and the after-failure lock; permissions: when they are asked (`ReadMetadata` false, backend outside the list, S3 with `ReadMetadata` true gives no), `mode` in the PR's format, malformed formats giving `None` and «—»; the pre-lock table (owner, group, other, root, unknown `mi_uid`).
 - `tests/test_tk_servidor.py` (windows; CI runs them on Linux under xvfb and on Windows): the window opens before reading, the indicator, what the list DISPLAYS (`tree.item(iid, "text")` with the name and the pair mark, `"values"`, `"image"`; never the data the window holds), «—» in the permissions column, double click only on a row, «Reconectar», the empty-folder text only after a listing, a 5 000-entry folder that opens and shows all of them, closing.
 - `tests/test_tk_medidas.py` (the size matrix, `ui.md`): «Servidor» is measured on every `PANTALLAS` entry in its tallest and widest realistic state: a fake `rcd` answers a 41-entry folder with long names, a pair's folder (mark), a folder locked by its permissions (padlock), a long remote name, and a root pair that puts «Estás dentro de la pareja…» in the indicator. It checks the window asks no more than `pantalla_util` and that nothing is clipped without a bar, and that the measured window really had the full list, the mark, the padlock and the notice. The sizing rule did not need to change: the `Treeview` keeps `FILAS_VISIBLES = 12` rows and the window sits in the `Visor` like every screen, so on a screen too small for it the `Visor` caps it and shows its own bar (at 1024x600 and 133 % it asks 559 px of 600 and needs none).
+- Transfers (piece 2): `tests/test_rcd.py` (`copiar` sends `sync/copy` and never `sync/sync`, with the filter, `createEmptySrcDirs`, `_async`, the group, `IgnoreExisting` only with «Omitir», and no call at all for an empty rule list; `cancelar` sends `job/stop` and swallows only `ErrorRc`; `progreso`/`estado`); `tests/test_transferencia.py` (rules and escaping, folders, the collision count, the pair blocks and warnings in both directions, `progreso_de`, `resultado_de`); `tests/test_tk_transferencia.py` (the panel, the three answers of the collision prompt with «Cancelar» as the default); `tests/test_tk_servidor.py` (the buttons, the multiple selection, the block and the warning in the window, the one prompt, cancel, the result and «Reintentar», closing during a batch, the listing read again after an upload into the folder on screen); `tests/test_tk_medidas.py` (the window with the panel visible).
 - `tests/test_principal.py`: when «Servidor…» can be pressed. `tests/test_instantanea.py`: the shared read's `remotes_servidor`.
 - `tests/test_reglas_claude.py`: this doc, its rule, and the `paths` of the rule.
 
-Real machine: `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md` (eight rows).
+Real machine: `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md` (eight rows for piece 1, six for piece 2; none run yet).
