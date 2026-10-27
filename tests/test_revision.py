@@ -567,4 +567,133 @@ with sandbox():
     finally:
         bisync.os.replace = real_replace
 
+# ---- Qué dijo rclone, en llano (#96) ----------------------------------------------------
+#
+# El `fallo` explica el error cuando el catálogo (`common/errores.py`) lo reconoce, y si
+# no, enseña la última línea de error tal cual. Un log de verdad del rclone fijado.
+from _logs_errores import DISCO_LLENO, PERMISO, RED_RECHAZADA  # noqa: E402
+
+from common import errores, frenos, vestibulo  # noqa: E402
+
+
+def con_log(pareja, texto):
+    """Apunta una pasada fallida de esa pareja con un log que dice `texto`."""
+    model.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = model.LOG_DIR / f"{pareja}_20261027_100000.log"
+    log.write_text(texto, encoding="utf-8")
+    results.apuntar(pareja, 1, log)
+    return log
+
+
+def preparada(nombres=("notas",)):
+    """Una configuración con sus carpetas y su baseline, para que solo falle la pasada."""
+    cfg = mkcfg(list(nombres))
+    for pair in cfg.pairs:
+        pair.local_abs.mkdir(parents=True, exist_ok=True)
+        listados(pair)
+    return cfg
+
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = preparada()
+    log = con_log("notas", PERMISO)
+    fallo = uno(revision.revisar(cfg), "fallo")
+    causa = errores.PERMISO
+    c("un fallo reconocido sigue siendo `fallo`, AVISO y con el mismo título",
+      (fallo.clave, fallo.gravedad, fallo.titulo),
+      ("fallo", revision.AVISO, f"{revision.nombre_visible('notas')}: la última pasada falló"))
+    c("  y su detalle empieza por el nombre y la explicación de la causa",
+      fallo.detalle.startswith(f"{causa.nombre}. {causa.explicacion}"), True)
+    c.contains("  con el riesgo", fallo.detalle, causa.riesgo)
+    c.contains("  y qué hacer a mano", fallo.detalle, causa.a_mano)
+    c("  y acaba como siempre",
+      fallo.detalle.endswith("Mientras no se arregle, eso no está sincronizado."), True)
+    c("  su dato es (log, causa)", fallo.dato, (log, causa))
+    c.contains("--doctor imprime el mismo detalle", "\n".join(revision.informe(cfg)),
+               fallo.detalle)
+
+    # La consola dice lo mismo para la misma línea.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sync.explain_failure(log)
+    c.contains("la consola de sync.py explica lo mismo", buf.getvalue(), causa.explicacion)
+    c.contains("  con el mismo paso a mano", buf.getvalue(), causa.a_mano)
+
+    diario("notas", [0, 1, 1], dia=6)
+    c.contains("la racha sigue ahí, tras la explicación", detalle_fallo(cfg),
+               f"{causa.a_mano} Falla desde el 07/09 · 1 de las últimas 3 bien.")
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = preparada()
+    con_log("notas", "2026/10/27 10:00:00 INFO  : algo\n"
+                     "2026/10/27 10:00:01 ERROR : x.md: Failed to copy: algo que no conocemos\n"
+                     "2026/10/27 10:00:02 NOTICE: Failed to copy: lo último que dijo\n"
+                     "2026/10/27 10:00:03 INFO  : estadísticas\n")
+    fallo = uno(revision.revisar(cfg), "fallo")
+    cuando = results.fallos(cfg)[0].cuando
+    c("un error sin reconocer lleva la última línea de error, tal cual y sin la fecha",
+      fallo.detalle.split(" Mientras")[0],
+      f"Acabó con código 1 el {cuando}. rclone dijo: «NOTICE: Failed to copy: lo último que dijo». "
+      "El log lo explica.")
+    c("  y su dato es (log, None)", fallo.dato[1], None)
+    c("  sin ninguna explicación del catálogo",
+      any(k.explicacion in fallo.detalle for _, k in errores.ENTRADAS), False)
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = preparada()
+    con_log("notas", "2026/10/27 10:00:00 INFO  : nada que decir\n")
+    cuando = results.fallos(cfg)[0].cuando
+    c("sin línea de error, el texto de siempre, letra por letra",
+      detalle_fallo(cfg),
+      f"Acabó con código 1 el {cuando}. El log lo explica. Mientras no se arregle, eso no está "
+      "sincronizado.")
+
+# Una sola lectura del log para el freno y la causa, recordada (la misma caché).
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = preparada()
+    log = con_log("notas", RED_RECHAZADA)
+    leidos, original = [], frenos.leer
+    frenos.leer = lambda ruta, **kw: leidos.append(ruta) or original(ruta, **kw)
+    try:
+        primero = uno(revision.revisar(cfg), "fallo")
+        segundo = uno(revision.revisar(cfg), "fallo")
+        c("el log se lee una vez para el freno y la causa", leidos, [log])
+        c("  y el segundo repaso da la misma causa", segundo.dato, primero.dato)
+        c("  que es la red", primero.dato[1], errores.RED)
+        revision.olvidar_frenos()
+        revision.revisar(cfg)
+        c("olvidar_frenos() también olvida la causa", leidos, [log, log])
+    finally:
+        frenos.leer = original
+
+# El disco lleno remite al contenedor solo cuando hay un hallazgo `espacio`.
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = preparada()
+    con_log("notas", DISCO_LLENO)
+    sin = uno(revision.revisar(cfg, fisica=None), "fallo")
+    c("disco lleno sin contenedor: no lo nombra",
+      (sin.dato[1], "contenedor" in sin.detalle), (errores.DISCO_LLENO, False))
+    fisica = tmpdir()
+    (fisica / vestibulo.CONTENEDOR).write_bytes(b"\0")
+    real_disperso, real_umbral = vestibulo.disperso, vestibulo.UMBRAL_LIBRE
+    vestibulo.disperso = lambda contenedor: True
+    vestibulo.UMBRAL_LIBRE = 1 << 62
+    try:
+        todos = revision.revisar(cfg, fisica=fisica)
+        c("con el aviso `espacio`, el disco lleno remite a él",
+          (uno(todos, "espacio") is not None,
+           "«El contenedor se queda sin sitio fuera»" in uno(todos, "fallo").detalle),
+          (True, True))
+        con_log("notas", PERMISO)
+        revision.olvidar_frenos()
+        c("  y otra causa no, aunque esté el aviso",
+          "contenedor" in uno(revision.revisar(cfg, fisica=fisica), "fallo").detalle, False)
+    finally:
+        vestibulo.disperso, vestibulo.UMBRAL_LIBRE = real_disperso, real_umbral
+
 sys.exit(c.report())

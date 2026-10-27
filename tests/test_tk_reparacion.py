@@ -1098,6 +1098,61 @@ c("cada lectura de la ventana principal se hizo sin fallos",
   [f for f in lecturas if f], [])
 
 
+# ---- Un `fallo` explicado: sus arreglos van debajo del texto (#96) ---------------------
+from _logs_errores import PERMISO, RED_RECHAZADA  # noqa: E402
+
+from common import errores  # noqa: E402
+from ui import repair  # noqa: E402
+
+
+def debajo_del_texto(dlg, boton, texto):
+    """Indica si el botón va en una fila por debajo de la etiqueta que empieza por `texto`."""
+    etiqueta = next(l for l in recorrer(dlg)
+                    if isinstance(l, ttk.Label) and str(l.cget("text")).startswith(texto))
+    return int(boton.master.grid_info()["row"]) > int(etiqueta.grid_info()["row"])
+
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg, p = con_freno(RED_RECHAZADA)
+    visto = {}
+    desde_reparacion.clear()
+    confirmaciones.clear()
+
+    def mirar_y_reintentar(dlg):
+        """Apunta los botones y dónde van, y pulsa «Reintentar la pasada»."""
+        b = botones(dlg)
+        visto["botones"] = sorted(b)
+        visto["textos"] = " | ".join(textos(dlg))
+        visto["debajo"] = [debajo_del_texto(dlg, b[n], errores.RED.nombre)
+                           for n in (repair.ETIQUETA_REINTENTAR, "Ver el log")]
+        b[repair.ETIQUETA_REINTENTAR].invoke()
+
+    reparacion(cfg, mirar_y_reintentar)
+    c("un fallo sin red trae «Reintentar la pasada» y «Ver el log»",
+      [b for b in visto["botones"] if b in (repair.ETIQUETA_REINTENTAR, "Ver el log")],
+      ["Reintentar la pasada", "Ver el log"])
+    c("  los dos debajo del texto, y el log no está además junto al título",
+      (visto["debajo"], visto["botones"].count("Ver el log")), ([True, True], 1))
+    c.contains("  la fila dice qué significa", visto["textos"], errores.RED.explicacion)
+    c("  reintentar lanza la pasada normal, sin preguntar",
+      (desde_reparacion, confirmaciones), ([(f"Reintentar «{p.name}»", [p.name])], []))
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg, p = con_freno(PERMISO)
+    visto = {}
+
+    def mirar(dlg):
+        """Apunta los botones y si el del log va junto al título."""
+        b = botones(dlg)
+        visto["botones"] = sorted(b)
+        visto["debajo"] = debajo_del_texto(dlg, b["Ver el log"], errores.PERMISO.nombre)
+
+    reparacion(cfg, mirar)
+    c("un fallo sin arreglos queda como antes: solo «Ver el log», junto al título",
+      (repair.ETIQUETA_REINTENTAR in visto["botones"], visto["debajo"]), (False, False))
+
 # la ventana de salida sin bloquear, con un proceso de verdad
 real_deiconify = tk.Toplevel.deiconify
 tk.Toplevel.deiconify = lambda self: None               # nada se enseña en un test

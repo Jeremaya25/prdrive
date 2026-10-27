@@ -392,8 +392,8 @@ with sandbox():
         # Un log que no se puede leer no se recuerda.
         antes = len(revision._VEREDICTOS)
         c("un log que ya no está no es un freno",
-          revision._freno(results.Fallo("notas", "", 1, model.LOG_DIR / "no_esta.log"),
-                          P["notas"]), None)
+          revision._veredicto(results.Fallo("notas", "", 1, model.LOG_DIR / "no_esta.log"),
+                              P["notas"]).freno, None)
         c("  y no deja un veredicto recordado", len(revision._VEREDICTOS), antes)
 
         # Lo que se recuerda tiene tope: el más antiguo es el que se olvida.
@@ -402,12 +402,12 @@ with sandbox():
         for i in range(tope + 5):
             logs.append(model.LOG_DIR / f"notas_tope_{i:03d}.log")
             logs[-1].write_text(BISYNC_BORRADOS + f"# {i}\n", encoding="utf-8")
-            revision._freno_de(logs[-1], P["notas"])
+            revision._veredicto_de(logs[-1], P["notas"])
         c("los veredictos recordados no pasan del tope", len(revision._VEREDICTOS), tope)
         lecturas.clear()
-        revision._freno_de(logs[-1], P["notas"])
+        revision._veredicto_de(logs[-1], P["notas"])
         c("  el último sigue recordado", lecturas, [])
-        revision._freno_de(logs[0], P["notas"])
+        revision._veredicto_de(logs[0], P["notas"])
         c("  y el primero se olvidó", lecturas, [logs[0]])
 
         revision.olvidar_frenos()

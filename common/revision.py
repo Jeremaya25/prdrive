@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from . import bisync, conflicts, frenos, historial, model, results, store, vestibulo
+from . import bisync, conflicts, errores, frenos, historial, model, results, store, vestibulo
 from .model import Config, Pair
 
 GRAVE = "grave"
@@ -54,7 +54,8 @@ class Hallazgo:
         detalle: Explicación completa.
         pareja: La pareja afectada, o `None` si es del dispositivo.
         gravedad: `GRAVE`, `AVISO` o `NOTA`.
-        dato: Lo que necesita la reparación.
+        dato: Lo que necesita la reparación. En un `fallo`, `(log, causa)`: el log
+            (o `None`) y la `errores.Causa` reconocida (o `None`).
     """
     clave: str
     titulo: str
@@ -279,8 +280,27 @@ def _frase_racha(racha: historial.Racha) -> str:
     return f"{desde}{_dia(racha.desde)} · {cuenta}."
 
 
-_VEREDICTOS: dict[tuple[Path, int, int, str], frenos.Freno | None] = {}
-"""Lo que `_freno_de()` ya leyó: el freno de un log (o `None`), por log, tamaño, mtime y modo.
+@dataclass(frozen=True)
+class Veredicto:
+    """Lo que dice el log de una pasada fallida, leído una sola vez.
+
+    Args:
+        freno: El freno de borrados que la paró, o `None`.
+        causa: El error del catálogo (`common/errores.py`) que la paró, o `None`.
+            Solo se busca si no fue un freno.
+        linea: La última línea de error del log, para enseñarla tal cual cuando
+            no hay causa; `None` si no tiene ninguna.
+    """
+    freno: frenos.Freno | None = None
+    causa: errores.Causa | None = None
+    linea: str | None = None
+
+
+_NADA = Veredicto()
+"""El veredicto de una pasada sin log, o con un log que no se deja leer."""
+
+_VEREDICTOS: dict[tuple[Path, int, int, str], Veredicto] = {}
+"""Lo que `_veredicto_de()` ya leyó: el veredicto de un log, por log, tamaño, mtime y modo.
 
 Solo vive en el proceso. Un log de `logs/` se escribe una vez, así que mientras no
 cambie su tamaño ni su mtime el veredicto es el mismo y no hace falta leerlo otra vez
@@ -291,18 +311,22 @@ _TOPE_VEREDICTOS = 64
 """Veredictos que se recuerdan a la vez: una ventana abierta días ve logs nuevos sin parar."""
 _CERROJO_VEREDICTOS = threading.Lock()
 """Protege `_VEREDICTOS`: `revisar()` corre en un hilo de la ventana y en el de Tk."""
-_SIN_VEREDICTO = object()
-"""Lo que `_VEREDICTOS` no tiene, para distinguirlo de un veredicto `None` (no es un freno)."""
 
 
 def olvidar_frenos() -> None:
-    """Olvida los veredictos de `_freno_de()`, de modo que el siguiente repaso lea los logs."""
+    """Olvida los veredictos de `_veredicto_de()`, de modo que el siguiente repaso lea los logs."""
     with _CERROJO_VEREDICTOS:
         _VEREDICTOS.clear()
 
 
-def _freno_de(log: Path, pair: Pair) -> frenos.Freno | None:
-    """Devuelve el freno que paró la pasada de ese log, leyéndolo solo si ha cambiado.
+def _veredicto_de(log: Path, pair: Pair) -> Veredicto:
+    """Devuelve qué paró la pasada de ese log, leyéndolo solo si ha cambiado.
+
+    Una sola lectura del final del log (`frenos.leer()`) da el freno y, si no lo
+    hubo, la causa del catálogo y la última línea de error. Lo que el final dice
+    entero se reconoce igual; cuántos ficheros había borrado ya un espejo sale de
+    contar líneas de todo el log y queda en `None` si el log pesa más de lo leído
+    (como en `frenos.detectar_en()`).
 
     Recuerda el veredicto por `(log, tamaño, mtime, modo de la pareja)`. El `stat()`
     va antes de la lectura: si el log cambia entre las dos, queda recordado bajo la
@@ -314,30 +338,38 @@ def _freno_de(log: Path, pair: Pair) -> frenos.Freno | None:
     st = log.stat()
     clave = (log, st.st_size, st.st_mtime_ns, pair.mode.name)
     with _CERROJO_VEREDICTOS:
-        visto = _VEREDICTOS.get(clave, _SIN_VEREDICTO)
-    if visto is not _SIN_VEREDICTO:
+        visto = _VEREDICTOS.get(clave)
+    if visto is not None:
         return visto
-    freno = frenos.detectar_en(log, pair)
+    texto = frenos.leer(log)
+    freno = frenos.detectar(texto, pair)
+    if freno is not None:
+        if freno.tipo == frenos.ESPEJO and st.st_size > frenos.TOPE_LECTURA:
+            freno = replace(freno, borrados=None)
+        veredicto = Veredicto(freno=freno)
+    else:
+        veredicto = Veredicto(causa=errores.clasificar(texto),
+                              linea=errores.ultima_linea_de_error(texto))
     with _CERROJO_VEREDICTOS:
         if clave not in _VEREDICTOS and len(_VEREDICTOS) >= _TOPE_VEREDICTOS:
             del _VEREDICTOS[next(iter(_VEREDICTOS))]    # el más antiguo
-        _VEREDICTOS[clave] = freno
-    return freno
+        _VEREDICTOS[clave] = veredicto
+    return veredicto
 
 
-def _freno(fallo: results.Fallo, pair: Pair | None) -> frenos.Freno | None:
-    """Devuelve el freno de borrados que paró esa pasada, o `None` si falló por otra cosa.
+def _veredicto(fallo: results.Fallo, pair: Pair | None) -> Veredicto:
+    """Devuelve qué paró esa pasada: un freno de borrados, un error conocido o nada.
 
-    Lo dice el log de la pasada (`frenos.detectar()`, el mismo reconocimiento que
-    usa la consola de `sync.py`). Sin log, o sin poder leerlo, no hay nada que
-    reconocer y la avería sigue siendo un fallo cualquiera.
+    Lo dice el log de la pasada (los mismos reconocimientos que usa la consola de
+    `sync.py`). Sin log, o sin poder leerlo, no hay nada que reconocer y la avería
+    sigue siendo un fallo cualquiera.
     """
     if fallo.log is None or pair is None:
-        return None
+        return _NADA
     try:
-        return _freno_de(fallo.log, pair)
+        return _veredicto_de(fallo.log, pair)
     except OSError:
-        return None
+        return _NADA
 
 
 def _frase_freno(pair: Pair, freno: frenos.Freno) -> tuple[str, str]:
@@ -448,20 +480,64 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
                     pair.name, AVISO, (log, freno))
 
 
-def _fallos(config: Config) -> list[Hallazgo]:
+_REMITE_ESPACIO = ("Este dispositivo vive en un contenedor dinámico al que se le acaba el "
+                   "sitio fuera: mira el aviso «El contenedor se queda sin sitio fuera».")
+"""Lo que añade un disco lleno cuando además hay un hallazgo `espacio`."""
+
+
+def _detalle_fallo(f: results.Fallo, veredicto: Veredicto,
+                   racha: historial.Racha | None, espacio: bool) -> str:
+    """Devuelve el texto de un `fallo`: qué dijo rclone, en llano si se reconoce.
+
+    Con causa: su nombre y su explicación, el riesgo y qué hacer a mano. Sin causa
+    no se explica nada que el catálogo no tenga: se dice cómo acabó la pasada y, si
+    el log tiene una línea de error, esa línea tal cual. Detrás, en los dos casos,
+    desde cuándo falla y que mientras tanto no está sincronizado.
+
+    Args:
+        f: El fallo apuntado en `last_run.json`.
+        veredicto: Lo que dice su log.
+        racha: Desde cuándo falla, si el diario lo sabe.
+        espacio: Si `revisar()` ve también el hallazgo `espacio` (un contenedor
+            dinámico sin sitio fuera): un disco lleno remite a él.
+    """
+    causa = veredicto.causa
+    if causa is not None:
+        partes = [f"{causa.nombre}. {causa.explicacion}", causa.riesgo]
+        if causa.a_mano:
+            partes.append(causa.a_mano)
+        if causa is errores.DISCO_LLENO and espacio:
+            partes.append(_REMITE_ESPACIO)
+        texto = " ".join(partes)
+    else:
+        texto = f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "")
+        if veredicto.linea is not None:
+            texto += f". rclone dijo: «{veredicto.linea}»"
+        texto += ". El log lo explica." if f.log else ". No queda log de aquella pasada."
+    if racha is not None:
+        texto += f" {_frase_racha(racha)}"
+    return texto + " Mientras no se arregle, eso no está sincronizado."
+
+
+def _fallos(config: Config, espacio: bool = False) -> list[Hallazgo]:
     """Devuelve las averías de las parejas cuya última pasada falló.
 
     Las que paró un freno de borrados (`frenos.detectar()`) son un hallazgo
-    propio, con cifras y sin ser además un fallo. El resto no tiene reparación:
-    son un informe, y lo que se ofrece es el log que lo explica. Del diario de
-    pasadas sale desde cuándo falla, que distingue un tropiezo de una avería; sin
-    diario (un dispositivo recién actualizado o que no se deja leer) la avería se
-    cuenta igual, sin esa frase.
+    propio, con cifras y sin ser además un fallo. El resto es un `fallo`, que
+    explica en llano lo que dijo rclone cuando el catálogo de `common/errores.py`
+    lo reconoce (y lo dice tal cual cuando no). Del diario de pasadas sale desde
+    cuándo falla, que distingue un tropiezo de una avería; sin diario (un
+    dispositivo recién actualizado o que no se deja leer) la avería se cuenta
+    igual, sin esa frase.
 
     El llavero no está en `Config.names`, pero si un freno lo para (tras la repetición
     que ya hace `sync.repetir_sin_freno()`) entra aquí, con su nombre y sin que se
     ofrezca forzarlo (#115). Un fallo suyo que no es un freno (sin red) sigue sin
     hallazgo: ya lo dice la línea del llavero y se reintenta solo.
+
+    Args:
+        config: La configuración del dispositivo.
+        espacio: Si hay también un hallazgo `espacio` (ver `_detalle_fallo()`).
     """
     try:
         fallos = results.fallos(config)
@@ -477,19 +553,16 @@ def _fallos(config: Config) -> list[Hallazgo]:
     hallazgos = []
     for f in fallos:
         racha = rachas.get(f.pareja)
-        freno = _freno(f, parejas.get(f.pareja))
-        if freno is None and f.pareja == model.LLAVERO:
+        veredicto = _veredicto(f, parejas.get(f.pareja))
+        if veredicto.freno is None and f.pareja == model.LLAVERO:
             continue
-        if freno is not None:
-            hallazgos.append(_hallazgo_freno(parejas[f.pareja], freno, f.log, racha))
+        if veredicto.freno is not None:
+            hallazgos.append(_hallazgo_freno(parejas[f.pareja], veredicto.freno, f.log, racha))
             continue
         hallazgos.append(Hallazgo(
             "fallo", f"{nombre_visible(f.pareja)}: la última pasada falló",
-            f"Acabó con código {f.codigo}" + (f" el {f.cuando}" if f.cuando else "") +
-            (". El log lo explica." if f.log else ". No queda log de aquella pasada.") +
-            (f" {_frase_racha(racha)}" if racha is not None else "") +
-            " Mientras no se arregle, eso no está sincronizado.",
-            f.pareja, AVISO, (f.log,)))
+            _detalle_fallo(f, veredicto, racha, espacio),
+            f.pareja, AVISO, (f.log, veredicto.causa)))
     return hallazgos
 
 
@@ -608,8 +681,9 @@ def revisar(config: Config, *,
             if hallazgo is not None:
                 hallazgos.append(hallazgo)
     hallazgos += _conflictos(config)
-    hallazgos += _fallos(config)
-    for hallazgo in (_listados_sueltos(), _espacio(fisica), _catalogo_duplicado()):
+    espacio = _espacio(fisica)
+    hallazgos += _fallos(config, espacio is not None)
+    for hallazgo in (_listados_sueltos(), espacio, _catalogo_duplicado()):
         if hallazgo is not None:
             hallazgos.append(hallazgo)
 

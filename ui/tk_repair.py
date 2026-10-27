@@ -54,19 +54,21 @@ TODO_BIEN = ("No hay nada que revisar: las parejas tienen su baseline, no hay "
 
 BOTONES = {
     "prefijo": "Apartar el baseline…",
-    "lock": "Borrar los bloqueos…",
+    "lock": repair.ETIQUETA_LOCK,
     "resync": repair.ETIQUETA_RESYNC,
-    "fallo": "Ver el log",
+    "fallo": repair.ETIQUETA_LOG,
 }
 """Qué botón lleva cada avería, junto a su título.
 
 Lo que no está aquí no tiene botón, y eso también es una respuesta: la carpeta
 local que falta no se arregla creándola. El freno de borrados (`freno`) tiene
 varios y van aparte, debajo de su texto (`FORZAR`, `repair.ETIQUETA_SIMULAR`, `VER_LOG`).
+Un `fallo` con arreglos (`repair.arreglos_fallo()`) también los lleva debajo, y
+entonces su «Ver el log» va con ellos y no junto al título.
 """
 FORZAR = repair.ETIQUETA_FORZAR
 """El botón que salta el freno de borrados de UNA pasada, tras confirmarlo."""
-VER_LOG = "Ver el log"
+VER_LOG = repair.ETIQUETA_LOG
 """El botón que abre el log de la pasada que paró el freno."""
 
 
@@ -238,16 +240,44 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
             messagebox.showerror(TITLE, f"No se ha podido abrir:\n\n{ruta}\n\n{e}",
                                  parent=dlg)
 
+    def reintentar(hallazgo) -> None:
+        """Lanza otra vez la pasada normal de la pareja, sin preguntar.
+
+        Es la misma pasada que el servicio hace solo (`repair.args_reintentar()`:
+        no salta ningún freno ni rehace ninguna referencia), como «Sincronizar
+        ahora». Antes se vuelve a mirar: si el fallo ya no está, no se lanza nada.
+        """
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None:
+            return
+        panel.devolver(True)
+        panel.cerrar(lambda: lanzar(f"Reintentar «{hallazgo.pareja}»",
+                                    repair.args_reintentar(hallazgo)))
+
     ACCIONES = {"prefijo": aplicar, "lock": aplicar,
                 "resync": resincronizar, "fallo": ver_log}
+    ARREGLOS = {"resync": resincronizar, "lock": aplicar,
+                "reintentar": reintentar, "log": ver_log}
+
+    def arreglos(hallazgo) -> list[tuple[str, object]]:
+        """Devuelve los botones de un `fallo` con arreglos, o `[]` si solo tiene el log."""
+        if hallazgo.clave != "fallo":
+            return []
+        botones = repair.arreglos_fallo(hallazgo, estado["hallazgos"])
+        if len(botones) < 2:
+            return []
+        return [(texto, lambda _h, a=ARREGLOS[accion], o=objetivo: a(o))
+                for texto, accion, objetivo in botones]
 
     def botones_debajo(hallazgo) -> list[tuple[str, object]]:
         """Devuelve los botones que van bajo el texto de la avería, en su orden.
 
-        Solo el freno de borrados los lleva: son tres y juntos no caben en la
-        fila del título sin ensanchar la pantalla. Qué se ofrece lo decide
-        `repair` (el llavero, por ejemplo, no se fuerza).
+        Los lleva el freno de borrados (son tres y juntos no caben en la fila del
+        título sin ensanchar la pantalla) y el `fallo` que tiene arreglos. Qué se
+        ofrece lo decide `repair` (el llavero, por ejemplo, no se fuerza).
         """
+        if hallazgo.clave == "fallo":
+            return arreglos(hallazgo)
         if hallazgo.clave != "freno":
             return []
         return [(texto, accion) for texto, accion, vale in (
@@ -274,8 +304,9 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
             row=0, column=1, sticky="w")
         theme.chip(cabeza, rotulo, chip).grid(row=0, column=2, sticky="e", padx=(theme.E3, 0))
 
+        debajo = botones_debajo(hallazgo)
         texto = BOTONES.get(hallazgo.clave)
-        if texto is not None:
+        if texto is not None and not (hallazgo.clave == "fallo" and debajo):
             boton = ttk.Button(cabeza, text=texto, style="CardQuiet.TButton",
                                command=lambda h=hallazgo: ACCIONES[h.clave](h))
             boton.grid(row=0, column=3, sticky="e", padx=(theme.E3, 0))
@@ -285,7 +316,6 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
             row=linea, column=0, sticky="w", pady=(theme.E1, theme.E2))
         linea += 1
 
-        debajo = botones_debajo(hallazgo)
         if debajo:
             barra = ttk.Frame(padre, style="Plano.Card.TFrame")
             barra.grid(row=linea, column=0, sticky="w", pady=(0, theme.E2))

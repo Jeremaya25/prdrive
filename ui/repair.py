@@ -14,6 +14,9 @@ con esto?». Hay tres respuestas posibles:
   porque eso es una sincronización de verdad, con su registro y su log; algunas
   se confirman antes (`aviso_resync()`, `aviso_forzar()`);
 - nada, que es el caso de la carpeta local que no está (ver `revision._local`).
+
+Un `fallo` no tiene plan propio: sus arreglos (`arreglos_fallo()`) son los botones
+que ya existen para otras averías de la misma pareja, más una pasada normal.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from common import bisync, frenos, model, orden, revision, store
+from common import bisync, errores, frenos, model, orden, revision, store
 from common.model import Config, Pair
 from common.revision import Hallazgo, aviso_carpeta_programa
 
@@ -37,6 +40,15 @@ ETIQUETA_FORZAR = "Forzar sincronización…"
 
 ETIQUETA_RESYNC = "Resincronizar…"
 """El botón que rehace la referencia de una pareja, en «Reparación» y en la ficha de «Parejas»."""
+
+ETIQUETA_LOCK = "Borrar los bloqueos…"
+"""El botón que borra los `.lck` que quedaron de una pareja, tras confirmarlo."""
+
+ETIQUETA_REINTENTAR = "Reintentar la pasada"
+"""El botón que lanza otra vez la pasada normal de una pareja que falló."""
+
+ETIQUETA_LOG = "Ver el log"
+"""El botón que abre el log de la pasada que falló."""
 
 
 class ReparacionImposible(Exception):
@@ -285,6 +297,55 @@ def args_resync(hallazgo: Hallazgo) -> list[str]:
     stdin, que detrás de una ventana no existe, y la pareja se saltaría.
     """
     return [str(hallazgo.pareja), "--resync", "--yes"]
+
+
+def args_reintentar(hallazgo: Hallazgo) -> list[str]:
+    """Devuelve los argumentos de `sync.py` para repetir la pasada normal de esa pareja.
+
+    Es la misma pasada que hace el servicio solo: sin `--yes`, `--force` ni
+    `--resync`, así que no se salta ningún freno, no rehace ninguna referencia y
+    una pareja que pida un resync vuelve «Saltada». Por eso no se confirma.
+    """
+    return [str(hallazgo.pareja)]
+
+
+_ACCIONES_DE_ARREGLO = {errores.RESYNC: ("resync", ETIQUETA_RESYNC),
+                        errores.LOCK: ("lock", ETIQUETA_LOCK)}
+"""Para cada arreglo que es el botón de otra avería: la clave de esa avería y su botón."""
+
+
+def arreglos_fallo(hallazgo: Hallazgo,
+                   hallazgos: list[Hallazgo]) -> list[tuple[str, str, Hallazgo]]:
+    """Devuelve los botones de un `fallo`, en su orden: los arreglos de su causa y el log.
+
+    Solo se ofrecen botones que ya existen. `resync` y `lock` son los de la avería
+    `resync` o `lock` de LA MISMA pareja en la lista actual: si esa avería no está,
+    no hay botón (el texto ya dice qué hacer). Así el resync sigue pasando por
+    `aviso_resync()` y el borrado de bloqueos por `plan_locks()`, los dos con su
+    confirmación; aquí no se piensa ningún plan. `reintentar` es una pasada normal
+    (`args_reintentar()`). Nunca hay un `--force`.
+
+    Args:
+        hallazgo: El `fallo`; su `dato` es `(log, causa)`.
+        hallazgos: Todo lo que `revisar()` ve ahora, donde se buscan los hermanos.
+
+    Returns:
+        `(etiqueta, accion, objetivo)`, con `accion` en `"resync"`, `"lock"`,
+        `"reintentar"` o `"log"` y `objetivo` el hallazgo sobre el que actúa.
+        «Ver el log» va siempre el último. Sin causa, solo el log.
+    """
+    causa = hallazgo.dato[1] if len(hallazgo.dato) > 1 else None
+    botones: list[tuple[str, str, Hallazgo]] = []
+    for arreglo in (causa.arreglos if causa is not None else ()):
+        if arreglo == errores.REINTENTAR:
+            botones.append((ETIQUETA_REINTENTAR, "reintentar", hallazgo))
+            continue
+        clave, etiqueta = _ACCIONES_DE_ARREGLO[arreglo]
+        hermano = next((h for h in hallazgos
+                        if h.clave == clave and h.pareja == hallazgo.pareja), None)
+        if hermano is not None:
+            botones.append((etiqueta, clave, hermano))
+    return [*botones, (ETIQUETA_LOG, "log", hallazgo)]
 
 
 def args_simular(nombres: list[str]) -> list[str]:
@@ -545,8 +606,10 @@ def aviso_forzar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
 def hallazgos_reparables(hallazgos: list[Hallazgo]) -> list[Hallazgo]:
     """Devuelve los hallazgos que tienen algún botón.
 
-    Es un plan o una pasada que lanzar.
+    Es un plan o una pasada que lanzar; un `fallo` cuenta si tiene algún arreglo
+    además de «Ver el log».
     """
     return [h for h in hallazgos
-            if tiene_plan(h) or h.clave in ("resync", "conflicto") or puede_forzar(h)]
+            if tiene_plan(h) or h.clave in ("resync", "conflicto") or puede_forzar(h)
+            or (h.clave == "fallo" and len(arreglos_fallo(h, hallazgos)) > 1)]
 

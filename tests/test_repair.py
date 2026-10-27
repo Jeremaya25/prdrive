@@ -350,4 +350,94 @@ c.contains("el plan del resync dice que no salta ningún freno", textos, "no sal
 c.contains("  y nombra la acción que sí salta el de borrados", textos,
            f"«{repair.ETIQUETA_FORZAR}», que salta el freno de borrados")
 
+# ---- Los arreglos de un `fallo` (#96) ---------------------------------------------------
+#
+# Solo los botones que ya existen: el resync y el borrado de bloqueos de la avería
+# hermana de LA MISMA pareja, y una pasada normal. «Ver el log», siempre el último.
+from common import errores  # noqa: E402
+from common.revision import Hallazgo  # noqa: E402
+
+
+def fallo(causa, pareja="notas", log=Path("x.log")):
+    """Un `fallo` de esa pareja con esa causa."""
+    return Hallazgo("fallo", f"{pareja}: la última pasada falló", "…", pareja,
+                    revision.AVISO, (log, causa))
+
+
+def acciones(h, todos=()):
+    """Devuelve las acciones de los arreglos de ese fallo, en su orden."""
+    return [accion for _, accion, _ in repair.arreglos_fallo(h, [h, *todos])]
+
+
+RESYNC_NOTAS = Hallazgo("resync", "notas: pide resync", "…", "notas", revision.AVISO, ())
+RESYNC_OTRA = Hallazgo("resync", "fotos: pide resync", "…", "fotos", revision.AVISO, ())
+LOCK_NOTAS = Hallazgo("lock", "notas: bloqueos", "…", "notas", revision.AVISO, ())
+LOCK_OTRA = Hallazgo("lock", "fotos: bloqueos", "…", "fotos", revision.AVISO, ())
+
+c("sin causa, solo el log", acciones(fallo(None)), ["log"])
+c("un `fallo` de antes (dato sin causa), solo el log",
+  acciones(Hallazgo("fallo", "t", "d", "notas", revision.AVISO, (None,))), ["log"])
+for causa in (errores.SIN_REFERENCIA, errores.FILTROS, errores.CRITICO):
+    c(f"`{causa.clave}`: el resync de la misma pareja, si está",
+      acciones(fallo(causa), [RESYNC_OTRA, RESYNC_NOTAS]), ["resync", "log"])
+    c(f"`{causa.clave}`: sin el hallazgo `resync` de esa pareja, ningún botón de resync",
+      acciones(fallo(causa), [RESYNC_OTRA]), ["log"])
+c("`bloqueo`: el borrado de bloqueos de la misma pareja, si está",
+  acciones(fallo(errores.BLOQUEO), [LOCK_OTRA, LOCK_NOTAS]), ["lock", "log"])
+c("`bloqueo`: el de otra pareja no vale",
+  acciones(fallo(errores.BLOQUEO), [LOCK_OTRA]), ["log"])
+c("el objetivo del botón es la avería hermana, que tiene su propio plan",
+  [o for _, a, o in repair.arreglos_fallo(fallo(errores.BLOQUEO), [LOCK_NOTAS])
+   if a == "lock"], [LOCK_NOTAS])
+causas = [causa for _, causa in errores.ENTRADAS]
+c("«reintentar» solo para la red, el límite de la API y el fichero en uso",
+  sorted(k.clave for k in causas if "reintentar" in acciones(fallo(k))),
+  ["en_uso", "limite_api", "red"])
+todos = [RESYNC_NOTAS, LOCK_NOTAS]
+c("«Ver el log» va siempre el último, y apunta al propio fallo",
+  {(repair.arreglos_fallo(fallo(k), todos)[-1][1:]) == ("log", fallo(k)) for k in causas},
+  {True})
+c("  con su etiqueta", repair.arreglos_fallo(fallo(None), [])[-1][0], repair.ETIQUETA_LOG)
+c("las etiquetas son las de los botones que ya existen",
+  {e for k in causas for e, _, _ in repair.arreglos_fallo(fallo(k), todos)},
+  {repair.ETIQUETA_RESYNC, repair.ETIQUETA_LOCK, repair.ETIQUETA_REINTENTAR,
+   repair.ETIQUETA_LOG})
+c("ningún arreglo de un `fallo` hace un plan propio",
+  (repair.tiene_plan(fallo(errores.BLOQUEO)),
+   {a for k in causas for _, a, _ in repair.arreglos_fallo(fallo(k), todos)}
+   <= {"resync", "lock", "reintentar", "log"}), (False, True))
+c("args_reintentar() es la pasada normal: solo el nombre",
+  repair.args_reintentar(fallo(errores.RED)), ["notas"])
+c("  sin --force, --resync ni --yes",
+  {"--force", "--resync", "--yes", "-y"} & set(repair.args_reintentar(fallo(errores.RED))),
+  set())
+c("un `fallo` con arreglos cuenta como reparable",
+  [h.clave for h in repair.hallazgos_reparables([fallo(errores.RED)])], ["fallo"])
+c("  y uno sin ellos, no",
+  repair.hallazgos_reparables([fallo(None), fallo(errores.PERMISO)]), [])
+
+# De verdad: un log de bisync con el lock de otra pasada y el `.lck` en el workdir.
+from _logs_errores import BLOQUEO  # noqa: E402
+
+with sandbox():
+    revision.olvidar_frenos()
+    cfg = mkcfg(["notas"])
+    pair = cfg.pairs[0]
+    pair.local_abs.mkdir(parents=True, exist_ok=True)
+    listados(pair)
+    (pair.workdir / f"{bisync.expected_prefix(pair)}.lck").write_text("{}", encoding="utf-8")
+    model.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = model.LOG_DIR / "notas_20261027_100221.log"
+    log.write_text(BLOQUEO, encoding="utf-8")
+    from common import results
+    results.apuntar("notas", 1, log)
+    todos = revision.revisar(cfg)
+    f = hallazgo(todos, "fallo")
+    c("el diagnóstico reconoce el lock en el log", f.dato[1], errores.BLOQUEO)
+    botones = repair.arreglos_fallo(f, todos)
+    c("  y su arreglo es «Borrar los bloqueos…» de su `lock`, y el log",
+      [(e, a, o.clave) for e, a, o in botones],
+      [(repair.ETIQUETA_LOCK, "lock", "lock"), (repair.ETIQUETA_LOG, "log", "fallo")])
+    c("  cuyo plan es el de siempre, que se confirma", repair.tiene_plan(botones[0][2]), True)
+
 sys.exit(c.report())
