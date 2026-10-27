@@ -27,7 +27,18 @@ dependencias, y **sin probar en un Windows real** (ver
   extracción, y el handle tiene que estar cerrado para entonces.
 - **`WM_POWERBROADCAST`** con `PBT_APMRESUMEAUTOMATIC` (vuelta de la
   suspensión) pide `despertar`: la batería, la red y los remotos sin conexión
-  se miran enseguida (sección 6 del diseño).
+  se miran enseguida (sección 6 del diseño). Con `PBT_APMSUSPEND` (el equipo se
+  va a dormir) pide el evento `suspension` y contesta enseguida: Windows da
+  unos dos segundos y el agente no los alarga.
+- **La sesión** (#178), para que el agente bloquee solo las raíces que lo
+  tienen puesto. La ventana se registra con `WTSRegisterSessionNotification`
+  al crearla (al iniciar sesión el servicio de sesiones puede no estar listo:
+  se reintenta con un temporizador, `REINTENTOS_SESION` veces) y se da de baja
+  en `WM_DESTROY`; `oye_sesion` dice si lo ha conseguido. `WM_WTSSESSION_CHANGE`
+  con `WTS_SESSION_LOCK` o `WTS_SESSION_UNLOCK` pide los eventos `bloqueo` y
+  `desbloqueo`. `WM_QUERYENDSESSION` no veta ni retrasa nada (lo de Windows,
+  TRUE), y `WM_ENDSESSION` llama a `fin_de_sesion()`, que solo lanza lo que el
+  agente tenía preparado: tras contestar, el proceso puede morir.
 - **El menú** es `TrackPopupMenu` con `TPM_RETURNCMD`: devuelve el id elegido
   en vez de mandar `WM_COMMAND`. Antes, `SetForegroundWindow` a la ventana
   propia y después un `WM_NULL`: sin eso el menú no se cierra al pinchar fuera
@@ -96,7 +107,11 @@ WM_CLOSE = 0x0010
 WM_CONTEXTMENU = 0x007B
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
+WM_QUERYENDSESSION = 0x0011     # ¿se puede cerrar la sesión? (apagar también)
+WM_ENDSESSION = 0x0016          # se cierra: `wParam` distinto de cero
+WM_TIMER = 0x0113
 WM_POWERBROADCAST = 0x0218
+WM_WTSSESSION_CHANGE = 0x02B1   # la sesión cambia; qué cambio, en `wParam`
 WM_DEVICECHANGE = 0x0219
 WM_HOTKEY = 0x0312              # un atajo de `RegisterHotKey`, con su id en `wParam`
 WM_APP = 0x8000
@@ -107,8 +122,19 @@ WM_ATAJOS = WM_APP + 4          # hay atajos de teclado nuevos que poner
 PRIMER_ATAJO = 1
 """El id del primer atajo de `RegisterHotKey`: los de un programa van de 0 a 0xBFFF."""
 
+PBT_APMSUSPEND = 0x0004         # el equipo se va a suspender
 PBT_APMRESUMESUSPEND = 0x0007   # vuelta de la suspensión, con alguien delante
 PBT_APMRESUMEAUTOMATIC = 0x0012  # vuelta de la suspensión, siempre
+WTS_SESSION_LOCK = 0x7          # wtsapi32.h
+WTS_SESSION_UNLOCK = 0x8
+NOTIFY_FOR_THIS_SESSION = 0
+EVENTOS_WTS = {WTS_SESSION_LOCK: equipo.EVENTO_BLOQUEO,
+               WTS_SESSION_UNLOCK: equipo.EVENTO_DESBLOQUEO}
+"""Los cambios de la sesión que se le cuentan al agente, como el evento de `PIDE_SESION`."""
+ID_TEMPORIZADOR_SESION = 1
+REINTENTOS_SESION = 5
+"""Las veces que se intenta registrar la ventana para oír la sesión antes de dejarlo."""
+CADA_REINTENTO_SESION = 2000  # ms
 DBT_DEVNODES_CHANGED = 0x0007
 DBT_DEVICEARRIVAL = 0x8000
 DBT_DEVICEQUERYREMOVE = 0x8001
@@ -485,6 +511,14 @@ class Bandeja:
             combinaciones no ha dejado poner Windows: `atajos_puestos(combos,
             rechazados)`, con el motivo de cada una por acción. Se llama desde
             el hilo de la bandeja.
+        oye_sesion: Si la ventana está registrada para oír el bloqueo y el
+            desbloqueo de la sesión (`WTSRegisterSessionNotification`). Lo lee
+            el agente para saber si puede ofrecer «Bloquearla al bloquear la
+            sesión».
+        fin_de_sesion: A quien se llama cuando Windows cierra la sesión o se
+            apaga (`WM_ENDSESSION`), desde el hilo de la bandeja y antes de
+            contestar: el agente, que solo lanza lo que tiene preparado
+            (`Agente.lanzar_al_salir()`). Un fallo suyo no se propaga.
     """
 
     def __init__(self, carpeta_iconos: Path, pedir: Callable[[dict], None],
@@ -497,6 +531,9 @@ class Bandeja:
         self.dispositivo: Callable[[int, int, str], None] | None = None
         self.volumen: Callable[[int, tuple[str, ...]], None] | None = None
         self.atajos_puestos: Callable[[dict, dict], None] | None = None
+        self.oye_sesion = False
+        self.fin_de_sesion: Callable[[], Any] | None = None
+        self._intentos_sesion = 0
         self._atajos_pedidos: dict[str, str] | None = None
         self._atajos: dict[int, str] = {}
         self.hwnd = None
@@ -585,6 +622,7 @@ class Bandeja:
             if self.hwnd:
                 self._pendiente = self._pendiente or self.vista
                 self._poner_icono()
+                self._oir_sesion()
         except Exception:                               # noqa: BLE001
             if self.hwnd:
                 self.api.destruir(self.hwnd)
@@ -640,7 +678,29 @@ class Bandeja:
         if msg == WM_POWERBROADCAST:
             if wparam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
                 self.pedir({"pide": equipo.PIDE_DESPERTAR})
+            elif wparam == PBT_APMSUSPEND:
+                # Sin esperar a nada: Windows da unos 2 s y el agente no los alarga.
+                self.pedir({"pide": equipo.PIDE_SESION, "evento": equipo.EVENTO_SUSPENSION})
             return None
+        if msg == WM_WTSSESSION_CHANGE:
+            evento = EVENTOS_WTS.get(wparam)
+            if evento is not None:
+                self.pedir({"pide": equipo.PIDE_SESION, "evento": evento})
+            return None
+        if msg == WM_QUERYENDSESSION:
+            return None                     # TRUE: ni se veta ni se retrasa
+        if msg == WM_ENDSESSION:
+            if wparam and self.fin_de_sesion is not None:
+                try:
+                    self.fin_de_sesion()
+                except Exception:                       # noqa: BLE001
+                    pass                    # que la sesión se cierre igual
+            return 0
+        if msg == WM_TIMER and wparam == ID_TEMPORIZADOR_SESION:
+            # Uno que ya estuviera en la cola al quitarlo no cuenta.
+            if not self.oye_sesion and self._intentos_sesion < REINTENTOS_SESION:
+                self._oir_sesion()
+            return 0
         if self._taskbar_created and msg == self._taskbar_created:
             # El Explorador se ha reiniciado y se ha llevado el icono.
             self._puesto = False
@@ -651,6 +711,10 @@ class Bandeja:
             return 0
         if msg == WM_DESTROY:
             self._soltar_atajos()
+            self.api.parar_temporizador(hwnd, ID_TEMPORIZADOR_SESION)
+            if self.oye_sesion:
+                self.api.soltar_sesion(hwnd)
+                self.oye_sesion = False
             if self._puesto:
                 self.api.notificar(NIM_DELETE, hwnd=hwnd, id=ID_ICONO, flags=0)
                 self._puesto = False
@@ -661,6 +725,23 @@ class Bandeja:
             self.api.salir()
             return 0
         return None
+
+    def _oir_sesion(self) -> None:
+        """Registra la ventana para oír la sesión; si falla, lo reintenta con un temporizador.
+
+        Al iniciar sesión, el servicio de sesiones puede no estar listo todavía
+        (`WTSRegisterSessionNotification` falla): se vuelve a intentar cada
+        `CADA_REINTENTO_SESION` hasta `REINTENTOS_SESION` veces, y luego se deja
+        `oye_sesion` en falso.
+        """
+        self._intentos_sesion += 1
+        if self.api.registrar_sesion(self.hwnd):
+            self.oye_sesion = True
+        elif self._intentos_sesion < REINTENTOS_SESION:
+            if self._intentos_sesion == 1:
+                self.api.temporizador(self.hwnd, ID_TEMPORIZADOR_SESION, CADA_REINTENTO_SESION)
+            return
+        self.api.parar_temporizador(self.hwnd, ID_TEMPORIZADOR_SESION)
 
     def _icono(self, estado: str):
         """Devuelve el icono de ese estado, cargado una vez; si falta, el de `BIEN`."""
@@ -985,6 +1066,44 @@ class Api:
         u, wt = self.user32, self.wt
         u.UnregisterHotKey.argtypes = [wt.HWND, self.ct.c_int]
         u.UnregisterHotKey(hwnd, ident)
+
+    def registrar_sesion(self, hwnd) -> bool:
+        """Registra la ventana para recibir `WM_WTSSESSION_CHANGE` de esta sesión.
+
+        Es `WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)`
+        (wtsapi32). Devuelve si se ha podido.
+        """
+        wt = self.wt
+        try:
+            wts = self.ct.WinDLL("wtsapi32", use_last_error=True)
+        except OSError:
+            return False
+        wts.WTSRegisterSessionNotification.restype = wt.BOOL
+        wts.WTSRegisterSessionNotification.argtypes = [wt.HWND, wt.DWORD]
+        return bool(wts.WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION))
+
+    def soltar_sesion(self, hwnd) -> None:
+        """Da de baja lo de `registrar_sesion()` (`WTSUnRegisterSessionNotification`)."""
+        wt = self.wt
+        try:
+            wts = self.ct.WinDLL("wtsapi32", use_last_error=True)
+        except OSError:
+            return
+        wts.WTSUnRegisterSessionNotification.argtypes = [wt.HWND]
+        wts.WTSUnRegisterSessionNotification(hwnd)
+
+    def temporizador(self, hwnd, ident: int, ms: int) -> None:
+        """Pone un temporizador de la ventana (`SetTimer`): `WM_TIMER` con `ident` cada `ms`."""
+        u, wt = self.user32, self.wt
+        u.SetTimer.restype = self.ct.c_size_t
+        u.SetTimer.argtypes = [wt.HWND, self.ct.c_size_t, wt.UINT, self.ct.c_void_p]
+        u.SetTimer(hwnd, ident, ms, None)
+
+    def parar_temporizador(self, hwnd, ident: int) -> None:
+        """Quita un temporizador de `temporizador()` (`KillTimer`); si no lo hay, nada."""
+        u, wt = self.user32, self.wt
+        u.KillTimer.argtypes = [wt.HWND, self.ct.c_size_t]
+        u.KillTimer(hwnd, ident)
 
     def icono(self, ruta: Path):
         """Carga un `.ico` al tamaño del icono pequeño del sistema.

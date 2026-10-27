@@ -385,6 +385,40 @@ try:
       (watch.pedir_ajuste_unidad("modo", True), watch.pedir_ajuste_unidad("pedir_al_conectar", "sí"),
        equipo.recoger()), (False, False, []))
 
+    # «Bloquearla …» (#178): las casillas que el agente dice poder cumplir en ESTA raíz.
+    SESION, SUSPENDER, APAGAR = equipo.AJUSTES_BLOQUEAR_SOLO
+    estado_dice({"id": "aaaa", "cifrado": "veracrypt", "pedir_al_conectar": True})
+    c("bloquear_solo: None si la fila no lo trae (sin bandeja, Linux, agente de antes)",
+      watch.bloquear_solo(), None)
+    estado_dice({"id": "bbbb", "bloquear_solo": {SESION: True}})
+    c("  ni si lo dice de otra", watch.bloquear_solo(), None)
+    estado_dice({"id": "aaaa", "bloquear_solo": {}})
+    c("  ni vacío", watch.bloquear_solo(), None)
+    estado_dice({"id": "aaaa", "bloquear_solo": [SESION]})
+    c("  ni algo que no es un dict", watch.bloquear_solo(), None)
+    estado_dice({"id": "aaaa", "bloquear_solo": {SUSPENDER: "sí", "otra": True}})
+    c("  ni con valores que no son booleanos o claves que no conoce", watch.bloquear_solo(),
+      None)
+    estado_dice({"id": "aaaa", "bloquear_solo": {APAGAR: False, SESION: True,
+                                                 SUSPENDER: False, "otra": True}})
+    c("  lo que trae, en el orden de la ventana y sin lo que no conoce",
+      list(watch.bloquear_solo().items()), [(SESION, True), (SUSPENDER, False),
+                                            (APAGAR, False)])
+    estado_dice({"id": "aaaa", "bloquear_solo": {SUSPENDER: True, APAGAR: False}})
+    c("  sin oír la sesión, solo las otras dos", watch.bloquear_solo(),
+      {SUSPENDER: True, APAGAR: False})
+    c("  cada una con su texto, y una ayuda común que dice que nunca fuerza",
+      (sorted(watch.TEXTO_BLOQUEAR_SOLO) == sorted(equipo.AJUSTES_BLOQUEAR_SOLO),
+       "Win+L" in watch.TEXTO_BLOQUEAR_SOLO[SESION],
+       "si Windows da tiempo" in watch.TEXTO_BLOQUEAR_SOLO[APAGAR],
+       "sin forzar nunca" in watch.ayuda_bloquear_solo()), (True, True, True, True))
+    equipo.estado_json().write_text("{no es json", encoding="utf-8")
+    c("  un estado.json roto no lo rompe", watch.bloquear_solo(), None)
+    c("pedir_ajuste_unidad vale para ellas sin cambiarlo",
+      (watch.pedir_ajuste_unidad(SUSPENDER, True),
+       [(p["pide"], p["id"], p["clave"], p["valor"]) for p in equipo.recoger()]),
+      (True, [(equipo.PIDE_AJUSTE_UNIDAD, "aaaa", SUSPENDER, True)]))
+
     equipo.guardar_ajustes(equipo.Ajustes().con_unidad(equipo.Unidad("aaaa", "nada")))
     r = watch.resumen()
     c("agente, modo nada: no hace nada, y no vigila", (watch.linea(r).texto, r.vigila_este),
