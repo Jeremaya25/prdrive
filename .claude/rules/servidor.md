@@ -4,6 +4,8 @@ paths:
   - "tests/test_rcd.py"
   - "ui/servidor.py"
   - "tests/test_servidor.py"
+  - "ui/transferencia.py"
+  - "tests/test_transferencia.py"
   - "ui/tk_servidor.py"
   - "tests/test_tk_servidor.py"
   - "docs/guia/servidor.md"
