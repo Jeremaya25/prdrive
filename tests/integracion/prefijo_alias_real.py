@@ -8,8 +8,8 @@ en Linux y en Windows; en un equipo propio, a mano.
 
 Por cada caso monta un `rclone.conf` con remotes `alias` (a una carpeta, a un
 remote `local`, a otro alias, con subruta, a un `combine`), lanza el bisync con
-el extremo local de un `device_remote` y el remoto de la pareja, tal como los
-arma el programa, y compara el nombre del listado que escribió rclone con
+el extremo local de un `device_remote` (también con llaves en la carpeta, #177)
+y el remoto de la pareja, tal como los arma el programa, y compara el nombre del listado que escribió rclone con
 `bisync.expected_prefix()`. `tests/test_bisync_prefijo.py` fija esos nombres
 con los que escribió rclone en Linux; esto es lo que dice si siguen siendo los
 de rclone y si el caso de Windows (`C:\\…`, `\\\\?\\`) lo es de verdad.
@@ -42,8 +42,19 @@ def ver(que: str, obtenido, esperado) -> None:
         fallos.append(que)
 
 
-def casos(raiz: Path) -> list[tuple[str, str, str]]:
-    """Devuelve `(descripción, remote de la pareja, remote_path)` y deja el rclone.conf en `raiz`."""
+LOCAL = "sync-data/prueba"
+"""La carpeta del dispositivo de casi todos los casos."""
+
+LOCAL_LLAVES = "sync-data/Fotos {2024}"
+"""Una carpeta del dispositivo con llaves (#177).
+
+El `combine` del entorno lleva un sufijo `{hash}` en su nombre (`fs/newfs.go`) y
+`StripHexString` solo quita esa primera `{…}`: las de la carpeta se quedan.
+"""
+
+
+def casos(raiz: Path) -> list[tuple[str, str, str, str]]:
+    """Devuelve `(descripción, remote, remote_path, carpeta local)` y deja el rclone.conf en `raiz`."""
     remoto = raiz / "remoto"
     conf = f"""
 [nas]
@@ -88,8 +99,9 @@ upstreams = "r={remoto}"
         raro.mkdir(parents=True)
         (raro / "a.txt").write_text("a", encoding="utf-8")
         propios.append(("en Linux, un remote local con espacios raros y control", "nas",
-                        raro.as_posix()))
-    return propios + [
+                        raro.as_posix(), LOCAL))
+    control = (remoto / "datos" / "prueba").as_posix()
+    return propios + [(*caso, LOCAL) for caso in (
         ("un alias a una carpeta", "a_carpeta", "datos/prueba"),
         ("  con la ruta del remoto absoluta", "a_carpeta", "/datos/prueba"),
         ("  con la ruta sucia (// y ./)", "a_carpeta", "/datos//./prueba/"),
@@ -97,11 +109,12 @@ upstreams = "r={remoto}"
         ("un alias de otro alias", "de_alias", "prueba"),
         ("un alias con subruta", "con_subruta", "prueba"),
         ("un alias a un combine", "a_combine", "datos/prueba"),
-        ("sin alias, un remote local (el control)", "nas", f"{(remoto / 'datos' / 'prueba').as_posix()}"),
-    ]
+        ("sin alias, un remote local (el control)", "nas", control),
+    )] + [("una carpeta del dispositivo con llaves", "nas", control, LOCAL_LLAVES)]
 
 
-def probar(rclone: Path, raiz: Path, descripcion: str, remote: str, ruta: str) -> None:
+def probar(rclone: Path, raiz: Path, descripcion: str, remote: str, ruta: str,
+           local: str) -> None:
     """Lanza un `bisync --resync` de la pareja y compara el listado con el que se espera."""
     from common import bisync, model
 
@@ -112,7 +125,7 @@ def probar(rclone: Path, raiz: Path, descripcion: str, remote: str, ruta: str) -
     model.RCLONE_CONF = raiz / "rclone.conf"
     config = model.parse_config(
         {"defaults": {"remote": remote, "device_remote": "disp"},
-         "pair": [{"name": "prueba", "local": "sync-data/prueba", "remote_path": ruta,
+         "pair": [{"name": "prueba", "local": local, "remote_path": ruta,
                    "mode": "bisync"}]})
     pair = config.pairs[0]
     shutil.rmtree(model.STATE_DIR, ignore_errors=True)
@@ -132,7 +145,7 @@ def probar(rclone: Path, raiz: Path, descripcion: str, remote: str, ruta: str) -
         fallos.append(descripcion)
         return
     print(f"        rclone escribió: {escritos[0]}", flush=True)
-    ver(f"{descripcion}: {remote}:{ruta}", bisync.expected_prefix(pair), escritos[0])
+    ver(f"{descripcion}: {local} y {remote}:{ruta}", bisync.expected_prefix(pair), escritos[0])
     ver("  y se puede comprobar", bisync.prefijo_comprobable(pair), True)
 
 
@@ -154,11 +167,14 @@ def main() -> int:
         (raiz / "remoto" / "datos" / "prueba" / "a.txt").write_text("a", encoding="utf-8")
         (raiz / "dispositivo" / "sync-data" / "prueba").mkdir(parents=True)
         (raiz / "dispositivo" / "sync-data" / "prueba" / "b.txt").write_text("b", encoding="utf-8")
+        llaves = raiz / "dispositivo" / LOCAL_LLAVES
+        llaves.mkdir(parents=True)
+        (llaves / "c.txt").write_text("c", encoding="utf-8")
         (raiz / "dispositivo" / ".prdrive").mkdir()
         print(f"rclone: {rclone}\nsistema: {'Windows' if IS_WIN else 'Linux'}\n"
               f"raíz del remoto: {raiz / 'remoto'}", flush=True)
-        for descripcion, remote, ruta in casos(raiz):
-            probar(rclone, raiz, descripcion, remote, ruta)
+        for descripcion, remote, ruta, local in casos(raiz):
+            probar(rclone, raiz, descripcion, remote, ruta, local)
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
     print(f"\n{'FALLAN: ' + ', '.join(fallos) if fallos else 'Todo coincide con rclone.'}")
