@@ -11,8 +11,9 @@ archivos que ya estaban en el destino, no las carpetas que se fusionan.
 
 import sys
 
-from _harness import Checks
+from _harness import Checks, mkcfg
 
+from common import model
 from ui import transferencia
 
 c = Checks("transferencias: qué copia un lote")
@@ -55,5 +56,87 @@ c("singular", transferencia.texto_choques(1, "/datos"),
   "1 elemento ya existe en /datos. ¿Sobrescribirlo u omitirlo?")
 c("plural", transferencia.texto_choques(3, "/datos"),
   "3 elementos ya existen en /datos. ¿Sobrescribirlos u omitirlos?")
+
+# --- Qué parejas alcanza una copia, y qué se avisa o se bloquea -------------------------
+DEVICE = model.DEVICE_ROOT
+cfg = mkcfg((), pairs=[
+    {"name": "Notas", "local": "sync-data/notas", "remote_path": "/datos/notas", "mode": "bisync"},
+    {"name": "Copia", "local": "sync-data/copia", "remote_path": "/copia", "mode": "up-mirror"},
+    {"name": "Bajadas", "local": "sync-data/bajadas", "remote_path": "/bajadas", "mode": "down-mirror"},
+    {"name": "Todo", "local": "sync-data/todo", "remote_path": "/", "mode": "bisync", "remote": "b2"},
+])
+
+AVISO_BISYNC_NOTAS = ("Lo que subas a «Notas» lo bajará al dispositivo su próxima pasada; "
+                      "si sobrescribes algo que también ha cambiado allí, saldrá un conflicto.")
+BLOQUEO_COPIA = ("«Copia» deja el servidor igual que el dispositivo: lo que subas aquí lo "
+                 "borraría su próxima pasada. Súbelo a su carpeta del dispositivo.")
+BLOQUEO_BAJADAS = ("«Bajadas» deja su carpeta igual que el servidor: lo que bajes aquí lo "
+                   "borraría su próxima pasada. Bájalo fuera de ella.")
+
+c("subir dentro de una bisync avisa",
+  transferencia.aviso("subir", transferencia.afectadas_subida(cfg, "nas", "/datos/notas/2026", [E("a.txt", False)])),
+  AVISO_BISYNC_NOTAS)
+c("subir a una up-mirror bloquea",
+  transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/copia", [E("a", False)])),
+  BLOQUEO_COPIA)
+c("subir por encima de una pareja la alcanza",
+  [a.pareja for a in transferencia.afectadas_subida(cfg, "nas", "/datos", [E("notas", True)])], ["Notas"])
+c("subir un archivo con el nombre de la carpeta de una pareja también la alcanza",
+  [a.pareja for a in transferencia.afectadas_subida(cfg, "nas", "/datos", [E("notas", False)])], ["Notas"])
+c("subir un archivo por encima no alcanza lo que cuelga de él",
+  transferencia.afectadas_subida(cfg, "nas", "/", [E("datos", False)]), ())
+c("otro remote no cuenta", transferencia.afectadas_subida(cfg, "nas", "/", [E("x", False)]), ())
+c("la raíz de b2 cuenta todo",
+  [a.pareja for a in transferencia.afectadas_subida(cfg, "b2", "/z", [E("x", False)])], ["Todo"])
+c("lleva el modo", transferencia.afectadas_subida(cfg, "nas", "/copia", [E("a", False)]),
+  (transferencia.Afectada("Copia", "up-mirror"),))
+c("bajar dentro de una down-mirror bloquea",
+  transferencia.bloqueo("bajar", transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data/bajadas/sub"), [E("a", False)])),
+  BLOQUEO_BAJADAS)
+c("bajar por encima de la carpeta de una pareja la alcanza",
+  [a.pareja for a in transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data"), [E("notas", True)])], ["Notas"])
+c("bajar un archivo por encima no alcanza lo que cuelga de él",
+  transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data"), [E("notas", False)])[0].pareja, "Notas")
+c("bajar fuera de las parejas no dice nada",
+  (transferencia.bloqueo("bajar", ()), transferencia.aviso("bajar", ())), (None, None))
+c("bajar a otra carpeta no alcanza a nadie",
+  transferencia.afectadas_bajada(cfg, str(DEVICE / "otra"), [E("a", False)]), ())
+c("prefijo de texto no es estar dentro",
+  transferencia.afectadas_subida(cfg, "nas", "/datos/notas2", [E("a", False)]), ())
+c("prefijo de texto local no es estar dentro",
+  transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data/notas2"), [E("a", False)]), ())
+c("varias: bloqueo si alguna es up-mirror",
+  transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/", [E("copia", True), E("datos", True)])),
+  BLOQUEO_COPIA)
+c("sin duplicados y en el orden de la configuración",
+  [a.pareja for a in transferencia.afectadas_subida(cfg, "nas", "/datos/notas", [E("a", True), E("b", True)])],
+  ["Notas"])
+c("un bloqueo de bajada no sale al subir",
+  transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/bajadas", [E("a", False)])), None)
+c("subir a una down-mirror avisa",
+  transferencia.aviso("subir", transferencia.afectadas_subida(cfg, "nas", "/bajadas", [E("a", False)])),
+  "Lo que subas a «Bajadas» lo bajará al dispositivo su próxima pasada.")
+
+# Los textos de cada modo, en los dos sentidos.
+def _aviso(sentido, modo):
+    return transferencia.aviso(sentido, (transferencia.Afectada("P", modo),))
+
+c("subir a up avisa", _aviso("subir", "up"),
+  "«P» solo sube del dispositivo: lo que subas aquí se quedará en el servidor.")
+c("subir a down avisa", _aviso("subir", "down"),
+  "Lo que subas a «P» lo bajará al dispositivo su próxima pasada.")
+c("bajar a bisync avisa", _aviso("bajar", "bisync"),
+  "Lo que bajes a la carpeta de «P» lo subirá al servidor su próxima pasada.")
+c("bajar a up avisa", _aviso("bajar", "up"),
+  "Lo que bajes a la carpeta de «P» lo subirá al servidor su próxima pasada.")
+c("bajar a up-mirror avisa", _aviso("bajar", "up-mirror"),
+  "Lo que bajes a la carpeta de «P» lo subirá al servidor su próxima pasada.")
+c("bajar a down avisa", _aviso("bajar", "down"),
+  "«P» solo baja del servidor: lo que bajes aquí se quedará en el dispositivo.")
+c("con bloqueo no hay aviso", _aviso("subir", "up-mirror"), None)
+c("varios avisos van separados por una línea en blanco",
+  transferencia.aviso("subir", (transferencia.Afectada("A", "down"), transferencia.Afectada("B", "down"))),
+  "Lo que subas a «A» lo bajará al dispositivo su próxima pasada.\n\n"
+  "Lo que subas a «B» lo bajará al dispositivo su próxima pasada.")
 
 sys.exit(c.report())
