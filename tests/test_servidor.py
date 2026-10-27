@@ -38,7 +38,7 @@ c("las carpetas se saben carpetas", [e.es_carpeta for e in ENTRADAS], [True, Tru
 c("la fecha con nanosegundos y desfase se lee",
   ENTRADAS[2].fecha, datetime(2026, 10, 1, 10, 0, tzinfo=timezone(timedelta(hours=2))))
 c("la fecha con Z se lee en UTC", ENTRADAS[1].fecha, datetime(2026, 3, 12, 9, 0, tzinfo=timezone.utc))
-c("los permisos aún no se leen", (ENTRADAS[2].modo, ENTRADAS[2].uid, ENTRADAS[2].gid), (None, None, None))
+c("sin metadatos, los permisos no se conocen", (ENTRADAS[2].modo, ENTRADAS[2].uid, ENTRADAS[2].gid), (None, None, None))
 c("una respuesta sin lista es una carpeta vacía",
   [servidor.entradas_de(x) for x in ({}, {"list": None}, [], None)], [()] * 4)
 RARAS = servidor.entradas_de({"list": [
@@ -226,5 +226,80 @@ c("la fecha en hora local, día/mes/año hh:mm",
   servidor.fecha_legible(FECHA), FECHA.astimezone().strftime("%d/%m/%Y %H:%M"))
 c("una fecha sin zona se enseña como viene",
   servidor.fecha_legible(datetime(2026, 3, 5, 9, 7)), "05/03/2026 09:07")
+
+# la fecha más allá de lo que se puede pasar a hora local
+anterior = os.environ.get("TZ")
+os.environ["TZ"] = "Europe/Madrid"
+if hasattr(time, "tzset"):
+    time.tzset()
+try:
+    LEJANA = datetime(9999, 12, 31, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
+    c("una fecha que desborda al pasarla a hora local se enseña como raya", servidor.fecha_legible(LEJANA), "—")
+    c("y al leerla es desconocida",
+      servidor.entradas_de({"list": [{"Name": "a", "IsDir": False, "ModTime": "9999-12-31T23:00:00-05:00"}]})[0].fecha, None)
+finally:
+    if anterior is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = anterior
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+# permisos: cuándo se piden
+c("SFTP de hoy: ReadMetadata falso → no", servidor.pide_permisos({"Features": {"ReadMetadata": False}}, "sftp"), False)
+c("SFTP con el PR → sí", servidor.pide_permisos({"Features": {"ReadMetadata": True}}, "sftp"), True)
+c("local → sí", servidor.pide_permisos({"Features": {"ReadMetadata": True}}, "local"), True)
+c("S3 lee metadatos por objeto → no", servidor.pide_permisos({"Features": {"ReadMetadata": True}}, "s3"), False)
+c("crypt sobre SFTP → no", servidor.pide_permisos({"Features": {"ReadMetadata": True}}, "crypt"), False)
+c("fsinfo raro → no",
+  [servidor.pide_permisos(f, "sftp") for f in ({}, {"Features": None}, {"Features": {"ReadMetadata": "true"}}, None)],
+  [False] * 4)
+
+# permisos: qué se lee
+META = lambda m: {"list": [{"Name": "d", "IsDir": True, "Size": -1, "ModTime": "2026-01-01T00:00:00Z", "Metadata": m}]}
+c("mode del formato del PR", servidor.entradas_de(META({"mode": "40755", "uid": "1000", "gid": "100"}))[0].modo, 0o40755)
+c("uid y gid decimales",
+  (lambda e: (e.uid, e.gid))(servidor.entradas_de(META({"mode": "40755", "uid": "1000", "gid": "100"}))[0]), (1000, 100))
+c("modos raros dan None", [servidor.entradas_de(META({"mode": v}))[0].modo for v in ("rwxr-xr-x", "0x1ed", "", "9", "-1", "12345670", 755)],
+  [None] * 7)
+c("uid y gid raros dan None", [(lambda e: (e.uid, e.gid))(servidor.entradas_de(META({"uid": v, "gid": v}))[0])
+                              for v in ("root", "", "-1", "1.5", 3)], [(None, None)] * 5)
+c("unos Metadata que no son un diccionario no rompen",
+  [servidor.entradas_de(META(m))[0].modo for m in (None, "mode", ["mode"], 40755)], [None] * 4)
+
+# permisos: la columna
+c("la columna", [servidor.texto_permisos(m) for m in (None, 0o40755, 0o100600, 0o40700, 0o40007)],
+  ["—", "755", "600", "700", "007"])
+
+# permisos: el candado previo (yo soy el 1000)
+def carpeta(modo, uid=1000):
+    return servidor.Entrada("d", True, None, None, modo, uid, 100)
+c("dueño sin r y x → sí", servidor.sin_acceso_previo(carpeta(0o40300), 1000), True)
+c("dueño sin r → sí", servidor.sin_acceso_previo(carpeta(0o40100), 1000), True)
+c("dueño con r y x → no", servidor.sin_acceso_previo(carpeta(0o40700), 1000), False)
+c("dueño aunque otros puedan: es el dueño quien manda", servidor.sin_acceso_previo(carpeta(0o40305), 1000), True)
+c("de otro y nadie puede → sí", servidor.sin_acceso_previo(carpeta(0o40700, 0), 1000), True)
+c("de otro y solo r en grupo → sí", servidor.sin_acceso_previo(carpeta(0o40740, 0), 1000), True)
+c("de otro y el grupo puede → no se marca", servidor.sin_acceso_previo(carpeta(0o40750, 0), 1000), False)
+c("de otro y otros pueden → no", servidor.sin_acceso_previo(carpeta(0o40705, 0), 1000), False)
+c("yo soy root → nunca", servidor.sin_acceso_previo(carpeta(0o40000, 5), 0), False)
+c("sin saber quién soy → no", servidor.sin_acceso_previo(carpeta(0o40000), None), False)
+c("un archivo → no", servidor.sin_acceso_previo(servidor.Entrada("f", False, 1, None, 0o100000, 1000, 100), 1000), False)
+c("sin modo → no", servidor.sin_acceso_previo(carpeta(None), 1000), False)
+c("sin dueño → no", servidor.sin_acceso_previo(carpeta(0o40000, None), 1000), False)
+c("mi uid del stat", servidor.mi_uid_de({"item": {"Metadata": {"uid": "1000"}}}), 1000)
+c("sin metadatos, None", servidor.mi_uid_de({"item": {}}), None)
+c("un stat raro, None",
+  [servidor.mi_uid_de(x) for x in (None, {}, {"item": None}, {"item": {"Metadata": None}},
+                                   {"item": {"Metadata": {"uid": "root"}}}, [])], [None] * 6)
+
+# una pareja más honda gana a la que contiene todo
+cfg_hondo = mkcfg((), pairs=[
+    {"name": "Todo", "local": "sync-data/todo", "remote_path": "/", "remote": "nas"},
+    {"name": "Notas", "local": "sync-data/notas", "remote_path": "/datos/notas", "remote": "nas"}],
+    defaults={"remote": "nas"})
+c("dentro_de da la pareja más honda, no la primera de la configuración",
+  (servidor.dentro_de(cfg_hondo, "nas", "/datos/notas/2026"), servidor.dentro_de(cfg_hondo, "nas", "/otra")),
+  ("Notas", "Todo"))
 
 sys.exit(c.report())

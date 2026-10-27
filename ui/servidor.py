@@ -48,7 +48,17 @@ Una fecha anterior no se puede pasar a hora local en todos los sistemas (en Wind
 `astimezone()` falla antes de 1970), así que se trata como desconocida.
 """
 
+LEE_PERMISOS_EN_EL_LISTADO = frozenset({"sftp", "local"})
+"""Backends cuyos metadatos salen del mismo listado, sin una petición por objeto.
+
+Pedir `metadata` a uno que los lee por objeto (S3 hace un `HEAD` por archivo) convertiría
+cada carpeta en miles de peticiones. Ampliarla exige comprobar en el código de rclone que
+el backend los saca del listado. Un `crypt` sobre SFTP es `crypt`: no está.
+"""
+
 _FRACCION = re.compile(r"(\.\d{6})\d+")
+_OCTAL = re.compile(r"[0-7]{1,7}")
+_DECIMAL = re.compile(r"[0-9]{1,10}")
 
 
 @dataclass(frozen=True)
@@ -75,10 +85,12 @@ class Entrada:
 
 
 def _fecha(texto: Any) -> datetime | None:
-    """Lee un `ModTime` de rclone; `None` si no se entiende o es anterior a `PRIMER_ANO`.
+    """Lee un `ModTime` de rclone; `None` si no se entiende o no se puede enseñar.
 
-    rclone puede dar hasta nanosegundos y un desfase (`+02:00`); `fromisoformat`
-    solo admite microsegundos, así que se recorta la fracción.
+    No se puede enseñar una fecha anterior a `PRIMER_ANO` ni una que desborde al
+    pasarla a hora local (`9999-12-31T23:00-05:00`). rclone puede dar hasta
+    nanosegundos y un desfase (`+02:00`); `fromisoformat` solo admite
+    microsegundos, así que se recorta la fracción.
     """
     if not isinstance(texto, str):
         return None
@@ -86,7 +98,20 @@ def _fecha(texto: Any) -> datetime | None:
         fecha = datetime.fromisoformat(_FRACCION.sub(r"\1", texto))
     except ValueError:
         return None
-    return fecha if fecha.year >= PRIMER_ANO else None
+    if fecha.year < PRIMER_ANO:
+        return None
+    try:
+        fecha.astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+    return fecha
+
+
+def _numero(valor: Any, patron: re.Pattern[str], base: int) -> int | None:
+    """Lee un número que rclone da como texto (`"40755"`, `"1000"`); `None` si no cuadra."""
+    if not isinstance(valor, str) or not patron.fullmatch(valor):
+        return None
+    return int(valor, base)
 
 
 def _entrada(item: Any) -> Entrada | None:
@@ -100,7 +125,12 @@ def _entrada(item: Any) -> Entrada | None:
     tamano = item.get("Size")
     if es_carpeta or isinstance(tamano, bool) or not isinstance(tamano, int) or tamano < 0:
         tamano = None
-    return Entrada(nombre, es_carpeta, tamano, _fecha(item.get("ModTime")))
+    meta = item.get("Metadata")
+    if not isinstance(meta, dict):
+        meta = {}
+    return Entrada(nombre, es_carpeta, tamano, _fecha(item.get("ModTime")),
+                   _numero(meta.get("mode"), _OCTAL, 8), _numero(meta.get("uid"), _DECIMAL, 10),
+                   _numero(meta.get("gid"), _DECIMAL, 10))
 
 
 def entradas_de(respuesta: dict) -> tuple[Entrada, ...]:
@@ -259,13 +289,13 @@ def dentro_de(config: Config, remote: str, ruta: str) -> str | None:
     """Devuelve la pareja cuya carpeta es `ruta` o la contiene, en ese remote.
 
     La comparación es por tramos: `/datos/notas2` no está dentro de `/datos/notas`.
-    Una pareja en la raíz del remote contiene todo el remote.
+    Una pareja en la raíz del remote contiene todo el remote. Si varias contienen
+    la ruta, gana la más honda (la de la carpeta más larga), no la primera de la configuración.
     """
     actual = remote_picker.normalizar(ruta)
-    for carpeta, nombre in parejas_en(config, remote).items():
-        if actual == carpeta or actual.startswith(carpeta.rstrip("/") + "/"):
-            return nombre
-    return None
+    dentro = [(carpeta, nombre) for carpeta, nombre in parejas_en(config, remote).items()
+              if actual == carpeta or actual.startswith(carpeta.rstrip("/") + "/")]
+    return max(dentro, key=lambda par: len(par[0]))[1] if dentro else None
 
 
 def _dice(error: Exception, patrones: tuple[str, ...]) -> bool:
@@ -332,6 +362,58 @@ def fecha_legible(fecha: datetime | None) -> str:
         return fecha.strftime("%d/%m/%Y %H:%M")
     except (OverflowError, OSError, ValueError):
         return SIN_DATO
+
+
+def pide_permisos(fsinfo: dict, tipo: str) -> bool:
+    """Si hay que pedir permisos (`opt.metadata`) en los listados de un remote.
+
+    Args:
+        fsinfo: La respuesta de `operations/fsinfo`.
+        tipo: El `type =` del remote en `rclone.conf` (el `Name` de `fsinfo` es el
+            nombre del remote, no el del backend).
+
+    Returns:
+        `True` solo si el backend sabe leer metadatos **y** los saca del listado
+        (`LEE_PERMISOS_EN_EL_LISTADO`). Cualquier respuesta rara es `False`.
+    """
+    caracteristicas = fsinfo.get("Features") if isinstance(fsinfo, dict) else None
+    leen = isinstance(caracteristicas, dict) and caracteristicas.get("ReadMetadata") is True
+    return leen and tipo in LEE_PERMISOS_EN_EL_LISTADO
+
+
+def texto_permisos(modo: int | None) -> str:
+    """Devuelve los tres dígitos de permisos (`755`) o `SIN_DATO` si no se conocen."""
+    return SIN_DATO if modo is None else f"{modo & 0o777:03o}"
+
+
+def mi_uid_de(stat: dict | None) -> int | None:
+    """Devuelve el uid del usuario en el servidor, o `None` si no se puede saber.
+
+    Args:
+        stat: La respuesta de `operations/stat` de la carpeta por defecto del
+            backend (la de inicio en SFTP), pedida con metadatos.
+    """
+    item = stat.get("item") if isinstance(stat, dict) else None
+    meta = item.get("Metadata") if isinstance(item, dict) else None
+    return _numero(meta.get("uid"), _DECIMAL, 10) if isinstance(meta, dict) else None
+
+
+def sin_acceso_previo(e: Entrada, mi_uid: int | None) -> bool:
+    """Si es SEGURO que el usuario no puede entrar en la carpeta `e` (candado previo).
+
+    Entrar exige `r` y `x`. Solo se marca lo seguro: si el permiso depende del
+    grupo (no eres el dueño, el grupo puede y otros no), no se marca, porque los
+    grupos del usuario no se saben por SFTP. Root (`mi_uid == 0`) entra siempre.
+
+    Args:
+        e: La entrada, con modo y dueño leídos.
+        mi_uid: El uid del usuario, o `None` si no se sabe.
+    """
+    if not e.es_carpeta or e.modo is None or e.uid is None or mi_uid is None or mi_uid == 0:
+        return False
+    if e.uid == mi_uid:
+        return e.modo & 0o500 != 0o500
+    return e.modo & 0o050 != 0o050 and e.modo & 0o005 != 0o005
 
 
 def cuantos(n: int) -> str:
