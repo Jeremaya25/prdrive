@@ -15,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from common import catalog
 from common.model import Config
 
 from . import remote_picker, transferencia
@@ -150,12 +149,15 @@ def _toca_el_catalogo(ruta: str, carpeta: str) -> bool:
 
     Args:
         ruta: Ruta normalizada del servidor.
-        carpeta: La carpeta del catálogo (`model.carpeta_del_catalogo`): `""` si es la raíz
-            del remote, donde solo cuentan los propios ficheros del catálogo.
+        carpeta: La carpeta del catálogo (`model.carpeta_del_catalogo`). Es la raíz del
+            remote tanto si viene `""` (`remote.toml`) como `"/"` (`/remote.toml`); ahí solo
+            cuentan los propios ficheros del catálogo.
     """
-    if not carpeta:
-        return ruta in {"/" + n for n in catalog.NOMBRES}
+    from common import catalog
+
     catalogo = remote_picker.normalizar(carpeta)
+    if catalogo == "/":
+        return ruta in {"/" + n for n in catalog.NOMBRES}
     return (ruta == catalogo or catalogo.startswith(ruta.rstrip("/") + "/")
             or ruta.startswith(catalogo + "/"))
 

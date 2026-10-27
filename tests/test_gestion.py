@@ -251,6 +251,19 @@ c("catálogo en la raíz: renombrar algo a remote.toml",
   gestion.bloqueo(Op(gestion.RENOMBRAR, "nas", "/", (E("a.txt", False),), nombre="remote.toml"),
                   cfg, RAIZ_CAT), CATALOGO)
 
+RAIZ_ABS = ("nas", "/")
+c("catálogo en la raíz escrito con «/»: borrar remote.toml",
+  gestion.bloqueo(Op(B, "nas", "/", (E("remote.toml", False),)), cfg, RAIZ_ABS), CATALOGO)
+c("catálogo en la raíz escrito con «/»: borrar pairs.toml",
+  gestion.bloqueo(Op(B, "nas", "/", (E("pairs.toml", False),)), cfg, RAIZ_ABS), CATALOGO)
+c("catálogo en la raíz escrito con «/»: otro archivo no bloquea",
+  gestion.bloqueo(Op(B, "nas", "/", (E("otra.txt", False),)), cfg, RAIZ_ABS), None)
+c("catálogo en la raíz escrito con «/»: una carpeta cualquiera no bloquea",
+  gestion.bloqueo(Op(B, "nas", "/", (E("fotos", True),)), cfg, RAIZ_ABS), None)
+c("catálogo en la raíz escrito con «/»: renombrar algo a remote.toml",
+  gestion.bloqueo(Op(gestion.RENOMBRAR, "nas", "/", (E("a.txt", False),), nombre="remote.toml"),
+                  cfg, RAIZ_ABS), CATALOGO)
+
 c("mover dentro de una up-mirror",
   gestion.bloqueo(Op(gestion.MOVER, "nas", "/tmp", (E("a.txt", False),), destino="/datos/copia/sub"),
                   cfg, None), LLEGAR)
