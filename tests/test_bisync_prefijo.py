@@ -605,18 +605,26 @@ with sandbox():
     c("  sin llaves, el prefijo de siempre, byte a byte",
       bisync.expected_prefix(pareja_llaves("sync-data/notas", "/datos/notas")),
       "disp_sync-data_notas..nas__datos_notas")
-    model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
-    c("  el lado sin sufijo (un remote `local` del rclone.conf) pierde sus llaves",
-      bisync.expected_prefix(pareja_llaves("sync-data/p", "/datos/dest {x}")),
-      "disp_sync-data_p..nas__datos_dest_")
-    # El `TYPE` del entorno manda sobre una sección del mismo nombre del rclone.conf.
-    model.RCLONE_CONF.write_text("[nas]\ntype = local\n\n[disp]\ntype = alias\n"
-                                 "remote = /srv/otra\n", encoding="utf-8")
-    con_seccion = pareja_llaves("Fotos {2024}")
-    c("  un [disp] de tipo alias en el rclone.conf no cambia el extremo del combine",
-      bisync.expected_prefix(con_seccion), "disp_Fotos_{2024}..nas__datos_x")
-    c("  y el prefijo sigue siendo comprobable",
-      bisync.prefijo_comprobable(con_seccion), True)
+    # Un remote `local` del rclone.conf tiene por `Root()` la ruta limpia
+    # (`raiz_local()`), que en Windows es absoluta y con `\\?\` delante: estos
+    # valores son los de POSIX, así que se fuerza `IS_WIN`, como en los demás.
+    real_win = bisync.IS_WIN
+    try:
+        bisync.IS_WIN = False
+        model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+        c("  el lado sin sufijo (un remote `local` del rclone.conf) pierde sus llaves",
+          bisync.expected_prefix(pareja_llaves("sync-data/p", "/datos/dest {x}")),
+          "disp_sync-data_p..nas__datos_dest_")
+        # El `TYPE` del entorno manda sobre una sección del mismo nombre del rclone.conf.
+        model.RCLONE_CONF.write_text("[nas]\ntype = local\n\n[disp]\ntype = alias\n"
+                                     "remote = /srv/otra\n", encoding="utf-8")
+        con_seccion = pareja_llaves("Fotos {2024}")
+        c("  un [disp] de tipo alias en el rclone.conf no cambia el extremo del combine",
+          bisync.expected_prefix(con_seccion), "disp_Fotos_{2024}..nas__datos_x")
+        c("  y el prefijo sigue siendo comprobable",
+          bisync.prefijo_comprobable(con_seccion), True)
+    finally:
+        bisync.IS_WIN = real_win
     model.RCLONE_CONF.unlink()
 
     # Un workdir cuyo único baseline se llama como lo escribió rclone: es de esta pareja.
