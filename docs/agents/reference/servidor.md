@@ -2,7 +2,7 @@
 
 Formerly none: a new area. Design: `docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`. The catalogue it browses: `catalogue.md`; the window pattern it follows: `ui.md`.
 
-This doc is a stub that grows with the feature; today it covers `common/rcd.py` (the process and its anti-orphan belts) and `ui/servidor.py` (the decision half).
+This doc is a stub that grows with the feature; today it covers `common/rcd.py` (the process and its anti-orphan belts), `ui/servidor.py` (the decision half) and `ui/tk_servidor.py` (the window).
 
 ## The resident `rclone rcd` (`common/rcd.py`)
 
@@ -34,3 +34,14 @@ No Tk, no disk, no network; `tk_servidor` only draws what it returns.
 - **Pairs**: `marca()` (exact path) and `dentro_de()` (path or ancestor at a `/` boundary) look only at pairs of the same `remote_name`; `dentro_de()` returns the DEEPEST matching pair (longest `remote_path`), not the first in config order.
 - **Permissions**: `pide_permisos(fsinfo, tipo)` is true only if `Features.ReadMetadata is True` **and** the `rclone.conf` `type =` is in `LEE_PERMISOS_EN_EL_LISTADO` (`sftp`, `local`: metadata comes out of the same listing; never S3, which does a `HEAD` per object). With rclone v1.75.2 SFTP says `false`, so the «Permisos» column is `SIN_DATO` («—») everywhere and lights up by itself once a rclone with rclone/rclone#9631 is pinned. `texto_permisos()` shows `modo & 0o777` as three octal digits. `sin_acceso_previo(entrada, mi_uid)` marks a folder only when entering is CERTAINLY impossible (owner without `r`+`x`; or not owner, neither group nor other has `r`+`x`, and `mi_uid != 0`); a group-dependent case is not marked. `mi_uid_de(stat)` reads `uid` from the `operations/stat` of the backend's default folder. `_fecha()` also returns `None` for a date that overflows `astimezone()`.
 - **Errors**: `frase_error()` checks `RcdCaido` first (its text quotes a connection error to `rcd`, which is not a server without network), then permission (`ErrorRc.estado == 403` or text), no network, not found (404 or text), timeout. `es_sin_red()` is what decides «Reintentar» at open.
+
+## The window (`ui/tk_servidor.py`)
+
+Only draws; `open_dialog(parent, config)` is a modal «Servidor» built like «Dispositivos» (`Sondeo` + `tk.Indicador` + `tk.Tabla`, `segundo_plano.lanzar(functools.partial(...))`, nothing of Tk inside the thread). Tests replace `tk_servidor.mostrar` and `rcd.arrancar`.
+
+- **Opens first, reads after (#66).** `rcd.arrancar()` runs on the Tk thread (`PDEATHSIG`); one `Encargo` runs `esperar()`, `operations/fsinfo` (`fs = "<remote>:/"`, the same string as the listings), `operations/stat` of the home folder only if `pide_permisos`, and the listing. The per-remote `(permisos, mi_uid)` is remembered, so later listings are one call. Every request goes through `Navegacion` (`pedir`/`cambiar_remote`, then `recibir`/`fallo`): the last one wins and a late answer paints nothing.
+- **Failures stay in the indicator**, the table keeps the previous folder; a permission failure repaints the rows (padlock, `apagado`). A failed remote change resets the combo to the shown remote.
+- **Buttons.** «Reconectar» after `RcdCaido` (relaunches `rcd.arrancar()` on the Tk thread, stops the old one in the background, repeats the last request); «Reintentar» when the opening request fails with `es_sin_red` or `rcd` does not start (repeats it; relaunches `rcd` only if it is not alive). `PuertoOcupado` from `esperar()` relaunches once on the Tk thread; the second one is shown with «Reintentar». `RcdCaido` is never «sin red».
+- **Rows.** iid = the entry's name; a pair's folder gets `"  ⇄ {nombre}"` in its name cell; a locked folder (`sin_acceso` or `sin_acceso_previo`) has the `candado` icon and tone `apagado`. Double click, Intro and KP_Enter enter the chosen folder (bound on the canvas, replacing the table's own, which needs an `al_activar` `tk.Tabla` does not pass), Backspace and «↑» go up.
+- **«Esta carpeta está vacía.»** is only set (`_decir_vacio`) once a listing has arrived: `tk.Tabla` fixes it at creation and a connecting or unreachable window must not say it.
+- **Closing** (`WM_DELETE_WINDOW` and `<Destroy>`) runs `parar()` once, in the background, guarded by a flag; `Sondeo` cancels with the window, so a late answer finds nobody. `tests/test_tk_servidor.py` covers it with real threads.
