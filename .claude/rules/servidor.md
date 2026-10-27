@@ -6,6 +6,8 @@ paths:
   - "tests/test_servidor.py"
   - "ui/transferencia.py"
   - "tests/test_transferencia.py"
+  - "ui/gestion.py"
+  - "tests/test_gestion.py"
   - "ui/tk_servidor.py"
   - "tests/test_tk_servidor.py"
   - "ui/tk_transferencia.py"

@@ -154,6 +154,57 @@ def _mas_hondas(contienen: list[tuple[int, str]]) -> set[str]:
     return {nombre for h, nombre in contienen if h == hondura}
 
 
+def _carpetas_de_parejas(config: Config, remote: str) -> list[tuple[str, str]]:
+    """Devuelve `(carpeta, nombre)` de cada pareja de ese remote, con la carpeta normalizada."""
+    return [(remote_picker.normalizar(p.remote_path), p.name)
+            for p in config.pairs if p.remote_name == remote]
+
+
+def _contiene(carpeta: str, ruta: str) -> bool:
+    """Dice si `ruta` es `carpeta` o cuelga de ella, por tramos de ruta y no por prefijo de texto."""
+    return ruta == carpeta or ruta.startswith(carpeta.rstrip("/") + "/")
+
+
+def parejas_que_contienen(config: Config, remote: str, ruta: str) -> set[str]:
+    """Devuelve las parejas más hondas cuya carpeta es la ruta o la contiene.
+
+    Son TODAS las que comparten esa carpeta más honda, no solo una: si dos parejas
+    comparten carpeta y una es `*-mirror`, elegir solo una podría dejar escapar un
+    bloqueo.
+
+    Args:
+        config: Configuración con las parejas.
+        remote: Remote de la ruta; las parejas de otros remotes no cuentan.
+        ruta: Ruta del servidor.
+
+    Returns:
+        Los nombres de esas parejas; vacío si ninguna carpeta de pareja la contiene.
+    """
+    destino = remote_picker.normalizar(ruta)
+    return _mas_hondas([
+        (len(carpeta.rstrip("/")), nombre)
+        for carpeta, nombre in _carpetas_de_parejas(config, remote)
+        if _contiene(carpeta, destino)
+    ])
+
+
+def parejas_bajo(config: Config, remote: str, ruta: str) -> set[str]:
+    """Devuelve las parejas cuya carpeta es la ruta o cuelga de ella.
+
+    Args:
+        config: Configuración con las parejas.
+        remote: Remote de la ruta; las parejas de otros remotes no cuentan.
+        ruta: Ruta del servidor.
+
+    Returns:
+        Los nombres de esas parejas; vacío si ninguna carpeta de pareja está en la ruta
+        ni por debajo.
+    """
+    objetivo = remote_picker.normalizar(ruta)
+    return {nombre for carpeta, nombre in _carpetas_de_parejas(config, remote)
+            if _contiene(objetivo, carpeta)}
+
+
 def afectadas_subida(config: Config, remote: str, ruta_destino: str,
                      elementos: Iterable[Elemento]) -> tuple[Afectada, ...]:
     """Devuelve las parejas del servidor que recibirían lo que se sube.
@@ -173,19 +224,15 @@ def afectadas_subida(config: Config, remote: str, ruta_destino: str,
     Returns:
         Las parejas alcanzadas, sin repetir y en el orden de la configuración.
     """
-    carpetas = [(remote_picker.normalizar(p.remote_path), p.name)
-                for p in config.pairs if p.remote_name == remote]
-    destino = remote_picker.normalizar(ruta_destino)
-    nombres = _mas_hondas([
-        (len(carpeta.rstrip("/")), nombre) for carpeta, nombre in carpetas
-        if destino == carpeta or destino.startswith(carpeta.rstrip("/") + "/")
-    ])
-    base = destino.rstrip("/")
+    nombres = parejas_que_contienen(config, remote, ruta_destino)
+    base = remote_picker.normalizar(ruta_destino).rstrip("/")
     for e in elementos:
         objetivo = remote_picker.normalizar(base + "/" + e.nombre)
-        for carpeta, nombre in carpetas:
-            if carpeta == objetivo or (e.es_carpeta and carpeta.startswith(objetivo + "/")):
-                nombres.add(nombre)
+        if e.es_carpeta:
+            nombres |= parejas_bajo(config, remote, objetivo)
+        else:
+            nombres |= {nombre for carpeta, nombre in _carpetas_de_parejas(config, remote)
+                        if carpeta == objetivo}
     return _afectadas(config, nombres)
 
 
