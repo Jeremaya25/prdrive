@@ -432,7 +432,8 @@ c("  y cada una deja su línea en el diario", len(F.DIARIO), len(rechazadas))
 
 # --- la raíz del equipo cifrada
 def montar() -> None:
-    """Lo que hace VeraCrypt al abrirla: aparece la raíz en su punto."""
+    """Lo que hace VeraCrypt al abrirla: aparece la raíz en su punto, con el `.hc` retenido."""
+    RETENIDO[0] = True
     app = PUNTO / penwatch.APP_SUBDIR
     (app / "state").mkdir(parents=True, exist_ok=True)
     store.write_json(app / "state" / "fleet.json", {"nombre": "Mi portátil"})
@@ -444,6 +445,20 @@ def montar() -> None:
         '[defaults]\nremote = "nas"\n\n[[pair]]\nname = "notas"\nlocal = "notas"\n'
         'remote_path = "/R/notas"\n', encoding="utf-8")
 
+
+def cerrar_raiz() -> None:
+    """Lo que hace VeraCrypt al cerrarla: vacía el punto y suelta el `.hc`.
+
+    Las dos cosas: en Windows la carpeta temporal empieza por una letra
+    (`C:\\…`), así que `Unidad.letra` la lee y `bloqueada()` mira el `.hc`.
+    """
+    for hijo in list(PUNTO.iterdir()):
+        shutil.rmtree(hijo)
+    RETENIDO[0] = False
+
+
+LETRA = equipo.leer_ajustes().unidades[CIFRADA].letra or str(PUNTO)[:1]
+"""Lo que se le pasa a `/dismount`: su letra fija (en Windows, la de la carpeta temporal)."""
 
 montar()
 ag = F.nuevo()
@@ -459,12 +474,11 @@ c("bloquear la sesión no la toca: no lo tiene puesto", veracrypts(), [])
 sesion(ag, DESBLOQUEO)
 sesion(ag, SUSPENSION)
 c("suspender, sí: desatendido, con su letra o su carpeta",
-  [p.args for p in veracrypts()], [[VC, "/dismount", str(PUNTO)[:1], "/silent", "/quit"]])
+  [p.args for p in veracrypts()], [[VC, "/dismount", LETRA, "/silent", "/quit"]])
 c("  y la raíz sale «bloqueándose»", fila(ag, CIFRADA)["motivo"], "bloqueándose")
 for p in veracrypts():
     p.rc = 0
-for hijo in list(PUNTO.iterdir()):
-    shutil.rmtree(hijo)
+cerrar_raiz()
 F.vueltas(ag, 2)
 c("  cerrada de verdad: bloqueada", (ag.bloqueos, CIFRADA in ag.conexiones), ({}, False))
 montar()
@@ -474,9 +488,8 @@ F.LANZADOS.clear()
 ag.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": CIFRADA})
 F.vueltas(ag, 1, recorrer=False)
 c("el «Bloquear» de una persona sigue sin /silent", [p.args for p in veracrypts()],
-  [[VC, "/dismount", str(PUNTO)[:1], "/quit"]])
-for hijo in list(PUNTO.iterdir()):
-    shutil.rmtree(hijo)
+  [[VC, "/dismount", LETRA, "/quit"]])
+cerrar_raiz()
 veracrypts()[0].rc = 0
 F.vueltas(ag, 2)
 ag.pedir({"pide": equipo.PIDE_DESPERTAR})
