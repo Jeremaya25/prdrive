@@ -219,7 +219,7 @@ VERACRYPT_APPIMAGE_URL = ("https://launchpad.net/veracrypt/trunk/"
                           f"{VERACRYPT_VERSION}/+download/{{nombre}}")
 """Plantilla de la URL de un AppImage; `{nombre}` es el de `VERACRYPT_APPIMAGE`."""
 
-KEEPASSXC_VERSION = "2.7.12"
+KEEPASSXC_VERSION = "2.8.0"
 """Versión de KeePassXC que viaja con el llavero (`.prdrive/keepassxc/`).
 
 Es la primera con passkeys que pone los indicadores BE/BS que piden los sitios
@@ -229,7 +229,7 @@ llegaron a ver rechazado pero que nadie garantiza.
 
 Mismo contrato que VeraCrypt: el SHA-256 se apunta a mano tras comprobar la
 firma PGP con la clave de KeePassXC, huella `BF5A 669F 2272 CF43 24C1  FDA8
-CFB4 C216 6397 D0D2` (`gpg --verify KeePassXC-<versión>-Win64.zip.sig`). En
+CFB4 C216 6397 D0D2` (`gpg --verify <paquete>.sig`). En
 ejecución no se lee ningún `.DIGEST`: vienen en tres formatos distintos según
 la versión (H-2) y salen del mismo sitio que el paquete.
 
@@ -237,12 +237,36 @@ la versión (H-2) y salen del mismo sitio que el paquete.
 AD78 D3AF D894  F9E0 B7A6 6F03 B590 76A8`, la misma que vio K0), y el SHA-256
 coincide con su `.DIGEST`. El AppImage de Linux, el mismo día y con la misma
 subclave.
+2.8.0, comprobada el 27/10/2026 (la clave bajada de keepassxc.org, con esa
+huella): firma buena de la misma subclave `C1E4 CBA3 AD78 D3AF D894  F9E0 B7A6
+6F03 B590 76A8` en el ZIP de Windows y en los dos AppImage de x86_64, y el
+SHA-256 de cada uno coincide con su `.DIGEST`. Se sube por dos arreglos de
+seguridad de la integración con el navegador (la inyección de referencias de
+entradas y las escrituras fuera de límites al cifrar y descifrar los mensajes
+nativos). Es Qt 6. Los nombres cambian: el ZIP de Windows pasa de `Win64` a
+`x64` y el AppImage de Linux lleva `-1`. Hay dos AppImage de x86_64 firmados y
+distintos, `KeePassXC-2.8.0-x86_64.AppImage` y `KeePassXC-2.8.0-1-x86_64.AppImage`
+(mismo tamaño); se fija el `-1`, que es el que enlaza keepassxc.org/download.
+Extraídos los dos, `AppRun` es idéntico, ninguno trae `apprun-hooks/`, y solo
+difieren `usr/bin/keepassxc`, `usr/bin/keepassxc-cli` y las bibliotecas
+`libglib`/`libgio`/`libgobject`/`libgmodule`/`libbrotli*` (el `-1` es una
+recompilación; el otro trae además `usr/share/doc/libbrotli1`). La glibc mínima
+del `-1` (`objdump -T` de `usr/bin/keepassxc` y de `usr/lib/*.so*`) es la 2.38,
+la de las bibliotecas que lleva dentro (`libglib-2.0`; el binario pide la 2.34):
+la 2.7.12 pedía la 2.30, así que quedan fuera, por ejemplo, Ubuntu 22.04 y
+Debian 12.
+
+El `AppRun` de la 2.8.0 ya no es un `exec keepassxc "$@"`: en un arranque normal
+copia un icono y escribe `org.keepassxc.KeePassXC.desktop` en
+`~/.local/share`, corre `update-desktop-database` y lanza con `systemd-run
+--user --scope`. Eso dejaría rastro en el equipo fuera de `equipo.DIR`, así que
+en Linux se lanza el binario (`keepassxc.PROGRAMA_LINUX`), no el `AppRun`.
 """
 KEEPASSXC: dict[str, tuple[str, str]] = {
-    "windows-x64": ("KeePassXC-2.7.12-Win64.zip",
-                    "958234b0669d757b53eacf42bdd5de0fa1cc1ab7527709ddf4f7e29c06a8305f"),
-    "linux-x64": ("KeePassXC-2.7.12-x86_64.AppImage",
-                  "564fe8b751b9ef7aa057e4d3d0b2878db24eaa0f6b1c855c82e699ab0913ae49"),
+    "windows-x64": ("KeePassXC-2.8.0-x64.zip",
+                    "48ff4f088e9ce70e241da1270e5081528dba77c38b17dae4aa6690ffc50fc828"),
+    "linux-x64": ("KeePassXC-2.8.0-1-x86_64.AppImage",
+                  "3ab1bfbb422272334b48057e6bfc984c839375d9a1cd9350c4ea62ca0b55ca5f"),
 }
 """El paquete oficial de KeePassXC por paquete: `{paquete: (nombre, sha256)}`.
 
@@ -254,6 +278,16 @@ sino extraído una vez en cada equipo (`common/keepassxc.py`, §11 de la
 especificación).
 """
 KEEPASSXC_EJECUTABLES: dict[str, dict[str, dict[str, str]]] = {
+    "2.8.0": {
+        "windows-x64": {
+            "KeePassXC.exe": "72200bfe1a6c59162bee904832f3b292ede45325effcef54060c6aff836dd28d",
+            "keepassxc-cli.exe":
+                "ff737226e5fac1517652781908e5fbac3e626ad45215db63b6ee86ef2aa75c37",
+            "keepassxc-proxy.exe":
+                "cac9ec8b7b46cb34c416ad8cfec35d280646bd4f0f27a62ed2ae2050bcbcd56b",
+        },
+        "linux-x64": {"KeePassXC.AppImage": KEEPASSXC["linux-x64"][1]},
+    },
     "2.7.12": {
         "windows-x64": {
             "KeePassXC.exe": "1debd4f24e12bd400a6eedac20b22ca1fd97d17b1b16487a45a3e81fc61c7858",
@@ -262,7 +296,10 @@ KEEPASSXC_EJECUTABLES: dict[str, dict[str, dict[str, str]]] = {
             "keepassxc-proxy.exe":
                 "037bb594287671876f0f3f662cfafdb8219e51d4f0f33766f9aba2d609bcac44",
         },
-        "linux-x64": {"KeePassXC.AppImage": KEEPASSXC["linux-x64"][1]},
+        "linux-x64": {
+            "KeePassXC.AppImage":
+                "564fe8b751b9ef7aa057e4d3d0b2878db24eaa0f6b1c855c82e699ab0913ae49",
+        },
     },
 }
 """El SHA-256 de cada ejecutable de KeePassXC que prdrive lanza o registra desde la unidad.
@@ -277,11 +314,11 @@ código» y el agente vuelve a preguntar.
 
 Windows: los tres ejecutables del ZIP oficial (`KeePassXC.exe`, la línea de
 órdenes y el proxy del navegador), resumidos tal cual salen del ZIP de
-`KEEPASSXC["windows-x64"]` una vez comprobado contra su SHA-256 (el 15/10/2026,
-sobre la 2.7.12). El resto de ficheros que van al lado no se resume en cada
+`KEEPASSXC["windows-x64"]` una vez comprobado contra su SHA-256 (el 15/10/2026
+sobre la 2.7.12, el 27/10/2026 sobre la 2.8.0). El resto de ficheros que van al lado no se resume en cada
 lanzamiento: de ellos se mira la forma, contra `common/keepassxc_arbol.json`
 (`components.keepassxc_arbol()`: ni uno de más, ni de menos, ni con otro
-tamaño; los de hasta 4 KiB, como `qt.conf`, también se resumen). Lo aceptado
+tamaño; los de hasta 4 KiB, como `.portable`, también se resumen). Lo aceptado
 es una DLL cambiada en su sitio con el mismo tamaño. Linux: el
 AppImage, que no se repite aquí, porque su suma es la del paquete
 (`KEEPASSXC["linux-x64"]`). Linux ARM64 no tiene paquete: usa el KeePassXC del
@@ -304,15 +341,15 @@ KEEPASSXC_PARA: dict[str, str] = {"windows-x64": "windows-x64",
 """Qué paquete de `KEEPASSXC` usa cada plataforma.
 
 Windows ARM64 usa el de x64, emulado: en las pruebas, el ZIP x64 funcionó
-entero en Windows ARM (A1), y el único ZIP ARM64 publicado, el de la
-2.8.0-beta1, no conectaba con el navegador (A2, H-7). Linux ARM64 no tiene
-ninguno, porque no hay AppImage aarch64: usa el KeePassXC del equipo, si lo
-hay (§11 de la especificación).
+entero en Windows ARM (A1), y el ZIP ARM64 de la 2.8.0-beta1 no conectaba con
+el navegador (A2, H-7). La 2.8.0 ya publica un ZIP ARM64 y un AppImage aarch64
+nativos, pero prdrive no los lleva todavía: necesitan sus pruebas en real. Linux
+ARM64 usa el KeePassXC del equipo, si lo hay (§11 de la especificación).
 """
-MB_KEEPASSXC: dict[str, int] = {"windows-x64": 78, "linux-x64": 47}
-"""Megabytes que ocupa en la unidad cada paquete de la 2.7.12.
+MB_KEEPASSXC: dict[str, int] = {"windows-x64": 138, "linux-x64": 50}
+"""Megabytes que ocupa en la unidad cada paquete de la 2.8.0.
 
-El ZIP descomprimido son 78,0 MiB; el AppImage, que viaja entero, 47,0.
+El ZIP descomprimido son 137,4 MiB; el AppImage, que viaja entero, 49,7.
 """
 
 

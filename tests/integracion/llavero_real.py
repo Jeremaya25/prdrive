@@ -252,7 +252,7 @@ def por_que_no_arranca() -> None:
     """Cuenta por qué no se ve KeePassXC (Linux): las bibliotecas que no encuentra y lo que dice.
 
     Es lo extraído en la caché: `ldd` del programa y del plugin de Qt para X11
-    (con las bibliotecas que lleva el AppImage delante, como `AppRun`), y
+    (con las bibliotecas que lleva el AppImage delante), y
     unos segundos de arrancarlo a mano con `QT_DEBUG_PLUGINS`.
     """
     from common import keepassxc as kx
@@ -271,14 +271,14 @@ def por_que_no_arranca() -> None:
         print(f"    ldd {binario.name}: " + (", ".join(faltan) if faltan else "no falta nada"))
     for args in (["--version"], []):            # la versión, y la ventana: 10 s
         try:
-            r = subprocess.run([str(raiz / "AppRun"), *args], capture_output=True, text=True,
+            r = subprocess.run([str(raiz / kx.PROGRAMA_LINUX), *args], capture_output=True, text=True,
                                env=entorno, timeout=10)
             salida = (r.stdout + r.stderr).strip().splitlines()
-            print(f"    AppRun {' '.join(args)}: código {r.returncode}")
+            print(f"    keepassxc {' '.join(args)}: código {r.returncode}")
         except subprocess.TimeoutExpired as e:
             salida = ((e.stdout or b"").decode(errors="replace")
                       + (e.stderr or b"").decode(errors="replace")).strip().splitlines()
-            print(f"    AppRun {' '.join(args)}: sigue abierto a los 10 s")
+            print(f"    keepassxc {' '.join(args)}: sigue abierto a los 10 s")
         mostrar(salida)
 
 
@@ -391,6 +391,8 @@ def main() -> int:
     propia = temporal / "propia" / BASE
     propia.parent.mkdir()
     r = cli("db-create", "-p", str(propia), entrada=f"{CLAVE}\n{CLAVE}\n")
+    if r.returncode != 0:                       # 127 = al cargador le falta una biblioteca del equipo
+        mostrar((r.stdout + r.stderr).strip().splitlines())
     ver("keepassxc-cli db-create crea la base", (r.returncode, propia.is_file()), (0, True))
     en_dispositivo(app, "activar", str(propia))
     catalogo = (remoto / "prdrive-catalog" / "remote.toml").read_text(encoding="utf-8")
@@ -442,6 +444,12 @@ def main() -> int:
         manifiesto = Path(e["manifiestos"].get("chrome", "no-hay"))
         ver("y nada en ~/.config/keepassxc",
             (Path(os.environ["XDG_CONFIG_HOME"]) / "keepassxc").exists(), False)
+        # El AppRun de la 2.8.0 los escribe; prdrive lanza el binario y no debe haber rastro.
+        datos = Path(os.environ["XDG_DATA_HOME"])
+        ver("ni un .desktop ni un icono de KeePassXC en ~/.local/share",
+            [(datos / "applications" / "org.keepassxc.KeePassXC.desktop").exists(),
+             (datos / "icons" / "hicolor" / "256x256" / "apps" / "keepassxc.png").exists()],
+            [False, False])
     # Recién abierto, su servidor del navegador puede no escuchar todavía, y el
     # proxy no vuelve a intentar la conexión: se le dan unos intentos.
     respuesta: dict = {}

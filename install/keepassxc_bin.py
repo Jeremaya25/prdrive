@@ -16,7 +16,7 @@ cuadra no. Se guarda tal cual en la caché del usuario, una carpeta por versión
 el bajado a mano y dejado ahí con su nombre se comprueba igual (`ensure_zip()`).
 
 Qué se escribe en la unidad:
-- El ZIP entero, sin su carpeta de arriba (`KeePassXC-2.7.12-Win64/`), que ya
+- El ZIP entero, sin su carpeta de arriba (`KeePassXC-<versión>-<arquitectura>/`), que ya
   trae `.portable` (H-3). Cada ruta se valida ANTES de escribir la primera
   (`components.ruta_relativa_segura()`: nada de `..`, `\\`, unidad ni ruta
   absoluta), con la defensa de `update._ruta_segura()` y por la misma razón:
@@ -217,7 +217,7 @@ def ensure_zip(clave: str = PAQUETE, progreso: Progreso | None = None,
 def miembros(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
     """Devuelve los ficheros del ZIP con su ruta dentro de la carpeta del paquete.
 
-    El ZIP oficial lo mete todo en una carpeta (`KeePassXC-2.7.12-Win64/`), que
+    El ZIP oficial lo mete todo en una carpeta (`KeePassXC-<versión>-<arquitectura>/`), que
     se quita. Se valida TODO antes de escribir nada.
 
     Raises:
