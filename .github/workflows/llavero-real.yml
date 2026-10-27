@@ -50,7 +50,9 @@ jobs:
 
       - name: Pantalla virtual (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+        # libegl1 y libopengl0: la 2.8.0 (Qt 6) las pide también a `keepassxc-cli`, y no vienen
+        # con el runner ni con xvfb.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libegl1 libopengl0
 
       - name: El llavero de punta a punta (Linux)
         if: runner.os == 'Linux'

@@ -391,6 +391,8 @@ def main() -> int:
     propia = temporal / "propia" / BASE
     propia.parent.mkdir()
     r = cli("db-create", "-p", str(propia), entrada=f"{CLAVE}\n{CLAVE}\n")
+    if r.returncode != 0:                       # 127 = al cargador le falta una biblioteca del equipo
+        mostrar((r.stdout + r.stderr).strip().splitlines())
     ver("keepassxc-cli db-create crea la base", (r.returncode, propia.is_file()), (0, True))
     en_dispositivo(app, "activar", str(propia))
     catalogo = (remoto / "prdrive-catalog" / "remote.toml").read_text(encoding="utf-8")
