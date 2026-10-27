@@ -486,7 +486,9 @@ if IS_WIN:
             try:
                 r = subprocess.run(["cmd", "/c", str(script)], capture_output=True,
                                    text=True, timeout=60)
-                return (r.stdout + r.stderr).split()
+                # Solo las marcas del script: `tasklist` puede quejarse de su
+                # entrada redirigida en una máquina sin consola.
+                return [t for t in (r.stdout + r.stderr).split() if t in ("AVISO", "FIN")]
             except subprocess.TimeoutExpired:
                 return ["no ha terminado en 60 s"]
             finally:
