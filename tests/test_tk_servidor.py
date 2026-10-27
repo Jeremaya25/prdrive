@@ -21,7 +21,13 @@ lo que ve la persona:
 - una carpeta de 5 000 entradas se abre y se ve entera (la tabla de un lienzo
   moría con `BadAlloc` pasadas ~850 filas);
 - cerrar la ventana con un listado en vuelo, con hilos de verdad: `parar()` una
-  vez y ninguna excepción de Tk.
+  vez y ninguna excepción de Tk;
+- bajar y subir (pieza 2): los tres botones y cuándo se encienden, selección
+  múltiple, el bloqueo y el aviso por pareja, el aviso de choques con sus tres
+  respuestas, el filtro escapado que llega a `sync/copy`, el panel con un
+  progreso que avanza, el resultado, «Cancelar» (una sola vez), «Reintentar»,
+  la conexión perdida a mitad, y cerrar con un lote en marcha (con hilos de
+  verdad: `job/stop` antes de `parar()`, ninguna excepción de Tk).
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ import sys
 import threading
 import time
 
-from _harness import Checks, mkcfg, sandbox
+from _harness import Checks, mkcfg, sandbox, tmpdir
 
 from common import config_file, model, rcd
 from common.model import ConfigError
@@ -46,7 +52,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import icons, segundo_plano, servidor, theme, tk_servidor  # noqa: E402
+from ui import icons, segundo_plano, servidor, theme, tk_servidor, tk_transferencia  # noqa: E402
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -81,6 +87,7 @@ class RcdFalso:
         self.respuestas = respuestas
         self.llamadas: list[tuple] = []
         self.paradas = 0
+        self.orden: list[str] = []        # métodos llamados y «parar», en el orden en que ocurrieron
         self.esperas = 0
         self.error_esperar: Exception | None = None
         self.vivo = True
@@ -93,6 +100,7 @@ class RcdFalso:
     def llamar(self, metodo: str, params: dict | None = None) -> dict:
         params = params or {}
         self.llamadas.append((metodo, params))
+        self.orden.append(metodo)
         respuesta = self.respuestas[(metodo, params.get("remote"))]
         if callable(respuesta):
             respuesta = respuesta()
@@ -102,6 +110,7 @@ class RcdFalso:
 
     def parar(self) -> None:
         self.paradas += 1
+        self.orden.append("parar")
 
     def listados(self) -> list[dict]:
         return [p for m, p in self.llamadas if m == "operations/list"]
@@ -737,6 +746,605 @@ with sandbox():
     c("cerrar mientras arranca también para el rcd, una vez", tardio.paradas, 1)
     c("  y sin excepciones", errores, [])
     raiz.withdraw()
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+
+    # -----------------------------------------------------------------------
+    # 13. Bajar y subir (pieza 2)
+    # -----------------------------------------------------------------------
+    model.RCLONE_CONF.write_text("[nas]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
+                                 encoding="utf-8")
+    tk_servidor.INTERVALO_PROGRESO_MS = 5
+    CFG2 = mkcfg((), pairs=[
+        {"name": "Copia", "local": "sync-data/copia", "remote_path": "/datos/copia",
+         "remote": "nas", "mode": "up-mirror"},
+        {"name": "Notas", "local": "sync-data/notas", "remote_path": "/datos/notas",
+         "remote": "nas", "mode": "bisync"},
+        {"name": "Baja", "local": "sync-data/baja", "remote_path": "/datos/baja",
+         "remote": "nas", "mode": "down"},
+        {"name": "Espejo", "local": "sync-data/espejo", "remote_path": "/datos/espejo",
+         "remote": "nas", "mode": "down-mirror"},
+        {"name": "Sube", "local": "sync-data/sube", "remote_path": "/datos/sube",
+         "remote": "nas", "mode": "up"}], defaults={"remote": "nas"})
+
+    CORRIENDO = {"finished": False}
+    ACABADO = {"finished": True, "success": True}
+    FALLADO = {"finished": True, "success": False, "error": "permission denied"}
+
+    def stats(hechos=0, total=0, enviados=0, total_bytes=0, **mas) -> dict:
+        return {"transfers": hechos, "totalTransfers": total, "bytes": enviados,
+                "totalBytes": total_bytes, "speed": 2048, "eta": 5, **mas}
+
+    def secuencia(*items):
+        """Una respuesta que va dando `items` y se queda en el último."""
+        cola = list(items)
+        return lambda: cola.pop(0) if len(cola) > 1 else cola[0]
+
+    class RcdLote(RcdFalso):
+        """Un servidor donde lo que no se ha dicho que exista, no existe (`stat` → 404)."""
+
+        def llamar(self, metodo, params=None):
+            params = params or {}
+            if metodo == "operations/stat" and (metodo, params.get("remote")) not in self.respuestas:
+                self.llamadas.append((metodo, params))
+                self.orden.append(metodo)
+                raise rcd.ErrorRc("object not found", 404)
+            return super().llamar(metodo, params)
+
+    def servidor_lote(estadisticas=(stats(),), estados=(ACABADO,), otras=None) -> RcdFalso:
+        """Un servidor que acepta un `sync/copy` (jobid 7) y cuenta cómo va."""
+        return RcdLote(respuestas(otras={
+            ("sync/copy", None): {"jobid": 7},
+            ("core/stats", None): secuencia(*estadisticas),
+            ("job/status", None): secuencia(*estados),
+            ("job/stop", None): {},
+            ("operations/list", "datos/notas"): lista(item("hoy.txt")),
+            ("operations/stat", "leeme.txt"): {"item": item("leeme.txt")},
+            **(otras or {})}))
+
+    def bombear(condicion, tope: float = 5.0) -> bool:
+        """Deja correr el bucle de Tk hasta que se cumpla la condición."""
+        fin = time.monotonic() + tope
+        while not condicion() and time.monotonic() < fin:
+            raiz.update()
+            time.sleep(0.005)
+        return bool(condicion())
+
+    def estado_de(widget) -> str:
+        return str(widget.cget("state"))
+
+    def botones_de(dlg) -> tuple[str, str, str]:
+        return (estado_de(dlg.bajar), estado_de(dlg.subir_archivos), estado_de(dlg.subir_carpeta))
+
+    def elegir_varias(dlg, *iids) -> None:
+        dlg.lista.selection_set(*iids)
+        dlg.update()
+
+    def copias(falso) -> list[dict]:
+        return [p for m, p in falso.llamadas if m == "sync/copy"]
+
+    def paradas_de_trabajo(falso) -> int:
+        return len([m for m, _p in falso.llamadas if m == "job/stop"])
+
+    def listados_vistos(falso) -> list[dict]:
+        """Los listados de una carpeta (no los recursivos de contar choques)."""
+        return [p for p in falso.listados() if not p["opt"].get("recurse")]
+
+    def panel_a_la_vista(dlg) -> bool:
+        return bool(dlg.panel.marco.winfo_manager()) and bool(dlg.panel.titulo.winfo_manager())
+
+    def frase_panel(dlg) -> str:
+        """El texto del resultado del panel."""
+        for w in dlg.panel.resultado.winfo_children():
+            for h in [w, *w.winfo_children()]:
+                if isinstance(h, ttk.Label) and h.cget("text"):
+                    return str(h.cget("text"))
+        return ""
+
+    LLAMADAS_DIALOGOS: dict[str, list] = {"avisar": [], "preguntar": [], "choques": [],
+                                          "destino": [], "archivos": [], "carpeta": []}
+    RESPUESTAS_DIALOGOS: dict = {"preguntar": True, "choques": "sobrescribir",
+                                 "destino": None, "archivos": [], "carpeta": None}
+
+    def falso_avisar(parent, titulo, texto, tono="Azul."):
+        LLAMADAS_DIALOGOS["avisar"].append((titulo, texto))
+
+    def falso_preguntar(parent, titulo, texto, aceptar="Aceptar", cancelar="Cancelar"):
+        LLAMADAS_DIALOGOS["preguntar"].append((titulo, texto, aceptar, cancelar))
+        return RESPUESTAS_DIALOGOS["preguntar"]
+
+    def falso_choques(parent, texto):
+        LLAMADAS_DIALOGOS["choques"].append(texto)
+        return RESPUESTAS_DIALOGOS["choques"]
+
+    def falso_destino(parent, inicial):
+        LLAMADAS_DIALOGOS["destino"].append(inicial)
+        return RESPUESTAS_DIALOGOS["destino"]
+
+    def falso_archivos(parent, inicial):
+        LLAMADAS_DIALOGOS["archivos"].append(inicial)
+        return RESPUESTAS_DIALOGOS["archivos"]
+
+    def falso_carpeta(parent, inicial):
+        LLAMADAS_DIALOGOS["carpeta"].append(inicial)
+        return RESPUESTAS_DIALOGOS["carpeta"]
+
+    def dialogos(**respuestas_) -> None:
+        """Reinicia lo apuntado y fija lo que contestan los diálogos."""
+        for lista_ in LLAMADAS_DIALOGOS.values():
+            lista_.clear()
+        RESPUESTAS_DIALOGOS.update({"preguntar": True, "choques": "sobrescribir",
+                                    "destino": None, "archivos": [], "carpeta": None})
+        RESPUESTAS_DIALOGOS.update(respuestas_)
+
+    tk_servidor.avisar, tk_servidor.preguntar = falso_avisar, falso_preguntar
+    tk_transferencia.preguntar_choques = falso_choques
+    tk_servidor.elegir_destino, tk_servidor.elegir_archivos = falso_destino, falso_archivos
+    tk_servidor.elegir_carpeta = falso_carpeta
+
+    # --- 13a. Los botones y cuándo se encienden --------------------------------
+    dialogos()
+    falso = servidor_lote(estados=(CORRIENDO,))
+    dlg = abrir(falso)
+    c("los tres botones llevan su rótulo",
+      (str(dlg.bajar.cget("text")), str(dlg.subir_archivos.cget("text")),
+       str(dlg.subir_carpeta.cget("text"))), ("Bajar…", "Subir archivos…", "Subir carpeta…"))
+    c("con rcd y sin selección: «Bajar…» apagado, las dos «Subir…» encendidas",
+      botones_de(dlg), ("disabled", "normal", "normal"))
+    elegir_varias(dlg, "datos")
+    c("con una fila elegida «Bajar…» se enciende", botones_de(dlg)[0], "normal")
+    elegir_varias(dlg, "datos", "leeme.txt")
+    c("la lista admite varias filas a la vez", sorted(dlg.lista.selection()), ["datos", "leeme.txt"])
+    c("  y «Bajar…» sigue encendido", botones_de(dlg)[0], "normal")
+    n = len(falso.listados())
+    pulsar(dlg, "<Return>")
+    c("Intro con dos filas elegidas no entra en ninguna", (len(falso.listados()), dlg.ruta.cget("text")),
+      (n, "/"))
+    elegir_varias(dlg, "datos")
+    dlg.lista.selection_remove("datos")
+    dlg.update()
+    c("quitar la selección apaga «Bajar…»", botones_de(dlg)[0], "disabled")
+    # a mitad de un lote, los tres apagados
+    dialogos(destino=str(tmpdir()))
+    elegir_varias(dlg, "leeme.txt")
+    dlg.bajar.invoke()
+    c("el panel sale y enseña el título", bombear(lambda: panel_a_la_vista(dlg)), True)
+    c("durante el lote los tres botones están apagados", botones_de(dlg),
+      ("disabled", "disabled", "disabled"))
+    elegir_varias(dlg, "datos")
+    c("  y elegir otra fila no enciende «Bajar…»", botones_de(dlg)[0], "disabled")
+    dlg.bajar.invoke()
+    dlg.subir_archivos.invoke()
+    c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
+      (1, []))
+    cerrar(dlg)
+
+    # sin rcd (rclone no arrancó) no se enciende ninguno
+    rcd.arrancar = no_arranca
+    ABIERTAS.clear()
+    previo = tk_servidor.mostrar
+    tk_servidor.mostrar = lambda dlg_, parent=None: (ABIERTAS.append(dlg_), dlg_.update())
+    tk_servidor.open_dialog(raiz, CFG)
+    tk_servidor.mostrar = previo
+    dlg = ABIERTAS[0]
+    c("sin rcd los tres botones están apagados", botones_de(dlg),
+      ("disabled", "disabled", "disabled"))
+    cerrar(dlg)
+    rcd.arrancar = arrancar_falso
+
+    # --- 13b. Bajar con su estructura, el progreso y el resultado ---------------
+    destino = tmpdir()
+    (destino / "datos").mkdir()
+    (destino / "datos" / "a.txt").write_text("viejo", encoding="utf-8")
+    (destino / "leeme.txt").write_text("viejo", encoding="utf-8")
+    dialogos(destino=str(destino), choques="omitir")
+    falso = servidor_lote(
+        estadisticas=(stats(), stats(3, 10, 1024, 4096, transferring=[{"name": "datos/b.txt"}]),
+                      stats(3, 10, 4096, 4096, checks=5)),
+        estados=(CORRIENDO, CORRIENDO, ACABADO),
+        otras={("operations/list", "datos"): lista(item("notas", True), item("a.txt"))})
+    # el listado recursivo de «datos» da rutas relativas a «datos»
+    listado_normal = falso.respuestas[("operations/list", "datos")]
+    falso.respuestas[("operations/list", "datos")] = lambda: listado_normal
+    dlg = abrir(falso)
+    elegir_varias(dlg, "datos", "leeme.txt")
+    dlg.bajar.invoke()
+    c("«Bajar…» empieza el diálogo en una carpeta del equipo",
+      len(LLAMADAS_DIALOGOS["destino"]), 1)
+    c("el aviso de choques salió una vez, con el plural y el destino",
+      LLAMADAS_DIALOGOS["choques"], [f"2 elementos ya existen en {destino}. ¿Sobrescribirlos u omitirlos?"])
+    c("se lanzó un solo sync/copy", len(copias(falso)), 1)
+    cp = copias(falso)[0]
+    c("  de «nas:/» a la carpeta elegida", (cp["srcFs"], cp["dstFs"]), ("nas:/", str(destino)))
+    c("  con la estructura del servidor: «datos» entera y «leeme.txt»",
+      sorted(cp["_filter"]["IncludeRule"]), ["/datos/**", "/leeme.txt"])
+    c("  con «Omitir»: IgnoreExisting", cp.get("_config"), {"IgnoreExisting": True})
+    c("  asíncrono, con su grupo y carpetas vacías",
+      (cp["_async"], cp["_group"], cp["createEmptySrcDirs"]), (True, "lote-1", True))
+    c("  y nada que borre", [m for m, _p in falso.llamadas
+                            if m in ("sync/sync", "sync/move", "operations/purge",
+                                     "operations/deletefile")], [])
+    c("el panel enseña el título del lote en curso",
+      bombear(lambda: dlg.panel.titulo.cget("text") == f"Bajando a {destino}"), True)
+    c("el progreso avanza en el panel",
+      bombear(lambda: str(dlg.panel.cuenta.cget("text")).startswith("3 de 10 archivos")), True)
+    c("  con el archivo en curso", str(dlg.panel.archivo.cget("text")), "datos/b.txt")
+    c("al acabar, «Copiados … · omitidos …» (comprobados mayor que copiados)",
+      bombear(lambda: frase_panel(dlg) == "Copiados 3 · omitidos 2"), True)
+    c("  el progreso se esconde y no hay «Reintentar»",
+      (bool(dlg.panel.titulo.winfo_manager()), bool(dlg.panel.reintentar.winfo_manager())),
+      (False, False))
+    c("  y los botones vuelven", botones_de(dlg)[0], "normal")
+    dlg.bajar.invoke()
+    c("  la última carpeta del equipo se recuerda: el segundo diálogo empieza en ella",
+      LLAMADAS_DIALOGOS["destino"][-1], str(destino))
+    c("  y el grupo del segundo lote es otro",
+      copias(falso)[-1]["_group"], "lote-2")
+    cerrar(dlg)
+
+    # sin choques: no se pregunta, y «Sobrescribir» no pone IgnoreExisting
+    dialogos(destino=str(tmpdir()), choques="sobrescribir")
+    falso = servidor_lote(estados=(ACABADO,), estadisticas=(stats(1, 1, 5, 5),))
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    bombear(lambda: frase_panel(dlg) != "")
+    c("sin nada que choque no se pregunta y se copia sin IgnoreExisting",
+      (LLAMADAS_DIALOGOS["choques"], "_config" in copias(falso)[0]), ([], False))
+    c("  «Copiados 1» sin omitidos", frase_panel(dlg), "Copiados 1")
+    cerrar(dlg)
+
+    # un choque: singular; «Sobrescribir» no pone IgnoreExisting; Cancelar no copia
+    unico = tmpdir()
+    (unico / "leeme.txt").write_text("viejo", encoding="utf-8")
+    for respuesta, copia, omite in (("sobrescribir", True, False), ("omitir", True, True),
+                                    (None, False, False)):
+        dialogos(destino=str(unico), choques=respuesta)
+        falso = servidor_lote()
+        dlg = abrir(falso)
+        elegir_varias(dlg, "leeme.txt")
+        dlg.bajar.invoke()
+        bombear(lambda: frase_panel(dlg) != "" or not copia)
+        c(f"un choque, respuesta {respuesta!r}: el texto va en singular",
+          LLAMADAS_DIALOGOS["choques"],
+          [f"1 elemento ya existe en {unico}. ¿Sobrescribirlo u omitirlo?"])
+        c("  se copia o no según la respuesta", len(copias(falso)), 1 if copia else 0)
+        if copia:
+            c("  y IgnoreExisting solo con «Omitir»", "_config" in copias(falso)[0], omite)
+        else:
+            c("  «Cancelar» no deja nada en el panel y devuelve los botones",
+              (panel_a_la_vista(dlg), botones_de(dlg)[0]), (False, "normal"))
+        cerrar(dlg)
+
+    # --- 13c. Un nombre con caracteres de patrón llega escapado a sync/copy -----
+    dialogos(destino=str(tmpdir()))
+    falso = servidor_lote(otras={
+        ("operations/list", ""): lista(item("raro [1]*"), item("!x.txt"), item("a b?.txt"),
+                                       item("dir{1}", True)),
+        ("operations/stat", "raro [1]*"): {"item": item("raro [1]*")},
+        ("operations/stat", "!x.txt"): {"item": item("!x.txt")},
+        ("operations/stat", "a b?.txt"): {"item": item("a b?.txt")},
+        ("operations/list", "dir{1}"): lista()})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "raro [1]*", "!x.txt", "a b?.txt", "dir{1}")
+    dlg.bajar.invoke()
+    bombear(lambda: frase_panel(dlg) != "")
+    c("las reglas que llegan a sync/copy están escapadas y son solo lo elegido",
+      sorted(copias(falso)[0]["_filter"]["IncludeRule"]),
+      sorted(["/raro \\[1\\]\\*", "/!x.txt", "/a b\\?.txt", "/dir\\{1\\}/**"]))
+    c("  y se miró cada archivo por su nombre sin escapar (stat) y la carpeta (list recursivo)",
+      sorted(p["remote"] for m, p in falso.llamadas
+             if m == "operations/stat" and p["remote"] not in ("",)),
+      sorted(["raro [1]*", "!x.txt", "a b?.txt"]))
+    cerrar(dlg)
+
+    # --- 13d. Subir: bloqueo, aviso por modo y choques --------------------------
+    origen = tmpdir()
+    (origen / "uno.txt").write_text("1", encoding="utf-8")
+    (origen / "dos.txt").write_text("2", encoding="utf-8")
+    (origen / "fotos").mkdir()
+    (origen / "fotos" / "a.jpg").write_text("a", encoding="utf-8")
+    (origen / "fotos" / "b.jpg").write_text("b", encoding="utf-8")
+    nuevo_rcd = lambda o=None: servidor_lote(otras={  # noqa: E731
+        ("operations/list", "datos/copia"): lista(), ("operations/list", "datos/baja"): lista(),
+        ("operations/list", "datos/espejo"): lista(), ("operations/list", "datos/sube"): lista(),
+        ("operations/list", "datos/notas"): lista(item("hoy.txt")), **(o or {})})
+
+    dialogos(archivos=[str(origen / "uno.txt")])
+    falso = nuevo_rcd()
+    dlg = abrir(falso, config=CFG2)
+    elegir_y_entrar(dlg, "datos")
+    elegir_varias(dlg)
+    falso.respuestas[("operations/list", "datos")] = lista(
+        item("copia", True), item("notas", True), item("baja", True), item("espejo", True),
+        item("sube", True), item("fotos", True))
+    dlg.arriba.invoke()
+    elegir_y_entrar(dlg, "datos")
+    elegir_y_entrar(dlg, "copia")
+    c("estamos dentro de «Copia» (up-mirror)", dlg.ruta.cget("text"), "/datos/copia")
+    dlg.subir_archivos.invoke()
+    c("subir a una pareja up-mirror se bloquea con «No se puede»",
+      LLAMADAS_DIALOGOS["avisar"],
+      [("No se puede", "«Copia» deja el servidor igual que el dispositivo: lo que subas aquí lo "
+                       "borraría su próxima pasada. Súbelo a su carpeta del dispositivo.")])
+    c("  y no se copia ni se mira el destino",
+      (copias(falso), [p for p in falso.listados() if p["opt"].get("recurse")]), ([], []))
+    c("  ni queda un lote en marcha", (panel_a_la_vista(dlg), botones_de(dlg)[1]), (False, "normal"))
+
+    dialogos(archivos=[str(origen / "uno.txt")], preguntar=False)
+    dlg.arriba.invoke()
+    elegir_y_entrar(dlg, "notas")
+    c("estamos dentro de «Notas» (bisync)", dlg.ruta.cget("text"), "/datos/notas")
+    dlg.subir_archivos.invoke()
+    c("subir a una pareja bisync pregunta con el texto del modo",
+      LLAMADAS_DIALOGOS["preguntar"],
+      [("Carpeta de una pareja",
+        "Lo que subas a «Notas» lo bajará al dispositivo su próxima pasada; si sobrescribes "
+        "algo que también ha cambiado allí, saldrá un conflicto.", "Seguir", "Cancelar")])
+    c("  «Cancelar» no copia nada y deja los botones", (copias(falso), botones_de(dlg)[1]),
+      ([], "normal"))
+    dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
+    dlg.subir_archivos.invoke()
+    c("  «Seguir» copia: «uno.txt» a la raíz absoluta de la carpeta",
+      bombear(lambda: len(copias(falso)) == 1), True)
+    cp = copias(falso)[0]
+    c("  de la carpeta del equipo a «nas:/datos/notas», con su regla",
+      (cp["srcFs"], cp["dstFs"], cp["_filter"]["IncludeRule"]),
+      (str(origen), "nas:/datos/notas", ["/uno.txt"]))
+    c("  sin choques (el servidor tiene «hoy.txt», no «uno.txt»)",
+      (LLAMADAS_DIALOGOS["choques"], "_config" in cp), ([], False))
+    c("  el título del panel es «Subiendo a /datos/notas»",
+      bombear(lambda: frase_panel(dlg) != ""), True)
+    c("  y al acabar relee la carpeta que se ve",
+      listados_vistos(falso)[-1]["remote"], "datos/notas")
+    n_antes = len(listados_vistos(falso))
+    dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
+    dlg.subir_archivos.invoke()
+    bombear(lambda: len(copias(falso)) == 2 and frase_panel(dlg) != "")
+    bombear(lambda: len(listados_vistos(falso)) > n_antes)
+    c("  tras cada subida a la carpeta que se ve hay un listado nuevo de ella",
+      len(listados_vistos(falso)) > n_antes, True)
+    cerrar(dlg)
+
+    # los demás modos avisan con su texto (up, down, down-mirror)
+    for pareja, carpeta_, texto_ in (
+            ("Baja", "baja", "Lo que subas a «Baja» lo bajará al dispositivo su próxima pasada."),
+            ("Espejo", "espejo", "Lo que subas a «Espejo» lo bajará al dispositivo su próxima pasada."),
+            ("Sube", "sube", "«Sube» solo sube del dispositivo: lo que subas aquí se quedará en el servidor.")):
+        dialogos(archivos=[str(origen / "uno.txt")], preguntar=False)
+        falso = nuevo_rcd()
+        dlg = abrir(falso, config=CFG2)
+        falso.respuestas[("operations/list", "")] = lista(item("datos", True))
+        dlg.arriba.invoke()
+        falso.respuestas[("operations/list", "datos")] = lista(item(carpeta_, True))
+        elegir_y_entrar(dlg, "datos")
+        elegir_y_entrar(dlg, carpeta_)
+        dlg.subir_archivos.invoke()
+        c(f"subir a «{pareja}» avisa con el texto de su modo",
+          [t[1] for t in LLAMADAS_DIALOGOS["preguntar"]], [texto_])
+        cerrar(dlg)
+
+    # --- 13e. Subir una carpeta y los choques de la subida ---------------------
+    dialogos(carpeta=str(origen / "fotos"), choques=None)
+    falso = nuevo_rcd({
+        ("operations/list", "fotos"): lista(item("a.jpg"), item("b.jpg"), item("c.jpg"))})
+    falso.respuestas[("operations/list", "")] = lista(item("datos", True), item("fotos", True))
+    dlg = abrir(falso)
+    # el listado recursivo de «fotos» trae las rutas bajo «fotos»
+    falso.respuestas[("operations/list", "fotos")] = lambda: {"list": [
+        {"Name": "a.jpg", "Path": "a.jpg", "IsDir": False, "Size": 1},
+        {"Name": "b.jpg", "Path": "b.jpg", "IsDir": False, "Size": 1},
+        {"Name": "sub", "Path": "sub", "IsDir": True, "Size": -1}]}
+    dlg.subir_carpeta.invoke()
+    c("subir una carpeta pregunta por los choques: dos archivos coinciden (la subcarpeta no cuenta)",
+      LLAMADAS_DIALOGOS["choques"], ["2 elementos ya existen en /. ¿Sobrescribirlos u omitirlos?"])
+    c("  la recursión se pidió solo de «fotos» en el servidor",
+      [p["remote"] for p in falso.listados() if p["opt"].get("recurse")], ["fotos"])
+    c("  «Cancelar» no copia nada", copias(falso), [])
+    dialogos(carpeta=str(origen / "fotos"), choques="omitir")
+    dlg.subir_carpeta.invoke()
+    bombear(lambda: len(copias(falso)) == 1)
+    cp = copias(falso)[0]
+    c("  «Omitir» copia la carpeta entera con IgnoreExisting",
+      (cp["srcFs"], cp["dstFs"], cp["_filter"]["IncludeRule"], cp.get("_config")),
+      (str(origen), "nas:/", ["/fotos/**"], {"IgnoreExisting": True}))
+    bombear(lambda: frase_panel(dlg) != "")
+    c("  al acabar en la raíz que se ve, relee la raíz", listados_vistos(falso)[-1]["remote"], "")
+    # raíz de una unidad
+    dialogos(carpeta="/")
+    n = len(copias(falso))
+    dlg.subir_carpeta.invoke()
+    c("la raíz de una unidad no se sube: se dice", (len(copias(falso)), LLAMADAS_DIALOGOS["avisar"]),
+      (n, [("No se puede", tk_servidor.SIN_RAIZ)]))
+    cerrar(dlg)
+
+    # un destino que no existe en el servidor no choca (404 = «no está»)
+    dialogos(archivos=[str(origen / "uno.txt")])
+    falso = nuevo_rcd({("operations/stat", ""): {"item": None}})
+    dlg = abrir(falso)
+    falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("object not found", 404)
+    dlg.subir_archivos.invoke()
+    bombear(lambda: len(copias(falso)) == 1)
+    c("un archivo que no existe en el servidor (404) no choca y se copia",
+      (LLAMADAS_DIALOGOS["choques"], len(copias(falso))), ([], 1))
+    cerrar(dlg)
+
+    # un error de verdad al contar se dice con «Reintentar»; no copia
+    dialogos(archivos=[str(origen / "uno.txt")])
+    falso = nuevo_rcd()
+    falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("permission denied", 403)
+    dlg = abrir(falso)
+    dlg.subir_archivos.invoke()
+    c("un error al mirar el destino sale en el panel, sin copiar",
+      (frase_panel(dlg), copias(falso), botones_de(dlg)[1]),
+      ("No tienes permiso para escribir en /.", [], "normal"))
+    c("  con «Reintentar»", bool(dlg.panel.reintentar.winfo_manager()), True)
+    falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("object not found", 404)
+    dlg.panel.reintentar.invoke()
+    bombear(lambda: len(copias(falso)) == 1)
+    c("  «Reintentar» repite el lote desde el principio", len(copias(falso)), 1)
+    cerrar(dlg)
+
+    # bajar dentro de la carpeta local de una pareja
+    espejo = str(model.DEVICE_ROOT / "sync-data" / "espejo")
+    dialogos(destino=espejo)
+    falso = servidor_lote()
+    dlg = abrir(falso, config=CFG2)
+    elegir_varias(dlg, "leeme.txt")
+    dlg.bajar.invoke()
+    c("bajar a la carpeta de una pareja down-mirror se bloquea",
+      (LLAMADAS_DIALOGOS["avisar"], copias(falso)),
+      ([("No se puede", "«Espejo» deja su carpeta igual que el servidor: lo que bajes aquí lo "
+                        "borraría su próxima pasada. Bájalo fuera de ella.")], []))
+    dialogos(destino=str(model.DEVICE_ROOT / "sync-data" / "notas"), preguntar=False)
+    dlg.bajar.invoke()
+    c("  y a la de una bisync avisa antes de seguir",
+      [t[:2] for t in LLAMADAS_DIALOGOS["preguntar"]],
+      [("Carpeta de una pareja",
+        "Lo que bajes a la carpeta de «Notas» lo subirá al servidor su próxima pasada.")])
+    c("  y con «Cancelar» no copia", copias(falso), [])
+    cerrar(dlg)
+
+    # --- 13f. Cancelar ---------------------------------------------------------
+    dialogos(destino=str(tmpdir()))
+    parado = threading.Event()
+    estados_cancelar = lambda: ({"finished": True, "success": False, "error": "context canceled"}  # noqa: E731
+                                if parado.is_set() else CORRIENDO)
+
+    def parar_trabajo():
+        parado.set()
+        return {}
+    falso = servidor_lote(
+        estadisticas=(stats(3, 8, 100, 800),), estados=(CORRIENDO,),
+        otras={("job/status", None): estados_cancelar, ("job/stop", None): parar_trabajo})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    bombear(lambda: str(dlg.panel.cuenta.cget("text")).startswith("3 de 8 archivos"))
+    dlg.panel.cancelar.invoke()
+    dlg.panel.cancelar.invoke()
+    dlg.panel.cancelar.invoke()
+    c("«Cancelar» manda job/stop una sola vez, aunque se pulse tres", paradas_de_trabajo(falso), 1)
+    c("  y con el jobid del lote", [p for m, p in falso.llamadas if m == "job/stop"], [{"jobid": 7}])
+    c("el panel dijo «Cancelando…» en el acto y dejó el botón apagado",
+      (str(dlg.panel.archivo.cget("text")), estado_de(dlg.panel.cancelar)),
+      ("Cancelando…", "disabled"))
+    c("al acabar el trabajo: «Cancelado: copiados 3 de 8»",
+      bombear(lambda: frase_panel(dlg) == "Cancelado: copiados 3 de 8"), True)
+    c("  sin «Reintentar» y con los botones de vuelta",
+      (bool(dlg.panel.reintentar.winfo_manager()), botones_de(dlg)[0]), (False, "normal"))
+    cerrar(dlg)
+
+    # --- 13g. Un fallo del trabajo: la frase y «Reintentar» --------------------
+    destino = str(tmpdir())
+    dialogos(destino=destino)
+    falso = servidor_lote(estados=(FALLADO,), estadisticas=(stats(2, 5),))
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    c("un trabajo que falla por permiso lo dice en llano",
+      bombear(lambda: frase_panel(dlg) == f"No tienes permiso para escribir en {destino}."), True)
+    c("  y ofrece «Reintentar»", bool(dlg.panel.reintentar.winfo_manager()), True)
+    falso.respuestas[("job/status", None)] = ACABADO
+    dlg.panel.reintentar.invoke()
+    bombear(lambda: frase_panel(dlg).startswith("Copiados"))
+    c("  «Reintentar» repite el mismo lote con las mismas reglas y otro grupo",
+      ([c_["_filter"] for c_ in copias(falso)], [c_["_group"] for c_ in copias(falso)]),
+      ([{"IncludeRule": ["/leeme.txt"]}] * 2, ["lote-1", "lote-2"]))
+    c("  y acaba bien", frase_panel(dlg), "Copiados 2")
+    cerrar(dlg)
+
+    # --- 13h. La conexión se pierde a mitad de un lote -------------------------
+    dialogos(destino=str(tmpdir()))
+    hay = threading.Event()
+
+    def se_cae():
+        if hay.is_set():
+            raise rcd.RcdCaido("Connection refused")
+        return CORRIENDO
+    falso = servidor_lote(otras={("job/status", None): se_cae})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    bombear(lambda: panel_a_la_vista(dlg))
+    hay.set()
+    c("una conexión perdida a mitad: el panel lo dice",
+      bombear(lambda: frase_panel(dlg) == "Se perdió la conexión con rclone."), True)
+    c("  el indicador ofrece «Reconectar»", (boton(dlg), frase(dlg)),
+      ("Reconectar", "Se ha perdido la conexión con rclone."))
+    c("  los botones vuelven y el lote no se reanuda solo",
+      (botones_de(dlg)[0], bool(dlg.panel.reintentar.winfo_manager()), len(copias(falso))),
+      ("normal", False, 1))
+    cerrar(dlg)
+
+    # --- 13i. Cerrar con un lote en marcha, con hilos de verdad -----------------
+    segundo_plano.lanzar = LANZAR_DE_VERDAD
+    espera_previa = rcd.ESPERA_QUIT
+    rcd.ESPERA_QUIT = 1.0
+    for decision in (False, True):
+        dialogos(destino=str(tmpdir()), preguntar=decision)
+        parado = threading.Event()
+        bloqueado = threading.Event()
+        suelto_ = threading.Event()
+        primera = [True]
+
+        def estado_cierre():
+            if primera[0] and not parado.is_set():
+                primera[0] = False
+                bloqueado.set()
+                suelto_.wait(5)            # una respuesta de progreso en vuelo al cerrar
+                return CORRIENDO
+            return ({"finished": True, "success": False, "error": "context canceled"}
+                    if parado.is_set() else CORRIENDO)
+
+        def parar_cierre():
+            parado.set()
+            return {}
+        falso = servidor_lote(
+            estadisticas=(stats(1, 4, 10, 40),),
+            otras={("job/status", None): estado_cierre, ("job/stop", None): parar_cierre})
+        errores.clear()
+        dlg = abrir(falso)
+        elegir_varias(dlg, "leeme.txt")
+        falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+        dlg.bajar.invoke()
+        c("el trabajo está en marcha y su progreso en vuelo", bombear(bloqueado.is_set), True)
+        dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
+        c("cerrar con un lote en marcha pregunta antes",
+          LLAMADAS_DIALOGOS["preguntar"],
+          [("Transferencia en marcha", "Hay una transferencia en marcha. ¿Cancelarla y cerrar?",
+            "Cancelar y cerrar", "Seguir")])
+        if not decision:
+            c("  «Seguir»: la ventana sigue y no se paró nada",
+              (bool(dlg.winfo_exists()), falso.paradas, paradas_de_trabajo(falso)), (True, 0, 0))
+            suelto_.set()
+            for _ in range(20):
+                raiz.update()
+                time.sleep(0.01)
+            c("  y el lote sigue (el panel a la vista)", panel_a_la_vista(dlg), True)
+            parado.set()
+            c("  hasta que acaba por su cuenta y lo dice",
+              bombear(lambda: frase_panel(dlg) != ""), True)
+            cerrar(dlg)
+            bombear(lambda: falso.paradas >= 1)
+        else:
+            c("  «Cancelar y cerrar»: se cerró la ventana",
+              bombear(lambda: not dlg.winfo_exists()), True)
+            c("  se mandó job/stop antes de parar el rcd",
+              (paradas_de_trabajo(falso), falso.orden.index("job/stop") < falso.orden.index("parar")),
+              (1, True))
+            c("  y el rcd se paró una vez", falso.paradas, 1)
+            suelto_.set()                  # llega tarde la respuesta del progreso en vuelo
+            for _ in range(30):
+                raiz.update()
+                time.sleep(0.01)
+            c("  una respuesta tardía no pinta nada ni lanza excepciones de Tk", errores, [])
+            c("  sigue siendo una sola parada", falso.paradas, 1)
+            raiz.withdraw()
+    rcd.ESPERA_QUIT = espera_previa
     segundo_plano.lanzar = segundo_plano.en_el_acto
 
 c("nada ha reventado por el camino", errores, [])
