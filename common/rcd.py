@@ -521,6 +521,73 @@ def copiar(r: Rcd, origen: str, destino: str, reglas: list[str], omitir: bool, g
     return int(r.llamar("sync/copy", params)["jobid"])
 
 
+ORDENES_PERMITIDAS = frozenset({
+    "operations/mkdir", "operations/movefile", "operations/deletefile",
+    "operations/purge", "sync/move"})
+"""Las órdenes de gestión que `lanzar_orden` acepta: crear, renombrar, mover y borrar.
+
+Es una lista cerrada a propósito. No está `job/batch`, porque `job/stop` no lo
+para y un lote seguiría tras cancelarlo; ni `sync/sync`, que borra en el destino.
+"""
+
+
+def lanzar_orden(r: Rcd, orden: dict, grupo: str) -> int:
+    """Lanza en segundo plano una orden de gestión de la lista `ORDENES_PERMITIDAS`.
+
+    La orden es un diccionario cuyo `_path` es el método de rclone; el resto de
+    claves son sus parámetros. No se modifica el diccionario de quien llama.
+    Cada orden va sola: `job/stop` no detiene un borrado a medias, solo puede
+    evitar que empiece la siguiente.
+
+    Args:
+        r: El `rcd` que ejecuta la orden.
+        orden: Un diccionario con `_path` (un método de `ORDENES_PERMITIDAS`) y
+            los parámetros del método, p. ej. `fs` y `remote`.
+        grupo: El nombre del grupo de estadísticas, para seguir el lote con `core/stats`.
+
+    Returns:
+        El `jobid` del trabajo, para `estado` y `cancelar`.
+
+    Raises:
+        ValueError: Si `_path` falta o no está en `ORDENES_PERMITIDAS`. No se llama a `rcd`.
+        ErrorRc: Si rclone no acepta la orden.
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    metodo = orden.get("_path")
+    if not isinstance(metodo, str) or metodo not in ORDENES_PERMITIDAS:
+        raise ValueError(f"orden no permitida: {metodo}")
+    params = {clave: valor for clave, valor in orden.items() if clave != "_path"}
+    params.update({"_async": True, "_group": grupo})
+    return int(r.llamar(metodo, params)["jobid"])
+
+
+def tamano(r: Rcd, fs: str, remote: str) -> tuple[int, int]:
+    """Cuenta los archivos y los bytes de una carpeta del servidor, en una sola llamada.
+
+    Usa el tope por defecto (`TIMEOUT_PETICION`): una carpeta grande tarda en contarse.
+
+    Args:
+        r: El `rcd` que consulta.
+        fs: El `fs` del remoto, en la forma `<remoto>:/` desde la raíz absoluta.
+        remote: La carpeta dentro de `fs`, sin barra inicial (`""` para la raíz).
+
+    Returns:
+        `(archivos, bytes)`. Un campo que falta, que no es un entero o que es un
+        booleano cuenta 0.
+
+    Raises:
+        ErrorRc: Si rclone contesta con un error.
+        RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    datos = r.llamar("operations/size", {"fs": fs, "remote": remote})
+    return _entero(datos.get("count")), _entero(datos.get("bytes"))
+
+
+def _entero(valor: object) -> int:
+    """El valor si es un entero que no es booleano; si no, 0."""
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else 0
+
+
 def progreso(r: Rcd, grupo: str) -> dict:
     """Devuelve las estadísticas acumuladas de un grupo de transferencias.
 

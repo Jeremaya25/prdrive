@@ -756,4 +756,41 @@ c("estado devuelve job/status del jobid", rcd.estado(falso, 7), {"jobid": 7, "fi
 c("y lo pide con job/status", falso.llamadas[-1], ("job/status", {"jobid": 7}))
 c("  con el mismo tope corto", falso.topes[-1], rcd.TIMEOUT_SONDEO)
 
+# órdenes de gestión: una lista cerrada, cada una asíncrona en su grupo
+c("la lista de órdenes de gestión es la cerrada", rcd.ORDENES_PERMITIDAS, frozenset({
+    "operations/mkdir", "operations/movefile", "operations/deletefile",
+    "operations/purge", "sync/move"}))
+orden = {"_path": "operations/purge", "fs": "nas:/", "remote": "datos/viejo"}
+falso = RcdFalso({"jobid": 7})
+jid = rcd.lanzar_orden(falso, orden, "gestion-1")
+c("lanza la orden asíncrona con su grupo", falso.llamadas[-1],
+  ("operations/purge", {"fs": "nas:/", "remote": "datos/viejo", "_async": True, "_group": "gestion-1"}))
+c("devuelve el jobid", jid, 7)
+c("no toca la orden de quien llama", orden, {"_path": "operations/purge", "fs": "nas:/", "remote": "datos/viejo"})
+for mala in ({"_path": "sync/sync"}, {"_path": "job/batch", "inputs": []}, {"_path": "operations/delete"},
+             {"fs": "nas:/"}, {"_path": ["operations/purge"]}):
+    falso = RcdFalso({"jobid": 7})
+    error = None
+    try:
+        rcd.lanzar_orden(falso, mala, "g")
+    except ValueError as e:
+        error = e
+    c(f"{mala!r}: ValueError", isinstance(error, ValueError), True)
+    c(f"{mala!r}: no llama a rcd", falso.llamadas, [])
+c("y el mensaje nombra la orden", str(error), "orden no permitida: ['operations/purge']")
+falso = RcdFalso({"jobid": 7})
+try:
+    rcd.lanzar_orden(falso, {"_path": "sync/sync"}, "g")
+except ValueError as e:
+    c("el mensaje nombra la orden rechazada", str(e), "orden no permitida: sync/sync")
+
+falso = RcdFalso({"count": 4, "bytes": 8, "sizeless": False})
+c("tamano lee count y bytes", rcd.tamano(falso, "nas:/", "a/x"), (4, 8))
+falso = RcdFalso({"count": "x", "bytes": True})
+c("tamano con campos raros cuenta 0", rcd.tamano(falso, "nas:/", "a"), (0, 0))
+falso = RcdFalso({"count": 4, "bytes": 8})
+rcd.tamano(falso, "nas:/", "a/x")
+c("tamano pide operations/size", falso.llamadas[-1], ("operations/size", {"fs": "nas:/", "remote": "a/x"}))
+c("  con el tope por defecto (una carpeta grande tarda)", falso.topes[-1], None)
+
 sys.exit(c.report())
