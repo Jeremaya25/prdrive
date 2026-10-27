@@ -18,6 +18,7 @@ Each opens with the files it covers. Claude Code also gets a one-line pointer to
 | `conflicts-versions.md` | conflicts, `results.py`, `historial.py`, `versions = true` / `.prversions/` |
 | `catalogue.md` | `catalog.py`, `catalog_editor`, `pair_editor`, `flags_editor`, `flags_guia`, `remote_picker` |
 | `fleet.md` | `fleet.py`, `tk_fleet.py` |
+| `servidor.md` | `rcd.py`, `servidor.py`, `tk_servidor.py`: the «Servidor…» explorer and its resident `rclone rcd` |
 | `service.md` | `runsync.py`, `ui/prefs.py`, `state/` locks, failure pop-up |
 | `penwatch.md` | `penwatch.py` |
 | `ui.md` | `ui/` in general: frontends, theme and sizing, `working()`/background reads, «Ajustes» |
