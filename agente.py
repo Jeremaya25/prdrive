@@ -772,9 +772,12 @@ HUELLA_SIN_CARPETAS = frozenset({"state", "logs", "filters", "keys", "runtime", 
 """Carpetas que la huella deja fuera: lo que cambia con el uso y no se lee entero.
 
 `keepassxc/` es el programa del llavero y su configuración, que KeePassXC
-reescribe al usarlo. El programa SÍ se ejecuta, pero no por la huella: cada
-ejecutable se comprueba contra su SHA-256 en `common/pins.py` justo antes de
-lanzarlo (`keepassxc.comprobar()`), y esos dos ficheros sí entran en la huella.
+reescribe al usarlo. El programa SÍ se ejecuta, pero no por la huella: justo
+antes de lanzarlo (`keepassxc.comprobar()`) se mira que la carpeta del paquete
+tenga la forma del árbol oficial (`common/keepassxc_arbol.json`: ni un fichero
+de más, ni de menos, ni con otro tamaño) y que el ejecutable dé su SHA-256 de
+`common/pins.py`, y esos ficheros sí entran en la huella. Lo que no se ve: un
+fichero del árbol (no un ejecutable) cambiado en su sitio con el mismo tamaño.
 """
 HUELLA_SIN_FICHEROS = frozenset({"sync_config.toml", Path(penwatch.CONTROL_FILE).name})
 """Ficheros que la huella deja fuera: la configuración y el fichero de control."""
@@ -803,10 +806,12 @@ def huella(raiz: Path) -> str | None:
     agente no ejecuta el rclone de la unidad, pasa el suyo
     (`model.RCLONE_DEL_AGENTE`), y por eso la huella cuesta milisegundos y no
     lo que tarda en leerse un binario de 60 MB. `keepassxc/` tampoco (78 MB y
-    una configuración que cambia con el uso): lo que de ahí se lanza se
-    comprueba contra un SHA-256 fijado en `common/pins.py`, que sí entra en la
-    huella, antes de lanzarlo (`keepassxc.comprobar()`); las DLL y los demás
-    ficheros que van al lado del programa no se comprueban. `rclone.conf`
+    una configuración que cambia con el uso): antes de lanzar algo de ahí
+    (`keepassxc.comprobar()`) se compara la forma de la carpeta con el árbol
+    oficial (`common/keepassxc_arbol.json`) y el ejecutable con un SHA-256
+    fijado en `common/pins.py`, que sí entran en la huella; lo que no se ve es
+    un fichero del árbol, que no sea ejecutable, cambiado en su sitio con el
+    mismo tamaño. `rclone.conf`
     entra: la opción `ssh` de un remoto sftp es una orden.
     """
     base = app(raiz)

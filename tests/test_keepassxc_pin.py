@@ -10,10 +10,20 @@ de mentira cuya suma se pone en la tabla, y `lanzar()`, `ejecutar_cli()`,
 `sonda_cli()` y el registro apuntan lo que se les pide. Lo que se sujeta:
 - La tabla: la versión fijada, los tres ejecutables de Windows y el AppImage de
   Linux con la suma del pin del paquete (no repetida).
+- La tabla del árbol (`common/keepassxc_arbol.json`): cada versión con Windows
+  en `pins.KEEPASSXC_EJECUTABLES` tiene su árbol, y sus ejecutables dan las sumas
+  de los pines.
 - `comprobar()`: pasa el de la tabla; no pasa uno cambiado, uno sin sello, una
   versión que no está en la tabla ni un nombre que no está; lo que se dice sale
-  en español y dice cómo seguir; el resultado se recuerda por ruta, tamaño y
-  mtime.
+  en español y dice cómo seguir; el fichero se lee entero cada vez, sin caché.
+- El árbol (con `components.keepassxc_arbol` sustituido por uno de mentira): pasa
+  un paquete con su sello y lo que el navegador y la CLI dejan en `config/`; no
+  pasa un fichero añadido (una DLL junto al exe, un `qt.conf`, un plugin), uno
+  con otro tamaño, uno que falta, uno en `config/sub/`, un enlace ni un fichero
+  pequeño cambiado con el mismo tamaño; una versión sin árbol no pasa y no se
+  apunta.
+- `abrir_navegador()` escribe el JSON de cada clave, con el proxy comprobado,
+  antes de la clave; sin JSON no hay clave.
 - Ningún camino lanza ni registra lo que no cuadra: la ventana (KeePassXC y su
   proxy, que KeePassXC registra por su cuenta), el registro del navegador, la
   CLI de «Combinar», la de «dejar sin contraseña» y la sonda de la llave. Y
@@ -26,6 +36,7 @@ import ast
 import contextlib
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -52,11 +63,35 @@ c("  solo de paquetes que prdrive instala (Linux ARM64 usa el del equipo)",
   all(paquete in pins.KEEPASSXC for porversion in tabla.values() for paquete in porversion),
   True)
 
-# --- comprobar(): el resumen de cada fichero contra la tabla
+# --- la tabla del árbol, sobre los datos de verdad
+arboles_ok, sumas_ok = [], []
+for version, porpaquete in sorted(tabla.items()):
+    if "windows-x64" not in porpaquete:
+        continue
+    arbol_real = components.keepassxc_arbol(version, "windows-x64")
+    arboles_ok.append((version, arbol_real is not None))
+    sumas_ok.append((version, {n: (arbol_real or {}).get(n, (0, ""))[1]
+                               for n in porpaquete["windows-x64"]} == porpaquete["windows-x64"]))
+c("cada versión con Windows en KEEPASSXC_EJECUTABLES tiene árbol en common/keepassxc_arbol.json "
+  "(si falla: python generar_arbol_keepassxc.py)", all(ok for _, ok in arboles_ok), True)
+c("  y sus tres ejecutables dan las sumas de KEEPASSXC_EJECUTABLES",
+  all(ok for _, ok in sumas_ok) and bool(sumas_ok), True)
+c("  la versión fijada tiene árbol", components.keepassxc_arbol(V, "windows-x64") is not None,
+  True)
+c("  con el .portable y el qt.conf del ZIP (este se resume: es pequeño)",
+  [n in (components.keepassxc_arbol(V, "windows-x64") or {}) for n in (".portable", "qt.conf")],
+  [True, True])
+c("  y el AppImage de Linux no tiene árbol: se copia y se comprueba entero en el equipo",
+  (components.keepassxc_usa_arbol("linux-x64"), components.keepassxc_usa_arbol("windows-x64")),
+  (False, True))
+
+# --- comprobar(): el árbol y el resumen de cada fichero contra la tabla
 keepassxc.comprobar = REAL_COMPROBAR
 reales = (pins.KEEPASSXC_EJECUTABLES, keepassxc.paquete_del_equipo, keepassxc.lanzar,
           keepassxc.ejecutar_cli, keepassxc.sonda_cli, keepassxc.version_del_equipo,
-          registro.escribir, model.APP_DIR)
+          registro.escribir, model.APP_DIR, components.keepassxc_arbol)
+ARBOLES: dict[str, dict] = {}
+"""Los árboles de mentira por versión; `components.keepassxc_arbol` los da."""
 
 
 def suma(datos: bytes) -> str:
@@ -87,10 +122,27 @@ try:
         keepassxc.paquete_del_equipo = lambda: "windows-x64"
         pkg = components.keepassxc_dir(model.APP_DIR, "windows-x64")
         pkg.mkdir(parents=True)
-        CONTENIDO = {components.KEEPASSXC_EXE: b"MZ el programa", keepassxc.CLI: b"MZ la cli",
-                     keepassxc.PROXY: b"MZ el proxy"}
-        for nombre, datos in CONTENIDO.items():
+        RELLENO = b"\0" * (components.KEEPASSXC_RESUMIR_HASTA + 1)
+        """Para que los ejecutables de mentira, como los de verdad, solo los resuma su suma."""
+        CONTENIDO = {components.KEEPASSXC_EXE: b"MZ el programa" + RELLENO,
+                     keepassxc.CLI: b"MZ la cli" + RELLENO,
+                     keepassxc.PROXY: b"MZ el proxy" + RELLENO}
+        OTRA_CLI = b"MZ la cLI" + RELLENO
+        """La CLI cambiada con el mismo tamaño: el árbol la deja pasar y su suma no."""
+        RESTO = {".portable": b"", "Qt5Core.dll": b"MZ qt core",
+                 "plugins/imageformats/qjpeg.dll": b"MZ jpeg",
+                 "share/docs/guia.html": b"<html>" + b"x" * 5000}
+        """Lo demás del paquete de mentira: lo que el árbol mide y la tabla de pines no fija."""
+        for nombre, datos in {**CONTENIDO, **RESTO}.items():
+            (pkg / nombre).parent.mkdir(parents=True, exist_ok=True)
             (pkg / nombre).write_bytes(datos)
+
+        def arbol_de(ficheros: dict[str, bytes]) -> dict[str, tuple[int, str]]:
+            """Devuelve el árbol de esos ficheros, como lo daría `keepassxc_arbol()`."""
+            return {n: (len(d), suma(d)) for n, d in ficheros.items()}
+
+        components.keepassxc_arbol = lambda version, paquete: (
+            ARBOLES.get(version) if paquete == "windows-x64" else None)
 
         def sellar(version: str | None) -> None:
             """Pone (o quita) el sello del paquete con esa versión."""
@@ -106,7 +158,8 @@ try:
             ficheros = {**CONTENIDO, **cambios}
             pins.KEEPASSXC_EJECUTABLES = {version: {"windows-x64": {
                 n: suma(d) for n, d in ficheros.items()}}}
-            keepassxc.RESUMENES.clear()
+            ARBOLES.clear()
+            ARBOLES[version] = arbol_de({**CONTENIDO, **RESTO})
 
         sellar("9.9.9")
         fijar("9.9.9")
@@ -114,8 +167,7 @@ try:
                                              keepassxc.PROXY))
         c("uno con el SHA-256 de la tabla se da por bueno",
           [veredicto(f) for f in (exe, cli, proxy)], [None, None, None])
-        keepassxc.RESUMENES.clear()
-        cli.write_bytes(b"MZ otra cli")
+        cli.write_bytes(OTRA_CLI)
         malo = veredicto(cli)
         c("uno cambiado no", malo is not None, True)
         c.contains("  y se dice en español que no es el oficial", malo or "",
@@ -131,7 +183,6 @@ try:
           {"version": "9.9.9", "fichero": keepassxc.CLI})
         c("  y uno cambiado no hace daño a los demás", veredicto(exe), None)
         cli.write_bytes(CONTENIDO[keepassxc.CLI])
-        keepassxc.RESUMENES.clear()
         components.keepassxc_olvidar_alterado(None, "windows-x64")
 
         sellar("9.9.8")
@@ -149,6 +200,7 @@ try:
         (pkg / "otro.exe").write_bytes(b"MZ otro")
         c("un fichero que la tabla no nombra tampoco", veredicto(pkg / "otro.exe") is not None,
           True)
+        (pkg / "otro.exe").unlink()
         c("un paquete que no es de la tabla tampoco",
           veredicto(exe, "windows-arm64") is not None, True)
         c("  y esos tampoco se apuntan: no son un fichero cambiado",
@@ -168,17 +220,14 @@ try:
         estado_bueno = model.STATE_DIR
         model.STATE_DIR = root / "estado-roto"
         model.STATE_DIR.write_text("no soy una carpeta", encoding="utf-8")
-        cli.write_bytes(b"MZ otra cli")
-        keepassxc.RESUMENES.clear()
+        cli.write_bytes(OTRA_CLI)
         c.contains("si no se puede escribir state/, se dice igual que no es el oficial",
                    veredicto(cli) or "", "no es el oficial")
         model.STATE_DIR = estado_bueno
         cli.write_bytes(CONTENIDO[keepassxc.CLI])
-        keepassxc.RESUMENES.clear()
         c("  y no deja nada apuntado", components.keepassxc_alterado(None, "windows-x64"), {})
 
-        # el resultado se recuerda mientras no cambie la ruta, el tamaño ni el mtime
-        keepassxc.RESUMENES.clear()
+        # sin caché: el fichero se lee entero cada vez (en FAT/exFAT el mtime se pone a mano)
         leidos: list[Path] = []
         resumen_real = keepassxc._resumen
 
@@ -191,17 +240,114 @@ try:
         try:
             veredicto(exe)
             veredicto(exe)
-            c("el mismo fichero, sin cambios, se lee una vez", leidos, [exe])
-            exe.write_bytes(b"MZ el programa!")           # otro tamaño
-            c("  si cambia, se vuelve a leer, y ya no cuadra",
-              (veredicto(exe) is not None, leidos), (True, [exe, exe]))
+            c("el mismo fichero, sin cambios, se lee cada vez", leidos, [exe, exe])
+            antes = exe.stat()
+            exe.write_bytes(b"MZ el progrXma" + RELLENO)   # mismo tamaño, otros bytes
+            os.utime(exe, ns=(antes.st_atime_ns, antes.st_mtime_ns))
+            c("  y uno cambiado con el mismo tamaño y el mtime de antes no pasa",
+              (veredicto(exe) is not None, len(leidos)), (True, 3))
             exe.write_bytes(CONTENIDO[components.KEEPASSXC_EXE])
-            os.utime(exe, ns=(1, 1))                       # mismo tamaño, otro mtime
-            c("  y también con el mismo tamaño y otro mtime",
-              (veredicto(exe), len(leidos)), (None, 3))
+            c("  y vuelto a poner, pasa", veredicto(exe), None)
         finally:
             keepassxc._resumen = resumen_real
-        keepassxc.RESUMENES.clear()
+        components.keepassxc_olvidar_alterado(None, "windows-x64")
+
+        # --- el árbol: la forma de la carpeta entera, antes de resumir nada
+        def apunte() -> dict:
+            """Devuelve lo apuntado del paquete en `state/`."""
+            return components.keepassxc_alterado(None, "windows-x64")
+
+        config_pkg = pkg / "config"
+        config_pkg.mkdir()
+        (config_pkg / "org.keepassxc.keepassxc_browser_chrome.json").write_text("{}")
+        (config_pkg / "keepassxc.ini").write_text("[General]\n")
+        c("pasa un paquete que cuadra, con su sello, los JSON del navegador y el .ini de la CLI "
+          "en config/", [veredicto(f) for f in (exe, cli, proxy)], [None, None, None])
+        shutil.rmtree(config_pkg)
+
+        def rechazado(que: str, poner, quitar, fichero: str) -> None:
+            """Comprueba que con `poner()` hecho no pasa, se apunta `fichero` y nada se lanza."""
+            components.keepassxc_olvidar_alterado(None, "windows-x64")
+            poner()
+            try:
+                mensaje = veredicto(exe)
+                c(f"no pasa con {que}", mensaje is not None, True)
+                c.contains("  y dice cuál", mensaje or "", fichero)
+                c(f"  y lo apunta para «Actualizar…»", apunte(),
+                  {"version": "9.9.9", "fichero": fichero})
+            finally:
+                quitar()
+            components.keepassxc_olvidar_alterado(None, "windows-x64")
+
+        def anadir(rel: str, datos: bytes = b"MZ"):
+            """Devuelve el par `(poner, quitar)` de un fichero añadido al paquete."""
+            ruta = pkg / rel
+
+            def poner():
+                ruta.parent.mkdir(parents=True, exist_ok=True)
+                ruta.write_bytes(datos)
+            return poner, lambda: ruta.unlink()
+
+        rechazado("un VCRUNTIME140.dll añadido junto al exe (K3)", *anadir("VCRUNTIME140.dll"),
+                  "VCRUNTIME140.dll")
+        rechazado("un qt.conf añadido", *anadir("qt.conf", b"[Paths]\nPrefix=E:/x\n"),
+                  "qt.conf")
+        rechazado("un plugin añadido en imageformats/", *anadir("plugins/imageformats/x.dll"),
+                  "plugins/imageformats/x.dll")
+        rechazado("un fichero en config/sub/ (solo se admite lo de config/ mismo)",
+                  *anadir("config/sub/x.dll"), "config/sub/x.dll")
+        shutil.rmtree(pkg / "config")
+        core = pkg / "Qt5Core.dll"
+        rechazado("una DLL de la tabla con otro tamaño",
+                  lambda: core.write_bytes(b"MZ qt core, otro"),
+                  lambda: core.write_bytes(RESTO["Qt5Core.dll"]), "Qt5Core.dll")
+        rechazado("una DLL de la tabla que falta", core.unlink,
+                  lambda: core.write_bytes(RESTO["Qt5Core.dll"]), "Qt5Core.dll")
+        otra = pkg / "QT5CORE.DLL"
+        if otra.exists():
+            print("  (saltado) mayúsculas: este sistema de ficheros no las distingue")
+        else:
+            core.rename(otra)
+            c("las rutas se comparan sin mayúsculas, como en Windows", veredicto(exe), None)
+            otra.rename(core)
+            rechazado("dos ficheros que solo se distinguen en mayúsculas",
+                      *anadir("QT5CORE.DLL", RESTO["Qt5Core.dll"]), "Qt5Core.dll")
+        guia = pkg / "share/docs/guia.html"
+        guia.write_bytes(b"<html>" + b"y" * 5000)
+        c("un fichero grande que no es ejecutable, cambiado con el mismo tamaño, pasa (es lo "
+          "aceptado)", veredicto(exe), None)
+        guia.write_bytes(RESTO["share/docs/guia.html"])
+        ARBOLES["9.9.9"]["qt.conf"] = (len(b"[Platforms]\n"), suma(b"[Platforms]\n"))
+        qtconf = pkg / "qt.conf"
+        qtconf.write_bytes(b"[Platforms]\n")
+        c("un fichero pequeño del árbol (qt.conf) que es el oficial pasa", veredicto(exe), None)
+        rechazado("un qt.conf del árbol cambiado con el mismo tamaño: los pequeños se resumen",
+                  lambda: qtconf.write_bytes(b"[Paths]\nP=E\n"),
+                  lambda: qtconf.write_bytes(b"[Platforms]\n"), "qt.conf")
+        del ARBOLES["9.9.9"]["qt.conf"]
+        qtconf.unlink()
+        enlace = pkg / "enlace.dll"
+        try:
+            enlace.symlink_to(core)
+        except (OSError, NotImplementedError):
+            print("  (saltado) un enlace simbólico: aquí no se pueden crear")
+        else:
+            enlace.unlink()
+            rechazado("un enlace simbólico", lambda: enlace.symlink_to(core), enlace.unlink,
+                      "enlace.dll")
+        c("con todo en su sitio vuelve a pasar", veredicto(exe), None)
+        fuera = root / "fuera" / components.KEEPASSXC_EXE
+        fuera.parent.mkdir()
+        fuera.write_bytes(CONTENIDO[components.KEEPASSXC_EXE])
+        c.contains("un ejecutable igual pero fuera de la carpeta de su paquete no pasa",
+                   veredicto(fuera) or "", "no está en la carpeta de su paquete")
+        c("  y no se apunta: no es un fichero cambiado del paquete", apunte(), {})
+        arbol_bueno = ARBOLES.pop("9.9.9")
+        sin_arbol = veredicto(exe)
+        c("una versión sin fila en el árbol no pasa", sin_arbol is not None, True)
+        c.contains("  y se dice", sin_arbol or "", "lista de ficheros de la versión 9.9.9")
+        c("  y no se apunta, como una versión desconocida", apunte(), {})
+        ARBOLES["9.9.9"] = arbol_bueno
 
         # --- ningún camino lanza ni registra lo que no cuadra
         lanzadas, cli_corridas, sondas, claves = [], [], [], []
@@ -255,13 +401,61 @@ try:
             c(f"abrir con {que} cambiado: no lanza, no registra y no escribe configuración",
               (resultado, nada()), ("no oficial", (0, 0, 0, 0, False)))
             c.contains("  y dice por qué", mensaje, "no es el oficial")
-        fijar("9.9.9", **{keepassxc.PROXY: b"MZ cambiado"})
-        resultado, _ = intentar(lambda: keepassxc.abrir_navegador(exe))
-        c("registrar el navegador con un proxy cambiado: no escribe ninguna clave",
-          (resultado, nada()[3]), ("no oficial", 0))
         fijar("9.9.9")
+        jsons_antes = sorted(p.name for p in (pkg / "config").glob("*"))
+        for que, rel in (("un VCRUNTIME140.dll añadido", "VCRUNTIME140.dll"),
+                         ("un imageformats/x.dll añadido", "plugins/imageformats/x.dll")):
+            (pkg / rel).write_bytes(b"MZ")
+            resultado, mensaje = intentar(lambda: keepassxc.abrir(ap))
+            (pkg / rel).unlink()
+            c(f"abrir con {que}: no lanza, no registra y no escribe configuración",
+              (resultado, nada(), sorted(p.name for p in (pkg / "config").glob("*"))),
+              ("no oficial", (0, 0, 0, 0, False), jsons_antes))
+            c.contains("  y dice por qué", mensaje, rel)
+        components.keepassxc_olvidar_alterado(None, "windows-x64")
+        fijar("9.9.9", **{keepassxc.PROXY: b"MZ cambiado"})
+        shutil.rmtree(pkg / "config")
+        resultado, _ = intentar(lambda: keepassxc.abrir_navegador(exe))
+        c("registrar el navegador con un proxy cambiado: no escribe ninguna clave ni JSON",
+          (resultado, nada()[3], (pkg / "config").exists()), ("no oficial", 0, False))
+        fijar("9.9.9")
+
+        # antes de cada clave, su JSON ya está, y nombra el proxy comprobado
+        vistos_al_escribir = []
+
+        def escribir_mirando(clave, valor):
+            """Apunta la clave y lo que dice en ese momento el JSON al que apunta."""
+            try:
+                datos = json.loads(Path(valor).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                datos = None
+            vistos_al_escribir.append((clave, datos))
+            claves.append((clave, valor))
+
+        registro.escribir = escribir_mirando
         resultado, valor = intentar(lambda: keepassxc.abrir_navegador(exe))
         c("  con el de la tabla, las cuatro", (resultado, valor, nada()[3]), ("ok", [], 4))
+        c("  y al escribir cada una su JSON ya existe y nombra el proxy comprobado",
+          [d.get("path") if d else None for _, d in vistos_al_escribir], [str(proxy)] * 4)
+        c("  el de Mozilla con su extensión, los demás con sus orígenes",
+          [("allowed_extensions" in d, "allowed_origins" in d) if d else None
+           for _, d in vistos_al_escribir],
+          [(False, True), (False, True), (True, False), (False, True)])
+        c("  y es lo que escribiría KeePassXC (manifiesto())",
+          (pkg / "config" / "org.keepassxc.keepassxc_browser_firefox.json")
+          .read_text(encoding="utf-8"), keepassxc.manifiesto(proxy, mozilla=True))
+        claves.clear(), vistos_al_escribir.clear()
+        edge = keepassxc.json_nativo(pkg / "config", "edge")
+        edge.unlink()
+        edge.mkdir()                                    # ahí no se puede escribir el JSON
+        resultado, valor = intentar(lambda: keepassxc.abrir_navegador(exe))
+        c("un JSON que no se puede escribir deja su clave sin escribir",
+          sorted(k for k, _ in claves),
+          sorted(keepassxc.clave_nativa(b) for b, _ in keepassxc.NAVEGADORES
+                 if b != "Software\\Microsoft\\Edge"))
+        c.contains("  y lo cuenta en los fallos", " ".join(valor or []), edge.name)
+        edge.rmdir()
+        registro.escribir = lambda clave, valor: claves.append((clave, valor))
         claves.clear()
 
         for que, cambios in (("la CLI", {keepassxc.CLI: b"MZ cambiada"}), ("", {})):
@@ -304,7 +498,7 @@ try:
 finally:
     (pins.KEEPASSXC_EJECUTABLES, keepassxc.paquete_del_equipo, keepassxc.lanzar,
      keepassxc.ejecutar_cli, keepassxc.sonda_cli, keepassxc.version_del_equipo,
-     registro.escribir, model.APP_DIR) = reales
+     registro.escribir, model.APP_DIR, components.keepassxc_arbol) = reales
 
 # --- guarda estática: lo que lanza o registra algo pasa por la comprobación
 LANZA = {"lanzar", "ejecutar_cli", "sonda_cli", "extraer_appimage", "escribir"}

@@ -17,7 +17,8 @@ DISPOSITIVO y cada paso en su propio proceso, como la ventana:
    crea la carpeta del remoto, KeePassXC se abre y es de la unidad, su
    configuración va a la de la unidad, y el navegador llega a él: un
    `change-public-keys` de KeePassXC-Browser por el proxy de su manifiesto (en
-   Windows, el JSON al que apunta la clave de HKCU, que escribe KeePassXC).
+   Windows, el JSON al que apunta la clave de HKCU, que escribe prdrive antes
+   de la clave y KeePassXC al arrancar).
 4. Un guardado (`keepassxc-cli add`) lo sube solo el vigilante.
 5. Un conflicto de verdad (la base cambia en los dos lados): bisync deja la
    copia al lado, y «Combinar» (`conflict_editor.plan_combinar`) la mete en la
@@ -424,9 +425,10 @@ def main() -> int:
         # carpeta de la unidad. Eso es lo que importa, y que el JSON esté.
         carpeta = components.keepassxc_exe(app, paquete).parent / "config"
         valores = [v for v in e["claves"].values() if v]
-        # Los JSON los escribe KeePassXC al arrancar, unos segundos después de que
-        # se le reconozca como de la unidad: se espera a que estén (si no, la
-        # comprobación corre contra su arranque).
+        # prdrive escribe un JSON antes de cada clave, pero KeePassXC las cambia
+        # al arrancar por las suyas, unos segundos después de que se le reconozca
+        # como de la unidad: se espera a que estén (si no, la comprobación corre
+        # contra su arranque).
         estan = esperar(lambda: all(Path(v).is_file() for v in valores), 30) is not None
         ver("las cuatro claves del navegador apuntan a JSON de la unidad, que están",
             (len(valores), {kx._comparable(str(Path(v).parent)) for v in valores}, estan),

@@ -52,6 +52,7 @@ prdrive/            the checkout; on a provisioned device it is `.prdrive/`
 ├── prdrive-install.py  wizard launcher (what gets compiled) · build_installer.py (PyInstaller)
 ├── generar_flags_rclone.py  regenerates `common/flags_rclone.json` (the pinned rclone's flags) when `RCLONE_VERSION` moves
 ├── generar_guia_flags.py  regenerates `docs/guia/flags-de-rclone.md` from the flags guide's catalogue
+├── generar_arbol_keepassxc.py  adds the official KeePassXC ZIP's file tree to `common/keepassxc_arbol.json` when `KEEPASSXC_VERSION` moves
 ├── VERSION         the version, in ONE place; ships to the device
 ├── common/         config and rclone; no Tk
 │   model (TOML → frozen `Mode`/`Pair`/`Config`, the flag cascade with its origin) · orden (the rclone command in tagged pieces: `sync.build_command()` and the flags preview) · bisync (rclone bisync internals) · conflicts · results (last_run.json) · historial (pass journal)
