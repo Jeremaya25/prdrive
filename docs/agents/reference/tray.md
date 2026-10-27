@@ -57,6 +57,12 @@ Runs its own thread with its window and message loop. The agent talks to it only
 - **`arrancar()` succeeds with the window, not the icon**: at logon the taskbar may not exist yet, `NIM_ADD` fails, and `TaskbarCreated` adds it later (also after an Explorer restart).
 - The menu is `TrackPopupMenu(TPM_RETURNCMD)` after `SetForegroundWindow`, with a `WM_NULL` after it, or it does not close when clicking away; `&` in names is doubled (`texto_menu()`).
 - Notices hang off the tray icon (`NIM_MODIFY` + `NIF_INFO`) through `avisos.GLOBO`; without it, `avisos` falls back to its temporary icon.
+- **The session and power events** (#178: the agent locking a root by itself; what it does with them: `agent.md`). All through `Api` (`registrar_sesion()`/`soltar_sesion()` over `wtsapi32`, `temporizador()`/`parar_temporizador()` over `SetTimer`/`KillTimer`), driven by the fake one in `tests/test_bandeja_windows.py`:
+  - **Registered on creation**: `_oir_sesion()` calls `WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)` right after the window exists. At logon the session service may not be ready, so a failure arms a window timer (`ID_TEMPORIZADOR_SESION`, every `CADA_REINTENTO_SESION` ms) for up to `REINTENTOS_SESION` attempts; a `WM_TIMER` already queued after success or the last attempt does nothing. `Bandeja.oye_sesion` says whether it worked (the agent reads it with `getattr`, so the Linux tray, which has none, offers no session box). `WM_DESTROY` kills the timer and unregisters (`WTSUnRegisterSessionNotification`).
+  - `WM_WTSSESSION_CHANGE` with `WTS_SESSION_LOCK`/`WTS_SESSION_UNLOCK` → `pedir({"pide": PIDE_SESION, "evento": "bloqueo"/"desbloqueo"})` (`EVENTOS_WTS`); other session changes (console connect, remote, fast user switching) ask nothing.
+  - `WM_POWERBROADCAST` with `PBT_APMSUSPEND` → `evento: "suspension"` and returns `None` (Windows' TRUE) at once: Windows gives about 2 s and the agent never stretches them. The resume ones still send `PIDE_DESPERTAR`.
+  - `WM_QUERYENDSESSION` returns `None` (TRUE): nothing vetoes or delays a logoff or shutdown.
+  - `WM_ENDSESSION` with a non-zero `wParam` calls `Bandeja.fin_de_sesion` (the agent's `lanzar_al_salir()`, set by `poner_bandeja()`) inside a `try`, like `dispositivo`, and returns 0: after that answer the process may die, so no agent turn is waited for.
 
 ## Linux (`ui/bandeja_linux.py`, phase 6)
 
