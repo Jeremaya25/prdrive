@@ -1384,6 +1384,30 @@ with sandbox():
           (1, "normal"))
         cerrar(dlg)
 
+    # --- 13h4. «job not found»: rclone olvidó un trabajo que ya acabó ----------
+    # Con el rcd vivo, rclone borra los trabajos ~60 s después de acabar: un
+    # seguimiento que ya no lo encuentra da el lote por acabado, sin colgar el panel.
+    dialogos(destino=str(tmpdir()))
+    fallos_ = [0]
+
+    def olvidado():
+        fallos_[0] += 1
+        if fallos_[0] <= tk_servidor.FALLOS_PARA_AVISAR:
+            raise rcd.RcdCaido("timed out")         # primero la línea de aviso se enciende
+        raise rcd.ErrorRc("job not found", 500)
+    falso = servidor_lote(otras={("job/status", None): olvidado})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    c("«job not found» con el rcd vivo: el panel dice que no se sabe cómo acabó",
+      bombear(lambda: frase_panel(dlg) == "No se sabe cómo acabó: revisa la carpeta."), True)
+    c("  sin «Reintentar», los tres botones libres y la línea de aviso se quita",
+      (bool(dlg.panel.reintentar.winfo_manager()), botones_de(dlg), frase(dlg)),
+      (False, ("normal",) * 3, ""))
+    c("  y nunca hubo un segundo sync/copy", len(copias(falso)), 1)
+    cerrar(dlg)
+
     # un fallo suelto (menos que FALLOS_PARA_AVISAR) ni siquiera se dice
     dialogos(destino=str(tmpdir()))
     fallos_ = [0]

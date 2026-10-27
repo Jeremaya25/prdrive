@@ -842,7 +842,17 @@ def open_dialog(parent, config: Config) -> None:
         sigue activo y los botones apagados: solo acaba cuando `job/status` dice
         `finished`, cuando el proceso muere o cuando se cierra. Nunca se ofrece
         «Reintentar» con una copia que puede estar en marcha.
+
+        Excepción: «job not found». rclone olvida un trabajo unos 60 s después de
+        acabar, así que ya no hay copia que esperar: el lote acaba aquí, sin
+        «Reintentar» (no se sabe cómo acabó).
         """
+        if isinstance(error, rcd.ErrorRc) and "job not found" in error.mensaje.lower():
+            if activo["fallos"] >= FALLOS_PARA_AVISAR:
+                decir("", "Pista.")                 # se quita la línea de «Sin respuesta…»
+            acabar(activo, transferencia.Resultado(
+                "No se sabe cómo acabó: revisa la carpeta.", "aviso", False))
+            return
         if not activo["rcd"].vivo:
             acabar_con_error(activo, rcd.RcdCaido(str(error)), None)
             return
