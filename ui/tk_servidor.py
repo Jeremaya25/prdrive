@@ -43,6 +43,11 @@ los decide `ui/gestion.py`, y el diálogo del nombre y la barra son de
 nombres del destino, o lo que hay dentro de lo que se borra) → confirmar cuando
 toca → lanzar → releer la carpeta que se ve y elegir lo nuevo. Un nombre nunca se
 lanza sobre otro que ya existe: los del destino se releen justo antes.
+
+Mover es cortar, navegar y pegar: «Cortar» apunta `(remote, carpeta, elementos)` y
+enseña una línea encima de la lista («3 elementos para mover desde /datos»); «Pegar
+aquí» mueve lo cortado a la carpeta que se ve, en el mismo remote. Lo cortado no se
+toca hasta pegar y se quita al pegar, con «Cancelar» o al cortar otra cosa.
 """
 
 from __future__ import annotations
@@ -422,7 +427,7 @@ def open_dialog(parent, config: Config) -> None:
     nav = servidor.Navegacion(next(iter(remotes), ""))
     estado: dict = {"rcd": None, "ultima": ("ruta", servidor.RAIZ), "abierto": False,
                     "cerrado": False, "puerto_reintentado": False, "entradas": {},
-                    "n_lote": 0, "tras": None,
+                    "n_lote": 0, "tras": None, "corte": None,
                     "carpeta": os.path.expanduser("~")}
     sondeos: dict[str, tuple[bool, int | None]] = {}
 
@@ -464,11 +469,17 @@ def open_dialog(parent, config: Config) -> None:
     barra_gestion.marco.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
     dlg.barra = barra_gestion
 
+    # La línea de lo cortado, entre la barra y la lista: sin corte no ocupa sitio.
+    corte = tk_gestion.linea_corte(marco, lambda: pegar_aqui(), lambda: quitar_corte())
+    corte.grid(row=3, column=0, sticky="ew", pady=(theme.E3, 0))
+    corte.grid_remove()
+    dlg.cortado = corte
+
     # La carpeta y el archivo llevan su icono en la columna del árbol (#0), la única
     # de una `Treeview` que lo admite; el árbol no se despliega: se entra.
     tarjeta = ttk.Frame(marco, style="Card.TFrame",
                         padding=(theme.E2, theme.E2, theme.E1, theme.E1))
-    tarjeta.grid(row=3, column=0, sticky="ew", pady=(theme.E4, 0))
+    tarjeta.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
     lista = ttk.Treeview(tarjeta, columns=("tamano", "modificado", "permisos"),
                          show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="extended")
@@ -491,13 +502,13 @@ def open_dialog(parent, config: Config) -> None:
 
     # El panel de un lote, entre la lista y el pie: sin lote no ocupa sitio.
     panel = tk_transferencia.Panel(marco)
-    panel.marco.grid(row=4, column=0, sticky="ew")
+    panel.marco.grid(row=5, column=0, sticky="ew")
     panel.ocultar()
     panel.al_cancelar = lambda: seg.cancelar()
     panel.al_reintentar = lambda: reintentar_lote()
 
     pie = ttk.Frame(marco)
-    pie.grid(row=5, column=0, sticky="ew", pady=(theme.E3, 0))
+    pie.grid(row=6, column=0, sticky="ew", pady=(theme.E3, 0))
     pie.columnconfigure(0, weight=1)
     cuenta = ttk.Label(pie, text="", style="MonoPista.TLabel")
     cuenta.grid(row=0, column=0, sticky="w")
@@ -596,14 +607,36 @@ def open_dialog(parent, config: Config) -> None:
         return {"nueva": ok, "renombrar": ok and filas == 1, "cortar": ok and filas >= 1,
                 "borrar": ok and filas >= 1}
 
+    def puede_pegar() -> bool:
+        """Si hay algo cortado, la ventana está libre y se ve el remote del que se cortó."""
+        return (estado["corte"] is not None and libre()
+                and estado["corte"][0] == nav.remote)
+
+    def estados_menu() -> dict[str, bool]:
+        """Qué entradas del menú y qué teclas valen ahora: las de la barra y «Pegar aquí»."""
+        return {**estados_gestion(), "pegar": puede_pegar()}
+
+    def pintar_corte() -> None:
+        """Enseña u oculta la línea de lo cortado y pone su texto y el estado de «Pegar aquí»."""
+        hay = estado["corte"]
+        if hay is None:
+            corte.grid_remove()
+            return
+        remote, carpeta, elementos = hay
+        corte.texto.configure(text=gestion.texto_corte(len(elementos), carpeta,
+                                                       remote != nav.remote))
+        corte.pegar.state(["!disabled" if puede_pegar() else "disabled"])
+        corte.grid()
+
     def actualizar_botones() -> None:
-        """Enciende o apaga los botones de gestión, «Bajar…» y las dos «Subir…» según la selección, el `rcd` y el lote."""
+        """Enciende o apaga los botones de gestión, «Pegar aquí», «Bajar…» y las dos «Subir…» según la selección, el `rcd` y el lote."""
         ok = libre()
         hay = bool(lista.selection())
         boton_bajar.configure(state="normal" if ok and hay else "disabled")
         for b in (boton_archivos, boton_carpeta):
             b.configure(state="normal" if ok else "disabled")
         barra_gestion.encender(**estados_gestion())
+        pintar_corte()
 
     # ------------------------------------------------------------- el rcd
     def conectar(forzar: bool = False) -> bool:
@@ -935,12 +968,22 @@ def open_dialog(parent, config: Config) -> None:
         """Al acabar un cambio (bien, mal o cancelado) relee la carpeta que se ve.
 
         Cuando llega el listado queda elegido lo nuevo (la carpeta creada, el nombre
-        nuevo) si sigue a la vista, y un resultado que fue a la línea de la ventana
+        nuevo, lo pegado) si sigue a la vista, y un resultado que fue a la línea de la ventana
         (el panel no llegó a salir) se vuelve a poner: leer la carpeta lo habría borrado.
         """
-        nuevos = (op.nombre,) if op.tipo in (gestion.NUEVA, gestion.RENOMBRAR) and op.nombre else ()
+        if op.tipo == gestion.MOVER:
+            # Lo que se ve y se relee es el destino. Si salió alguna orden, lo cortado ya no
+            # vale (algo se movió, o quedó a medias); si no (no se pudo ni mirar el destino),
+            # sigue cortado para volver a intentarlo.
+            carpeta, nuevos = op.destino or "", tuple(e.nombre for e in op.elementos)
+            if t.jobid is not None:
+                estado["corte"] = None
+                pintar_corte()
+        else:
+            carpeta = op.carpeta
+            nuevos = (op.nombre,) if op.tipo in (gestion.NUEVA, gestion.RENOMBRAR) and op.nombre else ()
         nota = resultado.texto if resultado.tono == "ok" and not t.panel_visto else ""
-        estado["tras"] = (op.remote, op.carpeta, nota, nuevos)
+        estado["tras"] = (op.remote, carpeta, nota, nuevos)
         repetir()
 
     def lanzar_gestion(t: tk_lote.Trabajo, op: gestion.Operacion) -> None:
@@ -1004,23 +1047,33 @@ def open_dialog(parent, config: Config) -> None:
         mirar_destino(nuevo_trabajo_gestion(op), op, actual)
 
     def mirar_destino(t: tk_lote.Trabajo, op: gestion.Operacion, actual: str | None) -> None:
-        """Relee en segundo plano los nombres de la carpeta del destino."""
+        """Relee en segundo plano los nombres de la carpeta del destino (al pegar, la de `destino`)."""
         indicador.poner(MIRANDO, True)
         accion.grid_remove()
+        carpeta = op.destino or "" if op.tipo == gestion.MOVER else op.carpeta
         sondeo_lote.esperar(
-            segundo_plano.lanzar(partial(_nombres_de, t.rcd, op.remote, op.carpeta)),
+            segundo_plano.lanzar(partial(_nombres_de, t.rcd, op.remote, carpeta)),
             partial(destino_mirado, t, op, actual))
 
     def destino_mirado(t: tk_lote.Trabajo, op: gestion.Operacion, actual: str | None,
                        encargo) -> None:
-        """Con los nombres de ahora: rechaza el que ya existe; si no, confirma (con avisos) y lanza."""
+        """Con los nombres de ahora: rechaza el que ya existe; si no, confirma (con avisos) y lanza.
+
+        Al pegar se rechaza lo que `gestion.validar_pegado` no admite y, después, lo que
+        bloquean las parejas y el catálogo (`gestion.bloqueo`): la persona sigue con lo
+        cortado.
+        """
         if not seg.vigente(t):
             return
         decir("", "Pista.")
         if encargo.error is not None:
             seg.acabar_con_error(t, encargo.error, partial(reintentar_nombre, op, actual))
             return
-        motivo = gestion.validar_nombre(op.nombre or "", encargo.resultado, actual)
+        if op.tipo == gestion.MOVER:
+            motivo = (gestion.validar_pegado(op, encargo.resultado)
+                      or gestion.bloqueo(op, config, catalogo))
+        else:
+            motivo = gestion.validar_nombre(op.nombre or "", encargo.resultado, actual)
         if motivo:
             seg.soltar()
             avisar(dlg, "No se puede", motivo, "Ambar.")
@@ -1076,12 +1129,32 @@ def open_dialog(parent, config: Config) -> None:
         if libre():
             contar_borrado(nuevo_trabajo_gestion(op), op, tamanos)
 
-    # -- cortar y pegar: aún sin hacer
+    # -- cortar y pegar: lo cortado se queda en la ventana hasta pegar
     def cortar_elegidos() -> None:
-        """«Cortar»: lo que se corta se pega con «Pegar aquí». Todavía no hace nada."""
+        """«Cortar»: apunta lo elegido, con su carpeta y su remote, y enseña la línea del corte."""
+        elementos = elementos_elegidos()
+        if not libre() or not elementos:
+            return
+        estado["corte"] = (nav.remote, nav.ruta, elementos)
+        actualizar_botones()
+        reajustar()
+
+    def quitar_corte() -> None:
+        """«Cancelar» de la línea: olvida lo cortado."""
+        estado["corte"] = None
+        actualizar_botones()
 
     def pegar_aqui() -> None:
-        """«Pegar aquí»: mueve lo cortado a la carpeta que se ve. Todavía no hace nada."""
+        """«Pegar aquí»: mueve lo cortado a la carpeta que se ve, si es el mismo remote.
+
+        Lee el destino antes de lanzar nada (`mirar_destino`); hasta que acaba el
+        pegado, lo cortado sigue ahí.
+        """
+        if not puede_pegar():
+            return
+        remote, carpeta, elementos = estado["corte"]
+        op = gestion.Operacion(gestion.MOVER, remote, carpeta, elementos, destino=nav.ruta)
+        mirar_destino(nuevo_trabajo_gestion(op), op, None)
 
     # -- teclas y botón derecho
     acciones_gestion = {"nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
@@ -1091,7 +1164,7 @@ def open_dialog(parent, config: Config) -> None:
     def con_tecla(clave: str):
         """Devuelve el manejador de una tecla: hace la acción solo si ahora se puede."""
         def al_pulsar(_evento=None) -> str:
-            if {**estados_gestion(), "pegar": False}[clave]:
+            if estados_menu()[clave]:
                 acciones_gestion[clave]()
             return "break"
         return al_pulsar
@@ -1103,8 +1176,7 @@ def open_dialog(parent, config: Config) -> None:
         if fila and fila not in lista.selection():
             lista.selection_set(fila)
             lista.focus(fila)
-        menu = tk_gestion.menu_contextual(lista, acciones_gestion,
-                                          {**estados_gestion(), "pegar": False})
+        menu = tk_gestion.menu_contextual(lista, acciones_gestion, estados_menu())
         _mostrar_menu(menu, evento.x_root, evento.y_root)
         return "break"
 

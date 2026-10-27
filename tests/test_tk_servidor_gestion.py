@@ -17,6 +17,9 @@ lo que se les pidió. Lo que se comprueba es lo que ve y lo que dispara la perso
 - borrar: un `operations/size` por carpeta, la confirmación con sus líneas, un «no» que no
   lanza nada, un «sí» que lanza `purge` y luego `deletefile` en ese orden, un bloqueo de
   pareja y del catálogo, el aviso de pareja y un fallo al contar con «Reintentar»;
+- cortar y pegar: la línea del corte, «Pegar aquí» (botón, Ctrl+V y menú), los rechazos
+  (misma carpeta, dentro de sí misma, nombre ocupado, otro remote), el bloqueo de un
+  up-mirror y el aviso de una pareja, el orden de las órdenes, cancelar y fallar a mitad;
 - cerrar con un cambio en marcha.
 """
 
@@ -550,6 +553,342 @@ with sandbox():
               (True, 0, 0))
             F.cerrar(dlg)
     rcd.ESPERA_QUIT = espera_previa
+
+    # -----------------------------------------------------------------------
+    # 6. Cortar y pegar aquí
+    # -----------------------------------------------------------------------
+    model.RCLONE_CONF.write_text("[nas]\ntype = sftp\nhost = h\n\n[otro]\ntype = sftp\nhost = h\n",
+                                 encoding="utf-8")
+    CONTENIDO_OTRA = {"v": []}
+
+    def servidor_mover(estados=None, otra=None, tamanos=None) -> RcdGestion:
+        """Un servidor con «/datos» y «/otra» (con `otra`) además de la raíz con las dos."""
+        CONTENIDO_OTRA["v"] = list(otra if otra is not None else [item("viejo.txt")])
+        return servidor_gestion(estados=estados, tamanos=tamanos, otras={
+            ("operations/list", ""): lista(item("datos", True), item("otra", True),
+                                           item("leeme.txt", tamano=2048)),
+            ("operations/list", "otra"): lambda: lista(*CONTENIDO_OTRA["v"]),
+            ("operations/list", "datos/fotos"): lista(item("sub", True)),
+            ("operations/list", "datos/fotos/sub"): lista()})
+
+    def al_mover(falso) -> None:
+        """Que el servidor haga lo que hacen las órdenes: lo movido aparece en «/otra»."""
+        def hace(metodo, params) -> None:
+            nombre = (params["dstFs"].rsplit("/", 1)[-1] if metodo == "sync/move"
+                      else params["dstRemote"].rsplit("/", 1)[-1])
+            CONTENIDO_OTRA["v"].append(item(nombre, metodo == "sync/move"))
+        falso.al_lanzar = hace
+
+    def linea(dlg) -> tuple[bool, str, bool]:
+        """Si la línea del corte se ve, lo que dice y si «Pegar aquí» está encendido."""
+        k = dlg.cortado
+        return (bool(k.winfo_manager()), str(k.texto.cget("text")),
+                not k.pegar.instate(["disabled"]))
+
+    def a(dlg, carpeta: str) -> None:
+        """Va a esa carpeta del mismo remote: sube hasta la raíz y baja tramo a tramo."""
+        while str(dlg.ruta.cget("text")) != "/":
+            antes = str(dlg.ruta.cget("text"))
+            pulsar(dlg, "<BackSpace>")
+            bombear(lambda: str(dlg.ruta.cget("text")) != antes)
+        for tramo in [t for t in carpeta.split("/") if t]:
+            entrar_en(dlg, tramo)
+            bombear(lambda: str(dlg.ruta.cget("text")).endswith(tramo))
+
+    # -- la línea del corte y el paso de una carpeta a otra
+    dialogos()
+    falso = servidor_mover()
+    al_mover(falso)
+    dlg = abrir(falso)
+    c("sin cortar no hay línea", linea(dlg)[0], False)
+    entrar_en(dlg, "datos")
+    c("  ni nada que pegar en el menú", (linea(dlg)[0],), (False,))
+    elegir(dlg, "fotos", "a.txt")
+    dlg.barra.cortar.invoke()
+    c("«Cortar» enseña la línea: cuántos y desde dónde, con «Pegar aquí» encendido",
+      linea(dlg), (True, "2 elementos para mover desde /datos", True))
+    c("  la línea va entre la barra y la lista",
+      int(dlg.barra.marco.grid_info()["row"]) < int(dlg.cortado.grid_info()["row"])
+      < int(dlg.lista.master.grid_info()["row"]), True)
+    c("  con sus dos botones",
+      (str(dlg.cortado.pegar.cget("text")), str(dlg.cortado.cancelar.cget("text"))),
+      ("Pegar aquí", "Cancelar"))
+    c("  y la barra sigue como estaba (con dos filas, sin «Renombrar…»)", encendidos(dlg),
+      (True, False, True, True))
+    a(dlg, "otra")
+    c("al navegar la línea sigue igual", linea(dlg), (True, "2 elementos para mover desde /datos", True))
+    antes = listados_de(falso, "otra")
+    pulsar(dlg, "<Control-v>")
+    c("Ctrl+V pega: lanza `sync/move` y `movefile`, en ese orden",
+      (bombear(lambda: len(falso.lanzadas) == 2), [m for m, _p in falso.lanzadas]),
+      (True, ["sync/move", "operations/movefile"]))
+    p1, p2 = falso.ordenes()
+    c("  la carpeta: origen, destino y `deleteEmptySrcDirs`",
+      (p1["srcFs"], p1["dstFs"], p1["deleteEmptySrcDirs"], p1["_group"]),
+      ("nas:/datos/fotos", "nas:/otra/fotos", True, "gestion-1"))
+    c("  el archivo: `movefile` entre sus rutas, en el mismo grupo",
+      (p2["srcFs"], p2["srcRemote"], p2["dstFs"], p2["dstRemote"], p2["_group"]),
+      ("nas:/", "datos/a.txt", "nas:/", "otra/a.txt", "gestion-1"))
+    c("  la segunda solo tras el `finished` de la primera",
+      falso.cronologia.index(("estado", 1, True))
+      < falso.cronologia.index(("lanzar", 2, "operations/movefile")), True)
+    c("  y no hay `sync/sync` ni `job/batch`",
+      [m for m, _p in falso.llamadas if m in ("sync/sync", "job/batch")], [])
+    c("al acabar, la línea del corte desaparece y el resultado va a la línea de la ventana",
+      (bombear(lambda: frase(dlg) == "Movidos 2 a /otra."), linea(dlg)[0], panel_a_la_vista(dlg)),
+      (True, False, False))
+    c("  y «/otra» se leyó dos veces: al mirar el destino y al releer tras pegar",
+      listados_de(falso, "otra") - antes, 2)
+    c("  la carpeta de destino se releyó y lo movido queda elegido",
+      (nombres(dlg), seleccion(dlg)), (["fotos", "a.txt", "viejo.txt"], ["a.txt", "fotos"]))
+    c("  y los botones vuelven", encendidos(dlg), (True, False, True, True))
+    F.cerrar(dlg)
+
+    # -- uno solo: singular; «Cancelar» quita lo cortado; cortar de nuevo lo sustituye
+    dialogos()
+    falso = servidor_mover()
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    c("con uno la línea va en singular", linea(dlg)[1], "1 elemento para mover desde /datos")
+    elegir(dlg, "a.txt")
+    pulsar(dlg, "<Control-x>")
+    dlg.update()
+    c("cortar otra vez sustituye lo cortado (Ctrl+X)", linea(dlg)[1],
+      "1 elemento para mover desde /datos")
+    dlg.cortado.cancelar.invoke()
+    c("«Cancelar» de la línea la quita", linea(dlg)[0], False)
+    pulsar(dlg, "<Control-v>")
+    c("  y Ctrl+V ya no hace nada", (falso.lanzadas, DIALOGOS["avisar"]), ([], []))
+    F.cerrar(dlg)
+
+    # -- los rechazos: la misma carpeta, dentro de sí misma, nombres ocupados
+    dialogos()
+    falso = servidor_mover(otra=[item("viejo.txt"), item("A.TXT"), item("FOTOS", True)])
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "fotos", "a.txt")
+    dlg.barra.cortar.invoke()
+    dlg.cortado.pegar.invoke()
+    c("pegar en la misma carpeta se rechaza y la línea sigue",
+      (DIALOGOS["avisar"], linea(dlg)[0], falso.lanzadas, encendidos(dlg)[0]),
+      ([("No se puede", "Ya están en esta carpeta.")], True, [], True))
+    DIALOGOS["avisar"].clear()
+    entrar_en(dlg, "fotos")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/fotos")
+    entrar_en(dlg, "sub")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/fotos/sub")
+    dlg.cortado.pegar.invoke()
+    c("pegar una carpeta dentro de sí misma se rechaza",
+      (DIALOGOS["avisar"], linea(dlg)[0], falso.lanzadas),
+      ([("No se puede", "No se puede mover una carpeta dentro de sí misma.")], True, []))
+    DIALOGOS["avisar"].clear()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    listas = listados_de(falso, "otra")
+    dlg.cortado.pegar.invoke()
+    c("un nombre ya ocupado en el destino (sin mayúsculas) se rechaza, con el primero y cuántos más",
+      DIALOGOS["avisar"],
+      [("No se puede", "Ya hay «fotos» y 1 más en /otra: renómbralos antes.")])
+    c("  se miró el destino una vez, sin lanzar nada, con la línea y los botones",
+      (listados_de(falso, "otra") - listas, falso.lanzadas, linea(dlg)[0], encendidos(dlg)[0]),
+      (1, [], True, True))
+    DIALOGOS["avisar"].clear()
+    CONTENIDO_OTRA["v"] = [item("LEEME.TXT"), item("A.TXT")]
+    dlg.cortado.pegar.invoke()
+    c("  con una sola se dice cuál", DIALOGOS["avisar"],
+      [("No se puede", "Ya hay «a.txt» en /otra: renómbralo antes.")])
+    F.cerrar(dlg)
+
+    # -- el nombre se ocupa en el servidor entre que se pulsa y se mira: la pantalla no lo sabe
+    dialogos()
+    falso = servidor_mover(otra=[item("viejo.txt")])
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    CONTENIDO_OTRA["v"].append(item("B.txt"))
+    c("la pantalla no lo sabía", "B.txt" in nombres(dlg), False)
+    dlg.cortado.pegar.invoke()
+    c("  y se rechaza al releer", (DIALOGOS["avisar"], falso.lanzadas),
+      ([("No se puede", "Ya hay «b.txt» en /otra: renómbralo antes.")], []))
+    F.cerrar(dlg)
+
+    # -- otro remote: «Pegar aquí» apagado, y el texto lo dice; al volver se enciende
+    dialogos()
+    falso = servidor_mover()
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    dlg.elegido.set("otro")
+    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    bombear(lambda: linea(dlg)[1].endswith("servidor."))
+    c("en otro remote la línea añade que solo se pega en el mismo servidor",
+      linea(dlg), (True, "1 elemento para mover desde /datos · "
+                         "Solo se puede pegar en el mismo servidor.", False))
+    pulsar(dlg, "<Control-v>")
+    dlg.lista.event_generate("<Button-3>", x=5, y=5)
+    dlg.update()
+    menu = DIALOGOS["menus"][-1]
+    c("  Ctrl+V y el menú tampoco pegan", (falso.lanzadas, str(menu.entrycget(3, "state"))),
+      ([], "disabled"))
+    dlg.elegido.set("nas")
+    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    bombear(lambda: linea(dlg)[1] == "1 elemento para mover desde /datos")
+    c("  al volver al remote del corte se enciende", linea(dlg), (
+        True, "1 elemento para mover desde /datos", True))
+    F.cerrar(dlg)
+
+    # -- el menú: «Pegar aquí» encendido con algo cortado, y pega
+    dialogos()
+    falso = servidor_mover()
+    al_mover(falso)
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    dlg.lista.event_generate("<Button-3>", x=5, y=5)
+    dlg.update()
+    menu = DIALOGOS["menus"][-1]
+    c("el menú trae «Pegar aquí» encendido", str(menu.entrycget(3, "state")), "normal")
+    menu.invoke(3)
+    c("  y pega", (bombear(lambda: len(falso.lanzadas) == 1), falso.lanzadas[0][0]),
+      (True, "operations/movefile"))
+    F.cerrar(dlg)
+
+    # -- una pareja que no admite lo que llega: espejo de subida; y el aviso de otra
+    cfg_espejo = mkcfg((), pairs=[
+        {"name": "Notas", "local": "sync-data/notas", "remote_path": "/datos/notas",
+         "remote": "nas", "mode": "bisync"},
+        {"name": "Espejo", "local": "sync-data/espejo", "remote_path": "/otra",
+         "remote": "nas", "mode": "up-mirror"}], defaults={"remote": "nas"})
+    dialogos()
+    falso = servidor_mover()
+    dlg = abrir(falso, cfg=cfg_espejo)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    dlg.cortado.pegar.invoke()
+    c("pegar dentro de una pareja up-mirror se bloquea con su texto, sin lanzar y con el corte",
+      (DIALOGOS["avisar"], falso.lanzadas, CONFIRMAR["llamadas"], linea(dlg)[0]),
+      ([("No se puede", "«Espejo» deja el servidor igual que el dispositivo: lo que pongas "
+                        "aquí lo borraría su próxima pasada.")], [], [], True))
+    F.cerrar(dlg)
+
+    dialogos(confirmar=False)
+    falso = servidor_mover()
+    al_mover(falso)
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    entrar_en(dlg, "notas")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+    dlg.cortado.pegar.invoke()
+    c("pegar dentro de una pareja bisync enseña el plan con su aviso",
+      CONFIRMAR["llamadas"],
+      [("Carpeta de una pareja", "", ("Se moverá «b.txt» de /datos a /datos/notas.",),
+        ("La próxima pasada de «Notas» lo copiará al dispositivo.",))])
+    c("  un «no» no lanza nada y deja el corte y la ventana libre",
+      (falso.lanzadas, linea(dlg)[0], encendidos(dlg)[0]), ([], True, True))
+    dialogos(confirmar=True)
+    dlg.cortado.pegar.invoke()
+    c("  un «sí» lanza", (bombear(lambda: len(falso.lanzadas) == 1), falso.lanzadas[0][1]["dstRemote"]),
+      (True, "datos/notas/b.txt"))
+    c("  y quita el corte", (bombear(lambda: not linea(dlg)[0]), linea(dlg)[0]), (True, False))
+    F.cerrar(dlg)
+
+    # -- cancelar durante el primer movimiento: el segundo no sale
+    for estados, dicho in (
+            ({1: [CORRIENDO] * 60 + [fallado("context canceled")]},
+             "Cancelado: movidos 0 de 2 · «fotos» puede haber quedado a medias"),
+            ({1: [CORRIENDO] * 60 + [ACABADO]}, "Cancelado: movidos 1 de 2")):
+        dialogos()
+        falso = servidor_mover(estados=estados)
+        al_mover(falso)
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        elegir(dlg, "fotos", "a.txt")
+        dlg.barra.cortar.invoke()
+        a(dlg, "otra")
+        bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+        dlg.cortado.pegar.invoke()
+        c("durante el pegado el panel dice a dónde se mueve y «Pegar aquí» está apagado",
+          (bombear(lambda: panel_a_la_vista(dlg)), str(dlg.panel.titulo.cget("text")),
+           linea(dlg)[2]), (True, "Moviendo a /otra", False))
+        dlg.panel.cancelar.invoke()
+        c("  cancelar a mitad: " + dicho,
+          (bombear(lambda: frase_panel(dlg) == dicho), len(falso.lanzadas)), (True, 1))
+        c("  el corte se quita y la carpeta se relee",
+          (bombear(lambda: not linea(dlg)[0]), linea(dlg)[0]), (True, False))
+        F.cerrar(dlg)
+
+    # -- falla el segundo: se cuenta y el corte se quita
+    dialogos()
+    falso = servidor_mover(estados={1: [ACABADO], 2: [fallado("object not found")]})
+    al_mover(falso)
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "fotos", "a.txt")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    dlg.cortado.pegar.invoke()
+    c("un fallo en el segundo movimiento se cuenta, sin «Reintentar»",
+      (bombear(lambda: frase_panel(dlg) != ""), frase_panel(dlg),
+       bool(dlg.panel.reintentar.winfo_manager())),
+      (True, "Movidos 1 de 2: «a.txt» no se pudo: ya no estaba", False))
+    c("  y el corte se quita", (bombear(lambda: not linea(dlg)[0]), linea(dlg)[0]), (True, False))
+    F.cerrar(dlg)
+
+    # -- no se puede mirar el destino: «Reintentar», nada lanzado y el corte sigue
+    dialogos()
+    falso = servidor_mover()
+    al_mover(falso)
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    fallos = [rcd.ErrorRc("permission denied", 403)]
+    falso.respuestas[("operations/list", "otra")] = (
+        lambda: (_ for _ in ()).throw(fallos.pop()) if fallos else lista(*CONTENIDO_OTRA["v"]))
+    dlg.cortado.pegar.invoke()
+    c("si no se puede mirar el destino se dice con «Reintentar» y no se lanza",
+      (frase_panel(dlg), bool(dlg.panel.reintentar.winfo_manager()), falso.lanzadas,
+       linea(dlg)[0]),
+      ("No tienes permiso para ver esta carpeta.", True, [], True))
+    dlg.panel.reintentar.invoke()
+    c("  «Reintentar» vuelve a mirar y mueve",
+      (bombear(lambda: len(falso.lanzadas) == 1), bombear(lambda: not linea(dlg)[0])),
+      (True, True))
+    F.cerrar(dlg)
+
+    # -- cerrar la ventana de en medio de un pegado
+    dialogos(preguntar=False)
+    falso = servidor_mover(estados={1: [CORRIENDO] * 60 + [ACABADO]})
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "fotos")
+    dlg.barra.cortar.invoke()
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    dlg.cortado.pegar.invoke()
+    bombear(lambda: panel_a_la_vista(dlg))
+    dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
+    c("cerrar a mitad de un pegado pregunta con el texto de los cambios",
+      DIALOGOS["preguntar"][0][:2],
+      ("Cambio en marcha", "Hay un cambio en marcha en el servidor. ¿Cancelarlo y cerrar?"))
+    F.cerrar(dlg)
 
     # Mientras corre, la línea de «Sin respuesta…» de un cambio dice que sigue en marcha
     c("la línea de «sin respuesta» de un cambio",

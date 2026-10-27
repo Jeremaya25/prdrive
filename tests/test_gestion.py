@@ -56,6 +56,15 @@ c("renombrar sobre otro hermano", gestion.validar_nombre("b", ["a", "b"], actual
 c("existentes puede ser un generador", gestion.validar_nombre("x", (n for n in ["X"])),
   "Ya hay algo que se llama «x» en esta carpeta.")
 
+# --- texto_corte -----------------------------------------------------------------------
+c("la línea de lo cortado, en plural", gestion.texto_corte(3, "/datos/fotos"),
+  "3 elementos para mover desde /datos/fotos")
+c("  en singular", gestion.texto_corte(1, "/datos"), "1 elemento para mover desde /datos")
+c("  con la carpeta sin barra inicial", gestion.texto_corte(2, "datos/"),
+  "2 elementos para mover desde /datos")
+c("  en otro servidor añade el motivo", gestion.texto_corte(2, "/datos", True),
+  "2 elementos para mover desde /datos · Solo se puede pegar en el mismo servidor.")
+
 # --- validar_pegado --------------------------------------------------------------------
 mover = Op(gestion.MOVER, "nas", "/a", (E("x", True), E("y.txt", False)), destino="/b")
 c("pegado normal", gestion.validar_pegado(mover, []), None)

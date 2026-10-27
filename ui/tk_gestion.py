@@ -171,6 +171,38 @@ class Barra:
             getattr(self, clave).state(["!disabled" if encendido else "disabled"])
 
 
+ANCHO_CORTE = 380
+"""Ancho (px del diseño) donde se corta el texto de la línea de lo cortado."""
+
+
+def linea_corte(padre, al_pegar: Callable[[], None], al_cancelar: Callable[[], None]):
+    """Devuelve la línea de lo cortado: su texto y los botones «Pegar aquí» y «Cancelar».
+
+    Es un `ttk.Frame` sin colocar (lo hace quien la usa con `grid`) cuyas partes quedan en
+    atributos para que la ventana las ponga y los tests las manejen: `texto` (la
+    etiqueta), `pegar` y `cancelar` (los botones).
+
+    Args:
+        padre: El contenedor del que cuelga.
+        al_pegar: Lo que hace «Pegar aquí»; se consulta al pulsar.
+        al_cancelar: Lo que hace «Cancelar».
+    """
+    from tkinter import ttk
+
+    marco = ttk.Frame(padre)
+    marco.columnconfigure(0, weight=1)
+    marco.texto = ttk.Label(marco, text="", style="Pista.TLabel",
+                            wraplength=theme.medida(ANCHO_CORTE), justify="left")
+    marco.texto.grid(row=0, column=0, sticky="w")
+    marco.pegar = ttk.Button(marco, text=ROTULOS["pegar"], style="Quiet.TButton",
+                             command=lambda: al_pegar())
+    marco.pegar.grid(row=0, column=1, sticky="e", padx=(theme.E3, 0))
+    marco.cancelar = ttk.Button(marco, text="Cancelar", style="Quiet.TButton",
+                                command=lambda: al_cancelar())
+    marco.cancelar.grid(row=0, column=2, sticky="e", padx=(theme.E2, 0))
+    return marco
+
+
 def menu_contextual(padre, acciones: dict[str, Callable[[], None]],
                     estados: dict[str, bool]) -> "tk.Menu":
     """Devuelve el menú del botón derecho, listo para que la ventana lo enseñe.

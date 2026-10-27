@@ -116,6 +116,24 @@ def validar_pegado(op: Operacion, nombres_en_destino: Iterable[str]) -> str | No
     return None
 
 
+def texto_corte(elementos: int, carpeta: str, otro_servidor: bool = False) -> str:
+    """Devuelve lo que dice la línea de lo cortado, encima de la lista.
+
+    Args:
+        elementos: Cuántos elementos están cortados.
+        carpeta: La carpeta del servidor de la que salen.
+        otro_servidor: Si la ventana enseña ahora otro remote que el del corte, donde no
+            se puede pegar.
+
+    Returns:
+        `3 elementos para mover desde /datos` (`1 elemento` con uno) y, en otro servidor,
+        el motivo por el que «Pegar aquí» está apagado.
+    """
+    cuantos = "1 elemento" if elementos == 1 else f"{elementos} elementos"
+    texto = f"{cuantos} para mover desde {remote_picker.normalizar(carpeta)}"
+    return texto + " · Solo se puede pegar en el mismo servidor." if otro_servidor else texto
+
+
 def rutas_tocadas(op: Operacion) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Devuelve las rutas del servidor que la operación hace salir y las que hace llegar.
 
