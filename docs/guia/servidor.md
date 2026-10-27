@@ -37,7 +37,7 @@ Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
 ## Las marcas
 
-- **⇄ Nombre**, junto al nombre de una carpeta: es la carpeta de la pareja «Nombre», en ese mismo
+- **· pareja «Nombre»**, junto al nombre de una carpeta: es la carpeta de la pareja «Nombre», en ese mismo
   servidor. Si estás dentro de una carpeta de pareja, la ventana lo dice arriba: «Estás dentro de
   la pareja «Nombre»». Esta versión solo lo señala.
 - **Candado**: no puedes entrar en esa carpeta. Aparece cuando, al intentar entrar, el servidor

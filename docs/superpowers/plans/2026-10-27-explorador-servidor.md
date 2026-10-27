@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** a «Servidor…» button in the main window opens a one-pane, read-only explorer of the whole rclone remote (folders and files, size, date, permissions, «⇄ Pareja» marks, «Sin acceso» lock), talking to a resident `rclone rcd` that can never be left orphaned holding the device.
+**Goal:** a «Servidor…» button in the main window opens a one-pane, read-only explorer of the whole rclone remote (folders and files, size, date, permissions, «· pareja» marks, «Sin acceso» lock), talking to a resident `rclone rcd` that can never be left orphaned holding the device.
 
 **Architecture:** `common/rcd.py` owns the `rclone rcd` process (start on the Tk thread, HTTP over `127.0.0.1` with random credentials, three anti-orphan belts). `ui/servidor.py` is the pure decision half (parse `operations/list`, navigation with last-request-wins, remotes, pair overlay, error phrases, permissions). `ui/tk_servidor.py` only draws, on the `tk_fleet` pattern (`modal` + `Sondeo` + `Indicador` + `Tabla`). The main window gets one button.
 
@@ -29,7 +29,7 @@
   - indicator: `Conectando con el servidor…` · `Leyendo {ruta}…` · `Estás dentro de la pareja «{nombre}».` · `Este dispositivo no tiene conexión con ningún servidor.`;
   - errors: `No tienes permiso para ver esta carpeta.` · `Esa carpeta ya no existe en el servidor.` · `El servidor no ha contestado a tiempo.` · `Se ha perdido la conexión con rclone.` · `No hay conexión con el servidor.` · otherwise `rclone dice: {mensaje}`;
   - buttons `↑` (icon `arriba`), `Releer` (icon `reload`), `Reconectar` (after a lost `rcd`), `Reintentar` (no network at open);
-  - pair mark appended to the name cell: `  ⇄ {nombre}`; locked folder: icon `candado`, row tone `apagado`; permissions cell `—` when unknown, else three octal digits (`755`).
+  - pair mark appended to the name cell: `  · pareja «{nombre}»`; locked folder: icon `candado`, row tone `apagado`; permissions cell `—` when unknown, else three octal digits (`755`).
 
 ## Review Focus
 
@@ -260,7 +260,7 @@ c("sin metadatos, None", servidor.mi_uid_de({"item": {}}), None)
 # abrir: la tabla tiene las filas de "/" y la columna Permisos dice "—" en todas (fsinfo con ReadMetadata False)
 c("se pidió fsinfo y no metadata", [p["opt"] for m, p in falso.llamadas if m == "operations/list"], [{"noMimeType": True}])
 # doble clic en la carpeta "datos" → operations/list con remote "datos"; la ruta de arriba dice "/datos"
-# la carpeta de la pareja enseña "  ⇄ Notas" en su celda de nombre
+# la carpeta de la pareja enseña "  · pareja «Notas»" en su celda de nombre
 # dentro de la pareja: el indicador dice "Estás dentro de la pareja «Notas»."
 # un ErrorRc("permission denied") al entrar en "privado": la tabla sigue con las filas de antes, el indicador dice
 #   "No tienes permiso para ver esta carpeta." y la fila "privado" lleva el icono candado y tono apagado

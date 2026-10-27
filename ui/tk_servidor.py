@@ -50,8 +50,10 @@ FILAS_VISIBLES = 12
 VACIA = "Esta carpeta está vacía."
 CONECTANDO = "Conectando con el servidor…"
 SIN_REMOTES = "Este dispositivo no tiene conexión con ningún servidor."
-MARCA_PAREJA = "  ⇄ "
-"""Lo que se añade al nombre de una carpeta que es la de una pareja, antes del nombre de la pareja."""
+MARCA_PAREJA = "  · pareja «{}»"
+"""Lo que se añade al nombre de una carpeta que es la de una pareja; `{}` es el nombre de la pareja.
+
+Solo con glifos que traen las fuentes del programa (ui/fuentes)."""
 
 
 class Lectura(NamedTuple):
@@ -144,7 +146,7 @@ def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list
             hija = nav.hijo(e.nombre)
             pareja = servidor.marca(config, nav.remote, hija)
             if pareja:
-                nombre += f"{MARCA_PAREJA}{pareja}"
+                nombre += MARCA_PAREJA.format(pareja)
             if (nav.remote, hija) in nav.sin_acceso or servidor.sin_acceso_previo(e, mi_uid):
                 icono, tono = "candado", "apagado"
         filas.append(FilaLista(
@@ -238,7 +240,7 @@ def open_dialog(parent, config: Config) -> None:
     desplazar.grid(row=0, column=1, sticky="ns")
     # «Vacía» se dice con una etiqueta encima de la lista sin filas, y solo cuando
     # ha llegado un listado: una ventana que aún conecta no sabe si está vacía.
-    vacia = ttk.Label(tarjeta, text=VACIA, style="Pista.TLabel")
+    vacia = ttk.Label(tarjeta, text=VACIA, style="Card.Pista.TLabel")
     iconos = {nombre: icons.get(lista, nombre, 16, theme.TINTA3, theme.SUPERFICIE)
               for nombre in ("carpeta", "file", "candado")}
     dlg.lista, dlg.vacia, dlg.accion, dlg.elegido = lista, vacia, accion, elegido

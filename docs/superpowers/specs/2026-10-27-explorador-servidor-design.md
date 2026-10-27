@@ -94,7 +94,7 @@ sustituir el «Examinar…» de las parejas (sigue como está).
   dispositivo, sin los internos de prdrive (el `device_remote` `combine` de `[defaults]` y los
   `alias`), empezando por el de `[defaults].remote`.
 - **La capa de parejas**: una carpeta cuya ruta completa es el `remote_path` de una pareja del
-  config **en ese mismo remote** lleva «⇄ Nombre». Estando dentro de una (la ruta actual empieza
+  config **en ese mismo remote** lleva `· pareja «Nombre»`. Estando dentro de una (la ruta actual empieza
   por un `remote_path`), el aviso «Estás dentro de la pareja «Nombre»». En la pieza 1 solo
   informa; en la 3 es lo que activa la protección.
 - **«Sin acceso»**: una carpeta en la que entrar ha fallado por permiso (`ErrorRc` cuyo texto es
@@ -110,7 +110,7 @@ sustituir el «Examinar…» de las parejas (sigue como está).
 - `tk.Indicador` bajo la barra para «Conectando con el servidor…», los errores de listado y el
   aviso de «dentro de la pareja».
 - La tabla es `tk.Tabla` (un solo lienzo, `tk_tabla`). Columnas: nombre (`CeldaIcono` carpeta o
-  archivo; candado si «Sin acceso»; «⇄ Nombre» si es de una pareja), tamaño (legible, «—» en
+  archivo; candado si «Sin acceso»; `· pareja «Nombre»` si es de una pareja), tamaño (legible, «—» en
   carpetas: SFTP no da el tamaño de una carpeta sin recorrerla), fecha de modificación en hora
   local, permisos.
 - Doble clic o Intro entra en una carpeta; Retroceso o «↑» sube.
@@ -234,7 +234,7 @@ Ningún test arranca rclone ni toca la red: se sustituyen `rcd.lanzar()` y `rcd.
   contraseña; las ramas del Job Object y de `PDEATHSIG` se fuerzan con `IS_WIN` o dicen
   `(saltado) …`; el `Popen` se hace en el hilo que llama.
 - `tests/test_servidor.py` (sin pantalla): `operations/list` → entradas, orden y fechas; la marca
-  «⇄ Pareja» solo en el mismo remote y el aviso de «dentro de la pareja»; el desplegable sin
+  la marca de pareja solo en el mismo remote y el aviso de «dentro de la pareja»; el desplegable sin
   `combine` ni `alias`; la respuesta vieja descartada; la traducción de errores y «Sin acceso»;
   permisos: cuándo se piden (`ReadMetadata` falso, backend fuera de la lista, S3 con
   `ReadMetadata` verdadero → no), `mode` con el formato del PR (`100600`, `40755`) y formatos

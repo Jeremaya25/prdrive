@@ -6,7 +6,7 @@ que contesta desde un diccionario y apunta cada llamada. Lo que se comprueba es
 lo que ve la persona:
 
 - la lista (una `ttk.Treeview`) con las filas de «/», lo que SE VE en ella (el
-  texto del árbol con el nombre y la marca «⇄», el icono, tamaño, fecha y la
+  texto del árbol con el nombre y la marca de pareja, el icono, tamaño, fecha y la
   columna de permisos en «—»), y qué se le
   pidió al servidor (`noMimeType` y nada más) mientras `fsinfo` no dice que sabe
   dar permisos;
@@ -312,9 +312,9 @@ with sandbox():
     c("doble clic en «datos» lista «datos»", falso.listados()[-1]["remote"], "datos")
     c("la ruta de arriba dice «/datos»", dlg.ruta.cget("text"), "/datos")
     c("la lista tiene lo de «datos»", nombres(dlg), ["notas", "a.txt"])
-    c("la carpeta de la pareja enseña «  ⇄ Notas» en el texto que se ve",
-      (texto(dlg, "notas"), "⇄ Notas" in str(dlg.lista.item("notas", "text"))),
-      ("notas  ⇄ Notas", True))
+    c("la carpeta de la pareja enseña «  · pareja «Notas»» en el texto que se ve",
+      (texto(dlg, "notas"), "· pareja «Notas»" in str(dlg.lista.item("notas", "text"))),
+      ("notas  · pareja «Notas»", True))
     c("un archivo no lleva marca", texto(dlg, "a.txt"), "a.txt")
     c("fuera de la pareja el indicador calla", frase(dlg), "")
     elegir_y_entrar(dlg, "notas")
