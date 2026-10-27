@@ -95,8 +95,10 @@ c("bajar dentro de una down-mirror bloquea",
   BLOQUEO_BAJADAS)
 c("bajar por encima de la carpeta de una pareja la alcanza",
   [a.pareja for a in transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data"), [E("notas", True)])], ["Notas"])
-c("bajar un archivo por encima no alcanza lo que cuelga de él",
+c("bajar un archivo con el nombre de la carpeta de una pareja también la alcanza",
   transferencia.afectadas_bajada(cfg, str(DEVICE / "sync-data"), [E("notas", False)])[0].pareja, "Notas")
+c("bajar un archivo no alcanza lo que cuelga de su nombre",
+  transferencia.afectadas_bajada(cfg, str(DEVICE), [E("sync-data", False)]), ())
 c("bajar fuera de las parejas no dice nada",
   (transferencia.bloqueo("bajar", ()), transferencia.aviso("bajar", ())), (None, None))
 c("bajar a otra carpeta no alcanza a nadie",
@@ -116,6 +118,46 @@ c("un bloqueo de bajada no sale al subir",
 c("subir a una down-mirror avisa",
   transferencia.aviso("subir", transferencia.afectadas_subida(cfg, "nas", "/bajadas", [E("a", False)])),
   "Lo que subas a «Bajadas» lo bajará al dispositivo su próxima pasada.")
+
+# Parejas que comparten carpeta o que están anidadas: se alcanzan todas las de la carpeta
+# más honda, y un bloqueo no se escapa porque otra pareja comparta su ruta.
+cfg2 = mkcfg((), pairs=[
+    {"name": "Fotos", "local": "sync-data/a", "remote_path": "/fotos", "mode": "bisync"},
+    {"name": "Espejo", "local": "sync-data/b", "remote_path": "/fotos", "mode": "up-mirror"},
+    {"name": "Bajo", "local": "sync-data/c", "remote_path": "/otra", "mode": "down"},
+    {"name": "Bajo2", "local": "sync-data/c", "remote_path": "/otra2", "mode": "down-mirror"},
+    {"name": "Datos", "local": "sync-data/datos", "remote_path": "/datos", "mode": "up-mirror"},
+    {"name": "Notas", "local": "sync-data/datos/notas", "remote_path": "/datos/notas", "mode": "bisync"},
+])
+c("dos parejas en la misma ruta del servidor: salen las dos",
+  [a.pareja for a in transferencia.afectadas_subida(cfg2, "nas", "/fotos/x", [E("a", False)])],
+  ["Fotos", "Espejo"])
+c("dos parejas en la misma ruta del servidor: la up-mirror bloquea",
+  transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg2, "nas", "/fotos", [E("a", False)])),
+  "«Espejo» deja el servidor igual que el dispositivo: lo que subas aquí lo borraría "
+  "su próxima pasada. Súbelo a su carpeta del dispositivo.")
+c("dos parejas en la misma carpeta local: salen las dos",
+  [a.pareja for a in transferencia.afectadas_bajada(cfg2, str(DEVICE / "sync-data/c/x"), [E("a", False)])],
+  ["Bajo", "Bajo2"])
+c("dos parejas en la misma carpeta local: la down-mirror bloquea",
+  transferencia.bloqueo("bajar", transferencia.afectadas_bajada(cfg2, str(DEVICE / "sync-data/c"), [E("a", False)])),
+  "«Bajo2» deja su carpeta igual que el servidor: lo que bajes aquí lo borraría "
+  "su próxima pasada. Bájalo fuera de ella.")
+c("subir a una pareja anidada solo alcanza a la de dentro",
+  [a.pareja for a in transferencia.afectadas_subida(cfg2, "nas", "/datos/notas/x", [E("a", False)])],
+  ["Notas"])
+c("bajar a una pareja anidada solo alcanza a la de dentro",
+  [a.pareja for a in transferencia.afectadas_bajada(cfg2, str(DEVICE / "sync-data/datos/notas/x"), [E("a", False)])],
+  ["Notas"])
+c("subir a la externa de dos anidadas alcanza a la externa",
+  [a.pareja for a in transferencia.afectadas_subida(cfg2, "nas", "/datos/otra", [E("a", False)])],
+  ["Datos"])
+c("lo que alcanzan el destino y dos elementos sale una vez cada pareja",
+  [a.pareja for a in transferencia.afectadas_subida(cfg2, "nas", "/datos", [E("notas", True), E("notas", False)])],
+  ["Datos", "Notas"])
+c("dos elementos que llegan a las parejas de una misma carpeta las listan una vez",
+  [a.pareja for a in transferencia.afectadas_subida(cfg2, "nas", "/", [E("fotos", True), E("fotos", False)])],
+  ["Fotos", "Espejo"])
 
 # Los textos de cada modo, en los dos sentidos.
 def _aviso(sentido, modo):
