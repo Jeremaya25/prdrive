@@ -136,6 +136,17 @@ que son «unos 10 minutos» y no un reloj exacto: un `.bat` sin paréntesis no t
 otra forma barata de contar. «Expulsar» no lo usa.
 """
 
+AVISO_PENDIENTE = 60
+"""Vueltas de un segundo tras las que se avisa de que la ventana puede estar tapada.
+
+Unos 60 segundos de espera sin contar a la copia elevada del VeraCrypt que viaja
+(`:vc_pendiente`), en «Abrir» y en «Expulsar»: se imprime una vez
+(`:aviso_oculta`) y la espera sigue. No se intenta traer la ventana al frente: el
+aviso de UAC lo pide la copia elevada de VeraCrypt, no nosotros. Va con `set` en
+los dos `.bat` para que un test pueda bajarlo. Se cuenta como `ESPERA_PENDIENTE`:
+en vueltas, no en un reloj exacto.
+"""
+
 _CONTROL_BAT = str(CONTROL_FILE).replace("/", "\\")
 
 _APP_BAT = str(CONTROL_FILE.parent).replace("/", "\\")
@@ -265,6 +276,22 @@ el de «Abrir» lo pone quien la llama (`ESPERA_PENDIENTE`) y «Expulsar» esper
 que tarde la respuesta.
 """
 
+_AVISO_OCULTA_BAT = (
+    ":aviso_oculta\n"
+    "chcp 65001 >nul\n"
+    "echo.\n"
+    "echo   VeraCrypt sigue esperando una respuesta. Si no ves su ventana ni el\n"
+    "echo   aviso de permisos de administrador, puede haber quedado detrás de otras:\n"
+    "echo   búscala en la barra de tareas o con Alt+Tab.\n"
+    "echo.\n"
+    "exit /b 0\n"
+)
+"""Subrutina `:aviso_oculta`: dice dónde buscar la ventana de VeraCrypt que no se ve.
+
+Solo se llega a ella desde la rama de `:vc_pendiente` (copia elevada viva), al
+cumplirse `AVISO_PENDIENTE`. Imprime y vuelve: la espera sigue.
+"""
+
 _VIAJERO_BAT = f"%~dp0{v.TRAVELER}\\{v.TRAVELER_PORTATIL.format(arq='%VC_ARQ%')}"
 """Ruta del VeraCrypt portable que viaja.
 
@@ -342,7 +369,8 @@ def bat_abrir(device_id: str) -> str:
         "rem administrador, se relanza elevado y sale enseguida con 0 mientras la\n"
         "rem otra ventana pide la contrasena. Por eso espera a ver la unidad.\n"
         "rem Mientras esa copia siga viva, la espera no cuenta, hasta unos 10 minutos\n"
-        "rem (despues avisa de que la ventana puede estar tapada); si sale sin que\n"
+        "rem (al minuto avisa una vez de que la ventana puede estar tapada, y al\n"
+        "rem final lo repite y se rinde); si sale sin que\n"
         "rem haya unidad, la contrasena se ha cancelado y no espera mas.\n"
         "rem\n"
         "rem Lo escribe el instalador de prdrive. Sin bloques entre parentesis a\n"
@@ -362,6 +390,7 @@ def bat_abrir(device_id: str) -> str:
         + _VC_ANTES_BAT +
         f'set "ESPERA={ESPERA_INSTALADO}"\n'
         f'set "ESPERA_PENDIENTE={ESPERA_PENDIENTE}"\n'
+        f'set "AVISO_PENDIENTE={AVISO_PENDIENTE}"\n'
         f'if defined VIAJERO if defined VC_ANTES set "ESPERA={ESPERA_VIAJERO}"\n'
         f"echo Abriendo {v.ETIQUETA}: escribe la contrasena en la ventana de VeraCrypt.\n"
         "if defined VIAJERO if defined VC_ANTES "
@@ -382,6 +411,7 @@ def bat_abrir(device_id: str) -> str:
         ":esperar_pendiente\n"
         "set /a PENDIENTE+=1\n"
         "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta\n"
+        "if %PENDIENTE% equ %AVISO_PENDIENTE% call :aviso_oculta\n"
         ":esperar_vc\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
@@ -396,6 +426,8 @@ def bat_abrir(device_id: str) -> str:
         + _LIBRE_BAT +
         "\n"
         + _VC_PENDIENTE_BAT +
+        "\n"
+        + _AVISO_OCULTA_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT +
         "\n"
@@ -458,7 +490,8 @@ def bat_expulsar(device_id: str) -> str:
         "rem Espera unos segundos antes: quien lo llama suele ser la propia ventana,\n"
         "rem que se esta cerrando, y VeraCrypt reintenta el desmontaje solo 1,5 s.\n"
         "rem Mientras VeraCrypt siga preguntando (el que viaja lo hace desde una\n"
-        "rem copia elevada que no esperamos con /wait), la espera no cuenta.\n"
+        "rem copia elevada que no esperamos con /wait), la espera no cuenta; sin\n"
+        "rem tope, pero al minuto avisa una vez de que la ventana puede estar tapada.\n"
         "rem No dice que se puede quitar la unidad hasta ver suelto el contenedor:\n"
         "rem si se fuerza el cierre con algo abierto dentro, la letra se va pero el\n"
         "rem contenedor sigue retenido y Windows no deja quitarla.\n"
@@ -479,14 +512,20 @@ def bat_expulsar(device_id: str) -> str:
         + _VC_ANTES_BAT +
         'set "LETRA=%RAIZ:~0,1%"\n'
         'start "" /wait "%VC%" /dismount %RAIZ:~0,1% /quit\n'
+        f'set "AVISO_PENDIENTE={AVISO_PENDIENTE}"\n'
         'set "INTENTOS=0"\n'
+        'set "PENDIENTE=0"\n'
         ":esperar\n"
         "call :buscar\n"
         "if not defined RAIZ goto sin_letra\n"
         "call :vc_pendiente\n"
-        "if not errorlevel 1 goto esperar_vc\n"
+        "if not errorlevel 1 goto esperar_pendiente\n"
         "set /a INTENTOS+=1\n"
         "if %INTENTOS% geq 30 goto sigue_abierto\n"
+        "goto esperar_vc\n"
+        ":esperar_pendiente\n"
+        "set /a PENDIENTE+=1\n"
+        "if %PENDIENTE% equ %AVISO_PENDIENTE% call :aviso_oculta\n"
         ":esperar_vc\n"
         "timeout /t 1 /nobreak >nul\n"
         "goto esperar\n"
@@ -560,6 +599,8 @@ def bat_expulsar(device_id: str) -> str:
         + _olvidar_letra_bat() +
         "\n"
         + _VC_PENDIENTE_BAT +
+        "\n"
+        + _AVISO_OCULTA_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT
     )

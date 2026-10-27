@@ -83,7 +83,9 @@ Cuatro cosas más:
   el catálogo. La ruta local usa el diálogo de carpetas del sistema y se guarda
   relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](como-funciona.md#el-modelo): todos los que comparten este
-  catálogo, cuándo se les vio por última vez, **desde qué equipo** (el último
+  catálogo, con el **color del icono** que cada uno tiene en «Nombre e icono»
+  (llega con su siguiente sincronización; un icono propio sale como la marca de
+  prdrive), cuándo se les vio por última vez, **desde qué equipo** (el último
   ordenador donde se enchufaron) y cómo acabó su última pasada. Los que llevan
   más de una semana sin aparecer salen apagados. Debajo, la **ficha** del
   elegido: su versión, para qué plataformas sirve, desde cuándo falla si falla, y

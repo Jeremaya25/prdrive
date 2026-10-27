@@ -44,7 +44,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping, NamedTuple
 
-from . import APP_NAME, catalog, components, config_file, model, results, store, update
+from . import APP_NAME, autorun, catalog, components, config_file, model, results, store, update
 from .pins import PLATAFORMAS
 
 SUBCARPETA = "devices"
@@ -148,6 +148,9 @@ class Dispositivo(NamedTuple):
             vacío en todo lo demás.
         entiende: Lo que su código sabe leer (`ENTIENDE` de su versión);
             vacío en la nota de una versión de antes de la lista.
+        icono: La clave del icono de prdrive de su unidad (`autorun.CLAVES_MARCA`
+            o `autorun.CLAVE_PROPIA`); vacía si no tiene uno de prdrive, en la
+            raíz de un equipo y en la nota de una versión anterior.
     """
     id: str
     nombre: str
@@ -160,6 +163,7 @@ class Dispositivo(NamedTuple):
     tipo: str = ""
     cifrado: str = ""
     entiende: tuple[str, ...] = ()
+    icono: str = ""
 
     @property
     def es_equipo(self) -> bool:
@@ -283,6 +287,8 @@ def _tabla(disp: Dispositivo) -> dict[str, Any]:
         tabla["cifrado"] = disp.cifrado
     if disp.entiende:
         tabla["entiende"] = list(disp.entiende)
+    if disp.icono:
+        tabla["icono"] = disp.icono
     return tabla
 
 
@@ -370,7 +376,8 @@ def parse(texto: str, device_id: str = "") -> Dispositivo | None:
         ultima_buena=cadena("ultima_buena"),
         tipo=cadena("tipo").strip().lower(),
         cifrado=cadena("cifrado").strip().lower(),
-        entiende=tuple(e for e in entiende if isinstance(e, str) and e))
+        entiende=tuple(e for e in entiende if isinstance(e, str) and e),
+        icono=cadena("icono").strip().lower())
 
 
 def ruta_estado() -> Path:
@@ -586,7 +593,8 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
                        ultima_buena=ultima_buena,
                        tipo="" if not model.es_equipo(app_dir) else model.TIPO_EQUIPO,
                        cifrado=_cifrado(app_dir, identificador),
-                       entiende=ENTIENDE)
+                       entiende=ENTIENDE,
+                       icono=_icono(app_dir))
 
 
 CIFRADO_VERACRYPT = "veracrypt"
@@ -610,6 +618,25 @@ def _cifrado(app_dir: Path | str | None, identificador: str) -> str:
     return CIFRADO_VERACRYPT if unidad is not None and unidad.cifrada else ""
 
 
+def _icono(app_dir: Path | str | None) -> str:
+    """Devuelve la clave del icono de prdrive que tiene la unidad, o `""`.
+
+    Sale del `icon=` del `autorun.inf` de la raíz (`DEVICE_ROOT`, que con
+    VeraCrypt es el volumen montado) y de nada más. La raíz de un equipo no
+    publica ninguno: su `autorun.inf` no lo lee ningún Explorador. No lanza.
+    """
+    try:
+        if model.es_equipo(app_dir):
+            return ""
+        if app_dir is None:
+            raiz, app = Path(model.DEVICE_ROOT), model.APP_DIR.name
+        else:
+            raiz, app = Path(app_dir).parent, Path(app_dir).name
+        return autorun.clave_icono(autorun.leer(raiz).icono, app)
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
 def nota(config: model.Config | None = None) -> Dispositivo | None:
     """Devuelve la nota de ESTE dispositivo ahora mismo, o `None` si no tiene id."""
     last_result, ultima_buena = estado(config)
@@ -629,7 +656,7 @@ def _sin_fecha(disp: Dispositivo) -> tuple:
     """
     return (disp.id, disp.nombre, disp.version, disp.plataformas, disp.last_result,
             disp.ultimo_equipo, disp.ultima_buena, disp.tipo, disp.cifrado,
-            disp.entiende)
+            disp.entiende, disp.icono)
 
 
 def hace_falta_publicar(disp: Dispositivo, ahora: datetime | None = None) -> bool:

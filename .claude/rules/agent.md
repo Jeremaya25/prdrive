@@ -33,5 +33,6 @@ paths:
   - "tests/test_agente_bitlocker.py"
   - "tests/test_store_creado.py"
   - "tests/test_agente_registro.py"
+  - "tests/test_agente_fantasma_extraible.py"
 ---
 Before changing these files, read `docs/agents/reference/agent.md` (the resident agent: files and ownership, the contract with a drive, hardening). Also read the one that matches your change, all in `docs/agents/reference/`: `agent-scheduling.md` (planner, network probes, `watch = true`), `agent-window.md` (window ↔ agent, agent self-update), `host-root.md` (host root, encrypted root) or `tray.md`. Skip what you already read this session.

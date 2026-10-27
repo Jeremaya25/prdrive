@@ -330,6 +330,49 @@ with sandbox():
       (1, 1))
 
     # -----------------------------------------------------------------------
+    # 1b. La columna del icono: la clave publicada, una imagen por fila, y mide
+    #     lo mismo con la tabla vacía que con la flota pintada
+    # -----------------------------------------------------------------------
+    verde = dispositivo(0)._replace(icono="verde")
+    sin = dispositivo(1)
+    propio = dispositivo(2)._replace(icono="propio")
+    dlg = abrir([verde, sin, propio])
+    columna = [clave for clave, _t, _a in tk_fleet.COLUMNAS].index("icono")
+    c("la columna del icono va justo antes de «Dispositivo»",
+      [clave for clave, _t, _a in tk_fleet.COLUMNAS][columna:columna + 2],
+      ["icono", "nombre"])
+    c("la tabla lleva la clave del icono (y vacío para una nota sin ella)",
+      [dlg.tabla.filas[d.id][columna] for d in (verde, sin, propio)],
+      ["verde", "", "propio"])
+    c("el verde se pinta con su color de la marca",
+      tk_fleet.fila(verde, AQUI).celdas[columna].campo, tk_fleet.icons.CAMPOS["verde"])
+    c("y todo lo demás con la marca por defecto",
+      {tk_fleet.fila(d, AQUI).celdas[columna].campo for d in (sin, propio)},
+      {tk_fleet.icons.CAMPO})
+    lienzo, cv = dlg.tabla._lienzo, dlg.tabla.marco
+    c("cada fila dibuja una imagen en esa columna",
+      [len([i for i in set(cv.find_withtag(lienzo._filas[d.id].clave))
+            & set(cv.find_withtag(f"c{columna}")) if cv.type(i) == "image"])
+       for d in (verde, sin, propio)], [1, 1, 1])
+    con_flota = lienzo._anchos[columna]
+    cerrar(dlg)
+    vacio = abrir([])
+    sin_filas = vacio.tabla._lienzo._anchos[columna]
+    cerrar(vacio)
+    c("la columna mide lo mismo con la tabla vacía que con la flota", sin_filas, con_flota)
+    escala = raiz.tk.call("tk", "scaling")
+    try:
+        for factor in (1.0, 1.5, 2.0):
+            raiz.tk.call("tk", "scaling", escala * factor)
+            lleno, vacio = abrir(flota(6)), abrir([])
+            c(f"  y a {factor:g}x",
+              lleno.tabla._lienzo._anchos[columna], vacio.tabla._lienzo._anchos[columna])
+            cerrar(lleno)
+            cerrar(vacio)
+    finally:
+        raiz.tk.call("tk", "scaling", escala)
+
+    # -----------------------------------------------------------------------
     # 2. Elegir cada fila no crea ni destruye nada, y la ficha enseña lo que
     #    una ventana recién abierta con solo ese dispositivo
     # -----------------------------------------------------------------------

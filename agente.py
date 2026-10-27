@@ -1718,6 +1718,8 @@ class Agente:
         bloqueos: Los «Bloquear» en marcha.
         expulsiones: Los «Expulsar» en marcha, por id de la unidad.
         fantasmas: Los volúmenes fantasma ya dichos.
+        fantasmas_extraibles: Los ids de unidades extraíbles cifradas cuyo
+            fantasma ya se ha dicho en esta conexión (`_fantasmas_extraibles()`).
         bitlocker: Las unidades de la lista que el último recorrido vio
             enchufadas y bloqueadas con BitLocker, con su raíz, por id.
         desbloqueos_bitlocker: La ventana de desbloqueo de Windows pedida para
@@ -1844,6 +1846,7 @@ class Agente:
     bloqueos: dict[str, Bloqueo] = field(default_factory=dict)
     expulsiones: dict[str, Expulsion] = field(default_factory=dict)
     fantasmas: set[str] = field(default_factory=set)
+    fantasmas_extraibles: set[str] = field(default_factory=set)
     bitlocker: dict[str, Path] = field(default_factory=dict)
     desbloqueos_bitlocker: dict[str, Any] = field(default_factory=dict)
     con_vestibulo: set[str] = field(default_factory=set)
@@ -1996,6 +1999,7 @@ class Agente:
             self._limpiar_letras("letra nueva")
         self.letras_vistas = letras
         self._fantasmas(abiertas)
+        self._fantasmas_extraibles(abiertas, cerradas)
         self.con_vestibulo = set(cerradas)
 
         for uid in list(self.vistas):
@@ -2251,6 +2255,40 @@ class Agente:
                 avisar(f"{nombre_guardado(unidad, uid)}: el volumen no responde",
                        f"{unidad.ruta} sigue ahí, pero su contenedor está cerrado. "
                        f"Bloquéala y vuelve a desbloquearla.", True)
+
+    def _fantasmas_extraibles(self, abiertas: dict[str, Path],
+                              cerradas: dict[str, Path]) -> None:
+        """Quita de `abiertas` el fantasma de una unidad extraíble cifrada (#41).
+
+        Desenchufar sin expulsar deja la letra de dentro sirviendo el fichero de
+        control desde la caché; al volver a enchufar, el id está a la vez en
+        `abiertas` (esa letra) y en `cerradas` (el vestíbulo de la raíz física),
+        y si el `.hc` de la física está LIBRE el volumen no está abierto de
+        verdad: es el fantasma. Entonces el id sale de `abiertas` (la conexión
+        se desconecta como cualquier otra y no se pasa nada contra él) y no se
+        pide abrir el contenedor (`_vestibulos()`): montarlo con el fantasma
+        puesto dejaría dos letras con el mismo id. Se dice UNA vez por conexión.
+        El agente no desmonta el fantasma: la decisión es de la persona (con el
+        VeraCrypt que viaja pide UAC). Mismo criterio que `_fantasmas()` y que
+        `:fantasma` de «Abrir PRDRIVE». En Linux `retenido()` da `None`.
+        """
+        for uid in list(self.fantasmas_extraibles):
+            if uid not in abiertas or uid not in cerradas:
+                self.fantasmas_extraibles.discard(uid)
+        for uid in [u for u in abiertas if u in cerradas]:
+            if vestibulo.retenido(cerradas[uid] / penwatch.CONTAINER_FILE) is not False:
+                self.fantasmas_extraibles.discard(uid)
+                continue
+            del abiertas[uid]
+            if uid in self.fantasmas_extraibles:
+                continue
+            self.fantasmas_extraibles.add(uid)
+            unidad = self.ajustes.unidades.get(uid)
+            nombre = nombre_guardado(unidad, uid) if unidad is not None else uid[:8]
+            diario(f"{nombre}: fantasma de una conexión anterior en {cerradas[uid]}")
+            avisar(f"{nombre}: el volumen no responde",
+                   f"{nombre} sigue ahí, pero su contenedor está cerrado: ciérrala con "
+                   f"«Expulsar PRDRIVE» y vuelve a abrirla.", True)
 
     def _raices_ausentes(self, abiertas: dict[str, Path]) -> None:
         """Dice UNA vez que una raíz del equipo no está en su ruta.
@@ -2511,7 +2549,8 @@ class Agente:
             if uid not in cerradas:
                 del self.cerradas[uid]
         for uid, raiz in cerradas.items():
-            if uid in self.conexiones or uid in self.vestibulos:
+            if (uid in self.conexiones or uid in self.vestibulos
+                    or uid in self.fantasmas_extraibles):
                 continue
             unidad = self.ajustes.unidades.get(uid)
             if unidad is None or unidad.modo == equipo.NADA:

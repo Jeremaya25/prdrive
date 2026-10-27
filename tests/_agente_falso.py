@@ -17,7 +17,7 @@ from _harness import tmpdir
 
 import agente
 import penwatch
-from common import equipo, expulsar, moderacion, nombres, store
+from common import equipo, expulsar, moderacion, nombres, store, vestibulo
 
 
 class Proc:
@@ -91,6 +91,11 @@ def preparar() -> Path:
     agente.limpiar_navegador = lambda: (0, [])
     # Ni el registro de verdad: el nombre y el icono que quedaban de una letra.
     agente.explorador.limpiar = lambda app=None: []
+    # Ni el `.hc` de verdad: en Windows `retenido()` abre el fichero de mentira y lo
+    # da por LIBRE, y una unidad abierta y con su vestíbulo a la vez pasaría por
+    # un fantasma (`Agente._fantasmas_extraibles()`). `None` es «no se sabe»; el
+    # test que quiera fantasmas pone la suya después.
+    vestibulo.retenido = lambda contenedor: None
     # Ni las letras de unidad de verdad (Windows): que aparezca una no es cosa del test.
     agente.letras_de_unidad = lambda: None
     # Ni los procesos de verdad: el KeePassXC de una raíz que se va (Linux).

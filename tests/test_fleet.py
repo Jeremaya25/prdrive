@@ -19,7 +19,7 @@ from pathlib import Path
 
 from _harness import Checks, sandbox
 
-from common import catalog, fleet, model, store
+from common import autorun, catalog, fleet, model, store
 
 c = Checks("registro de la flota")
 
@@ -47,6 +47,20 @@ c("dos dispositivos, dos ficheros",
 texto = fleet.dumps(DISP)
 c("lo publicado se relee exactamente igual", fleet.parse(texto), DISP)
 c.contains("y lleva cabecera de quién lo escribe", texto, "nota de presencia")
+
+for clave in ("azul", "verde", "granate", "morado", "grafito", "propio"):
+    c(f"el icono {clave} hace la ida y vuelta de la nota",
+      fleet.parse(fleet.dumps(DISP._replace(icono=clave))).icono, clave)
+c("una nota sin icono se lee con la marca por defecto (vacío)",
+  fleet.parse(fleet.dumps(DISP)).icono, "")
+c("y no lleva la clave", "\nicono =" in fleet.dumps(DISP), False)
+for raro in ('"fucsia"', "42", '["verde"]', '"  VERDE "'):
+    nota_rara = fleet.parse(f'id = "z9"\nicono = {raro}\n')
+    c(f"un icono raro ({raro}) no rompe parse()", nota_rara is not None, True)
+c("un icono con mayúsculas y espacios se normaliza",
+  fleet.parse('id = "z9"\nicono = "  VERDE "\n').icono, "verde")
+c("un icono raro no rompe dumps() de la nota leída",
+  fleet.parse(fleet.dumps(fleet.parse('id = "z9"\nicono = ["verde"]\n'))).id, "z9")
 
 c("una nota que no es TOML no tumba nada", fleet.parse("esto no { es toml"), None)
 c("una nota sin id tampoco", fleet.parse('nombre = "x"\n'), None)
@@ -222,6 +236,48 @@ try:
         c("ponerle el mismo nombre no hace publicar otra vez",
           fleet.publicar(cfg, CFG), False)
         c("ni habla con el remoto", len(subidas), 1)
+
+        # El icono: sale del `icon=` del `autorun.inf` al publicar, sin estado
+        # aparte, y un cambio se publica en la siguiente pasada real.
+        def poner_icono(icono: str) -> None:
+            """Deja el `autorun.inf` de la raíz con ese `icon=`; vacío, sin fichero."""
+            autorun.escribir(root, autorun.con("", "", icono) if icono else "")
+
+        c("sin autorun.inf la nota no lleva icono", fleet.nota(cfg).icono, "")
+        c("y no hace publicar por ello", fleet.hace_falta_publicar(fleet.nota(cfg)), False)
+        for clave in (*autorun.CLAVES_MARCA, autorun.CLAVE_PROPIA):
+            poner_icono(f".prdrive\\icono-{clave}.ico" if clave != "propio"
+                        else ".prdrive\\icono-propio-0123abcd.ico")
+            c(f"un icono {clave} se publica con su clave", fleet.nota(cfg).icono, clave)
+        poner_icono(".prdrive\\icono-verde.ico")
+        c("cambiar el icono hace publicar", fleet.hace_falta_publicar(fleet.nota(cfg)), True)
+        c("la pasada siguiente sube la nota", fleet.publicar(cfg, CFG), True)
+        c("con el icono", fleet.parse(subidas[-1]).icono, "verde")
+        c("y con el mismo icono no vuelve a publicar", fleet.publicar(cfg, CFG), False)
+        poner_icono("VeraCrypt\\VeraCrypt.exe")
+        c("el icon= de VeraCrypt no es de prdrive", fleet.nota(cfg).icono, "")
+        poner_icono("otro\\icono-verde.ico")
+        c("ni uno de prdrive en otra carpeta", fleet.nota(cfg).icono, "")
+        poner_icono("")
+        c("sin icono, quitarlo también hace publicar",
+          fleet.hace_falta_publicar(fleet.nota(cfg)), True)
+        # Un `publicado` de antes del campo, de un dispositivo sin icono de prdrive.
+        antiguo = store.read_json(fleet.ruta_estado())
+        antiguo["publicado"].pop("icono", None)
+        store.write_json(fleet.ruta_estado(), antiguo)
+        fleet.recordar(fleet.nota(cfg))
+        c("un publicado sin la clave y un dispositivo sin icono no fuerzan publicar",
+          fleet.hace_falta_publicar(fleet.nota(cfg)), False)
+        # La raíz de un equipo no publica icono aunque su autorun.inf lo diga.
+        poner_icono(".prdrive\\icono-verde.ico")
+        control = model.APP_DIR / "PRDRIVE"
+        original = control.read_text(encoding="utf-8")
+        control.write_text(original + "tipo=equipo\n", encoding="utf-8")
+        try:
+            c("la raíz de un equipo no publica icono", fleet.nota(cfg).icono, "")
+        finally:
+            control.write_text(original, encoding="utf-8")
+        poner_icono("")
         catalog.run = falso_run(llamadas)
 
         # Un fallo de la pasada viaja en la nota: una flota en la que todos dicen

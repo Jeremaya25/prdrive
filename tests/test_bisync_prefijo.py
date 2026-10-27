@@ -572,6 +572,74 @@ with sandbox():
         ciclo, bisync.PairState(estado.status, estado.detail, "disp_otra..cosa")))
     c("  y con un alias que no se puede seguir, una y no acusa", (hallazgo, n), (None, 1))
 
+# llaves en la carpeta del dispositivo: el sufijo `{hash}` del `combine` (#177)
+#
+# El `combine` del dispositivo se define por el entorno (`pen_environment()`).
+# rclone v1.75.2 lee esas variables con `configmap.PriorityNormal`
+# (`fs/configmap.go`), `Options.Overridden()` (`fs/registry.go`) las cuenta y
+# `fs.NewFs()` (`fs/newfs.go`) le añade al nombre del `Fs` un sufijo `{hash}`:
+# `disp{xxxxx}`. `SessionName` quita solo la primera `{…}` (`StripHexString`,
+# cmd/bisync/bilib/canonical.go), que es ese sufijo, y las llaves de la carpeta
+# se quedan. Los valores de la derecha los escribió el binario fijado (rclone
+# v1.75.2, `bisync --resync` con el `combine` por el entorno) en el triaje de
+# #177. Sin el sufijo, prdrive se comía la `{2024}` y decía `disp_Fotos_`.
+# En el lado remoto un remote del `rclone.conf` no lleva sufijo: allí rclone y
+# prdrive se comen las dos la primera `{…}` de la carpeta.
+def pareja_llaves(local, remote_path="/datos/x", device_remote="disp"):
+    """Una pareja bisync `fotos` sobre `nas`, con esa carpeta local."""
+    defaults = {"remote": "nas"}
+    if device_remote:
+        defaults["device_remote"] = device_remote
+    return model.parse_config({"defaults": defaults,
+                               "pair": [{"name": "fotos", "local": local,
+                                         "remote_path": remote_path,
+                                         "mode": "bisync"}]}).pairs[0]
+
+
+with sandbox():
+    c("llaves en la carpeta del dispositivo: se quedan, como en rclone",
+      bisync.expected_prefix(pareja_llaves("Fotos {2024}")), "disp_Fotos_{2024}..nas__datos_x")
+    c("  y en varios tramos, todas",
+      bisync.expected_prefix(pareja_llaves("Fotos {2024}/sub {b}")),
+      "disp_Fotos_{2024}_sub_{b}..nas__datos_x")
+    c("  sin llaves, el prefijo de siempre, byte a byte",
+      bisync.expected_prefix(pareja_llaves("sync-data/notas", "/datos/notas")),
+      "disp_sync-data_notas..nas__datos_notas")
+    # Un remote `local` del rclone.conf tiene por `Root()` la ruta limpia
+    # (`raiz_local()`), que en Windows es absoluta y con `\\?\` delante: estos
+    # valores son los de POSIX, así que se fuerza `IS_WIN`, como en los demás.
+    real_win = bisync.IS_WIN
+    try:
+        bisync.IS_WIN = False
+        model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+        c("  el lado sin sufijo (un remote `local` del rclone.conf) pierde sus llaves",
+          bisync.expected_prefix(pareja_llaves("sync-data/p", "/datos/dest {x}")),
+          "disp_sync-data_p..nas__datos_dest_")
+        # El `TYPE` del entorno manda sobre una sección del mismo nombre del rclone.conf.
+        model.RCLONE_CONF.write_text("[nas]\ntype = local\n\n[disp]\ntype = alias\n"
+                                     "remote = /srv/otra\n", encoding="utf-8")
+        con_seccion = pareja_llaves("Fotos {2024}")
+        c("  un [disp] de tipo alias en el rclone.conf no cambia el extremo del combine",
+          bisync.expected_prefix(con_seccion), "disp_Fotos_{2024}..nas__datos_x")
+        c("  y el prefijo sigue siendo comprobable",
+          bisync.prefijo_comprobable(con_seccion), True)
+    finally:
+        bisync.IS_WIN = real_win
+    model.RCLONE_CONF.unlink()
+
+    # Un workdir cuyo único baseline se llama como lo escribió rclone: es de esta pareja.
+    fotos = pareja_llaves("Fotos {2024}")
+    fotos.local_abs.mkdir(parents=True, exist_ok=True)
+    fotos.workdir.mkdir(parents=True, exist_ok=True)
+    for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+        (fotos.workdir / ("disp_Fotos_{2024}..nas__datos_x" + sufijo)).write_text(
+            "# bisync listing v1 from 2026-10-27T10:00:00.000000000+0100\n", encoding="utf-8")
+    estado_fotos = bisync.pair_state(fotos)
+    c("  el baseline que nombró rclone se ve como el de esta pareja",
+      estado_fotos.prefix, bisync.expected_prefix(fotos))
+    c("  revision no da el hallazgo «prefijo»", revision._prefijo(fotos, estado_fotos), None)
+    c("  y la referencia vacía se rehace sola", bisync.referencia_vacia(fotos), True)
+
 # la venda, retirada
 #
 # No es una comprobación de aspecto: renombrar los listados al prefijo nuevo es

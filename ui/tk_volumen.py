@@ -191,7 +191,7 @@ def construir(panel: Panel) -> None:
         if not ok:
             messagebox.showerror(TITLE, str(valor), parent=dlg)
             return
-        messagebox.showinfo(TITLE, volumen.mensaje_guardado(estado, texto), parent=dlg)
+        messagebox.showinfo(TITLE, volumen.mensaje_guardado(estado, texto, eleccion.get()), parent=dlg)
         panel.terminar("Guardado.")
 
     botones = pie(marco, 6, columnas=2)
