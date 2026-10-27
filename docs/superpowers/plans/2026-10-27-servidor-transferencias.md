@@ -25,7 +25,7 @@
   - collision dialog: title `Ya existen`, text `{n} elementos ya existen en {destino}. ¿Sobrescribirlos u omitirlos?` (`1 elemento ya existe en {destino}. ¿Sobrescribirlo u omitirlo?` when n == 1), buttons `Sobrescribir`, `Omitir`, `Cancelar` (default focus `Cancelar`);
   - indicator while counting: `Mirando el destino…`;
   - panel titles `Subiendo a {destino}` / `Bajando a {destino}`; line `{hechos} de {total} archivos · {bytes} de {total_bytes}`; line `{velocidad}/s · quedan {eta}`; `Cancelando…`;
-  - results: `Copiados {x}` + (` · omitidos {y}` when y > 0) (tone ok); `Cancelado: copiados {x} de {n}` (tone aviso); errors through `servidor.frase_error` (tone aviso, with `Reintentar`);
+  - results: `Copiados {x}` + (` · omitidos {y}` when y > 0) (tone ok); `Cancelado: copiados {x} de {n}` (tone aviso); permission error `No tienes permiso para escribir en {destino}.`, other errors through `servidor.frase_error` (tone aviso, with `Reintentar`);
   - close prompt: title `Transferencia en marcha`, text `Hay una transferencia en marcha. ¿Cancelarla y cerrar?`, buttons `Cancelar y cerrar` / `Seguir`;
   - pair texts (upload): `bisync` `Lo que subas a «{pareja}» lo bajará al dispositivo su próxima pasada; si sobrescribes algo que también ha cambiado allí, saldrá un conflicto.` · `down`/`down-mirror` `Lo que subas a «{pareja}» lo bajará al dispositivo su próxima pasada.` · `up` `«{pareja}» solo sube del dispositivo: lo que subas aquí se quedará en el servidor.` · `up-mirror` (block) `«{pareja}» deja el servidor igual que el dispositivo: lo que subas aquí lo borraría su próxima pasada. Súbelo a su carpeta del dispositivo.`;
   - pair texts (download): `bisync` `Lo que bajes a la carpeta de «{pareja}» lo subirá al servidor su próxima pasada.` · `up`/`up-mirror` `Lo que bajes a la carpeta de «{pareja}» lo subirá al servidor su próxima pasada.` · `down` `«{pareja}» solo baja del servidor: lo que bajes aquí se quedará en el dispositivo.` · `down-mirror` (block) `«{pareja}» deja su carpeta igual que el servidor: lo que bajes aquí lo borraría su próxima pasada. Bájalo fuera de ella.`;
@@ -125,10 +125,12 @@ c("subir por encima de una pareja la alcanza", [a.pareja for a in transferencia.
 c("otro remote no cuenta", transferencia.afectadas_subida(cfg, "nas", "/", [E("x", False)]), ())
 c("la raíz de b2 cuenta todo", [a.pareja for a in transferencia.afectadas_subida(cfg, "b2", "/z", [E("x", False)])], ["Todo"])
 c("bajar dentro de una down-mirror bloquea", transferencia.bloqueo("bajar", transferencia.afectadas_bajada(cfg, str(DEVICE/"sync-data/bajadas/sub"), [E("a", False)])), BLOQUEO_BAJADAS)
-c("bajar por encima de la carpeta de una pareja la alcanza", ...)
+# bajar a sync-data con un elemento «notas» (carpeta) alcanza a «Notas» (su local es sync-data/notas)
+c("bajar por encima de la carpeta de una pareja la alcanza", [a.pareja for a in transferencia.afectadas_bajada(cfg, str(DEVICE/"sync-data"), [E("notas", True)])], ["Notas"])
 c("bajar fuera de las parejas no dice nada", (transferencia.bloqueo("bajar", ()), transferencia.aviso("bajar", ())), (None, None))
 c("prefijo de texto no es estar dentro", transferencia.afectadas_subida(cfg, "nas", "/datos/notas2", [E("a", False)]), ())
-c("varias: bloqueo si alguna es up-mirror", ...)
+# subir a "/" de nas una carpeta "copia" y otra "datos": alcanza «Copia» (up-mirror) y «Notas» → bloqueo de «Copia»
+c("varias: bloqueo si alguna es up-mirror", transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/", [E("copia", True), E("datos", True)])), BLOQUEO_COPIA)
 ```
 
 - [ ] **Steps 2–5:** FAIL → implement → PASS → commit «Servidor: avisar o bloquear según la pareja que recibe lo copiado».
@@ -143,7 +145,7 @@ c("varias: bloqueo si alguna es up-mirror", ...)
 - `@dataclass(frozen=True) Progreso(titulo: str, archivo: str, cuenta: str, fraccion: float | None, ritmo: str)`
 - `progreso_de(stats: dict, lote: Lote, destino_visible: str) -> Progreso`: `titulo` = `Subiendo a {destino_visible}` / `Bajando a {destino_visible}`; `archivo` = name of the first `transferring[]` entry or `""`; `cuenta` = `{transfers} de {totalTransfers} archivos · {bytes} de {totalBytes}` (sizes via `servidor.tamano_legible`); `fraccion` = `bytes/totalBytes` clamped to 0..1, `None` if `totalBytes` is 0/missing; `ritmo` = `{velocidad}/s · quedan {eta}` with eta as `N s` (< 60), `N min` (< 3600), `N h`; empty eta → only the speed; no speed → `""`.
 - `@dataclass(frozen=True) Resultado(texto: str, tono: str, reintentar: bool)` — `tono` is `"ok"` or `"aviso"`.
-- `resultado_de(estado: dict, stats: dict, cancelado: bool) -> Resultado`: success → `Copiados {transfers}` + ` · omitidos {omitidos}` where `omitidos = checks - transfers` if > 0 (`IgnoreExisting` and identical files count as checks); cancelled → `Cancelado: copiados {transfers} de {totalTransfers}`, no retry; `success: false` → `servidor.frase_error(rcd.ErrorRc(estado["error"], 0))`, retry.
+- `resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: str) -> Resultado`: success → `Copiados {transfers}` + ` · omitidos {omitidos}` where `omitidos = checks - transfers` if > 0 (`IgnoreExisting` and identical files count as checks); cancelled → `Cancelado: copiados {transfers} de {totalTransfers}`, no retry; `success: false` → if `servidor.es_de_permiso(...)` then `No tienes permiso para escribir en {destino_visible}.`, else `servidor.frase_error(rcd.ErrorRc(estado["error"], 0))`; retry.
 
 - [ ] **Step 1: failing tests** (Review Focus 5):
 
@@ -154,12 +156,12 @@ c("a medias", P({"transfers": 3, "totalTransfers": 41, "bytes": 125829120, "tota
    "speed": 4404019.2, "eta": 120, "transferring": [{"name": "fotos/a.jpg"}]}, lote_bajar, "/home/u/D"),
   transferencia.Progreso("Bajando a /home/u/D", "fotos/a.jpg", "3 de 41 archivos · 120 MB de 800 MB", 0.15, "4,2 MB/s · quedan 2 min"))
 c("eta nula", P({"speed": 1024, "eta": None}, lote_subir, "/").ritmo, "1 KB/s")
-c("ok con omitidos", transferencia.resultado_de({"success": True}, {"transfers": 38, "checks": 41}, False), transferencia.Resultado("Copiados 38 · omitidos 3", "ok", False))
-c("cancelado", transferencia.resultado_de({"success": False}, {"transfers": 12, "totalTransfers": 41}, True).texto, "Cancelado: copiados 12 de 41")
-c("error", transferencia.resultado_de({"success": False, "error": "permission denied"}, {}, False), transferencia.Resultado("No tienes permiso para ver esta carpeta.", "aviso", True))
+c("ok con omitidos", transferencia.resultado_de({"success": True}, {"transfers": 38, "checks": 41}, False, "/datos"), transferencia.Resultado("Copiados 38 · omitidos 3", "ok", False))
+c("cancelado", transferencia.resultado_de({"success": False}, {"transfers": 12, "totalTransfers": 41}, True, "/datos").texto, "Cancelado: copiados 12 de 41")
+c("permiso al escribir", transferencia.resultado_de({"success": False, "error": "permission denied"}, {}, False, "/datos"), transferencia.Resultado("No tienes permiso para escribir en /datos.", "aviso", True))
+c("otro error, en llano", transferencia.resultado_de({"success": False, "error": "i/o timeout"}, {}, False, "/datos").texto, "El servidor no ha contestado a tiempo.")
 ```
 
-(Note: the permission phrase is piece 1's listing phrase; reuse as is — the review can raise a dedicated write phrase.)
 
 - [ ] **Steps 2–5:** FAIL → implement → PASS → commit «Servidor: lo que dice el progreso de un lote y cómo acabó».
 
