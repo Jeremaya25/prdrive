@@ -151,6 +151,25 @@ with sandbox():
     c("y deja de estarlo al salir", r.vivo, False)
     r.proceso.returncode = None
 
+    # el entorno de quien lanza prdrive no deshace las garantías
+    ajenas = {"RCLONE_RC_NO_AUTH": "true", "RCLONE_RC_WEB_GUI": "true", "RCLONE_RC_SERVE": "true",
+              "RCLONE_RC_ADDR": "0.0.0.0:5572", "RCLONE_RC_HTPASSWD": "/x", "RCLONE_RC_USER": "otro"}
+    previo = {k: os.environ.get(k) for k in ajenas}
+    os.environ.update(ajenas)
+    try:
+        rastro.proceso = ProcesoFalso()
+        rcd.arrancar()
+        limpio = rastro.lanzado[-1][1]
+    finally:
+        for k, v in previo.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        store.soltar_hijo(rastro.proceso)
+    c("las RCLONE_RC_* del usuario no pasan al hijo",
+      sorted(k for k in limpio if k.startswith("RCLONE_RC_")), ["RCLONE_RC_PASS", "RCLONE_RC_USER"])
+    c("  y el usuario es el generado, no el de fuera",
+      (limpio["RCLONE_RC_USER"] != "otro", len(limpio["RCLONE_RC_USER"]) >= 32), (True, True))
+    c("  el resto del entorno sigue", limpio.get("PATH"), os.environ.get("PATH"))
+
     # dos arranques no comparten credenciales
     rastro.proceso = ProcesoFalso()
     rcd.arrancar()

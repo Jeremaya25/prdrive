@@ -460,7 +460,12 @@ def arrancar() -> Rcd:
     usuario, clave = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     orden = [binario, "rcd", "--config", str(model.RCLONE_CONF),
              "--rc-addr", f"127.0.0.1:{puerto}", *catalog.NET_FLAGS]
-    entorno = {**os.environ, "RCLONE_RC_USER": usuario, "RCLONE_RC_PASS": clave}
+    # Ninguna `RCLONE_RC_*` de quien lanza prdrive pasa al hijo: rclone lee cada flag de
+    # `rc` también de su variable, y `RCLONE_RC_NO_AUTH`, `_WEB_GUI`, `_SERVE`, `_ADDR` o
+    # `_HTPASSWD` deshacerían lo que este módulo promete (sin `--rc-no-auth` no hay forma
+    # de negarlas por argv). En Windows los nombres no distinguen mayúsculas.
+    entorno = {k: v for k, v in os.environ.items() if not k.upper().startswith("RCLONE_RC_")}
+    entorno.update(RCLONE_RC_USER=usuario, RCLONE_RC_PASS=clave)
     stderr = tempfile.TemporaryFile()
     try:
         proceso = lanzar(orden, entorno, stderr)
