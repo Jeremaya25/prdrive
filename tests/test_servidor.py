@@ -293,6 +293,24 @@ c("un stat raro, None",
   [servidor.mi_uid_de(x) for x in (None, {}, {"item": None}, {"item": {"Metadata": None}},
                                    {"item": {"Metadata": {"uid": "root"}}}, [])], [None] * 6)
 
+# mi uid: en `local` es el del proceso (rclone corre como nosotros), no el del cwd del rcd
+_previo_uid = servidor.uid_del_proceso
+servidor.uid_del_proceso = lambda: 1234
+stat_ajeno = {"item": {"Metadata": {"uid": "0"}}}
+c("en local, mi uid es el del proceso aunque el stat diga otro",
+  servidor.mi_uid("local", stat_ajeno), 1234)
+c("  y sin stat también", servidor.mi_uid("local", None), 1234)
+c("en SFTP, el uid de la carpeta de inicio", servidor.mi_uid("sftp", stat_ajeno), 0)
+c("  y sin stat, None", servidor.mi_uid("sftp", None), None)
+c("el stat solo se pide fuera de local",
+  [servidor.uid_se_pregunta_al_servidor(t) for t in ("local", "sftp", "webdav")],
+  [False, True, True])
+servidor.uid_del_proceso = lambda: None             # Windows: no hay getuid
+c("en local sin getuid (Windows), None", servidor.mi_uid("local", stat_ajeno), None)
+servidor.uid_del_proceso = _previo_uid
+c("el uid real del proceso es un entero o None",
+  servidor.uid_del_proceso() == (os.getuid() if hasattr(os, "getuid") else None), True)
+
 # una pareja más honda gana a la que contiene todo
 cfg_hondo = mkcfg((), pairs=[
     {"name": "Todo", "local": "sync-data/todo", "remote_path": "/", "remote": "nas"},

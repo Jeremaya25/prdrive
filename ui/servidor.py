@@ -8,6 +8,7 @@ qué remotes se ofrecen, qué carpetas son de una pareja y cómo se dice un fall
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -396,6 +397,42 @@ def mi_uid_de(stat: dict | None) -> int | None:
     item = stat.get("item") if isinstance(stat, dict) else None
     meta = item.get("Metadata") if isinstance(item, dict) else None
     return _numero(meta.get("uid"), _DECIMAL, 10) if isinstance(meta, dict) else None
+
+
+def uid_del_proceso() -> int | None:
+    """Devuelve el uid con el que corre este proceso, o `None` donde no existe (Windows).
+
+    Es un punto de sustitución de los tests: lo que rclone verá como «yo» en un
+    remote `local` es este uid, porque `rclone rcd` corre con el nuestro.
+    """
+    getuid = getattr(os, "getuid", None)
+    return getuid() if getuid is not None else None
+
+
+def uid_se_pregunta_al_servidor(tipo: str) -> bool:
+    """Si el uid del usuario se averigua con un `operations/stat` (todo menos `local`).
+
+    En `local` no hay a quién preguntar: se sabe, y el `stat` de `<remote>:`
+    sería la carpeta desde la que corre `rcd`, no la del usuario.
+    """
+    return tipo != "local"
+
+
+def mi_uid(tipo: str, stat: dict | None) -> int | None:
+    """Devuelve el uid del usuario para marcar el candado previo, o `None` si no se sabe.
+
+    Args:
+        tipo: El `type =` del remote en `rclone.conf`.
+        stat: La respuesta de `operations/stat` de `<remote>:` pedida con
+            metadatos, o `None` si no se pidió (o falló). Solo cuenta fuera de `local`.
+
+    Returns:
+        En `local`, el uid de este proceso (`uid_del_proceso()`): rclone corre
+        como nosotros, y `<remote>:` es el directorio de trabajo de `rcd`, que
+        puede ser de otro dueño (un dispositivo ajeno), así que su `stat` no dice
+        quién soy. En el resto (SFTP), el uid de la carpeta de inicio.
+    """
+    return uid_del_proceso() if tipo == "local" else mi_uid_de(stat)
 
 
 def sin_acceso_previo(e: Entrada, mi_uid: int | None) -> bool:

@@ -46,7 +46,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import icons, segundo_plano, theme, tk_servidor  # noqa: E402
+from ui import icons, segundo_plano, servidor, theme, tk_servidor  # noqa: E402
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -534,6 +534,26 @@ with sandbox():
     c("la mía, con la misma máscara, no", icono(dlg, "mia"), "carpeta")
     c("la pública tampoco", icono(dlg, "publica"), "carpeta")
     cerrar(dlg)
+
+    # un remote `local`: mi uid es el del proceso, y no se pregunta por el stat del cwd del rcd
+    model.RCLONE_CONF.write_text("[nas]\ntype = local\n", encoding="utf-8")
+    uid_previo = servidor.uid_del_proceso
+    servidor.uid_del_proceso = lambda: 1000
+    en_local = RcdFalso({
+        ("operations/fsinfo", None): FSINFO_SI,
+        ("operations/list", ""): lista(
+            item("ajena", True, mode="40700", uid=1001, gid=1001),
+            item("mia", True, mode="40700", uid=1000, gid=1000)),
+    })
+    dlg = abrir(en_local)
+    c("en local no se pide el stat de `<remote>:`",
+      [m for m, _p in en_local.llamadas if m == "operations/stat"], [])
+    c("  la carpeta ajena lleva candado y la mía no (uid = el del proceso)",
+      (icono(dlg, "ajena"), icono(dlg, "mia")), ("candado", "carpeta"))
+    cerrar(dlg)
+    servidor.uid_del_proceso = uid_previo
+    model.RCLONE_CONF.write_text("[nas]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
+                                 encoding="utf-8")
 
     webdav = RcdFalso({("operations/fsinfo", None): FSINFO_SI,
                        ("operations/list", ""): lista(item("a.txt"))})

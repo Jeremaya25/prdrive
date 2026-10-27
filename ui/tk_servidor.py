@@ -80,7 +80,7 @@ def _leer(r: rcd.Rcd, p: servidor.Peticion, tipo: str,
         tipo: El `type =` del remote en `rclone.conf`.
         sondeado: `(permisos, mi_uid)` si ya se preguntó por este remote; con
             `None` se pregunta (`operations/fsinfo` y, si procede, el `stat`
-            de la carpeta de inicio) antes de listar.
+            de la carpeta de inicio, que solo se pide fuera de `local`) antes de listar.
         esperar: Si hay que esperar antes a que `rcd` conteste (recién lanzado).
 
     Raises:
@@ -96,12 +96,14 @@ def _leer(r: rcd.Rcd, p: servidor.Peticion, tipo: str,
         permisos = servidor.pide_permisos(fsinfo, tipo)
         mi_uid = None
         if permisos:
-            try:
-                mi_uid = servidor.mi_uid_de(r.llamar(
-                    "operations/stat",
-                    {"fs": f"{p.remote}:", "remote": "", "opt": {"metadata": True}}))
-            except rcd.ErrorRc:
-                pass        # sin saber quién soy, solo se pierde el candado previo
+            stat = None
+            if servidor.uid_se_pregunta_al_servidor(tipo):
+                try:
+                    stat = r.llamar("operations/stat",
+                                    {"fs": f"{p.remote}:", "remote": "", "opt": {"metadata": True}})
+                except rcd.ErrorRc:
+                    pass    # sin saber quién soy, solo se pierde el candado previo
+            mi_uid = servidor.mi_uid(tipo, stat)
     else:
         permisos, mi_uid = sondeado
     respuesta = r.llamar("operations/list", servidor.params_listado(p.remote, p.ruta, permisos))
