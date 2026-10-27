@@ -421,6 +421,45 @@ c("ninguna orden se sale de la lista cerrada de rcd",
                  Op(gestion.NUEVA, "n", "/", nombre="q"))
       for o in gestion.ordenes_de(op)), True)
 
+# --- ordenes_de: ni un espacio ni una «\» del nombre se tocan ---------------------------
+# `foo ` es otro elemento que `foo`: purgar «d/foo» borraría el equivocado, y sin remedio.
+for raiz, base in (("en la raíz", "/"), ("en una subcarpeta", "/d")):
+    pre = "" if base == "/" else "d/"
+    for nom in ("foo ", " x", "a\\b"):
+        c(f"borrar una carpeta {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.BORRAR, "nas", base, (E(nom, True),))),
+          [{"_path": "operations/purge", "fs": "nas:/", "remote": pre + nom}])
+        c(f"borrar un archivo {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.BORRAR, "nas", base, (E(nom, False),))),
+          [{"_path": "operations/deletefile", "fs": "nas:/", "remote": pre + nom}])
+        c(f"renombrar una carpeta desde y hacia {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", base, (E(nom, True),), nombre=nom + "2")),
+          [{"_path": "sync/move", "srcFs": "nas:/" + pre + nom, "dstFs": "nas:/" + pre + nom + "2",
+            "deleteEmptySrcDirs": True}])
+        c(f"renombrar un archivo desde y hacia {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", base, (E("v", False),), nombre=nom)),
+          [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": pre + "v",
+            "dstFs": "nas:/", "dstRemote": pre + nom}])
+        c(f"mover una carpeta {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.MOVER, "nas", base, (E(nom, True),), destino="/z")),
+          [{"_path": "sync/move", "srcFs": "nas:/" + pre + nom, "dstFs": "nas:/z/" + nom,
+            "deleteEmptySrcDirs": True}])
+        c(f"mover un archivo {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.MOVER, "nas", base, (E(nom, False),), destino="/")),
+          [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": pre + nom,
+            "dstFs": "nas:/", "dstRemote": nom}])
+        c(f"mover una carpeta {nom!r} hacia {raiz}",
+          gestion.ordenes_de(Op(gestion.MOVER, "nas", "/o", (E(nom, True),), destino=base)),
+          [{"_path": "sync/move", "srcFs": "nas:/o/" + nom, "dstFs": "nas:/" + pre + nom,
+            "deleteEmptySrcDirs": True}])
+        c(f"nueva carpeta {nom!r} {raiz}",
+          gestion.ordenes_de(Op(gestion.NUEVA, "nas", base, nombre=nom)),
+          [{"_path": "operations/mkdir", "fs": "nas:/", "remote": pre + nom}])
+c("la carpeta sí se normaliza (barra final, doble barra)",
+  gestion.ordenes_de(Op(gestion.BORRAR, "nas", "//d//e/", (E("x ", False),))),
+  [{"_path": "operations/deletefile", "fs": "nas:/", "remote": "d/e/x "}])
+
+
 # --- plan_de ---------------------------------------------------------------------------
 GRANDE = (1234, 3650722202)
 b_grande = Op(gestion.BORRAR, "nas", "/d", (E("fotos", True),))

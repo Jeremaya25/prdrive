@@ -247,14 +247,22 @@ def avisos(op: Operacion, config: Config) -> tuple[str, ...]:
     return tuple(textos)
 
 
-def _sin_barra(ruta: str) -> str:
-    """Devuelve la ruta sin la barra del principio: así se pasa un `remote` a rclone (`""` en la raíz)."""
-    return remote_picker.normalizar(ruta).lstrip("/")
+def _remoto(carpeta: str, nombre: str = "") -> str:
+    """Devuelve la ruta de `nombre` en `carpeta` sin la barra del principio: así se pasa un `remote` a rclone.
+
+    Solo la carpeta se normaliza; el nombre se añade tal cual (`foo `, ` x` o `a\\b` son
+    nombres válidos y `normalizar` los cambiaría por los de otro elemento). Sin nombre,
+    es la carpeta (`""` en la raíz).
+    """
+    base = remote_picker.normalizar(carpeta).lstrip("/")
+    if not nombre:
+        return base
+    return f"{base}/{nombre}" if base else nombre
 
 
-def _fs(remote: str, ruta: str = "/") -> str:
-    """Devuelve el `fs` de rclone para una ruta, siempre por la raíz absoluta: `remote:/ruta`."""
-    return f"{remote}:/{_sin_barra(ruta)}"
+def _fs(remote: str, ruta: str = "") -> str:
+    """Devuelve el `fs` de rclone para una ruta ya sin barra inicial, siempre por la raíz absoluta."""
+    return f"{remote}:/{ruta}"
 
 
 def ordenes_de(op: Operacion) -> list[dict]:
@@ -273,25 +281,25 @@ def ordenes_de(op: Operacion) -> list[dict]:
     """
     if op.tipo == NUEVA:
         return [{"_path": "operations/mkdir", "fs": _fs(op.remote),
-                 "remote": _sin_barra(_unir(op.carpeta, op.nombre or ""))}]
+                 "remote": _remoto(op.carpeta, op.nombre or "")}]
     ordenes: list[dict] = []
     for e in op.elementos:
-        origen = _unir(op.carpeta, e.nombre)
+        origen = _remoto(op.carpeta, e.nombre)
         if op.tipo == BORRAR:
             camino = "operations/purge" if e.es_carpeta else "operations/deletefile"
-            ordenes.append({"_path": camino, "fs": _fs(op.remote), "remote": _sin_barra(origen)})
+            ordenes.append({"_path": camino, "fs": _fs(op.remote), "remote": origen})
             continue
         if op.tipo == RENOMBRAR:
-            llegada = _unir(op.carpeta, op.nombre or "")
+            llegada = _remoto(op.carpeta, op.nombre or "")
         else:
-            llegada = _unir(op.destino or "", e.nombre)
+            llegada = _remoto(op.destino or "", e.nombre)
         if e.es_carpeta:
             ordenes.append({"_path": "sync/move", "srcFs": _fs(op.remote, origen),
                             "dstFs": _fs(op.remote, llegada), "deleteEmptySrcDirs": True})
         else:
             ordenes.append({"_path": "operations/movefile", "srcFs": _fs(op.remote),
-                            "srcRemote": _sin_barra(origen), "dstFs": _fs(op.remote),
-                            "dstRemote": _sin_barra(llegada)})
+                            "srcRemote": origen, "dstFs": _fs(op.remote),
+                            "dstRemote": llegada})
     return ordenes
 
 
