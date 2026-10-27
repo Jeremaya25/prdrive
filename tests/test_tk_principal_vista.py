@@ -60,7 +60,7 @@ from _vista import leer_vista, visibles  # noqa: E402
 
 from common import model, update  # noqa: E402
 from ui import (cifrado, instantanea, prefs, segundo_plano, tk_doctor,  # noqa: E402
-                tk_pairs, tk_principal, watch)
+                tk_pairs, tk_principal, tk_servidor, watch)
 from ui import icons  # noqa: E402
 from ui import tk as uitk  # noqa: E402
 from ui.principal import Estado, Fila, Linea  # noqa: E402
@@ -183,7 +183,9 @@ def estado_al_azar(rng) -> Estado:
         llavero=None if cargando else rng.choice(LLAVEROS), arranque=arranque,
         pausa=None if arranque is None else rng.choice(PAUSAS),
         servicio=SERVICIOS[0] if cargando else rng.choice(SERVICIOS),
-        pie=None if cargando else rng.choice(PIES), en_curso=en_curso, cargando=cargando)
+        pie=None if cargando else rng.choice(PIES),
+        servidor=False if cargando else rng.random() < 0.8, en_curso=en_curso,
+        cargando=cargando)
 
 
 SECUENCIAS = 100
@@ -269,7 +271,7 @@ def lista(nombres, marcadas, **cambios) -> Estado:
                 filas=tuple(Fila(n, "bisync", "—", None) for n in nombres), ultima="",
                 marcadas=frozenset(marcadas), llavero=None, arranque=None, pausa=None,
                 servicio=(principal.INICIAR, "Iniciar servicio"), pie=None,
-                en_curso=False, cargando=False)
+                servidor=True, en_curso=False, cargando=False)
     base.update(cambios)
     return Estado(**base)
 
@@ -682,6 +684,43 @@ with sandbox():
     c("  y se ensancha (no tenía ancho recordado)", visto["ancha"], True)
     c("  sin bajar", visto["y"][0], visto["y"][1])
     c("  ni moverse de su centro horizontal", visto["centro"] <= 1, True)
+
+# 6a2. «Servidor…»: apagado hasta que la lectura trae algún servidor, y abre el explorador
+CONF_CON_SERVIDOR = "[nas]\ntype = sftp\nhost = h\n"
+for con_conf in (True, False):
+    with sandbox():
+        if con_conf:
+            model.RCLONE_CONF.write_text(CONF_CON_SERVIDOR, encoding="utf-8")
+        visto = {}
+        abiertas: list = []
+
+        def servidor_a_la_vista(root) -> None:
+            """Mira «Servidor…» antes y después de la lectura, y lo pulsa."""
+            visto["antes"] = (boton(root, "Servidor…") is not None, activo(root, "Servidor…"))
+            root.update_idletasks()
+            root.instantanea.correr()
+            hasta(root, lambda: root.instantanea_lista)
+            root.update()
+            visto["fallos"] = root.instantanea.resultado.fallos
+            visto["después"] = activo(root, "Servidor…")
+            if visto["después"]:
+                boton(root, "Servidor…").invoke()
+
+        real_dialogo = tk_servidor.open_dialog
+        tk_servidor.open_dialog = lambda parent, config: abiertas.append((parent, config))
+        try:
+            abrir(TRES, servidor_a_la_vista, lanzar=sin_terminar)
+        finally:
+            tk_servidor.open_dialog = real_dialogo
+        etiqueta = "con rclone.conf" if con_conf else "sin rclone.conf"
+        c(f"«Servidor…» ({etiqueta}): se ve desde el primer pintado, apagado",
+          visto["antes"], (True, False))
+        c("  la lectura no falla por ello", visto["fallos"], {})
+        c("  y al llegar la lectura " + ("se enciende" if con_conf else "sigue apagado"),
+          visto["después"], con_conf)
+        c("  pulsarlo " + ("abre el explorador con la config de la ventana"
+                           if con_conf else "no hace nada (apagado)"),
+          [config is TRES for _, config in abiertas], [True] if con_conf else [])
 
 # 6b. si al crecer se saldría por abajo, sube lo justo
 REAL_UTIL = uitk.pantalla_util

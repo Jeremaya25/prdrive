@@ -96,6 +96,9 @@ class Instantanea:
             (`watch.Resumen`).
         llavero: La línea del llavero (`llavero_editor.Linea`), o `None` si el
             dispositivo no lo lleva.
+        remotes_servidor: Los remotes de `rclone.conf` a los que «Servidor…»
+            puede ir (`servidor.remotes_de()`), vacío si no hay ninguno o el
+            fichero no está.
         device_id: El id del dispositivo, o `None` si no se pudo leer.
         identidad: Su nombre y su icono (`Identidad`), o `None` si no se
             pudieron leer: la ventana se queda con los que tenga.
@@ -120,6 +123,7 @@ class Instantanea:
     del_equipo: bool = False
     vigilante: Resumen = field(default_factory=_vigilante_vacio)
     llavero: Linea | None = None
+    remotes_servidor: tuple[str, ...] = ()
     device_id: str | None = None
     identidad: Identidad | None = None
     fallos: Mapping[str, str] = field(default_factory=dict)
@@ -373,6 +377,15 @@ def leer(config: Config, *,
     def leer_llavero() -> Linea | None:
         return (linea_llavero or linea_del_llavero)(config)
 
+    def leer_remotes_servidor() -> tuple[str, ...]:
+        from common import model
+        from . import servidor
+        try:
+            texto = model.RCLONE_CONF.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ()
+        return tuple(servidor.remotes_de(texto, None, config.device_remote))
+
     estados = intentar("estados", lambda: estados_de(config), {})
     notas_pareja = intentar("notas", leer_notas, {})
     hallazgos, cuenta = intentar("hallazgos", leer_hallazgos, ((), 0))
@@ -388,6 +401,7 @@ def leer(config: Config, *,
         fallos["vigilante"] = repr(error)
         vigilante = _vigilante_vacio()
     llavero = intentar("llavero", leer_llavero, None)
+    remotes_servidor = intentar("remotes_servidor", leer_remotes_servidor, ())
     identidad = intentar("identidad", identidad_de, None)
 
     return Instantanea(
@@ -395,7 +409,8 @@ def leer(config: Config, *,
         conflictos=conflictos, componentes=componentes, componentes_texto=texto,
         componentes_actualizables=actualizables, fisica=fisica, expulsion=expulsion,
         bloqueo=bloqueo, del_equipo=del_equipo, vigilante=vigilante, llavero=llavero,
-        device_id=device_id, identidad=identidad, fallos=fallos, hecha=hecha, firma=sello, huella=huella)
+        remotes_servidor=remotes_servidor, device_id=device_id, identidad=identidad,
+        fallos=fallos, hecha=hecha, firma=sello, huella=huella)
 
 
 def vacia(config: Config) -> Instantanea:

@@ -38,7 +38,7 @@ from _logs_frenos import BISYNC_BORRADOS
 import tomllib
 
 from common import (catalog, components, config_file, conflicts, fleet, historial,
-                    kdbx, keepassxc, model, pairing, pins, results, revision, update)
+                    kdbx, keepassxc, model, pairing, pins, rcd, results, revision, update)
 from install import device
 
 c = Checks("medidas de las pantallas")
@@ -57,7 +57,7 @@ from ui import remote_picker, segundo_plano
 from ui import tk_flags_guia
 from ui import (catalog_editor, pair_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
                 tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
-                tk_volumen, tk_watch, versions_editor, volumen, watch)
+                tk_servidor, tk_volumen, tk_watch, versions_editor, volumen, watch)
 
 # Ni una petición a GitHub desde un test.
 update.fetch = lambda url, timeout: c("ningún test toca la red", "fetch", "nada")
@@ -97,6 +97,44 @@ FLOTA.append(FLOTA[0]._replace(
 # lista hecha, que es lo que hay que medir.
 remote_picker.listar = lambda remote, ruta: [f"carpeta-de-nombre-largo-{i}"
                                              for i in range(9)]
+
+# «Servidor»: un `rcd` de mentira que contesta una carpeta que llena la lista
+# (40 entradas con nombres largos, la de una pareja, candados y permisos), en un
+# remote de nombre largo y con una pareja en la raíz, que es lo que pone el aviso
+# bajo la barra. Es el caso más alto y más ancho que puede pintar.
+SERVIDOR_REMOTE = "servidor-de-la-oficina-de-arriba"
+SERVIDOR_PAREJA = "documentos-de-la-oficina-de-arriba-de-la-sala-de-reuniones"
+SERVIDOR_LARGO = "carpeta-con-un-nombre-muy-largo-que-no-cabe-en-la-columna-del-nombre"
+
+
+class RcdMedidas:
+    """Un `Rcd` que contesta siempre el mismo listado, sin lanzar rclone."""
+
+    vivo = True
+
+    def esperar(self, tope=None) -> None:
+        pass
+
+    def parar(self) -> None:
+        pass
+
+    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+        if metodo == "operations/fsinfo":
+            return {"Features": {"ReadMetadata": True}}
+        if metodo == "operations/stat":
+            return {"item": {"Metadata": {"uid": "1000"}}}
+        entradas = []
+        for i in range(40):
+            carpeta = i % 3 != 2
+            nombre = (SERVIDOR_LARGO if i == 0 else f"{SERVIDOR_LARGO[:40]}-{i}") + ("" if carpeta else ".txt")
+            meta = {"mode": ("40700" if i % 5 == 1 else "40755") if carpeta else "100644",
+                    "uid": "1001" if i % 5 == 1 else "1000", "gid": "1000"}
+            entradas.append({"Name": nombre, "IsDir": carpeta, "Size": -1 if carpeta else 123456789 * (i + 1),
+                             "ModTime": "2026-03-12T09:00:00Z", "Metadata": meta})
+        entradas.append({"Name": "pareja", "IsDir": True, "Size": -1, "ModTime": "2026-03-12T09:00:00Z",
+                         "Metadata": {"mode": "40755", "uid": "1000", "gid": "1000"}})
+        return {"list": entradas}
+
 
 fleet.leer = lambda raw=None: (FLOTA, None)
 fleet.device_id = lambda app_dir=None: "dispositivo0"
@@ -819,6 +857,41 @@ try:
                     ancho, alto, escala, modulo=tk_fleet)
                 c(f"{nombre}: la flota cabe", entra, True)
                 c(f"{nombre}: la flota no queda recortado", corta, False)
+
+                # «Servidor»: la lista lleva un número fijo de filas con barra, así que
+                # lo que se mide es la ventana con la carpeta más ancha y con lo que
+                # más estira por arriba y por abajo (el aviso de pareja y la ruta larga).
+                config_servidor = model.parse_config({
+                    "defaults": {"remote": SERVIDOR_REMOTE},
+                    "pair": [{"name": SERVIDOR_PAREJA, "local": "sync-data/todo",
+                              "remote_path": "/", "remote": SERVIDOR_REMOTE},
+                             {"name": SERVIDOR_PAREJA + "-2", "local": "sync-data/otra",
+                              "remote_path": "/pareja", "remote": SERVIDOR_REMOTE}]})
+                model.RCLONE_CONF.write_text(
+                    f"[{SERVIDOR_REMOTE}]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
+                    encoding="utf-8")
+                previos_servidor = (rcd.arrancar, segundo_plano.lanzar, config_file.load_raw)
+                rcd.arrancar = RcdMedidas
+                segundo_plano.lanzar = segundo_plano.en_el_acto
+                config_file.load_raw = lambda path=None: {"defaults": {"remote": SERVIDOR_REMOTE}}
+                antes = set(raiz.winfo_children())
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_servidor.open_dialog(raiz, config_servidor),
+                        ancho, alto, escala, modulo=tk_servidor)
+                finally:
+                    rcd.arrancar, segundo_plano.lanzar, config_file.load_raw = previos_servidor
+                abierta = [w for w in raiz.winfo_children() if w not in antes][0]
+                filas = abierta.lista.get_children()
+                c(f"{nombre}: el explorador del servidor cabe", entra, True)
+                c(f"{nombre}: el explorador del servidor no queda recortado", corta, False)
+                c(f"{nombre}: (y se ha medido con la lista llena, la marca, el candado y el aviso)",
+                  (len(filas) > 12,
+                   any("· pareja" in str(abierta.lista.item(i, "text")) for i in filas),
+                   any("apagado" in abierta.lista.item(i, "tags") for i in filas),
+                   bool(str(abierta.indicador.texto.cget("text")))),
+                  (True, True, True, True))
+                abierta.destroy()
 
                 # La guía de flags (#126): una tabla de un lienzo, tres filtros y un texto con
                 # barra. Su caso más alto es el de más filas (sin buscar nada), con la pareja

@@ -1843,7 +1843,7 @@ class Indicador:
 
 
 PRECARGA = ("ui.tk_pairs", "ui.tk_doctor", "ui.tk_watch", "ui.tk_repair", "ui.tk_update",
-            "ui.instantanea", "ui.watch", "common.conflicts")
+            "ui.tk_servidor", "ui.instantanea", "ui.watch", "common.conflicts")
 """Lo que la principal importa después de pintarse, en orden de uso probable.
 
 Sale de los `import` de los métodos de `VentanaPrincipal`: las pantallas que abre
@@ -2038,7 +2038,8 @@ class VentanaPrincipal:
 
         self.vista = tk_principal.VistaPrincipal(self.frame, tk_principal.Acciones(
             sincronizar=self.sincronizar, servicio=self.servicio,
-            parejas=self.abrir_parejas, ajustes=self.abrir_ajustes,
+            parejas=self.abrir_parejas, servidor=self.abrir_servidor,
+            ajustes=self.abrir_ajustes,
             reparacion=self.abrir_reparacion, llavero=self.abrir_llavero,
             expulsar=self.expulsar, bloquear=self.bloquear, arranque=self.abrir_arranque,
             descartar=self.descartar_aviso, actualizar=self.abrir_actualizacion,
@@ -2593,6 +2594,16 @@ class VentanaPrincipal:
         if tk_pairs.open_dialog(self.root, self.config, compartida=self.la_compartida(),
                                 lanzar=self.lanzar):
             self.recargar()
+
+    def abrir_servidor(self) -> None:
+        """Abre «Servidor…», el explorador de solo lectura de los remotes del dispositivo.
+
+        No devuelve nada: no cambia el config ni el estado, así que al volver no
+        se lee otra vez.
+        """
+        from . import tk_servidor
+
+        tk_servidor.open_dialog(self.root, self.config)
 
     def abrir_arranque(self) -> None:
         """Abre la pantalla del vigilante.

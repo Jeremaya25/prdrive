@@ -35,7 +35,7 @@ from _harness import REPO, Checks, mkcfg, sandbox, tmpdir
 
 from common import (autorun, bisync, components, conflicts, fleet, model, results, revision,
                     vestibulo)
-from ui import cifrado, instantanea, watch
+from ui import cifrado, instantanea, servidor, watch
 
 c = Checks("la lectura de una sola vez de la ventana")
 
@@ -263,7 +263,12 @@ with sandbox():
 with sandbox():
     cfg = preparar(("notas",))
     fisica = tmpdir()
-    sano = (*SIN_EQUIPO, (vestibulo, "raiz_fisica", lambda ident: fisica))
+    conf = tmpdir() / "rclone.conf"
+    conf.write_text("[nas]\ntype = sftp\nhost = h\n\n[zeta]\ntype = s3\n\n"
+                    "[dev]\ntype = combine\nupstreams = a=/x\n\n"
+                    "[atajo]\ntype = alias\nremote = nas:/\n", encoding="utf-8")
+    sano = (*SIN_EQUIPO, (vestibulo, "raiz_fisica", lambda ident: fisica),
+            (model, "RCLONE_CONF", conf))
 
     def revienta(*a, **k):
         raise RuntimeError("se ha ido el disco")
@@ -279,7 +284,8 @@ with sandbox():
     c("la lectura de referencia no tiene fallos", base.fallos, {})
     CAMPOS = ("estados", "notas", "hallazgos", "cuenta", "conflictos", "componentes",
               "componentes_texto", "componentes_actualizables", "fisica", "expulsion", "bloqueo",
-              "del_equipo", "vigilante", "llavero", "device_id", "identidad")
+              "del_equipo", "vigilante", "llavero", "remotes_servidor", "device_id",
+              "identidad")
     casos = [
         ("estados", {"estados": {}}, [(instantanea, "estados_de", revienta)], {}),
         ("notas", {"notas": {}}, [], {"notas": revienta}),
@@ -294,6 +300,8 @@ with sandbox():
         ("vigilante", {"vigilante": watch.Resumen("no_disponible")},
          [(watch, "resumen", revienta)], {}),
         ("llavero", {"llavero": None}, [], {"linea_llavero": revienta}),
+        ("remotes_servidor", {"remotes_servidor": ()},
+         [(servidor, "remotes_de", revienta)], {}),
         ("device_id", {"device_id": None, "fisica": None}, [(fleet, "device_id", revienta)], {}),
         ("fisica", {"fisica": None}, [(vestibulo, "raiz_fisica", revienta)], {}),
         ("identidad", {"identidad": None}, [(instantanea, "identidad_de", revienta)], {}),
@@ -309,6 +317,14 @@ with sandbox():
           {k: getattr(inst, k) for k in CAMPOS if k not in defecto},
           {k: getattr(base, k) for k in CAMPOS if k not in defecto})
         c(f"  una instantánea con huella, que vale", inst.vigente(cfg), True)
+
+    # los servidores a los que ir: los remotes de rclone.conf, sin los internos
+    c("remotes_servidor: los de rclone.conf, ordenados, sin combine ni alias",
+      (base.remotes_servidor, isinstance(base.remotes_servidor, tuple)),
+      (("nas", "zeta"), True))
+    sin_conf = lectura((model, "RCLONE_CONF", conf.parent / "no-esta.conf"))
+    c("  sin rclone.conf no hay ninguno y no es un fallo",
+      (sin_conf.remotes_servidor, sin_conf.fallos), ((), {}))
 
     # lo que da una raíz sin id: no se busca nada
     visto = []

@@ -146,6 +146,8 @@ class Estado:
         servicio: La acción (`watch.INICIAR`, `PAUSAR`, `REANUDAR`, `SEGUIR`) y
             el texto del botón del servicio.
         pie: `EXPULSAR`, `BLOQUEAR` o `None` si el pie no lleva el segundo botón.
+        servidor: Si hay algún servidor al que ir con «Servidor…». Sin lectura,
+            no.
         en_curso: Si hay una pasada en curso lanzada desde la ventana.
         cargando: Si la lectura del dispositivo aún no ha llegado.
     """
@@ -165,6 +167,7 @@ class Estado:
     pausa: str | None
     servicio: tuple[str, str]
     pie: str | None
+    servidor: bool
     en_curso: bool
     cargando: bool
 
@@ -277,6 +280,7 @@ def estado(config: Config, *, aviso: str | None, nueva: Release | None,
         componentes=componentes, componentes_boton=componentes_boton, filas=tuple(filas),
         ultima=f"última pasada {ultima}" if ultima else "", marcadas=frozenset(marcadas),
         llavero=llavero, arranque=arranque, pausa=pausa, servicio=servicio, pie=pie,
+        servidor=bool(inst and inst.remotes_servidor),
         en_curso=bool(en_curso), cargando=cargando)
 
 
@@ -306,14 +310,16 @@ def controles(e: Estado) -> dict[str, Control]:
     cortándola. Lo que necesita la lectura del dispositivo (el estado de
     resync de «Sincronizar ahora», la foto de procesos del llavero,
     «Expulsar») no está hasta que llega. Por eso, antes de que llegue, de lo
-    que toca `state/` solo se pueden pulsar «Parejas…» y «Ajustes…».
+    que toca `state/` solo se pueden pulsar «Parejas…» y «Ajustes…». «Servidor…»
+    lanza su propio `rclone rcd` con el `rclone.conf` del dispositivo: se apaga
+    durante una pasada y mientras no se sabe si hay algún servidor al que ir.
 
     Args:
         e: Lo que enseña la ventana.
 
     Returns:
         Un `Control` por cada clave: `sincronizar`, `servicio`, `parejas`,
-        `ajustes`, `reparacion`, `llavero`, `pie`, `componentes`, `version`,
+        `servidor`, `ajustes`, `reparacion`, `llavero`, `pie`, `componentes`, `version`,
         `descartar`, `arranque` y `marcar_todas`.
     """
     libre = not e.en_curso
@@ -326,6 +332,7 @@ def controles(e: Estado) -> dict[str, Control]:
         "sincronizar": Control(True, con_lectura),
         "servicio": Control(True, servicio_libre),
         "parejas": Control(True, libre),
+        "servidor": Control(True, libre and e.servidor),
         "ajustes": Control(True, libre),
         "reparacion": Control(e.reparacion > 0 and libre, True),
         "llavero": Control(e.llavero is not None,
