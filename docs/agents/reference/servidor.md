@@ -2,7 +2,7 @@
 
 Formerly none: a new area. Design: `docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`. The catalogue it browses: `catalogue.md`; the window pattern it follows: `ui.md`.
 
-This doc is a stub that grows with the feature; today it covers only `common/rcd.py` (the process and its anti-orphan belts).
+This doc is a stub that grows with the feature; today it covers `common/rcd.py` (the process and its anti-orphan belts) and `ui/servidor.py` (the decision half).
 
 ## The resident `rclone rcd` (`common/rcd.py`)
 
@@ -24,3 +24,12 @@ A surviving `rcd` keeps `rclone.conf` and the binary of the **device** open and 
 3. **One survives anyway**: `arrancar()` writes `state/rcd.json` (`fichero_estado()`, a function because tests move `STATE_DIR`) with `{"pid", "creado"}` (`store.creado()`), **never the password**. The next `arrancar()` calls `limpiar_huerfano()` first: it kills the tree (`store.matar_arbol()`, which needs the `start_new_session` of `_opciones_popen`) only if the pid is alive **and** its creation time matches within 1 s (otherwise another process inherited the number); an unknown creation time is not killed either. The file is always deleted; the function never raises. `parar()` deletes the file only if it still names its own pid. `--doctor` does not touch it.
 
 Order in `arrancar()`: `limpiar_huerfano()` → `lanzar()` → `atar_al_job()` (Windows) → write `rcd.json` → `store.apuntar_hijo()`. A failure of `puerto_libre()` is a `ConfigError`. The tests force Windows by replacing `rcd.os` and fake `atar_al_job`; the real Job Object call only runs on Windows (`(saltado)` elsewhere), and `PDEATHSIG` is covered by asserting `_opciones_popen()`, not by starting a process.
+
+## The decision half (`ui/servidor.py`)
+
+No Tk, no disk, no network; `tk_servidor` only draws what it returns.
+
+- **Listings**: `params_listado()` always sends `fs = "<remote>:/"` and `remote = ruta.lstrip("/")` as a JSON string (never URL-encoded; the root is `""`). `entradas_de()` keeps folders first, then `str.lower` order, skips items of the wrong shape, trims `ModTime` fractions to microseconds. `Entrada.modo/uid/gid` stay `None` until the permissions work fills them.
+- **Last request wins**: `Navegacion.pedir()` numbers requests; `recibir()`/`fallo()` ignore any that is not the last one. `remote`, `ruta` and `entradas` change together, only in `recibir()`.
+- **Pairs**: `marca()` (exact path) and `dentro_de()` (path or ancestor at a `/` boundary) look only at pairs of the same `remote_name`.
+- **Errors**: `frase_error()` checks `RcdCaido` first (its text quotes a connection error to `rcd`, which is not a server without network), then permission (`ErrorRc.estado == 403` or text), no network, not found (404 or text), timeout. `es_sin_red()` is what decides «Reintentar» at open.
