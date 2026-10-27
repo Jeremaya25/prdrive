@@ -72,7 +72,8 @@ def probar(p: comun.Prueba) -> None:
             shutil.copy2(fuente.with_name("copia.ttf"), fuente)
             p.nota("Windows deja sobrescribir la fuente registrada: el #179 no se reproduce así")
         except OSError as e:
-            p.nota(f"sobrescribirla a mano falla: winerror {getattr(e, 'winerror', None)}")
+            p.nota(f"sobrescribirla a mano falla: {type(e).__name__} errno {e.errno} "
+                   f"winerror {getattr(e, 'winerror', None)}")
         finally:
             fuente.with_name("copia.ttf").unlink(missing_ok=True)
 
@@ -94,6 +95,7 @@ def probar(p: comun.Prueba) -> None:
             p.ver("con la fuente cambiada, CopiaIncompleta que la nombra",
                   [r for r, _ in e.pendientes], [f"ui/fuentes/{FUENTE}"])
             p.ver("  diciendo que la tiene otro programa", "otro programa" in str(e), True)
+            p.nota(f"motivo: {e.pendientes[0][1]}")
         except InstallError as e:
             p.ver("con la fuente cambiada, CopiaIncompleta", type(e).__name__,
                   "CopiaIncompleta")

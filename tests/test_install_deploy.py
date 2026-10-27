@@ -694,6 +694,18 @@ except deploy.CopiaIncompleta as e:
 finally:
     deploy.copiar_fichero = copiar_real
 
+# En Windows, `open()` (el CRT) da un fichero en uso como errno 13 sin winerror:
+# es lo que vio la nube (F34) con el Python 3.11.
+deploy.IS_WIN, era_win = True, deploy.IS_WIN
+try:
+    c.contains("un PermissionError sin winerror en Windows también apunta a otro programa",
+               deploy._motivo(PermissionError(13, "Permission denied")), "otro programa")
+finally:
+    deploy.IS_WIN = era_win
+if not era_win:
+    c("fuera de Windows, el motivo del sistema",
+      deploy._motivo(PermissionError(13, "Permission denied")), "Permission denied")
+
 # --update con un fichero pendiente: rc 1 por main() y el texto por report()
 informado: list[list[str]] = []
 report_real = instalador.report

@@ -481,6 +481,11 @@ def _motivo(e: OSError) -> str:
     if getattr(e, "winerror", None) in (32, 33):
         return ("lo tiene abierto otro programa (por ejemplo, una ventana de "
                 "prdrive abierta sobre esta unidad)")
+    # `open()` pasa por el CRT: un fichero en uso llega como errno 13 sin `winerror`.
+    if IS_WIN and isinstance(e, PermissionError) and getattr(e, "winerror", None) is None:
+        return ("Windows no deja escribirlo; puede que lo tenga abierto otro "
+                "programa (por ejemplo, una ventana de prdrive abierta sobre esta "
+                "unidad)")
     return str(e.strerror or e)
 
 
