@@ -82,7 +82,8 @@ hasta entonces. `tests/test_flags_ayuda.py` falla si el fichero es de otra versi
 Después, `git diff` dice qué flags han llegado, han cambiado de tipo o se han ido;
 las tablas a mano de `ui/flags_ayuda.py` (borrado, choques, solo-sincroniza) se
 cruzan con el fichero en ese mismo test, y falla si rclone quita o renombra un
-flag que citan.
+flag que citan. Y se revisa el catálogo de errores (`common/errores.py`): cada
+aguja se vuelve a comprobar contra la versión nueva y se sube su `comprobado`.
 """
 
 PYTHON_RELEASE = "20261001"          # el tag de la release en GitHub

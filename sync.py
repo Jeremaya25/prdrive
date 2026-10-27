@@ -53,8 +53,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-from common import (bisync, cifrada, conflicts, fleet, frenos, historial, llavero, model,
-                    moderacion, orden, parte, progress, results, revision, store)
+from common import (bisync, cifrada, conflicts, errores, fleet, frenos, historial, llavero,
+                    model, orden, parte, progress, results, revision, store)
 from common.model import Config, Pair
 
 LOG_TAIL_LINES = 15
@@ -92,72 +92,13 @@ DIRECT_OUTPUT_HEADER = "--- salida directa de rclone (no pasó por --log-file) -
 Es lo que no llegó a `--log-file` (ver `append_output()`).
 """
 
-KNOWN_ERRORS = [
-    (bisync.MISSING_LISTINGS,
-     "No hay baseline: primera vez, listados en otro sitio (¿cambió la ruta?) o "
-     "un fallo crítico previo los invalidó. Solución: --resync."),
-    ("filters file has changed",
-     "Han cambiado los filtros. Solución: --resync (bisync no puede saber qué "
-     "ficheros excluidos existían antes)."),
-    ("filters file md5 hash not found",
-     "Primer uso de este fichero de filtros. Solución: --resync."),
-    # Los frenos de borrado, que reconoce `common/frenos.py` (lo comparte con el
-    # diagnóstico de «Reparación»). Son dos y no se miden igual: el de bisync es un
-    # PORCENTAJE del listado anterior (`excessDeletes()`, cmd/bisync/deltas.go) y el
-    # de un espejo una CUENTA de ficheros (ver `MODES` en `common/model.py`). Sus
-    # agujas son exactas: la `--max-delete` a secas casaba también con
-    # `--max-delete-size`, que es otro freno.
-    *frenos.ENTRADAS,
-    ("Access is denied",
-     "Fichero bloqueado por otro proceso (Obsidian, KeePass, antivirus)."),
-    # Lo que dice bisync al encontrar el lock de otra pasada
-    # (cmd/bisync/lockfile.go, `setLockFile`). «lock file» a secas casaría
-    # también con el «lock file renewed» de `--max-lock`.
-    ("prior lock file found",
-     "Hay un lock de otra ejecución. Si no hay ninguna corriendo, borra el .lck "
-     "del workdir de la pareja."),
-    # Lo que dice sftp cuando `knownhosts.New()` no puede abrir o leer el
-    # fichero (`NewFs`, backend/sftp/sftp.go). «known_hosts_file» a secas
-    # casaría también con el NOTICE «No host key validation is being
-    # performed» de cada pasada a un remoto sin ese fichero.
-    ("couldn't parse known_hosts_file",
-     "rclone no puede leer el fichero de known_hosts indicado en rclone.conf "
-     "(no existe o está mal formado). Las rutas relativas de rclone.conf se "
-     "resuelven contra .prdrive/; comprueba que keys/known_hosts existe ahí."),
-    # Sin conexión. Es una función y no una aguja porque el agente residente la
-    # comparte y no lleva este fichero: la lista vive en
-    # `common/moderacion.py`. Va antes de la siguiente, que suele acompañarla y
-    # explica menos.
-    (moderacion.es_de_red, moderacion.EXPLICACION_RED),
-    ("Failed to create file system",
-     "rclone no ha podido montar uno de los dos extremos. Suele ser una ruta o "
-     "credencial mal resuelta en rclone.conf (revisa key_file y "
-     "known_hosts_file), o el remoto inalcanzable."),
-    # El aborto crítico de bisync (cmd/bisync/operations.go: «Bisync aborted.
-    # Must run --resync to recover.» y «Bisync interrupted. Must run --resync
-    # to recover.», con mayúscula). Suele seguir a una causa que ya explica una
-    # aguja de arriba, y la de los filtros lleva su propio «(must run --resync)»
-    # en minúscula: por eso va detrás de todas las de causas concretas.
-    ("Must run --resync",
-     "bisync se ha parado con un error crítico (está en las líneas de arriba) y "
-     "ha invalidado el baseline: exige rehacerlo. Solución: --resync."),
-    # Errores de ARRANQUE: rclone rechaza la orden antes de instalar
-    # `--log-file`. Van al final para que gane cualquier error ocurrido durante
-    # la sincronización.
-    ("unknown flag",
-     "rclone no conoce uno de los flags. Está escrito en sync_config.toml (o en "
-     "el editor de flags de la ventana de parejas): rclone lo rechaza antes de "
-     "empezar, por eso no hay más log que este."),
-    ("invalid argument",
-     "rclone rechaza el VALOR de un flag: no es de los que admite (por ejemplo "
-     "conflict-resolve = \"new\" cuando lo válido es \"newer\"). El mensaje de "
-     "arriba enumera los buenos. Se corrige en sync_config.toml."),
-]
-"""Agujas de lo que dice rclone al fallar y su explicación; gana la primera que casa.
+KNOWN_ERRORS = errores.agujas_de_consola()
+"""Lo que dice rclone al fallar → su explicación, en el orden en que se prueba.
 
-Una aguja es un texto o una función del log. Los casos nuevos se añaden aquí,
-nunca en quien llama. Las entradas de flags (las de arranque) van al final: un
-volcado de ayuda con esos nombres no puede explicar un fallo ajeno.
+Se construye desde el catálogo de `common/errores.py` (el mismo que leen
+`--doctor` y «Reparación») con los frenos de `common/frenos.py` tras los filtros.
+Los casos nuevos se añaden allí, nunca aquí. Una aguja es un texto o una función
+del log, y gana la primera que casa.
 """
 
 
@@ -325,7 +266,9 @@ def print_log_tail(lpath: Path | None, lines: int = LOG_TAIL_LINES) -> None:
 def explain_failure(lpath: Path | None, pair: Pair | None = None) -> None:
     """Traduce el error de rclone a algo accionable.
 
-    Los casos nuevos se añaden a `KNOWN_ERRORS`, nunca en quien llama.
+    Los casos nuevos se añaden al catálogo de `common/errores.py` (de ahí sale
+    `KNOWN_ERRORS`), nunca en quien llama. Las agujas de texto se comparan sin
+    distinguir mayúsculas, como en `errores.clasificar()`.
 
     Args:
         lpath: El log de la pasada.
@@ -341,8 +284,9 @@ def explain_failure(lpath: Path | None, pair: Pair | None = None) -> None:
         text = lpath.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return          # ya lo ha dicho print_log_tail, que va antes
+    bajo = text.lower()
     for needle, explanation in KNOWN_ERRORS:
-        if needle(text) if callable(needle) else needle in text:
+        if errores.casa(needle, text, bajo):
             if pair is not None and pair.llavero and explanation in frenos.EXPLICACIONES:
                 explanation = frenos.explicacion_llavero(explanation)
             print(f"  >> {explanation}")

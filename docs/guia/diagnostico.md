@@ -14,7 +14,7 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 | La pareja necesita un `--resync` | Lanzarlo desde ahí |
 | Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
 | Ficheros en conflicto | Elegir con qué versión te quedas |
-| La última pasada falló | Abrir el log que lo explica |
+| La última pasada falló | Leer qué ha pasado, en llano, si es un error conocido (sin red, el remoto no acepta la conexión, disco lleno, un fichero en uso…), y usar el arreglo que proponga: reintentar la pasada, resincronizar o borrar un bloqueo, cada uno con su confirmación cuando cambia algo. Si el error no es de los conocidos, se enseña lo que dijo rclone tal cual. El log, siempre al final |
 | **El freno de borrados paró la pasada** (casi todo ha desaparecido de un lado, o han cambiado todos los ficheros) | Ver qué se borraría y, si es lo que querías, **forzar una sola pasada** ([más abajo](#cuando-salta-el-freno-de-borrados)) |
 | Un contenedor VeraCrypt **dinámico** se queda sin sitio fuera (menos de 1 GiB libre en la unidad) | Liberar sitio fuera del contenedor. Si se llena, lo de dentro da errores de escritura en mitad de una pasada |
 | **La carpeta local no está** | **Nada, a propósito**: ver abajo |
@@ -134,9 +134,27 @@ cada vez que se guarda uno nuevo se quedan los 20 últimos de esa pareja (con
 `--keep-logs`, los de las pasadas buenas van desplazando a los de las que
 fallaron). Al fallar se imprime la cola del log —sin las líneas de estadísticas,
 que ya contó el progreso— y se traduce el error de rclone a una explicación, si
-es uno de los conocidos.
+es uno de los conocidos. Es el mismo texto que da «Reparación» y que imprime
+`python sync.py --doctor`.
 
 Casos habituales:
+
+- **«Sin conexión con el remoto».** No se llega al servidor (sin red, apagado, un
+  nombre que no se resuelve). «Reintentar la pasada» cuando vuelva la red; el
+  servicio también lo reintenta solo.
+- **«El remoto no acepta la conexión».** Se llega, pero rechaza la contraseña, la
+  clave o el permiso de rclone (en Google Drive u OneDrive, el token caduca). Hay
+  que volver a autorizarlo: `rclone config reconnect <remoto>:` con el
+  `rclone.conf` de `.prdrive/`, o rehacer la conexión con el instalador.
+- **«No se encuentra la carpeta».** Casi siempre la del remoto: se movió, se
+  renombró o se borró. Compruébalo en el remoto y, si la moviste, cambia su ruta
+  en «Parejas». **No la crees vacía**: un lado vacío se lee como «se ha borrado
+  todo».
+- **«No queda sitio en el disco» / «El remoto está lleno».** Libera sitio donde
+  se escribía; la siguiente pasada copia lo que falte. Si la unidad es un
+  contenedor VeraCrypt dinámico, el aviso del contenedor lo dice aparte.
+- **«Un fichero está en uso».** En Windows, otro programa lo tiene abierto
+  (Obsidian, KeePass, un antivirus). Ciérralo y «Reintentar la pasada».
 
 - **«Must run --resync».** bisync se ha parado con un error crítico (el motivo va
   en las líneas de antes) y ha invalidado la referencia; si dice «filters file», es
