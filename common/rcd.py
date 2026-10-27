@@ -561,15 +561,17 @@ def lanzar_orden(r: Rcd, orden: dict, grupo: str) -> int:
     return int(r.llamar(metodo, params)["jobid"])
 
 
-def tamano(r: Rcd, fs: str, remote: str) -> tuple[int, int]:
+def tamano(r: Rcd, fs: str) -> tuple[int, int]:
     """Cuenta los archivos y los bytes de una carpeta del servidor, en una sola llamada.
 
     Usa el tope por defecto (`TIMEOUT_PETICION`): una carpeta grande tarda en contarse.
+    `operations/size` (`rcSize`, `fs/operations/rc.go`) solo lee `fs`: un `remote` se
+    ignora y contaría el remoto entero, así que la carpeta va dentro del propio `fs`.
 
     Args:
         r: El `rcd` que consulta.
-        fs: El `fs` del remoto, en la forma `<remoto>:/` desde la raíz absoluta.
-        remote: La carpeta dentro de `fs`, sin barra inicial (`""` para la raíz).
+        fs: La carpeta que se cuenta, en la forma `<remoto>:/<ruta sin barra inicial>`
+            desde la raíz absoluta (`<remoto>:/` para la raíz).
 
     Returns:
         `(archivos, bytes)`. Un campo que falta, que no es un entero o que es un
@@ -579,7 +581,7 @@ def tamano(r: Rcd, fs: str, remote: str) -> tuple[int, int]:
         ErrorRc: Si rclone contesta con un error.
         RcdCaido: Si no se puede hablar con `rcd`.
     """
-    datos = r.llamar("operations/size", {"fs": fs, "remote": remote})
+    datos = r.llamar("operations/size", {"fs": fs})
     return _entero(datos.get("count")), _entero(datos.get("bytes"))
 
 

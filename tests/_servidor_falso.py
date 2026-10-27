@@ -109,10 +109,13 @@ class RcdGestion(RcdFalso):
     Cada orden lanzada recibe el `jobid` 1, 2, 3… en el orden en que llega. `job/status`
     del trabajo `n` da, uno por consulta, los estados de `estados[n]` (el último se
     repite); sin ellos, el trabajo acaba bien a la primera. `operations/size` contesta
-    desde `tamanos` (por la ruta pedida) con `(archivos, bytes)` o con un error.
+    desde `tamanos` (por su `fs`, `nas:/datos/fotos`) con `(archivos, bytes)` o con un
+    error. Como el `rcSize` de rclone solo lee `fs`, un `operations/size` con `remote`
+    se apunta en `mal_pedidas` y falla.
 
     Attributes:
         lanzadas: `(método, parámetros)` de cada orden de gestión, en orden.
+        mal_pedidas: Los parámetros de cada `operations/size` que trajo `remote`.
         cronologia: `("lanzar", n, método)` y `("estado", n, finished)` en el orden en que ocurrieron.
     """
 
@@ -124,6 +127,7 @@ class RcdGestion(RcdFalso):
         self.colas: dict[int, list] = {}
         self.lanzadas: list[tuple[str, dict]] = []
         self.cronologia: list[tuple] = []
+        self.mal_pedidas: list[dict] = []
         self.al_lanzar = None             # `al_lanzar(método, parámetros)`: lo que cambia en el servidor
 
     def llamar(self, metodo, params=None, timeout=None):
@@ -152,7 +156,10 @@ class RcdGestion(RcdFalso):
         if metodo == "operations/size":
             self.llamadas.append((metodo, params))
             self.orden.append(metodo)
-            respuesta = self.tamanos[params["remote"]]
+            if "remote" in params:
+                self.mal_pedidas.append(params)
+                raise AssertionError("operations/size no lee «remote»: contaría el remoto entero")
+            respuesta = self.tamanos[params["fs"]]
             if isinstance(respuesta, Exception):
                 raise respuesta
             return {"count": respuesta[0], "bytes": respuesta[1]}

@@ -53,7 +53,7 @@
 **Interfaces — Produces:**
 - `ORDENES_PERMITIDAS: frozenset[str]` (the five paths above).
 - `lanzar_orden(r: Rcd, orden: dict, grupo: str) -> int`: `r.llamar(orden["_path"], {**params_without__path, "_async": True, "_group": grupo})`, returns `int(...["jobid"])`. `ValueError("orden no permitida: {path}")` before any call if `_path` is missing or not in the whitelist. The caller's dict is not mutated.
-- `tamano(r: Rcd, fs: str, remote: str) -> tuple[int, int]`: `operations/size {"fs": fs, "remote": remote}` → `(count, bytes)`; a missing, non-int or bool field counts 0. Uses the default timeout (a big folder takes time).
+- `tamano(r: Rcd, fs: str) -> tuple[int, int]`: `operations/size {"fs": fs}` with `fs` = the folder itself (`<remote>:/<path>`; rclone's `rcSize` reads only `fs`, a `remote` param is ignored and the whole remote is counted) → `(count, bytes)`; a missing, non-int or bool field counts 0. Uses the default timeout (a big folder takes time).
 
 - [ ] **Step 1: failing tests** (fake `Rcd` recording `llamar(metodo, params, timeout=None)`):
 
@@ -66,9 +66,9 @@ c("devuelve el jobid", jid, 7)
 c("no toca la orden de quien llama", orden, {"_path": "operations/purge", "fs": "nas:/", "remote": "datos/viejo"})
 for mala in ({"_path": "sync/sync"}, {"_path": "job/batch", "inputs": []}, {"_path": "operations/delete"}, {"fs": "nas:/"}):
     # ValueError, and falso.llamadas unchanged
-c("tamano lee count y bytes", rcd.tamano(falso_size({"count": 4, "bytes": 8}), "nas:/", "a/x"), (4, 8))
-c("tamano con campos raros cuenta 0", rcd.tamano(falso_size({"count": "x", "bytes": True}), "nas:/", "a"), (0, 0))
-c("tamano pide operations/size", ultima_llamada, ("operations/size", {"fs": "nas:/", "remote": "a/x"}))
+c("tamano lee count y bytes", rcd.tamano(falso_size({"count": 4, "bytes": 8}), "nas:/a/x"), (4, 8))
+c("tamano con campos raros cuenta 0", rcd.tamano(falso_size({"count": "x", "bytes": True}), "nas:/a"), (0, 0))
+c("tamano pide operations/size", ultima_llamada, ("operations/size", {"fs": "nas:/a/x"}))
 ```
 
 - [ ] **Step 2:** run `python3 tests/test_rcd.py` → FAIL (`AttributeError`).

@@ -777,20 +777,25 @@ for mala in ({"_path": "sync/sync"}, {"_path": "job/batch", "inputs": []}, {"_pa
         error = e
     c(f"{mala!r}: ValueError", isinstance(error, ValueError), True)
     c(f"{mala!r}: no llama a rcd", falso.llamadas, [])
-c("y el mensaje nombra la orden", str(error), "orden no permitida: ['operations/purge']")
-falso = RcdFalso({"jobid": 7})
-try:
-    rcd.lanzar_orden(falso, {"_path": "sync/sync"}, "g")
-except ValueError as e:
-    c("el mensaje nombra la orden rechazada", str(e), "orden no permitida: sync/sync")
+for mala, mensaje in (({"_path": ["operations/purge"]}, "orden no permitida: ['operations/purge']"),
+                      ({"_path": "sync/sync"}, "orden no permitida: sync/sync")):
+    falso = RcdFalso({"jobid": 7})
+    try:
+        rcd.lanzar_orden(falso, mala, "g")
+        texto = None
+    except ValueError as e:
+        texto = str(e)
+    c(f"el mensaje nombra la orden rechazada {mala['_path']!r}", texto, mensaje)
 
 falso = RcdFalso({"count": 4, "bytes": 8, "sizeless": False})
-c("tamano lee count y bytes", rcd.tamano(falso, "nas:/", "a/x"), (4, 8))
+c("tamano lee count y bytes", rcd.tamano(falso, "nas:/a/x"), (4, 8))
 falso = RcdFalso({"count": "x", "bytes": True})
-c("tamano con campos raros cuenta 0", rcd.tamano(falso, "nas:/", "a"), (0, 0))
+c("tamano con campos raros cuenta 0", rcd.tamano(falso, "nas:/a"), (0, 0))
 falso = RcdFalso({"count": 4, "bytes": 8})
-rcd.tamano(falso, "nas:/", "a/x")
-c("tamano pide operations/size", falso.llamadas[-1], ("operations/size", {"fs": "nas:/", "remote": "a/x"}))
+rcd.tamano(falso, "nas:/a/x")
+# rcSize solo lee `fs`: un `remote` se ignora y contaría el remoto entero.
+c("tamano pide operations/size con la carpeta en el fs", falso.llamadas[-1],
+  ("operations/size", {"fs": "nas:/a/x"}))
 c("  con el tope por defecto (una carpeta grande tarda)", falso.topes[-1], None)
 
 sys.exit(c.report())

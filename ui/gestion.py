@@ -283,6 +283,15 @@ def _fs(remote: str, ruta: str = "") -> str:
     return f"{remote}:/{ruta}"
 
 
+def fs_de_ruta(remote: str, carpeta: str, nombre: str = "") -> str:
+    """Devuelve el `fs` de rclone de `nombre` dentro de `carpeta`: `<remote>:/<ruta sin barra inicial>`.
+
+    Es lo que pide una orden que solo lee `fs`, como `operations/size`. Solo la carpeta se
+    normaliza; el nombre va tal cual (`_remoto`). Sin nombre, es la propia carpeta.
+    """
+    return _fs(remote, _remoto(carpeta, nombre))
+
+
 def ordenes_de(op: Operacion) -> list[dict]:
     """Devuelve las órdenes de rclone de la operación, una por elemento y en su orden.
 

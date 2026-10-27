@@ -81,7 +81,7 @@ def servidor_gestion(estados=None, tamanos=None, otras=None) -> RcdGestion:
         ("operations/list", "datos"): lambda: lista(*CONTENIDO["datos"]),
         ("operations/list", "datos/notas"): lista(item("hoy.txt")),
         **(otras or {})}),
-        tamanos=tamanos if tamanos is not None else {"datos/fotos": (12, MB5)},
+        tamanos=tamanos if tamanos is not None else {"nas:/datos/fotos": (12, MB5)},
         estados=estados)
 
 
@@ -385,9 +385,10 @@ with sandbox():
     entrar_en(dlg, "datos")
     elegir(dlg, "fotos", "a.txt")
     dlg.barra.borrar.invoke()
-    c("borrar cuenta una sola vez, y solo la carpeta",
+    c("borrar cuenta una sola vez, y solo la carpeta, con ella en el `fs`",
       [p for m, p in falso.llamadas if m == "operations/size"],
-      [{"fs": "nas:/", "remote": "datos/fotos"}])
+      [{"fs": "nas:/datos/fotos"}])
+    c("  sin `remote`, que `operations/size` no lee", falso.mal_pedidas, [])
     c("  la confirmación lleva el título, la nota y una línea por elemento",
       CONFIRMAR["llamadas"],
       [("Borrar del servidor", "El servidor no tiene papelera.",
@@ -495,7 +496,7 @@ with sandbox():
 
     # Contar falla: se dice con «Reintentar» y no se lanza nada
     dialogos(confirmar=True)
-    falso = servidor_gestion(tamanos={"datos/fotos": rcd.ErrorRc("permission denied", 403)})
+    falso = servidor_gestion(tamanos={"nas:/datos/fotos": rcd.ErrorRc("permission denied", 403)})
     dlg = abrir(falso)
     entrar_en(dlg, "datos")
     elegir(dlg, "fotos")
@@ -505,7 +506,7 @@ with sandbox():
       ("No tienes permiso para ver esta carpeta.", [], []))
     c("  con «Reintentar» y la ventana libre",
       (bool(dlg.panel.reintentar.winfo_manager()), encendidos(dlg)[0]), (True, True))
-    falso.tamanos["datos/fotos"] = (3, 300)
+    falso.tamanos["nas:/datos/fotos"] = (3, 300)
     dlg.panel.reintentar.invoke()
     c("  «Reintentar» vuelve a contar y sigue",
       (bombear(lambda: len(falso.lanzadas) == 1), [t[2] for t in CONFIRMAR["llamadas"]]),

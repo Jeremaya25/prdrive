@@ -358,8 +358,8 @@ def _contar_borrado(r: rcd.Rcd, op: gestion.Operacion,
                     tamanos: dict[str, int]) -> dict[str, tuple[int, int]]:
     """Cuenta lo que se llevaría el borrado, por elemento: `(archivos, bytes)`; corre en un hilo.
 
-    Una carpeta se cuenta con un `operations/size`; un archivo vale `(1, su tamaño)` y no
-    pregunta nada.
+    Una carpeta se cuenta con un `operations/size` sobre su propio `fs`; un archivo vale
+    `(1, su tamaño)` y no pregunta nada.
 
     Args:
         r: El `rcd` al que se habla.
@@ -371,9 +371,9 @@ def _contar_borrado(r: rcd.Rcd, op: gestion.Operacion,
         rcd.RcdCaido: Si no se puede hablar con `rcd`.
     """
     conteos: dict[str, tuple[int, int]] = {}
-    for e, orden in zip(op.elementos, gestion.ordenes_de(op)):
+    for e in op.elementos:
         if e.es_carpeta:
-            conteos[e.nombre] = rcd.tamano(r, orden["fs"], orden["remote"])
+            conteos[e.nombre] = rcd.tamano(r, gestion.fs_de_ruta(op.remote, op.carpeta, e.nombre))
         else:
             conteos[e.nombre] = (1, tamanos.get(e.nombre, 0))
     return conteos

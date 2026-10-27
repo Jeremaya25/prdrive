@@ -468,6 +468,14 @@ c("la carpeta sí se normaliza (barra final, doble barra)",
   gestion.ordenes_de(Op(gestion.BORRAR, "nas", "//d//e/", (E("x ", False),))),
   [{"_path": "operations/deletefile", "fs": "nas:/", "remote": "d/e/x "}])
 
+# --- fs_de_ruta: lo que se cuenta con `operations/size`, que solo lee `fs` --------------
+c("el fs de una carpeta, por la raíz absoluta", gestion.fs_de_ruta("nas", "/a", "x"), "nas:/a/x")
+c("  en la raíz", gestion.fs_de_ruta("nas", "/", "x"), "nas:/x")
+c("  sin nombre, la propia carpeta", (gestion.fs_de_ruta("nas", "/a/"), gestion.fs_de_ruta("nas", "/")),
+  ("nas:/a", "nas:/"))
+c("  el nombre va tal cual, solo la carpeta se normaliza",
+  gestion.fs_de_ruta("nas", "//d//e/", "foo "), "nas:/d/e/foo ")
+
 
 # --- plan_de ---------------------------------------------------------------------------
 GRANDE = (1234, 3650722202)

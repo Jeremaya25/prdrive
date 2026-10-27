@@ -60,7 +60,7 @@ el catálogo para proteger las parejas de otros dispositivos (decisión 6).
   nombre está libre es nuestra.
 - `operations/purge` borra una carpeta con todo lo de dentro; `operations/deletefile`, un
   archivo; un archivo que no existe da 404 «object not found».
-- `operations/size` (`fs` + `remote`) da `{"count", "bytes"}` de una carpeta en una llamada.
+- `operations/size` (solo `fs`, con la carpeta dentro: `<remote>:/<ruta>`) da `{"count", "bytes"}` de una carpeta en una llamada. `rcSize` no lee `remote`: con `fs = "<remote>:/"` y `remote` cuenta el remoto entero.
 - `job/batch` con `_async: true`, `_group` y `concurrency: 1` corre varias órdenes como **un**
   trabajo: un `jobid`, `job/status` con `output.results` (uno por orden, `{}` si fue bien o
   `{"error", "status", "input", "path"}` si no). **`success` es `true` aunque falle una orden**:
@@ -182,7 +182,7 @@ diálogo o el clic en «Pegar aquí» son la intención, y las tres tienen vuelt
   `ValueError` antes de llamar a nada si el `_path` no está en `ORDENES_PERMITIDAS =
   {"operations/mkdir", "operations/movefile", "operations/deletefile", "operations/purge",
   "sync/move"}`.
-- `tamano(r, fs, remote) -> tuple[int, int]`: `operations/size`, `(archivos, bytes)`; un campo
+- `tamano(r, fs) -> tuple[int, int]`: `operations/size {"fs": fs}` con `fs` = la carpeta (`<remote>:/<ruta>`), `(archivos, bytes)`; un campo
   que falta o no es entero cuenta 0.
 - El seguimiento usa lo que ya hay: `progreso()`, `estado()`, `cancelar()`.
 - El invariante de la pieza 2 cambia de forma: `copiar()` sigue sin poder borrar nada (solo
