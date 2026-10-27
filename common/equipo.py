@@ -180,6 +180,12 @@ CIFRADO_VERACRYPT = "veracrypt"
 """La unidad vive en un contenedor VeraCrypt (el vestíbulo: `common/vestibulo.py`)."""
 CIFRADO_BITLOCKER = "bitlocker"
 """La unidad lleva BitLocker (Windows): `Unidad.volumen` la reconoce bloqueada."""
+AJUSTES_BLOQUEAR_SOLO = ("bloquear_al_bloquear_sesion", "bloquear_al_suspender",
+                         "bloquear_al_cerrar_sesion")
+"""Los campos de `Unidad` que dicen si el agente la bloquea solo, uno por evento de Windows.
+
+En este orden los enseña la ventana (`ui/watch.py`).
+"""
 
 
 @dataclass(frozen=True)
@@ -224,6 +230,18 @@ class Unidad:
             (`pide_al_conectar()`): así los equipos que ya existen no cambian.
             Es un ajuste de este equipo, no de la unidad. Las raíces del equipo
             no lo llevan: su ajuste es `Ajustes.pedir_al_iniciar`.
+        bloquear_al_bloquear_sesion: Si el agente la bloquea él solo cuando
+            Windows bloquea la sesión (Win+L o por inactividad).
+        bloquear_al_suspender: Si la bloquea él solo cuando Windows va a
+            suspender el equipo.
+        bloquear_al_cerrar_sesion: Si la bloquea él solo, si Windows le da
+            tiempo, al cerrar la sesión o apagar el equipo.
+
+    Los tres `bloquear_al_*` (`AJUSTES_BLOQUEAR_SOLO`) valen para una unidad
+    con vestíbulo de VeraCrypt y para una raíz del equipo cifrada, nunca para
+    una raíz sin cifrar. De fábrica están apagados y solo se escriben en
+    `agente.json` encendidos, así que los equipos que ya existen no cambian.
+    Son ajustes de este equipo, como `pedir_al_conectar`.
     """
     id: str
     modo: str = MODO_AL_ATENDER
@@ -234,6 +252,9 @@ class Unidad:
     pausada: bool = False
     volumen: str = ""
     pedir_al_conectar: bool | None = None
+    bloquear_al_bloquear_sesion: bool = False
+    bloquear_al_suspender: bool = False
+    bloquear_al_cerrar_sesion: bool = False
 
     def pide_al_conectar(self, cifrado: str) -> bool:
         """Indica si el agente pide la contraseña de esta unidad al conectarla.
@@ -362,10 +383,13 @@ def desde_dict(datos: Mapping[str, Any]) -> Ajustes:
                 volumen = ""
             pedir = u["pedir_al_conectar"] \
                 if isinstance(u.get("pedir_al_conectar"), bool) and not ruta.strip() else None
+            # Los de bloquear solos: en una unidad, o en una raíz del equipo cifrada.
+            bloquea = not ruta.strip() or bool(hc.strip())
+            solos = {k: u.get(k) is True and bloquea for k in AJUSTES_BLOQUEAR_SOLO}
             unidades[uid.strip()] = Unidad(uid.strip(), modo, nombre, ruta.strip(),
                                            hc.strip() if ruta.strip() else "",
                                            codigo.strip(), u.get("pausada") is True,
-                                           volumen, pedir)
+                                           volumen, pedir, **solos)
     m = datos.get("moderacion") if isinstance(datos.get("moderacion"), dict) else {}
     fabrica = Politica()
     estirar = datos["estirar_intervalo"] \
@@ -411,7 +435,8 @@ def a_dict(aj: Ajustes) -> dict:
                             **({"pausada": True} if u.pausada else {}),
                             **({"volumen": u.volumen} if u.volumen else {}),
                             **({"pedir_al_conectar": u.pedir_al_conectar}
-                               if u.pedir_al_conectar is not None else {})}
+                               if u.pedir_al_conectar is not None else {}),
+                            **{k: True for k in AJUSTES_BLOQUEAR_SOLO if getattr(u, k)}}
                      for u in aj.unidades.values()},
         "espera_unidad_nueva": aj.espera_unidad_nueva,
         "moderacion": {"con_bateria": aj.politica.con_bateria,
@@ -594,11 +619,30 @@ PIDE_ATAJOS = "atajos"          # atajos (por acción), vez: guardar los atajos 
 PIDE_GRABAR_ATAJOS = "grabar_atajos"    # abrir la ventana que graba los atajos de teclado
 AJUSTES_PEDIBLES = ("espera_unidad_nueva", "pedir_al_iniciar", "estirar_intervalo",
                     "avisos_veracrypt")
-AJUSTES_DE_UNIDAD = ("pedir_al_conectar",)
+AJUSTES_DE_UNIDAD = ("pedir_al_conectar", *AJUSTES_BLOQUEAR_SOLO)
 """Los campos de `Unidad` que se piden con `PIDE_AJUSTE_UNIDAD`.
 
-Su valor es un booleano, o `None` para volver a «lo de siempre».
+Su valor es un booleano, o `None` para volver a «lo de siempre» (en los de
+`AJUSTES_BLOQUEAR_SOLO`, apagado). `pedir_al_conectar` no vale en una raíz del
+equipo; los de bloquear solos, sí, si va cifrada.
 """
+PIDE_SESION = "sesion"          # evento: lo que la bandeja de Windows oye de la sesión
+"""Un evento de la sesión de Windows (`EVENTOS_DE_SESION`), oído por la bandeja.
+
+Solo vale por la cola de la bandeja (`Agente.pedir()`): por el fichero
+`agente.pide` se rechaza, porque cualquiera podría escribir ahí que la sesión
+se ha desbloqueado.
+"""
+EVENTO_BLOQUEO = "bloqueo"          # `WTS_SESSION_LOCK`: Win+L o por inactividad
+EVENTO_DESBLOQUEO = "desbloqueo"    # `WTS_SESSION_UNLOCK`: la persona ha vuelto
+EVENTO_SUSPENSION = "suspension"    # `PBT_APMSUSPEND`: el equipo se va a dormir
+EVENTO_FIN = "fin_de_sesion"        # `WM_ENDSESSION`: se cierra la sesión o se apaga
+EVENTOS_DE_SESION = (EVENTO_BLOQUEO, EVENTO_DESBLOQUEO, EVENTO_SUSPENSION)
+"""Los eventos que llegan como `PIDE_SESION`; el de fin no, que no espera a una vuelta."""
+BLOQUEAR_AL = {EVENTO_BLOQUEO: "bloquear_al_bloquear_sesion",
+               EVENTO_SUSPENSION: "bloquear_al_suspender",
+               EVENTO_FIN: "bloquear_al_cerrar_sesion"}
+"""Qué ajuste de `Unidad` dice si se bloquea sola con cada evento de la sesión."""
 
 BUZON_SERVICIO = "servicio.pide"
 """Nombre del buzón de UNA raíz, dentro de su `state/`.

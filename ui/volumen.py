@@ -77,7 +77,7 @@ MARCAS = tuple(Opcion(clave, nombre, icons.CAMPOS[clave]) for clave, nombre in (
     ("morado", "Morado"), ("grafito", "Grafito")))
 """Los cinco colores de la marca que se ofrecen."""
 
-PROPIO = "propio"
+PROPIO = autorun.CLAVE_PROPIA
 """Clave de un `.ico` que trae la persona."""
 NINGUNO = "ninguno"
 """Clave de «sin `icon=`»: se queda el que ponga Windows."""
@@ -89,16 +89,6 @@ MAX_ICO = icons.MAX_ICO
 
 Es para no copiar a la unidad una foto de 50 MB porque se llamaba `.ico`. Es
 el mismo límite con que la bandeja del agente lo lee para pintarlo.
-"""
-
-_NOMBRE = re.compile(f"(?P<fuera>{re.escape(autorun.PREFIJO_RAIZ)})?"
-                     + re.escape(autorun.BASE_ICONO)
-                     + r"-(?P<clave>[a-z]+)(?:-[0-9a-f]{8})?"
-                     + re.escape(autorun.EXTENSION_ICONO), re.IGNORECASE)
-"""El nombre de uno de nuestros iconos.
-
-`fuera` es el prefijo que lleva uno suelto en una raíz (`autorun.PREFIJO_RAIZ`):
-se reconoce para recogerlo. Dentro de `.prdrive/`, donde se ponen, va sin él.
 """
 
 
@@ -156,20 +146,13 @@ def _nuestro(carpetas: tuple[str, ...], nombre: str,
              app: str | None = None) -> re.Match | None:
     """Devuelve el encaje del nombre si es un icono nuestro bien puesto.
 
-    Bien puesto es donde lo dejaría prdrive: en la raíz con el prefijo o en
-    `.prdrive/` sin él.
-
     Args:
         carpetas: Las de la ruta relativa a la raíz.
         nombre: El nombre del fichero.
         app: El nombre de la carpeta del programa en la raíz; por defecto, el
             de `APP_DIR` (el de este dispositivo).
     """
-    hallado = _NOMBRE.fullmatch(nombre)
-    if hallado is None:
-        return None
-    donde = () if hallado["fuera"] else ((app or model.APP_DIR.name).lower(),)
-    return hallado if tuple(c.lower() for c in carpetas) == donde else None
+    return autorun.icono_nuestro(carpetas, nombre, app or model.APP_DIR.name)
 
 
 def clave_de(icono: str, app: str | None = None) -> str:
@@ -186,13 +169,7 @@ def clave_de(icono: str, app: str | None = None) -> str:
     """
     if not icono:
         return NINGUNO
-    *carpetas, nombre = PureWindowsPath(icono).parts
-    hallado = _nuestro(tuple(carpetas), nombre, app)
-    if hallado:
-        clave = hallado["clave"].lower()
-        if clave == PROPIO or clave in {m.clave for m in MARCAS}:
-            return clave
-    return OTRO
+    return autorun.clave_icono(icono, app or model.APP_DIR.name) or OTRO
 
 
 def emblema(raiz: Path | str, app: str) -> dict:
@@ -299,17 +276,23 @@ def como_se_lee(estado: Estado) -> str:
             f"llegar la unidad. El cambio se verá {cuando_se_ve(estado)}.")
 
 
-def mensaje_guardado(estado: Estado, nombre: str) -> str:
+def mensaje_guardado(estado: Estado, nombre: str, eleccion: str = "") -> str:
     """Devuelve lo que se dice al guardar.
 
     Args:
         estado: Lo que tenía la unidad, de `leer()`.
         nombre: El nombre guardado, ya revisado; vacío si se ha quitado.
+        eleccion: La clave del icono guardado. Uno de prdrive (un color o un
+            `.ico` propio) llega también a «Dispositivos…».
     """
     texto = f"Guardado. Se verá {cuando_se_ve(estado)}."
-    if nombre:
-        texto += (" En «Dispositivos…» el nombre nuevo llegará con la próxima "
-                  "sincronización.")
+    de_prdrive = eleccion in autorun.CLAVES_MARCA or eleccion == PROPIO
+    cosas = [c for c, hay in (("el nombre", bool(nombre)),
+                              ("el icono", de_prdrive)) if hay]
+    if cosas:
+        nuevo = "nuevo" if len(cosas) == 1 else "nuevos"
+        texto += (f" En «Dispositivos…» {' y '.join(cosas)} {nuevo} llegará"
+                  f"{'n' if len(cosas) > 1 else ''} con la próxima sincronización.")
     return texto
 
 

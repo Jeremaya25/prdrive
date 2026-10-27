@@ -26,5 +26,8 @@ paths:
   - "tests/integracion/llavero_real.py"
   - "tests/test_agente_registro.py"
   - "tests/test_keepassxc_pin.py"
+  - "generar_arbol_keepassxc.py"
+  - "common/keepassxc_arbol.json"
+  - "tests/test_generar_arbol_keepassxc.py"
 ---
 Before changing these files, read `docs/agents/reference/llavero.md` (the keychain: KeePassXC on the device, its code-built pair, watching, opening, merging, ejecting). If you already read it this session, skip it.

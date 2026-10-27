@@ -1107,6 +1107,17 @@ class CeldaIcono(NamedTuple):
     texto: str = ""
 
 
+class CeldaMarca(NamedTuple):
+    """Una celda de `Tabla` con la marca de prdrive pintada en un color.
+
+    Args:
+        campo: El color del campo de la marca (un valor de `icons.CAMPOS`).
+        texto: Lo que dice para quien no la ve.
+    """
+    campo: str
+    texto: str = ""
+
+
 class CeldaTexto(NamedTuple):
     """Una celda de `Tabla` con texto en un rol (`'Fuerte.'`, `'Mono.'`, `'MonoPista.'`…)."""
     texto: str
@@ -1118,7 +1129,7 @@ class FilaTabla(NamedTuple):
 
     Args:
         iid: Cómo se la llama al elegirla.
-        celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip` o `CeldaIcono`.
+        celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip`, `CeldaIcono` o `CeldaMarca`.
         tono: `''`, `'aviso'` (fondo ámbar), `'peligro'` (fondo rojo), `'propio'`
             (fondo del acento) o `'apagado'` (todo el texto en gris).
     """
@@ -1934,6 +1945,9 @@ class VentanaPrincipal:
             lectura que la cierra aún sin llegar.
         inst: La última lectura del dispositivo (`ui.instantanea`), `None`
             hasta que llega.
+        identidad: El nombre y el icono del dispositivo que llevan el título
+            y el icono de la ventana (`instantanea.Identidad`), `None` hasta
+            que llega la primera lectura que los trae.
         pedido: `(lecturas, resumen)`: lo que se le ha pedido al agente y la
             lectura aún no ve, con el número de lecturas lanzadas cuando se
             pidió; o `None`.
@@ -1982,6 +1996,7 @@ class VentanaPrincipal:
         self.aviso = startup_msg
         self.en_curso = False
         self.inst = None
+        self.identidad = None
         self.pedido = None
         self.lecturas = 0
         self.compartida = None
@@ -2282,6 +2297,7 @@ class VentanaPrincipal:
         if not leida:
             inst = instantanea.vacia(self.config)
         self.inst = inst
+        self.poner_identidad(inst.identidad)
         if self.pedido is not None and self.pedido[0] < numero:
             self.pedido = None
         if self.libera is not None and numero >= self.libera:
@@ -2306,6 +2322,24 @@ class VentanaPrincipal:
         # deja esta ventana a medias.
         self.la_compartida().poner(inst)
         perf_al_pintar(root, "llega-instantanea")
+
+    def poner_identidad(self, identidad) -> None:
+        """Pone el nombre y el icono del dispositivo en el título y el icono de la ventana.
+
+        Es «<dispositivo> · prdrive» (`principal.titulo()`) y la marca en el
+        color de la unidad, o su `.ico` propio donde Tk sabe ponerlo: con varias
+        ventanas de prdrive abiertas, cada una dice de qué unidad es. Hasta la
+        primera lectura la ventana es «prdrive» con la marca de siempre. Sin
+        identidad (no se pudo leer) o con la misma, no toca nada.
+        """
+        if identidad is None or identidad == self.identidad:
+            return
+        from . import principal
+
+        self.identidad = identidad
+        self.root.title(principal.titulo(identidad.nombre))
+        icons.poner_icono(self.root, icons.CAMPOS.get(identidad.icono, icons.CAMPO),
+                          identidad.fichero)
 
     def refrescar_instantanea(self, libera: bool = False) -> None:
         """Lee en un hilo lo que la ventana enseña del dispositivo, y lo aplica al llegar.
@@ -2623,8 +2657,10 @@ class VentanaPrincipal:
         esta ventana: cerrarse tras actualizar el programa (sus módulos ya no
         son los de disco), releer el config tras tocar el llavero y, si se ha
         activado, lanzar su primera pasada, que sube la base o trae la del
-        remoto en la ventana de salida de siempre; y volver a leer el estado o
-        el vigilante si se han tocado. Si no ha cambiado nada no se toca nada.
+        remoto en la ventana de salida de siempre; y volver a leer el estado,
+        el vigilante o el nombre y el icono de la unidad (el título y el icono
+        de esta ventana) si se han tocado. Si no ha cambiado nada no se toca
+        nada.
         """
         perf_empezar("open-ajustes")
         from . import tk_doctor, tk_update
@@ -2642,7 +2678,8 @@ class VentanaPrincipal:
                 or hecho.get("componentes") == tk_update.CERRAR):
             self.cerrar()
             return
-        releer = bool(hecho.get("reparacion") or hecho.get("componentes"))
+        releer = bool(hecho.get("reparacion") or hecho.get("componentes")
+                      or hecho.get("volumen"))
         llavero = hecho.get("llavero")
         if llavero is not None:
             from . import tk_llavero

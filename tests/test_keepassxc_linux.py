@@ -253,6 +253,8 @@ def extraer_falso(appimage: Path, donde: Path) -> int:
     for nombre in ("keepassxc", "keepassxc-cli", "keepassxc-proxy"):
         (bin_ / nombre).write_bytes(b"ELF " + appimage.read_bytes())
     (donde / keepassxc.EXTRAIDO / keepassxc.APPRUN).write_text("#!/bin/sh\n", encoding="utf-8")
+    if falla_extraer.get("sin_programa"):
+        (donde / keepassxc.EXTRAIDO / keepassxc.PROGRAMA_LINUX).unlink()
     return 0
 
 
@@ -385,6 +387,15 @@ try:
        (hecho / "usr" / "bin" / "keepassxc").read_bytes()),
       (sorted(["2.7.11", pins.KEEPASSXC_VERSION, vivo.name]), b"ELF " + OTRO))
     falla_extraer["codigo"] = 0
+    falla_extraer["sin_programa"] = True
+    try:
+        keepassxc.preparar_appimage("linux-x64", app)
+        c("una extracción sin usr/bin/keepassxc se da por mala", "no lanzó", "OSError")
+    except OSError as e:
+        c.contains("una extracción sin usr/bin/keepassxc se da por mala", str(e), "extraer")
+    c("  y lo de antes sigue en su sitio",
+      (hecho / "usr" / "bin" / "keepassxc").read_bytes(), b"ELF " + OTRO)
+    falla_extraer["sin_programa"] = False
 finally:
     keepassxc.cache_equipo, keepassxc.extraer_appimage, store.procesos_desde = reales_extraer
     pins.KEEPASSXC_EJECUTABLES = PIN_REAL
@@ -578,13 +589,16 @@ try:
         os.environ["APPIMAGE"] = "/tmp/otro.AppImage"
         hecho, dicho = abrir(config())
         orden, entorno = eq.lanzadas[-1]
-        apprun = cache / pins.KEEPASSXC_VERSION / keepassxc.EXTRAIDO / keepassxc.APPRUN
+        raiz_extraida = cache / pins.KEEPASSXC_VERSION / keepassxc.EXTRAIDO
+        programa = raiz_extraida / keepassxc.PROGRAMA_LINUX
         donde = keepassxc.carpeta_config("linux-x64")
-        c("se abre con el AppRun de lo extraído, su configuración de Linux y la base",
+        c("se abre con usr/bin/keepassxc de lo extraído (no el AppRun), su configuración y la base",
           (hecho, dicho, orden),
-          (True, [], [str(apprun), "--config", str(donde / keepassxc.INI),
+          (True, [], [str(programa), "--config", str(donde / keepassxc.INI),
                       "--localconfig", str(donde / keepassxc.INI_LOCAL), str(base)]))
-        proxy = apprun.parent / keepassxc.PROXY_LINUX
+        proxy = raiz_extraida / keepassxc.PROXY_LINUX
+        c("  y antes de lanzar quedan creados los dos ficheros de configuración",
+          [(donde / n).is_file() for n in (keepassxc.INI, keepassxc.INI_LOCAL)], [True, True])
         if keepassxc.forma_ini(proxy) is not None:
             c("  la configuración, con el proxy de lo extraído",
               f"CustomProxyLocation={proxy}" in (donde / keepassxc.INI).read_text(
@@ -595,7 +609,7 @@ try:
           ("APPIMAGE" in entorno, entorno["KPXC_INITIAL_DIR"]), (False, str(root)))
         c("  el navegador, con su manifiesto", leer(
             casa / ".mozilla" / "native-messaging-hosts" / f"{keepassxc.HOST_NATIVO}.json"),
-          keepassxc.manifiesto(apprun.parent / keepassxc.PROXY_LINUX, True))
+          keepassxc.manifiesto(raiz_extraida / keepassxc.PROXY_LINUX, True))
         c("  y sin tocar el registro", escritas, [])
         os.environ.pop("APPIMAGE")
 
@@ -604,14 +618,14 @@ try:
         ini.write_text("[General]\nUseAtomicSaves=false\n", encoding="utf-8")
         c("ya abierto: se lanza para traerlo delante, sin tocar su configuración",
           (abrir(config()), eq.lanzadas[-1][0][0], ini.read_text(encoding="utf-8")),
-          ((True, []), str(apprun), "[General]\nUseAtomicSaves=false\n"))
+          ((True, []), str(programa), "[General]\nUseAtomicSaves=false\n"))
         eq.nuestro = False
 
         eq.codigo = 1
         hecho, dicho = abrir(config())
         c("si se cae al abrirse, se dice que se lance desde una terminal",
           (hecho, len(dicho)), (False, 1))
-        c.contains("  con lo que se lanzó", dicho[0] if dicho else "", str(apprun))
+        c.contains("  con lo que se lanzó", dicho[0] if dicho else "", str(programa))
         eq.codigo = None
 
         # Linux ARM64: el del equipo

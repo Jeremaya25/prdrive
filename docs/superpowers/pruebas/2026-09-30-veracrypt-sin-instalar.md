@@ -114,6 +114,16 @@ AES, SHA-512, PIM 0) y otro creado en Linux con el AppImage (AI2).
 | K2 | W | Una unidad de antes de #50 (`VeraCrypt\VeraCrypt.exe` sin sello). | Sale como pendiente con «Añadir plataformas…», sin botón; no se toca. | `components.actualizables()` |
 | K3 | W | Un equipo con la raíz cifrada ya abierta con el instalado; actualizar el agente con `--update-agente`. | No se lleva VeraCrypt propio (hay instalado); `instalacion.json` sin `"veracrypt"`. | `quiere_veracrypt()` |
 
+## 6. Lo que queda de #41
+
+Tres comprobaciones con un pendrive y un Windows de verdad. No bloquean nada. La fila F34 de la nube (`tests/maquina/f34_veracrypt_enchufe_windows.py`, VeraCrypt instalado, contenedor en un VHD exFAT) cubre la frontera con el sistema, pero un VHD no es un pendrive: un `ok` no cierra D1 ni D3.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| D1 | W | VeraCrypt **instalado**, abierto en la bandeja, y un pendrive de verdad con el contenedor montado: desenchufarlo sin expulsar. | Se apunta si VeraCrypt desmonta y si enseña el globo. No cambia el código: prdrive no deja VeraCrypt en segundo plano ni toca su configuración (`veracrypt.md`). | F34 (caso A) · nube: ok (F34) |
+| D2 | W | Con el VeraCrypt que viaja, tapar a propósito el aviso de UAC de «Abrir PRDRIVE» y de «Expulsar PRDRIVE» con otras ventanas. | A ≈1 minuto sale una sola vez «VeraCrypt sigue esperando una respuesta…» con dónde buscarlo; contestar después sigue funcionando (monta o desmonta). «Abrir» conserva sus 10 minutos y `:sin_respuesta`; «Expulsar» no se rinde. | `AVISO_PENDIENTE`, `:aviso_oculta` |
+| D3 | W | Con el agente en marcha: desenchufar sin expulsar y volver a enchufar. | Un solo aviso de fantasma, ninguna pasada, no pide la contraseña. Tras «Expulsar PRDRIVE» y «Abrir PRDRIVE» vuelve a la normalidad. | `Agente._fantasmas_extraibles()`, F34 (caso B) · nube: ok (F34) |
+
 ## Lo que este plan no cubre
 
 - Una cuenta sin administrador en Windows **no puede** usar VeraCrypt sin

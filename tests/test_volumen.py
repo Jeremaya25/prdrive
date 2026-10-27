@@ -207,6 +207,26 @@ c.contains("al guardar con nombre se dice cuándo llega a «Dispositivos…»",
            volumen.mensaje_guardado(sin_estado, "Pendrive de Pere"), "«Dispositivos…»")
 c("y sin nombre no, que ahí no cambia nada",
   "Dispositivos" in volumen.mensaje_guardado(sin_estado, ""), False)
+c.contains("con nombre e icono de prdrive se dice de los dos",
+           volumen.mensaje_guardado(sin_estado, "Pendrive de Pere", "verde"),
+           "el nombre y el icono nuevos llegarán")
+c.contains("quitado el nombre, con un icono de prdrive solo habla del icono",
+           volumen.mensaje_guardado(sin_estado, "", "propio"), "el icono nuevo llegará")
+c("quitado el nombre y con un icono ajeno no promete nada",
+  "Dispositivos" in volumen.mensaje_guardado(sin_estado, "", volumen.OTRO), False)
+c("ni sin icono", "Dispositivos" in volumen.mensaje_guardado(sin_estado, "", volumen.NINGUNO),
+  False)
+
+# Las claves de la marca son las mismas en los tres sitios y en el mismo orden.
+c("icons.CAMPOS, autorun.CLAVES_MARCA y volumen.MARCAS llevan las mismas claves",
+  tuple(icons.CAMPOS) == autorun.CLAVES_MARCA == tuple(m.clave for m in volumen.MARCAS), True)
+c("y la clave del .ico propio es la de autorun", volumen.PROPIO, autorun.CLAVE_PROPIA)
+c("autorun reconoce lo mismo que clave_de()",
+  [(autorun.clave_icono(i, ".prdrive"), volumen.clave_de(i, ".prdrive")) for i in
+   (".prdrive\\\\icono-verde.ico", ".prdrive\\\\icono-propio-0123abcd.ico",
+    ".prdrive-icono-azul.ico", "VeraCrypt\\\\VeraCrypt.exe", "otra\\\\icono-verde.ico", "")],
+  [("verde", "verde"), ("propio", "propio"), ("azul", "azul"), ("", "otro"),
+   ("", "otro"), ("", "ninguno")])
 
 sueltos = tmpdir("prdrive-ico-")
 bueno = sueltos / "bueno.ico"
@@ -599,7 +619,7 @@ def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
 
 
 tk_volumen.mostrar = mirar_etiquetas
-tk_volumen.open_dialog(tk_raiz)
+c("cerrarla sin guardar no dice que haya cambiado nada", tk_volumen.open_dialog(tk_raiz), False)
 c("la ventana dice que el nombre es también el del dispositivo, y cuál es ahora",
   any("«Dispositivos…»" in t and "«el pendrive azul»" in t for t in etiquetas), True)
 
@@ -613,17 +633,19 @@ c("con VeraCrypt dice que el pendrive conserva lo suyo, y que se ve al abrirla",
       and "abras" in t for t in etiquetas), True)
 
 tk_volumen.mostrar = rellenar_y_pulsar("Pendrive de Pere", "morado")
-tk_volumen.open_dialog(tk_raiz)
+guardado = tk_volumen.open_dialog(tk_raiz)
 c("«Guardar» guarda lo que dice el formulario", llamadas,
   [("PRDRIVE", "Pendrive de Pere", "morado", None)])
 c("y lo confirma", avisos, ["info"])
+c("  y dice que ha cambiado: la principal relee su título y su icono", guardado, True)
 
 llamadas.clear()
 avisos.clear()
 tk_volumen.mostrar = rellenar_y_pulsar("uno\tdos", "verde")
-tk_volumen.open_dialog(tk_raiz)
+guardado = tk_volumen.open_dialog(tk_raiz)
 c("un nombre que no vale ni llega a guardarse", llamadas, [])
 c("y se dice por qué", len(avisos) == 1 and "control" in avisos[0], True)
+c("  ni dice que haya cambiado", guardado, False)
 
 llamadas.clear()
 tk_volumen.mostrar = rellenar_y_pulsar("Pendrive de Pere", "verde", "Cancelar")

@@ -242,7 +242,7 @@ c("expulsar: mientras VeraCrypt siga con lo suyo, espera sin gastar intentos",
   (despues(esperar, "call :vc_pendiente"),
    "call :vc_pendiente" in esperar
    and esperar.index("call :vc_pendiente") < esperar.index("set /a INTENTOS+=1")),
-  ("if not errorlevel 1 goto esperar_vc", True))
+  ("if not errorlevel 1 goto esperar_pendiente", True))
 c("expulsar: y esperar sin contar vuelve a mirar la letra",
   bloque(expulsar, "esperar_vc")[:2], ["timeout /t 1 /nobreak >nul", "goto esperar"])
 c("expulsar: con uno de antes vivo, no se puede saber cuál es el suyo: se cuenta",
@@ -286,9 +286,10 @@ c("abrir: esa espera cuenta aparte, y no es la de los intentos",
    'set "PENDIENTE=0"' in abrir.splitlines()),
   (["set /a PENDIENTE+=1",
     "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta"], True))
+LLAMADA_AVISO_ABRIR = "if %PENDIENTE% equ %AVISO_PENDIENTE% call :aviso_oculta"
 c("abrir: y sigue por la misma espera de un segundo (mira la unidad otra vez)",
   despues(abrir.splitlines(),
-          "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta"), ":esperar_vc")
+          "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta"), LLAMADA_AVISO_ABRIR)
 c("abrir: la espera que sí cuenta no pasa por el contador de la que no",
   despues(esperar_abrir, "if %INTENTOS% geq %ESPERA% goto no_abierto"),
   "goto esperar_vc")
@@ -299,9 +300,37 @@ c.contains("  y dónde buscarla", sin_respuesta, "Alt+Tab")
 c.contains("  y qué hacer cuando se abra", sin_respuesta, vestibulo.NOMBRE_ABRIR)
 c("  y sale con error tras pausar, como las otras salidas",
   [ln for ln in bloque(abrir, "sin_respuesta") if ln][-2:], ["pause", "exit /b 1"])
-c("el tope de «Abrir» no toca a «Expulsar»: ni su contador ni su aviso",
-  ("PENDIENTE" in expulsar.replace("vc_pendiente", ""), "sin_respuesta" in expulsar),
-  (False, False))
+c("el tope de «Abrir» no toca a «Expulsar»: ni `ESPERA_PENDIENTE` ni `:sin_respuesta`",
+  ("ESPERA_PENDIENTE" in expulsar, "sin_respuesta" in expulsar), (False, False))
+
+# El aviso de ≈1 min (#41): la ventana de VeraCrypt o su aviso de UAC pueden haber
+# quedado detrás de otras. Se dice una vez, en las dos esperas, y la espera sigue;
+# «Expulsar» no tiene tope ni va a `:sin_respuesta`.
+c("el aviso: la constante son 60 vueltas, y las dos esperas la llevan con `set`",
+  (vestibulo.AVISO_PENDIENTE,
+   f'set "AVISO_PENDIENTE={vestibulo.AVISO_PENDIENTE}"' in abrir.splitlines(),
+   f'set "AVISO_PENDIENTE={vestibulo.AVISO_PENDIENTE}"' in expulsar.splitlines()),
+  (60, True, True))
+LLAMADA_AVISO = "if %PENDIENTE% equ %AVISO_PENDIENTE% call :aviso_oculta"
+for nombre, texto in (("abrir", abrir), ("expulsar", expulsar)):
+    c(f"{nombre}: el aviso se llama solo desde la rama de `:vc_pendiente`",
+      ([ln for ln in texto.splitlines() if "aviso_oculta" in ln
+        and not ln.startswith(":")], bloque(texto, "esperar_pendiente")[:2]),
+      ([LLAMADA_AVISO], ["set /a PENDIENTE+=1", LLAMADA_AVISO] if nombre == "expulsar" else
+       ["set /a PENDIENTE+=1", "if %PENDIENTE% geq %ESPERA_PENDIENTE% goto sin_respuesta"]))
+    c(f"{nombre}: la subrutina existe una vez, y es la misma en los dos",
+      (texto.count("\n:aviso_oculta\n"),
+       bloque(texto, "aviso_oculta") == bloque(abrir, "aviso_oculta")), (1, True))
+    c(f"{nombre}: el aviso dice dónde buscar y sigue esperando (vuelve con exit /b 0)",
+      ("Alt+Tab" in "\n".join(bloque(texto, "aviso_oculta")),
+       [ln for ln in bloque(texto, "aviso_oculta") if ln][-1]), (True, "exit /b 0"))
+c("expulsar: su contador `PENDIENTE` va aparte y empieza en 0",
+  ('set "PENDIENTE=0"' in expulsar.splitlines(),
+   despues(bloque(expulsar, "esperar_pendiente"), "set /a PENDIENTE+=1")),
+  (True, LLAMADA_AVISO))
+c("expulsar: la rama que cuenta no pasa por el tope de intentos",
+  despues(bloque(expulsar, "esperar"), "if %INTENTOS% geq 30 goto sigue_abierto"),
+  "goto esperar_vc")
 c("abrir: `:vc_pendiente` es la misma subrutina que la de expulsar",
   (bool(bloque(abrir, "vc_pendiente")),
    bloque(abrir, "vc_pendiente") == bloque(expulsar, "vc_pendiente")), (True, True))
@@ -422,6 +451,55 @@ if IS_WIN:
         finally:
             proc.kill()
             proc.wait()
+
+        # El bucle de espera de «Expulsar», tal cual sale del texto, con el aviso
+        # a 2 vueltas: sale una vez mientras el falso vive y la espera acaba
+        # cuando muere. `:buscar` siempre ve la letra; los 28 intentos de salida
+        # hacen que el fin sea `:sigue_abierto` y no tarde 30 s.
+        ini = expulsar.index("\n:esperar\n")
+        fin = expulsar.index("\n:sin_letra\n")
+        bucle = expulsar[ini:fin]
+
+        def espera_de_expulsar(falso_vivo):
+            """Devuelve la salida del bucle de «Expulsar» con o sin un falso vivo."""
+            lanzado = None
+            if falso_vivo:
+                lanzado = subprocess.Popen([str(falso), "-n", "6", "127.0.0.1"],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                for _ in range(50):
+                    if vivos():
+                        break
+                    time.sleep(0.1)
+            script = prueba / "espera.bat"
+            script.write_text(
+                "@echo off\r\nset \"VC_IMAGEN=VeraCrypt.exe\"\r\n"
+                "set \"AVISO_PENDIENTE=2\"\r\nset \"INTENTOS=28\"\r\n"
+                "set \"PENDIENTE=0\"\r\nset \"RAIZ=X:\"\r\ngoto esperar\r\n"
+                + bucle.replace("\n", "\r\n") + "\r\n"
+                ":buscar\r\nset \"RAIZ=X:\"\r\nexit /b 0\r\n"
+                ":sigue_abierto\r\necho FIN\r\nexit /b 0\r\n"
+                + "\r\n".join(["", ":vc_pendiente",
+                               *bloque(expulsar, "vc_pendiente")])
+                + "\r\n:aviso_oculta\r\necho AVISO\r\nexit /b 0\r\n",
+                encoding="utf-8")
+            try:
+                r = subprocess.run(["cmd", "/c", str(script)], capture_output=True,
+                                   text=True, timeout=60)
+                # Solo las marcas del script: `tasklist` puede quejarse de su
+                # entrada redirigida en una máquina sin consola.
+                return [t for t in (r.stdout + r.stderr).split() if t in ("AVISO", "FIN")]
+            except subprocess.TimeoutExpired:
+                return ["no ha terminado en 60 s"]
+            finally:
+                if lanzado:
+                    lanzado.kill()
+                    lanzado.wait()
+
+        c("expulsar, con el falso vivo: el aviso sale una vez y la espera acaba",
+          espera_de_expulsar(True).count("AVISO"), 1)
+        c("expulsar, sin VeraCrypt vivo: no hay aviso y acaba",
+          espera_de_expulsar(False), ["FIN"])
 
 # 3. escribirlo
 fisica = tmpdir("prdrive-fisica-")

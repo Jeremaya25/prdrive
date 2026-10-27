@@ -29,9 +29,11 @@ ni un x64 el de ARM). Cada componente deja escrito de dónde salió:
 - `keepassxc/<paquete>/PRDRIVE-KEEPASSXC`: lo escribe
   `install/keepassxc_bin.py` el último, con la versión y el SHA-256 de cada
   fichero. Dice de dónde salió el paquete, no que sus ficheros sigan siendo
-  esos: eso lo comprueba `keepassxc.comprobar()` al lanzar, y lo que encuentra
-  lo deja en `state/keepassxc-no-oficial.json` (`keepassxc_alterado()`) para
-  que esta ventana ofrezca «Actualizar…» sin resumir nada.
+  esos: eso lo comprueba `keepassxc.comprobar()` al lanzar (con la forma del
+  árbol oficial, `keepassxc_arbol_no_cuadra()`, y la suma del ejecutable), y lo
+  que encuentra lo deja en `state/keepassxc-no-oficial.json`
+  (`keepassxc_alterado()`) para que esta ventana ofrezca «Actualizar…» sin
+  resumir nada.
 
 Un dispositivo aprovisionado antes de los sellos no tiene el de rclone: se lee
 como «no consta» y eso CUENTA como pendiente, que es la única respuesta
@@ -51,6 +53,10 @@ instalador escriba donde el dispositivo lee.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +120,34 @@ el fijado, lo deja aquí: `{paquete: {"version": …, "fichero": …}}`. Lo lee
 ofrecer el «Actualizar…» de siempre. Lo borra `keepassxc_bin.instalar()` al
 reponer el paquete, o al ver que sus ficheros ya cuadran.
 """
+
+KEEPASSXC_ARBOL = Path(__file__).resolve().parent / "keepassxc_arbol.json"
+"""La tabla fijada de TODOS los ficheros de cada paquete de KeePassXC que se lanza desde la unidad.
+
+`{versión: {paquete: {ruta relativa con "/": [tamaño, sha256]}}}`, de cada
+fichero del ZIP oficial sin su carpeta de arriba (`keepassxc_bin.miembros()`).
+La escribe `generar_arbol_keepassxc.py`, que añade la versión fijada sin quitar
+las otras. Va en `common/`, así que viaja con el código y entra en la huella del
+agente. La lee `keepassxc_arbol()`; la usa `keepassxc_arbol_no_cuadra()`.
+"""
+KEEPASSXC_CONFIG_PAQUETE = "config"
+"""La carpeta del paquete de Windows donde KeePassXC (y prdrive) dejan los JSON del navegador.
+
+Un fichero normal directamente en ella se admite aunque no esté en el árbol:
+los JSON de mensajería nativa y los `.ini` que la CLI portátil deja ahí (H-3).
+Ni el cargador de Windows ni Qt cargan código de esa carpeta. Lo que haya más
+adentro (`config/sub/…`) no se admite.
+"""
+KEEPASSXC_RESUMIR_HASTA = 4096  # bytes
+"""Hasta qué tamaño se resume, además de medirse, un fichero del árbol de KeePassXC.
+
+Es donde cabe una instrucción: el `qt.conf` del ZIP oficial (44 bytes) dice a
+Qt de dónde cargar los plugins, y otro del mismo tamaño podría mandarlo a otra
+carpeta. Resumir lo que no pasa de 4 KiB no cuesta nada (en 2.7.12, tres
+ficheros).
+"""
+_ARBOLES: dict | None = None
+"""`KEEPASSXC_ARBOL` ya leído en este proceso (`keepassxc_arbol()`); `None`, sin leer."""
 
 RCLONE = "rclone"
 PYTHON = "python"
@@ -271,6 +305,161 @@ def keepassxc_ficheros(texto: str) -> dict[str, str]:
     return salida
 
 
+def keepassxc_usa_arbol(paquete: str) -> bool:
+    """Indica si de ese paquete se comprueba el árbol entero (`keepassxc_arbol_no_cuadra()`).
+
+    Es todo paquete que se ejecuta desde la unidad: el de Windows. El AppImage
+    de Linux es un solo fichero que se copia y se comprueba entero en el equipo.
+    """
+    return keepassxc_programa(paquete) != KEEPASSXC_APPIMAGE
+
+
+def _leer_arboles() -> dict:
+    """Devuelve `KEEPASSXC_ARBOL` leído, o `{}` si no se puede leer o no se entiende."""
+    try:
+        datos = json.loads(KEEPASSXC_ARBOL.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def keepassxc_arbol(version: str, paquete: str) -> dict[str, tuple[int, str]] | None:
+    """Devuelve el árbol oficial de ese paquete de KeePassXC: `{ruta: (tamaño, sha256)}`.
+
+    Lee `KEEPASSXC_ARBOL` una vez por proceso. Es de módulo para que los tests
+    la sustituyan por un árbol de mentira.
+
+    Returns:
+        El árbol, con las rutas relativas con `/`; `None` si la tabla no tiene
+        esa versión y paquete o si su fila no se entiende entera (una ruta que
+        se sale de la carpeta, un tamaño o una suma mal escritos): lo que no se
+        sabe no se da por bueno.
+    """
+    global _ARBOLES
+    if _ARBOLES is None:
+        _ARBOLES = _leer_arboles()
+    fila = _ARBOLES.get(version, {})
+    fila = fila.get(paquete) if isinstance(fila, dict) else None
+    if not isinstance(fila, dict) or not fila:
+        return None
+    arbol: dict[str, tuple[int, str]] = {}
+    for ruta, valor in fila.items():
+        if not (isinstance(ruta, str) and ruta_relativa_segura(ruta)
+                and isinstance(valor, list) and len(valor) == 2):
+            return None
+        tamano, suma = valor
+        if (not isinstance(tamano, int) or isinstance(tamano, bool) or tamano < 0
+                or not isinstance(suma, str) or len(suma) != 64
+                or any(ch not in "0123456789abcdef" for ch in suma)):
+            return None
+        arbol[ruta] = (tamano, suma)
+    return arbol
+
+
+REPARSE_POINT = 0x400
+"""`FILE_ATTRIBUTE_REPARSE_POINT`: un enlace, una unión u otro punto de reanálisis de Windows."""
+
+
+def _es_enlace(entrada: os.DirEntry) -> bool:
+    """Indica si esa entrada es un enlace simbólico, una unión o cualquier punto de reanálisis.
+
+    Raises:
+        OSError: Si no se puede mirar.
+    """
+    if entrada.is_symlink():
+        return True
+    es_union = getattr(entrada, "is_junction", None)  # Python 3.12+
+    if es_union is not None and es_union():
+        return True
+    info = entrada.stat(follow_symlinks=False)
+    return bool(getattr(info, "st_file_attributes", 0) & REPARSE_POINT)
+
+
+def keepassxc_arbol_no_cuadra(carpeta: Path | str,
+                              arbol: dict[str, tuple[int, str]]) -> tuple[str, str] | None:
+    """Mira que la carpeta de un paquete tenga la forma del árbol oficial, sin resumir nada.
+
+    Recorre la carpeta entera con `os.scandir`, sin seguir enlaces, y compara
+    cada fichero con `arbol` (rutas con `casefold()`: Windows no distingue
+    mayúsculas). No cuadra si hay un fichero que no está en el árbol, si falta
+    uno, si uno tiene otro tamaño, si hay un enlace simbólico, una unión o algo
+    que no es un fichero ni una carpeta, o si la carpeta no se puede leer. Se
+    admiten fuera del árbol el sello (`KEEPASSXC_STAMP`) y cualquier fichero
+    normal directamente en `KEEPASSXC_CONFIG_PAQUETE`. Una carpeta vacía que no
+    es del árbol no cuenta: no lleva nada que cargar. Un fichero del árbol de
+    hasta `KEEPASSXC_RESUMIR_HASTA` se resume (el `.portable`, los `.qm` vacíos); de los demás solo
+    se mira el tamaño, así que uno cambiado en su sitio con el mismo tamaño no
+    se ve aquí (de los ejecutables lo ve su suma, en `keepassxc.comprobar()`).
+
+    Lista unos 131 ficheros y resume unos bytes: milisegundos, y vale para la
+    ventana en segundo plano y para el instalador.
+
+    Args:
+        carpeta: La carpeta del paquete (`keepassxc_dir()`).
+        arbol: Lo que dio `keepassxc_arbol()`.
+
+    Returns:
+        `(ruta relativa con "/", motivo en español)` del primer fichero que no
+        cuadra, en un orden estable; `None` si todo cuadra.
+    """
+    esperados = {ruta.casefold(): (ruta, tamano, suma) for ruta, (tamano, suma) in arbol.items()}
+    sello = KEEPASSXC_STAMP.casefold()
+    config = KEEPASSXC_CONFIG_PAQUETE.casefold()
+    try:
+        info = os.lstat(carpeta)
+    except OSError as e:
+        return ".", f"no se ha podido leer la carpeta ({e})"
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & REPARSE_POINT):
+        return ".", "la carpeta del paquete es un enlace o no es una carpeta"
+    vistos: set[str] = set()
+    pendientes = [("", os.fspath(carpeta))]
+    while pendientes:
+        rel_dir, ruta_dir = pendientes.pop(0)
+        try:
+            with os.scandir(ruta_dir) as it:
+                entradas = sorted(it, key=lambda e: e.name)
+        except OSError as e:
+            return rel_dir or ".", f"no se ha podido leer la carpeta ({e})"
+        for entrada in entradas:
+            rel = f"{rel_dir}/{entrada.name}" if rel_dir else entrada.name
+            clave = rel.casefold()
+            try:
+                if _es_enlace(entrada):
+                    return rel, "es un enlace, y el paquete oficial no trae ninguno"
+                if entrada.is_dir(follow_symlinks=False):
+                    pendientes.append((rel, entrada.path))
+                    continue
+                normal = entrada.is_file(follow_symlinks=False)
+                tamano = entrada.stat(follow_symlinks=False).st_size
+            except OSError as e:
+                return rel, f"no se ha podido leer ({e})"
+            if not normal:
+                return rel, "no es un fichero normal"
+            if clave in vistos:
+                return rel, "está repetido con otras mayúsculas"
+            vistos.add(clave)
+            if clave in esperados:
+                _, oficial, suma = esperados[clave]
+                if tamano != oficial:
+                    return rel, f"tiene otro tamaño ({tamano} bytes; el oficial, {oficial})"
+                if tamano <= KEEPASSXC_RESUMIR_HASTA:
+                    try:
+                        with open(entrada.path, "rb") as f:
+                            leido = f.read(KEEPASSXC_RESUMIR_HASTA + 1)
+                    except OSError as e:
+                        return rel, f"no se ha podido leer ({e})"
+                    if hashlib.sha256(leido).hexdigest() != suma:
+                        return rel, "no es el del paquete oficial"
+                continue
+            if (not rel_dir and clave == sello) or rel_dir.casefold() == config:
+                continue
+            return rel, "no es del paquete oficial"
+    for clave in sorted(set(esperados) - vistos):
+        return esperados[clave][0], "falta"
+    return None
+
+
 def keepassxc_sello(app_dir: Path | str | None, paquete: str) -> dict[str, str]:
     """Devuelve el sello de ese KeePassXC como diccionario; vacío si no hay."""
     return leer_sello(_texto(keepassxc_dir(app_dir, paquete) / KEEPASSXC_STAMP))
@@ -323,7 +512,7 @@ def keepassxc_anotar_alterado(app_dir: Path | str | None, paquete: str, version:
 
     Args:
         version: La que decía el sello; si cambia, el apunte deja de contar.
-        fichero: Su nombre dentro de la carpeta del paquete.
+        fichero: Su ruta dentro de la carpeta del paquete, con `/`.
     """
     ruta = _estado(app_dir) / KEEPASSXC_NO_OFICIAL
     datos = store.read_json(ruta)

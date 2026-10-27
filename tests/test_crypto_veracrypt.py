@@ -809,4 +809,36 @@ finally:
     for nombre, funcion in sondas.items():
         setattr(crypto, nombre, funcion)
 
+# El aviso de UAC tapado (#41): los tres mensajes de `working()` que hablan del
+# aviso de permisos o lo provocan llevan la misma frase fija, que vive en
+# `install/crypto.py` (sin Tk). Los `tk_*` no se pueden ejecutar sin pantalla, así
+# que se mira qué `working()` la llevan: la llamada entera, hasta su paréntesis.
+from _harness import REPO as _REPO
+
+
+def llamadas_working(fichero):
+    """Devuelve el texto de cada llamada `working(` de `ui/<fichero>`."""
+    texto = (_REPO / "ui" / fichero).read_text(encoding="utf-8")
+    llamadas = []
+    for trozo in texto.split("working(")[1:]:
+        nivel, fin = 1, 0
+        for i, ch in enumerate(trozo):
+            nivel += (ch == "(") - (ch == ")")
+            if nivel == 0:
+                fin = i
+                break
+        llamadas.append(trozo[:fin])
+    return llamadas
+
+
+c.contains("la frase dice dónde buscar el aviso", crypto.AVISO_UAC_TAPADO,
+           "barra de tareas")
+c("tk_crypto: montar y crear llevan la frase",
+  [("AVISO_UAC_TAPADO" in ll) for ll in llamadas_working("tk_crypto.py")
+   if '"montando el contenedor"' in ll or '"creando el contenedor"' in ll],
+  [True, True])
+c("tk_equipo: abrir o crear el contenedor del equipo lleva la frase",
+  [("AVISO_UAC_TAPADO" in ll) for ll in llamadas_working("tk_equipo.py")
+   if '"el contenedor"' in ll], [True])
+
 raise SystemExit(c.report())

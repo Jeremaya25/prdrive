@@ -11,7 +11,12 @@ la bandeja (una cola). Así se comprueba, sin Windows:
   Explorador se reinicia.
 - El menú: lo elegido son peticiones al agente; lo apagado no pide nada.
 - `WM_DEVICECHANGE` despierta el recorrido; la vuelta de la suspensión pide
-  `despertar`. Los avisos de extracción de un handle (el de la carpeta de una
+  `despertar`.
+- La sesión (#178): la ventana se registra para oírla (y lo reintenta con un
+  temporizador si falla; `oye_sesion`), se da de baja al destruirse; el
+  bloqueo y el desbloqueo de la sesión y la suspensión piden su evento;
+  `WM_QUERYENDSESSION` no veta nada y `WM_ENDSESSION` llama a `fin_de_sesion`,
+  sin que un fallo suyo se propague. Los avisos de extracción de un handle (el de la carpeta de una
   pareja vigilada) van a `dispositivo()` antes de que la ventana conteste.
 - Los avisos cuelgan del icono (`NIF_INFO`) y `avisos` los manda por ahí.
 - Al cerrar se quita el icono, se sueltan los iconos y acaba el hilo.
@@ -48,9 +53,18 @@ class ApiFalsa:
         soltados: Los iconos soltados.
         fin: Se activa al acabar el bucle.
     """
-    def __init__(self, barra: bool = True):
-        """Prepara la `Api` de mentira, con o sin barra de tareas."""
+    def __init__(self, barra: bool = True, sesion: int = 1):
+        """Prepara la `Api` de mentira, con o sin barra de tareas.
+
+        Args:
+            barra: Si existe ya la barra de tareas.
+            sesion: En qué intento sale bien `registrar_sesion()` (0: nunca).
+        """
         self.barra = barra
+        self.sesion = sesion
+        self.intentos_sesion = 0
+        self.oida: set = set()
+        self.temporizadores: dict[int, int] = {}
         self.cola: queue.Queue = queue.Queue()
         self.llamadas: list = []
         self.manejar = None
@@ -71,6 +85,26 @@ class ApiFalsa:
     def soltar_atajo(self, hwnd, ident):
         """Quita un atajo registrado."""
         self.registrados.pop(ident, None)
+
+    def registrar_sesion(self, hwnd):
+        """Registra la ventana para oír la sesión, si toca que salga bien en este intento."""
+        self.intentos_sesion += 1
+        if self.sesion and self.intentos_sesion >= self.sesion:
+            self.oida.add(hwnd)
+            return True
+        return False
+
+    def soltar_sesion(self, hwnd):
+        """Da de baja la ventana."""
+        self.oida.discard(hwnd)
+
+    def temporizador(self, hwnd, ident, ms):
+        """Apunta un temporizador puesto."""
+        self.temporizadores[ident] = ms
+
+    def parar_temporizador(self, hwnd, ident):
+        """Quita un temporizador."""
+        self.temporizadores.pop(ident, None)
 
     def mensaje_registrado(self, nombre):
         """Devuelve el id de `TaskbarCreated`, o 0 para otro nombre."""
@@ -283,6 +317,41 @@ c("un volumen que llega con las letras de una unidad que sigue (el medio que vue
 api.enviar(bw.WM_POWERBROADCAST, bw.PBT_APMRESUMEAUTOMATIC, 0)
 c("la vuelta de la suspensión pide «despertar»",
   esperar(lambda: PEDIDAS[-1] == {"pide": equipo.PIDE_DESPERTAR}), True)
+
+# la sesión de Windows (#178)
+c("la ventana se registra para oír la sesión", (b.oye_sesion, api.oida), (True, {777}))
+SESION = {"pide": equipo.PIDE_SESION}
+api.enviar(bw.WM_WTSSESSION_CHANGE, bw.WTS_SESSION_LOCK, 0)
+c("bloquear la sesión (WTS_SESSION_LOCK) pide el evento «bloqueo»",
+  esperar(lambda: PEDIDAS[-1] == {**SESION, "evento": equipo.EVENTO_BLOQUEO}), True)
+api.enviar(bw.WM_WTSSESSION_CHANGE, bw.WTS_SESSION_UNLOCK, 0)
+c("  y desbloquearla (WTS_SESSION_UNLOCK), «desbloqueo»",
+  esperar(lambda: PEDIDAS[-1] == {**SESION, "evento": equipo.EVENTO_DESBLOQUEO}), True)
+antes = len(PEDIDAS)
+api.enviar(bw.WM_WTSSESSION_CHANGE, 0x1, 0)       # WTS_CONSOLE_CONNECT: fuera de alcance
+api.enviar(bw.WM_NULL, 0, 0)
+c("  otro cambio de la sesión no pide nada", esperar(lambda: api.cola.empty())
+  and len(PEDIDAS), antes)
+c("  y la ventana deja contestar a Windows",
+  b._mensaje(777, bw.WM_WTSSESSION_CHANGE, bw.WTS_SESSION_LOCK, 0), None)
+api.enviar(bw.WM_POWERBROADCAST, bw.PBT_APMSUSPEND, 0)
+c("el equipo se va a suspender (PBT_APMSUSPEND): pide «suspension»",
+  esperar(lambda: PEDIDAS[-1] == {**SESION, "evento": equipo.EVENTO_SUSPENSION}), True)
+c("  y contesta enseguida lo de Windows (TRUE), sin esperar a nadie",
+  b._mensaje(777, bw.WM_POWERBROADCAST, bw.PBT_APMSUSPEND, 0), None)
+c("¿se puede cerrar la sesión? (WM_QUERYENDSESSION): no se veta ni se retrasa",
+  b._mensaje(777, bw.WM_QUERYENDSESSION, 0, 0), None)
+FINES: list = []
+c("sin quien atienda el fin de la sesión, WM_ENDSESSION contesta igual",
+  b._mensaje(777, bw.WM_ENDSESSION, 1, 0), 0)
+b.fin_de_sesion = lambda: FINES.append(1)
+c("se cierra la sesión (WM_ENDSESSION con TRUE): llama a fin_de_sesion y contesta 0",
+  (b._mensaje(777, bw.WM_ENDSESSION, 1, 0), FINES), (0, [1]))
+c("  si al final no se cierra (FALSE), no", (b._mensaje(777, bw.WM_ENDSESSION, 0, 0), FINES),
+  (0, [1]))
+b.fin_de_sesion = lambda: 1 / 0
+c("  y un fallo suyo no se propaga", b._mensaje(777, bw.WM_ENDSESSION, 1, 0), 0)
+b.fin_de_sesion = None
 antes = len([a for a, _ in api.llamadas if a == bw.NIM_ADD])
 api.enviar(TASKBAR)
 c("TaskbarCreated (el Explorador reiniciado) vuelve a poner el icono",
@@ -332,6 +401,7 @@ esperar(lambda: len(PUESTOS) == 4)
 # cerrar
 b.cerrar()
 c("al cerrar se sueltan los atajos", api.registrados, {})
+c("  y la ventana se da de baja de la sesión", (api.oida, b.oye_sesion), (set(), False))
 c("al cerrar se quita el icono", esperar(lambda: api.llamadas[-1][0] == bw.NIM_DELETE), True)
 c("  se sueltan los iconos cargados", sorted(api.soltados),
   ["H:bandeja-bien.ico", "H:bandeja-pausa.ico"])
@@ -349,6 +419,38 @@ api.barra = True
 api.enviar(TASKBAR)
 c("  al llegar TaskbarCreated se pone el icono", esperar(lambda: b.puesta), True)
 b.cerrar()
+
+# la sesión al iniciarla: el servicio de sesiones aún no está listo
+api = ApiFalsa(sesion=3)
+b = bw.Bandeja(CARPETA, PEDIDAS.append, lambda: None, api=api)
+b.arrancar()
+c("si el registro de la sesión falla al arrancar, no la oye todavía y pone un temporizador",
+  (b.oye_sesion, api.temporizadores), (False, {bw.ID_TEMPORIZADOR_SESION:
+                                               bw.CADA_REINTENTO_SESION}))
+api.enviar(bw.WM_TIMER, bw.ID_TEMPORIZADOR_SESION, 0)
+api.enviar(bw.WM_TIMER, 99, 0)                  # otro temporizador: no es el suyo
+c("  el temporizador lo reintenta (el de otro no)",
+  (esperar(lambda: api.intentos_sesion == 2), b.oye_sesion), (True, False))
+api.enviar(bw.WM_TIMER, bw.ID_TEMPORIZADOR_SESION, 0)
+c("  al tercer intento sale bien y quita el temporizador",
+  esperar(lambda: b.oye_sesion) and (api.intentos_sesion, api.temporizadores), (3, {}))
+api.enviar(bw.WM_TIMER, bw.ID_TEMPORIZADOR_SESION, 0)
+api.enviar(bw.WM_NULL, 0, 0)
+c("  uno que quedaba en la cola ya no vuelve a registrar",
+  esperar(lambda: api.cola.empty()) and api.intentos_sesion, 3)
+b.cerrar()
+api = ApiFalsa(sesion=0)
+b = bw.Bandeja(CARPETA, PEDIDAS.append, lambda: None, api=api)
+b.arrancar()
+for _ in range(bw.REINTENTOS_SESION + 2):
+    api.enviar(bw.WM_TIMER, bw.ID_TEMPORIZADOR_SESION, 0)
+api.enviar(bw.WM_NULL, 0, 0)
+esperar(lambda: api.cola.empty())
+time.sleep(0.05)
+c("si nunca sale bien, se deja tras unos pocos intentos: oye_sesion es falso",
+  (b.oye_sesion, api.intentos_sesion, api.temporizadores),
+  (False, bw.REINTENTOS_SESION, {}))
+c("  y al cerrar no hay nada que dar de baja", (b.cerrar(), api.oida)[1], set())
 
 # sin ventana
 class SinVentana(ApiFalsa):

@@ -101,8 +101,8 @@ c("es una petición del agente, no del buzón de una raíz",
   (equipo.PIDE_AJUSTE_UNIDAD in equipo.PIDE_SERVICIO, equipo.PIDE_AJUSTE_UNIDAD
    == "ajuste_unidad"), (False, True))
 c("  y su ajuste no es de los globales (`PIDE_AJUSTE`)",
-  ("pedir_al_conectar" in equipo.AJUSTES_PEDIBLES, equipo.AJUSTES_DE_UNIDAD),
-  (False, ("pedir_al_conectar",)))
+  ("pedir_al_conectar" in equipo.AJUSTES_PEDIBLES, equipo.AJUSTES_DE_UNIDAD[0]),
+  (False, "pedir_al_conectar"))
 
 RAIZ_Q = tmpdir("prdrive-raiz-equipo-")
 equipo.guardar_ajustes(equipo.Ajustes()

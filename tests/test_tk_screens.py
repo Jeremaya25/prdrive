@@ -21,7 +21,7 @@ from _harness import Checks, sandbox
 
 import tomllib
 
-from common import catalog, config_file, fleet, model
+from common import catalog, config_file, equipo, fleet, model
 
 c = Checks("pantallas Tk (cableado)")
 
@@ -797,13 +797,13 @@ with sandbox():
     c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
     c("la tabla: cuándo se le vio, desde qué equipo y cómo acabó (lo demás, a la ficha)",
-      titulos, ["Este", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
-    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {5})
+      titulos, ["Este", "", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
+    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {6})
     c("«Último equipo» es el desde el que publicó por última vez",
-      filas["otro"][3], "OFICINA-07")
-    c("y de una nota que no lo apunta, una raya", filas["yo"][3], tk_fleet.SIN_DATO)
+      filas["otro"][4], "OFICINA-07")
+    c("y de una nota que no lo apunta, una raya", filas["yo"][4], tk_fleet.SIN_DATO)
     c("la última pasada sigue al final, y un «ok» se dice «bien»",
-      (filas["otro"][4], filas["yo"][4]), (tk_fleet.BIEN, tk_fleet.BIEN))
+      (filas["otro"][5], filas["yo"][5]), (tk_fleet.BIEN, tk_fleet.BIEN))
 
 # la columna «Último equipo»: solo el más reciente, la lista entera es de la ficha
 Recientes = fleet.Dispositivo(
@@ -816,7 +816,7 @@ c("el último equipo es el más reciente de la nota",
 c("sin equipos en la nota, una raya",
   tk_fleet.ultimo_equipo(Recientes._replace(equipos=())), tk_fleet.SIN_DATO)
 c("la columna está en la tabla", [k for k, *_ in tk_fleet.COLUMNAS],
-  ["aqui", "nombre", "visto", "equipo", "estado"])
+  ["aqui", "icono", "nombre", "visto", "equipo", "estado"])
 
 # la ficha: qué dice, sin dibujarla
 Linea = tk_fleet.Linea
@@ -1221,6 +1221,77 @@ with sandbox():
       (tk_configuracion.open_dialog(raiz, cfg), errores),
       (False, ["No he podido dejarle la petición al agente."]))
     errores.clear()
+prefs.PREFS = REAL_PREFS
+
+# «Ajustes → Configuración»: las casillas de «Bloquearla …» que el agente dice poder
+# cumplir, una por evento de Windows, y una petición por casilla cambiada (#178).
+visto_solo: dict = {}
+
+
+def bloquear_y(boton, alternar: tuple[str, ...] = ()):
+    """Devuelve un `wait_window` que apunta las casillas «Bloquearla …», alterna esas y pulsa."""
+    def _wait(self, *_a, **_k):
+        """Apunta casillas, filas y ayudas; alterna las pedidas y pulsa el botón."""
+        pila, casillas, ayudas, filas = [self], {}, [], {}
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Checkbutton) and str(w.cget("text")).startswith("Bloquearla"):
+                casillas[str(w.cget("text"))] = w
+                filas[str(w.cget("text"))] = int(w.master.grid_info()["row"])
+            elif isinstance(w, ttk.Button) and str(w.cget("text")) == "Guardar":
+                filas["Guardar"] = int(w.master.grid_info()["row"])
+            elif isinstance(w, ttk.Label) and "sin forzar nunca" in str(w.cget("text")):
+                ayudas.append(int(w.master.grid_info()["row"]))
+        visto_solo.update(casillas={t: w.instate(["selected"]) for t, w in casillas.items()},
+                          filas=filas, ayudas=ayudas)
+        for texto in alternar:
+            casillas[texto].invoke()
+        pulsar(boton)(self)
+        if self.winfo_exists():
+            pulsar("Cancelar")(self)
+    return _wait
+
+
+with sandbox():
+    cfg = preparar()
+    prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+    unidad_pedida.clear()
+    watch.pedir_ajuste_unidad = lambda clave, valor: unidad_pedida.append((clave, valor)) or True
+    watch.pedir_al_conectar = lambda: None
+    previo_solo = watch.bloquear_solo
+    try:
+        watch.bloquear_solo = lambda: None
+        tk.Toplevel.wait_window = bloquear_y("Cancelar")
+        tk_configuracion.open_dialog(raiz, cfg)
+        c("«Configuración» sin nada que el agente pueda bloquear solo: ninguna casilla",
+          visto_solo["casillas"], {})
+        SESION, SUSPENDER, APAGAR = (watch.TEXTO_BLOQUEAR_SOLO[k]
+                                     for k in equipo.AJUSTES_BLOQUEAR_SOLO)
+        watch.bloquear_solo = lambda: {"bloquear_al_bloquear_sesion": True,
+                                       "bloquear_al_suspender": False,
+                                       "bloquear_al_cerrar_sesion": False}
+        tk.Toplevel.wait_window = bloquear_y("Cancelar")
+        tk_configuracion.open_dialog(raiz, cfg)
+        filas = visto_solo["filas"]
+        c("  con las tres: una casilla por evento, con lo que dice el agente",
+          visto_solo["casillas"], {SESION: True, SUSPENDER: False, APAGAR: False})
+        c("  cada una en su fila, la ayuda común solo bajo la última y el pie debajo",
+          (len({filas[SESION], filas[SUSPENDER], filas[APAGAR]}), visto_solo["ayudas"],
+           filas["Guardar"] > filas[APAGAR]), (3, [filas[APAGAR]], True))
+        c("  «Cancelar» no pide nada", unidad_pedida, [])
+        tk.Toplevel.wait_window = bloquear_y("Guardar", (SESION, APAGAR))
+        c("  «Guardar» pide al agente solo las cambiadas, cada una con su valor",
+          (tk_configuracion.open_dialog(raiz, cfg), sorted(unidad_pedida)),
+          (True, [("bloquear_al_bloquear_sesion", False), ("bloquear_al_cerrar_sesion", True)]))
+        watch.bloquear_solo = lambda: {"bloquear_al_suspender": True}
+        unidad_pedida.clear()
+        tk.Toplevel.wait_window = bloquear_y("Guardar")
+        c("  sin oír la sesión, solo las que trae; sin tocarlas, «Guardar» no pide nada",
+          (tk_configuracion.open_dialog(raiz, cfg), list(visto_solo["casillas"]),
+           unidad_pedida), (False, [SUSPENDER], []))
+    finally:
+        watch.bloquear_solo = previo_solo
 prefs.PREFS = REAL_PREFS
 
 # El formulario de instalación ya no pregunta parejas ni intervalo: son los del

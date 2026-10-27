@@ -83,7 +83,9 @@ Cuatro cosas más:
   el catálogo. La ruta local usa el diálogo de carpetas del sistema y se guarda
   relativa a la raíz del dispositivo.
 - **Dispositivos…** enseña [la flota](como-funciona.md#el-modelo): todos los que comparten este
-  catálogo, cuándo se les vio por última vez, **desde qué equipo** (el último
+  catálogo, con el **color del icono** que cada uno tiene en «Nombre e icono»
+  (llega con su siguiente sincronización; un icono propio sale como la marca de
+  prdrive), cuándo se les vio por última vez, **desde qué equipo** (el último
   ordenador donde se enchufaron) y cómo acabó su última pasada. Los que llevan
   más de una semana sin aparecer salen apagados. Debajo, la **ficha** del
   elegido: su versión, para qué plataformas sirve, desde cuándo falla si falla, y
@@ -109,6 +111,11 @@ con la versión nueva. **No se toca nada tuyo**: la configuración, las claves, 
 estado de bisync, los filtros, los diarios, el rclone, el Python del dispositivo y
 los lanzadores se quedan donde estaban. rclone y Python son componentes, no
 código: el zip de la release no los lleva.
+
+Si otro programa tiene abierto algún fichero del programa (por ejemplo, otra
+ventana de prdrive abierta sobre la misma unidad), la actualización dice cuál no
+ha podido sustituir y el dispositivo sigue ofreciéndola: cierra las otras
+ventanas de prdrive y vuelve a pulsar «Actualizar…».
 
 Si no quieres esperar a que la ventana mire por su cuenta (lo hace al abrirse y
 como mucho una vez cada 24 horas), **«Ajustes… → Actualizaciones → Buscar

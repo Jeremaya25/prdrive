@@ -17,7 +17,8 @@ DISPOSITIVO y cada paso en su propio proceso, como la ventana:
    crea la carpeta del remoto, KeePassXC se abre y es de la unidad, su
    configuración va a la de la unidad, y el navegador llega a él: un
    `change-public-keys` de KeePassXC-Browser por el proxy de su manifiesto (en
-   Windows, el JSON al que apunta la clave de HKCU, que escribe KeePassXC).
+   Windows, el JSON al que apunta la clave de HKCU, que escribe prdrive antes
+   de la clave y KeePassXC al arrancar).
 4. Un guardado (`keepassxc-cli add`) lo sube solo el vigilante.
 5. Un conflicto de verdad (la base cambia en los dos lados): bisync deja la
    copia al lado, y «Combinar» (`conflict_editor.plan_combinar`) la mete en la
@@ -251,7 +252,7 @@ def por_que_no_arranca() -> None:
     """Cuenta por qué no se ve KeePassXC (Linux): las bibliotecas que no encuentra y lo que dice.
 
     Es lo extraído en la caché: `ldd` del programa y del plugin de Qt para X11
-    (con las bibliotecas que lleva el AppImage delante, como `AppRun`), y
+    (con las bibliotecas que lleva el AppImage delante), y
     unos segundos de arrancarlo a mano con `QT_DEBUG_PLUGINS`.
     """
     from common import keepassxc as kx
@@ -270,14 +271,14 @@ def por_que_no_arranca() -> None:
         print(f"    ldd {binario.name}: " + (", ".join(faltan) if faltan else "no falta nada"))
     for args in (["--version"], []):            # la versión, y la ventana: 10 s
         try:
-            r = subprocess.run([str(raiz / "AppRun"), *args], capture_output=True, text=True,
+            r = subprocess.run([str(raiz / kx.PROGRAMA_LINUX), *args], capture_output=True, text=True,
                                env=entorno, timeout=10)
             salida = (r.stdout + r.stderr).strip().splitlines()
-            print(f"    AppRun {' '.join(args)}: código {r.returncode}")
+            print(f"    keepassxc {' '.join(args)}: código {r.returncode}")
         except subprocess.TimeoutExpired as e:
             salida = ((e.stdout or b"").decode(errors="replace")
                       + (e.stderr or b"").decode(errors="replace")).strip().splitlines()
-            print(f"    AppRun {' '.join(args)}: sigue abierto a los 10 s")
+            print(f"    keepassxc {' '.join(args)}: sigue abierto a los 10 s")
         mostrar(salida)
 
 
@@ -390,6 +391,8 @@ def main() -> int:
     propia = temporal / "propia" / BASE
     propia.parent.mkdir()
     r = cli("db-create", "-p", str(propia), entrada=f"{CLAVE}\n{CLAVE}\n")
+    if r.returncode != 0:                       # 127 = al cargador le falta una biblioteca del equipo
+        mostrar((r.stdout + r.stderr).strip().splitlines())
     ver("keepassxc-cli db-create crea la base", (r.returncode, propia.is_file()), (0, True))
     en_dispositivo(app, "activar", str(propia))
     catalogo = (remoto / "prdrive-catalog" / "remote.toml").read_text(encoding="utf-8")
@@ -410,7 +413,10 @@ def main() -> int:
     if not se_ve and not IS_WIN:
         por_que_no_arranca()
     e = estado(app)
-    ver("el vigilante, en marcha", e["vigilante"], True)
+    # El vigilante arranca suelto después de KeePassXC: tarda en tomar su
+    # registro, así que se espera como se espera a KeePassXC.
+    ver("el vigilante, en marcha", esperar(lambda: estado(app)["vigilante"], 30) is not None, True)
+    e = estado(app)
     ver("su configuración, en la de la unidad",
         e["config"], ["keepassxc.ini", "keepassxc_local.ini", "raiz.txt"])
     ver("la línea de la ventana lo dice", e["linea"], f"{BASE}, abierto en KeePassXC.")
@@ -421,9 +427,10 @@ def main() -> int:
         # carpeta de la unidad. Eso es lo que importa, y que el JSON esté.
         carpeta = components.keepassxc_exe(app, paquete).parent / "config"
         valores = [v for v in e["claves"].values() if v]
-        # Los JSON los escribe KeePassXC al arrancar, unos segundos después de que
-        # se le reconozca como de la unidad: se espera a que estén (si no, la
-        # comprobación corre contra su arranque).
+        # prdrive escribe un JSON antes de cada clave, pero KeePassXC las cambia
+        # al arrancar por las suyas, unos segundos después de que se le reconozca
+        # como de la unidad: se espera a que estén (si no, la comprobación corre
+        # contra su arranque).
         estan = esperar(lambda: all(Path(v).is_file() for v in valores), 30) is not None
         ver("las cuatro claves del navegador apuntan a JSON de la unidad, que están",
             (len(valores), {kx._comparable(str(Path(v).parent)) for v in valores}, estan),
@@ -437,6 +444,12 @@ def main() -> int:
         manifiesto = Path(e["manifiestos"].get("chrome", "no-hay"))
         ver("y nada en ~/.config/keepassxc",
             (Path(os.environ["XDG_CONFIG_HOME"]) / "keepassxc").exists(), False)
+        # El AppRun de la 2.8.0 los escribe; prdrive lanza el binario y no debe haber rastro.
+        datos = Path(os.environ["XDG_DATA_HOME"])
+        ver("ni un .desktop ni un icono de KeePassXC en ~/.local/share",
+            [(datos / "applications" / "org.keepassxc.KeePassXC.desktop").exists(),
+             (datos / "icons" / "hicolor" / "256x256" / "apps" / "keepassxc.png").exists()],
+            [False, False])
     # Recién abierto, su servidor del navegador puede no escuchar todavía, y el
     # proxy no vuelve a intentar la conexión: se le dan unos intentos.
     respuesta: dict = {}

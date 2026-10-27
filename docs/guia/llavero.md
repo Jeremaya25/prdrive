@@ -216,9 +216,13 @@ asistente), el llavero va igual, con tres diferencias:
 - **En Linux x64**, KeePassXC viaja en la unidad como su AppImage oficial. La
   primera vez que abres el llavero en un equipo, prdrive lo prepara en la caché
   de ese equipo (`~/.cache/prdrive/keepassxc/`, unos 125 MB, unos segundos), y
-  después lo usa desde ahí. No hace falta FUSE ni nada instalado, y da igual
+  después lo usa desde ahí. Necesita las bibliotecas
+  `libEGL` y `libOpenGL` del equipo (los paquetes `libegl1` y `libopengl0`, que
+  cualquier escritorio ya trae) y glibc 2.38 o posterior (Ubuntu 24.04,
+  Debian 13, Fedora 39…): la 2.8.0 ya no abre en Ubuntu 22.04 ni en Debian 12,
+  que la 2.7.12 sí cubría. No hace falta FUSE, y da igual
   cómo esté montada la unidad.
-- **En Linux ARM64** no hay AppImage: se abre con el **KeePassXC del equipo**,
+- **En Linux ARM64** prdrive todavía no lleva el AppImage de ARM64: se abre con el **KeePassXC del equipo**,
   el de Flathub o el de tu distribución, con su configuración. Para las
   passkeys hace falta la 2.7.7 o posterior (Debian 12 y Ubuntu 24.04 traen una
   anterior: la base se abre, pero las passkeys no; se dice al abrir).

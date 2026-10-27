@@ -10,11 +10,11 @@ que se prueba como una tabla (`tests/test_principal.py`) y `ui/tk_principal.py`
 solo dibuja lo que dice.
 
 Es pura y tiene que cargarse antes del primer pintado: arriba solo importa la
-biblioteca estándar, `common.model` (que toda ventana carga con `ui.prefs`) y
-`ui.cuando`. `ui.watch` (con él, `common.fleet` y `common.components`) y
-`ui.llavero_editor` se importan dentro de `estado()` y solo con una lectura en
-la mano: esa lectura ya los ha cargado, y el primer pintado, que no la tiene, no
-paga ninguno.
+biblioteca estándar, `common.model` (que toda ventana carga con `ui.prefs`; con
+él, `common.APP_NAME`) y `ui.cuando`. `ui.watch` (con él, `common.fleet` y
+`common.components`) y `ui.llavero_editor` se importan dentro de `estado()` y
+solo con una lectura en la mano: esa lectura ya los ha cargado, y el primer
+pintado, que no la tiene, no paga ninguno.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Collection, Mapping, NamedTuple
 
-from common import model
+from common import APP_NAME, model
 
 from . import cuando
 
@@ -47,6 +47,19 @@ MARCAR_TODAS = "Marcar todas"
 """El texto del botón de la lista cuando hay casillas sin marcar."""
 DESMARCAR_TODAS = "Desmarcar todas"
 """El texto del botón de la lista cuando están todas marcadas."""
+
+
+def titulo(nombre: str | None) -> str:
+    """Devuelve el título de la ventana principal: «<dispositivo> · prdrive».
+
+    Con varias ventanas de prdrive abiertas, una por unidad, es lo que las
+    distingue en la barra de tareas. Sin nombre (aún no se ha leído) o con el
+    del propio programa, es solo el programa.
+    """
+    limpio = " ".join((nombre or "").split())
+    if not limpio or limpio.casefold() == APP_NAME.casefold():
+        return APP_NAME
+    return f"{limpio} · {APP_NAME}"
 
 
 def corto(texto: str, maximo: int = 30) -> str:

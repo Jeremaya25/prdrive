@@ -100,6 +100,16 @@ POSIX_CANDIDATES = [
 FILESYSTEMS = ("exFAT", "NTFS", "FAT") if IS_WIN else ("exFAT", "NTFS", "ext4")
 """Sistemas de ficheros que se ofrecen para el volumen de dentro."""
 
+AVISO_UAC_TAPADO = ("Si no ves el aviso, puede haber quedado detrás de otras "
+                    "ventanas: búscalo en la barra de tareas.")
+"""Frase que acompaña a los mensajes de espera donde VeraCrypt pide permisos (#41).
+
+El aviso de UAC lo pide la copia elevada de VeraCrypt, no prdrive, y puede salir
+detrás de otras ventanas: no se intenta traerlo al frente, se dice dónde buscarlo.
+Es fija: el texto de `working()` no cambia a mitad de la espera. La usan
+`ui/tk_crypto.py` y `ui/tk_equipo.py`, que solo dibujan.
+"""
+
 CONTRASENA_MAX = 128
 """Longitud máxima de la contraseña, en bytes UTF-8.
 

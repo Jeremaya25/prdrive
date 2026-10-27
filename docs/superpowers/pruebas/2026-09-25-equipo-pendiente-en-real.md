@@ -329,7 +329,8 @@ del resto del llavero: no se repiten aquí.
 ### KeePassXC fuera de la huella, comprobado contra su SHA-256 (#117)
 
 `keepassxc/` ya no entra en la huella del agente; antes de lanzar o registrar
-un ejecutable de la unidad se compara con `pins.KEEPASSXC_EJECUTABLES`. Los
+un ejecutable de la unidad se compara con `pins.KEEPASSXC_EJECUTABLES`, y la
+forma de la carpeta de su paquete con `common/keepassxc_arbol.json` (#164). Los
 tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 
 | Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
@@ -338,6 +339,23 @@ tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 | KP2 | W | Con el KeePassXC 2.7.12 que deja el instalador (sin tocar nada a mano), exFAT y NTFS: «Abrir llavero», «Combinar» una copia de conflicto y la sonda del fichero llave (llavero sin contraseña). | Se abre y combina sin avisar de que no es el oficial: las sumas de la tabla son las de los ficheros que el instalador deja en la unidad. | `keepassxc.comprobar()` |
 | KP3 | W | Cambiar un byte de `keepassxc-proxy.exe` y, aparte, de `KeePassXC.exe`, con el sello intacto; «Abrir llavero». Luego, sin borrar nada, mirar la ventana y pulsar «Actualizar…». | No se abre, no se escribe ni la configuración ni ninguna clave del registro, y el aviso manda a «Actualizar…» (no a borrar ninguna carpeta). Tras el aviso, la ventana ofrece «Actualizar…» («lleva 2.7.12 (con ficheros que no cuadran)»); al pulsarlo se repone el paquete, se apaga el aviso (`state/keepassxc-no-oficial.json` sin el apunte) y se abre. | `NoOficial`, `SALIDA_ACTUALIZAR`, `keepassxc_bin.al_dia()` |
 | KP4 | L | KP2 en Linux x64 con el AppImage. Después, con lo extraído en `~/.cache/prdrive/keepassxc/`, cambiar el AppImage de la unidad; y lo mismo con esa caché borrada. | Con la caché al día se abre igual; sin ella no se extrae nada y el aviso lo dice. | `keepassxc.preparar_appimage()` |
+| KP5 | W (exFAT y NTFS) | Con el paquete que pone el instalador: «Abrir llavero», conectar el navegador, «Combinar» una copia, cerrar, expulsar y abrir en otro equipo con otra letra. Apuntar qué ficheros aparecen en `keepassxc\windows-x64\` que no vienen en el ZIP. | No sale ningún «no es el oficial» en ningún paso. Lo que aparece fuera del ZIP está directamente en `config\` (los JSON del navegador, algún `.ini`); si aparece otra cosa, se amplía lo admitido. | `keepassxc.comprobar()`, `components.keepassxc_arbol_no_cuadra()` (#164) |
+| KP6 | W | Añadir, por separado, un `VCRUNTIME140.dll` junto a `KeePassXC.exe`, un `qt.conf` distinto del oficial con el mismo tamaño, y un `plugins\imageformats\x.dll`; «Abrir llavero» con cada uno. | No se abre, no se escribe ninguna clave del registro ni ningún JSON nuevo, y el aviso nombra el fichero. La ventana ofrece «Actualizar…»; tras pulsarlo el fichero ya no está y el llavero se abre. | `keepassxc.comprobar()`, `keepassxc_bin.al_dia()`/`instalar()` (#164) |
+| KP7 | W | En un equipo sin el runtime de Visual C++ (K3), «Abrir llavero» y mirar los JSON a los que apuntan las cuatro claves de `HKCU\Software\…\NativeMessagingHosts\org.keepassxc.keepassxc_browser`. Luego, con el runtime instalado, repetir y conectar el navegador. | Sin el runtime, KeePassXC no arranca, pero cada clave apunta a un JSON que existe y cuyo `path` es el `keepassxc-proxy.exe` de la unidad. Con el runtime, el navegador conecta (B2). | `keepassxc.abrir_navegador()` (#164) |
+
+### KeePassXC 2.8.0 (#175)
+
+El llavero pasa a KeePassXC 2.8.0 (Qt 6; en Linux se lanza `usr/bin/keepassxc`
+y no el `AppRun`). Lo que solo prueba un equipo real:
+
+| Código | Dónde | Qué hacer | Qué se espera |
+|---|---|---|---|
+| KX1 | W y W10 | «Actualizar…» de un dispositivo con 2.7.12 y el llavero activo: con KeePassXC abierto, y luego cerrado. Después K1, B1 y KP2. | Abierto, se aplaza; cerrado, deja la 2.8.0 y se abre y conecta con el navegador. |
+| KX2 | W | Las passkeys BE/BS (PK1, PK2, PK4) con la 2.8.0. | Igual que con la 2.7.12. |
+| KX3 | W y L | Una base usada con 2.8.0 se abre y combina con 2.7.12 y al revés (V1–V4 entre 2.7.12 y 2.8.0). | Sin avisos de formato; combinan. |
+| KX4 | WA | A1 con el ZIP x64 2.8.0 emulado (Qt 6). | Abre y conecta como la 2.7.12. |
+| KX5 | L | LX3, LX4 y LX7 con el AppImage 2.8.0. | Sin `.desktop` ni icono nuevos en `~/.local/share` y sin unidad `app-org.keepassxc…scope`. |
+| KX6 | W | K3 (sin Visual C++) con la 2.8.0. | El aviso de siempre. |
 
 ### «Abrir llavero» desde la bandeja con las pasadas retenidas
 
@@ -541,3 +559,24 @@ enseña Configuración.
 | U5 | W | U4 con la ventana de la raíz del equipo abierta. | No quita nada: dice que la cierres antes. Cerrándola y volviendo a «Desinstalar», sí. | `presencia.esperar_ajenos()` |
 | U6 · nube: ok (F33) | W | U4 con la raíz cifrada abierta con el VeraCrypt del agente (sin VeraCrypt instalado). | Lo que quede en uso de `%LOCALAPPDATA%\prdrive\veracrypt` se queda, con su entrada en `RunOnce`; al reiniciar y volver a entrar, la carpeta y la entrada ya no están. Apuntar si se ve una consola un instante al entrar. | `presencia.apuntar_borrado()` |
 | U7 | L | `python agente.py desinstalar` desde un terminal, con el Python del agente. | Pregunta en la consola; con «s», no quedan `~/.local/share/prdrive`, `~/.config/autostart/prdrive.desktop`, el acceso del menú ni `~/.cache/prdrive`. | `agente.desinstalar_por_consola()`, `presencia.borrar_cache()` |
+
+## Bloquear sola al bloquear la sesión, suspender o apagar (#178)
+
+Tres casillas por unidad en «Ajustes → Configuración» (`Unidad.bloquear_al_*`):
+la bandeja de Windows oye `WM_WTSSESSION_CHANGE`, `PBT_APMSUSPEND` y
+`WM_ENDSESSION`, y el agente desmonta con el VeraCrypt instalado,
+`/dismount <letra> /silent /quit`, sin forzar nunca. Los tests lo hacen con una
+`Api` de mentira y un VeraCrypt que no se lanza: nada de esto se ha visto en un
+Windows. Hace falta VeraCrypt **instalado** (no el portable), una unidad con
+vestíbulo atendida y, si se puede, la raíz del equipo cifrada.
+
+| Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
+|---|---|---|---|---|
+| S1 | W | Marcar «Bloquearla al bloquear la sesión (Win+L)» en una unidad abierta y pulsar Win+L; repetir dejando que la sesión se bloquee sola por inactividad (o el salvapantallas con «Mostrar la pantalla de inicio de sesión»). | En los dos casos llega `WTS_SESSION_LOCK` (una línea «la sesión de Windows se ha bloqueado» en `agente.log`) y, al volver, la unidad está cerrada. Apuntar si el bloqueo por inactividad lo manda igual. Y si `oye_sesion` sale verdadero al iniciar sesión (sale la casilla), o hace falta el reintento. | `Bandeja._oir_sesion()`, `Api.registrar_sesion()` |
+| S2 | W | Con «Bloquearla al suspender el equipo», suspender desde el menú Inicio; en un portátil con Modern Standby (S0ix, `powercfg /a` dice «Standby (S0 Low Power Idle)»), también cerrando la tapa. | Llega `PBT_APMSUSPEND` («el equipo se suspende» en el diario). **Apuntar** si llega con Modern Standby (puede que solo llegue el bloqueo de la sesión) y cuánto pasa entre esa línea y la de «bloqueada». | `Bandeja._mensaje()`, `Agente._evento_de_sesion()` |
+| S3 | W | S2 y, al despertar, mirar el diario y el Explorador. | El desmontaje acaba antes de dormirse (la línea «bloqueada» lleva la hora de antes de suspender) o, si no le dio tiempo, sigue y acaba al despertar. Ninguna letra fantasma. | `Agente._bloqueos()` |
+| S4 | W | Con un documento abierto dentro de la unidad (Word, o `notepad E:\x.txt`), pulsar Win+L; desbloquear la sesión. | VeraCrypt no saca ninguna ventana (ni «¿forzar?», ni de error) y la unidad se queda montada; al desbloquear la sesión sale **un** aviso «<nombre>: no la he bloqueado» — «Al bloquear la sesión: un programa tenía un fichero abierto dentro.» | `orden_bloquear(desatendido=True)`, `_decir_sin_bloquear()` |
+| S5 | W | Con su ventana de prdrive abierta, Win+L y volver; y con una sincronización larga en marcha, Win+L y volver antes de que acabe. | Nada se cierra; al volver, un aviso con «su ventana estaba abierta» o «había una sincronización en marcha». Ninguno sale con la sesión aún bloqueada. | `Agente._bloqueos()`, `_evento_de_sesion()` |
+| S6 | W | Con «Bloquearla al cerrar sesión o apagar», cerrar sesión; apagar con el inicio rápido activado; apagar con él desactivado (`powercfg /h off`); reiniciar. | **Apuntar** en cada caso si en `agente.log` sale «se cierra la sesión: lanzo el bloqueo de 1 de 1 raíz» y si, al volver a entrar, VeraCrypt ve el volumen cerrado del todo o hay una letra fantasma. El apagado no debe tardar más que sin prdrive. | `Bandeja._mensaje()` (`WM_ENDSESSION`), `Agente.lanzar_al_salir()` |
+| S7 | W | S1 a S6 con la raíz del equipo cifrada en lugar de la unidad. | Lo mismo, con su letra fija. Al desbloquear la sesión no se pide la contraseña: se abre con «Desbloquear…». | `Agente._bloqueable()` |
+| S8 | W | Desinstalar VeraCrypt (dejando el portable del agente) y abrir «Ajustes → Configuración». Con las casillas ya marcadas de antes, Win+L. | Las casillas no salen. Con Win+L no aparece ningún UAC; al volver, el aviso «no hay VeraCrypt instalado en este equipo». | `Agente._bloquear_solo()`, `Agente._veracrypt_del_equipo()` |
