@@ -35,12 +35,14 @@
 # hacer falta quita un widget a cada ventana); los módulos, de Rendimiento 37917304018.
 
 [techo]
-"widgets.main.p5" = 45
-"widgets.main.p50" = 225
+# +1 en las cuatro de la principal (27/10/2026, 0.8.0): el botón «Servidor…» junto a
+# «Parejas…» y «Ajustes…», dicho en la descripción de su PR.
+"widgets.main.p5" = 46
+"widgets.main.p50" = 226
 # La principal con la lectura compartida ya aplicada (`llega-instantanea`): sus widgets con las
 # parejas que la lectura pone en la lista.
-"widgets.main_leida.p5" = 50
-"widgets.main_leida.p50" = 230
+"widgets.main_leida.p5" = 51
+"widgets.main_leida.p50" = 231
 # «Parejas» sin el editor de la pareja elegida, que pasó a su propia ventana (`widgets.pareja`):
 # de 83 a 38 (10/10/2026, medido en Windows ARM64; no depende de la máquina).
 "widgets.parejas.p5" = 38
