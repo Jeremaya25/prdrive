@@ -1,6 +1,6 @@
 # «Servidor…»: bajar y subir archivos y carpetas — diseño
 
-Fecha: 27/10/2026. Estado: **diseño aprobado en conversación, sin construir**. Es la pieza 2 de
+Fecha: 27/10/2026. Estado: **construida** (código, pruebas automáticas y guía); las pruebas en máquina real (filas T1 a T6 de `docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`) están por hacer. Es la pieza 2 de
 tres del explorador del servidor; la pieza 1 (explorar, solo lectura) está en la 0.8.0
 (`docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`,
 `docs/agents/reference/servidor.md`). La pieza 3 (renombrar, mover, borrar) tendrá su spec.

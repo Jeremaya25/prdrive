@@ -1,14 +1,17 @@
 [← Guías](README.md)
 
-# Ver lo que hay en el servidor
+# Ver, bajar y subir archivos del servidor
 
 «Servidor…», en la ventana de prdrive, te deja recorrer tu servidor carpeta a carpeta, como
 WinSCP: ves qué hay, cuánto ocupa cada archivo, cuándo se cambió por última vez y qué carpetas
-son de una pareja. **Solo mira.** No copia, no sube, no borra ni cambia nada en el servidor.
+son de una pareja. Desde ahí también puedes **bajar** archivos y carpetas al equipo y **subir**
+archivos y carpetas del equipo al servidor. **No borra nada ni cambia nombres**, ni en el
+servidor ni en el equipo. Lo único que puede reemplazar un archivo es «Sobrescribir», y solo si
+lo eliges tú.
 
-> **Sin probar todavía en un equipo de verdad.** Está cubierto por pruebas automáticas, pero no
-> se ha probado todavía con un servidor real en un equipo real. Si algo no cuadra, dilo tal cual
-> lo ves.
+> **Probado solo con un servidor de prueba en Linux.** Está cubierto por pruebas automáticas y
+> se ha probado con un servidor SFTP de prueba, pero no todavía con un servidor real, ni en
+> Windows, ni con unidades FAT32 o exFAT. Si algo no cuadra, dilo tal cual lo ves.
 
 ## Abrirlo
 
@@ -31,7 +34,9 @@ enseña la carpeta de arriba del todo.
   - **Modificado**: la fecha y la hora en tu equipo. «—» si el servidor no la sabe.
   - **Permisos**: ver más abajo.
 - **Entrar** en una carpeta: doble clic en ella, o selecciónala y pulsa Intro. **Retroceso** sube.
-- **Abajo**, cuántos elementos hay. **Cerrar** cierra la ventana.
+- Puedes elegir varias filas a la vez con Ctrl o Mayús.
+- **Abajo**, cuántos elementos hay, y junto a **Cerrar**, los botones **Bajar…**,
+  **Subir archivos…** y **Subir carpeta…** (ver «Bajar y subir»).
 
 Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
@@ -43,6 +48,62 @@ Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 - **Candado**: no puedes entrar en esa carpeta. Aparece cuando, al intentar entrar, el servidor
   dice que no tienes permiso. Mientras la ventana siga abierta, la carpeta se queda apagada con el
   candado. El candado no lleva texto: se reconoce por el dibujo.
+
+## Bajar y subir
+
+- **Bajar…**: elige en la lista lo que quieres (una o varias filas, carpetas o archivos), pulsa
+  **Bajar…** y elige la carpeta del equipo donde guardarlo. Las carpetas se guardan con todo lo
+  que tienen dentro.
+- **Subir archivos…**: elige archivos de tu equipo. Se suben a la carpeta del servidor que estás
+  viendo.
+- **Subir carpeta…**: elige una carpeta de tu equipo. Se sube entera, con su nombre, a la carpeta
+  que estás viendo.
+
+Mientras se copia, un panel al pie de la lista muestra qué archivo va, cuántos llevas, la
+velocidad y cuánto falta. Puedes seguir mirando carpetas mientras tanto. Solo hay una copia a la
+vez: mientras dura, los tres botones están apagados.
+
+### Si algo ya existe
+
+Si en la carpeta de destino hay archivos con el mismo nombre y en el mismo sitio, prdrive
+**pregunta una sola vez**, antes de copiar, y te dice cuántos son y dónde:
+
+- **Sobrescribir**: lo que es distinto se reemplaza por la copia nueva. Lo que es igual se salta.
+- **Omitir**: lo que ya existe se queda como está. Solo se copia lo que no había.
+- **Cancelar**: no se copia nada.
+
+**Cuidado con los nombres que solo cambian de mayúsculas**, en Windows y en unidades FAT32 o
+exFAT: `Foto.JPG` y `foto.jpg` son el mismo archivo para el equipo, pero prdrive no los toma por
+iguales y **no pregunta**: sobrescribe. Mira los nombres antes de bajar a una carpeta que ya tiene
+archivos parecidos.
+
+### Carpetas de una pareja
+
+Lo que copies dentro de la carpeta de una pareja lo verá su siguiente sincronización, como
+cualquier cambio. Por eso:
+
+- **Subir** a la carpeta del servidor de una pareja: si la pareja es **espejo de subida**
+  (`up-mirror`), prdrive **no deja subir**, porque la sincronización borraría lo subido: el
+  servidor tiene que quedar igual que el equipo. En las demás parejas, prdrive avisa de lo que
+  hará la pareja con lo subido y te deja seguir o cancelar.
+- **Bajar** a la carpeta del equipo de una pareja: si es **espejo de bajada** (`down-mirror`),
+  prdrive **no deja bajar**, por la misma razón. En las demás, avisa y te deja seguir o cancelar.
+- Fuera de las carpetas de las parejas (el escritorio, «Descargas»…), no hay avisos.
+
+### Cancelar
+
+**Cancelar**, en el panel, para la copia. Lo que ya se había copiado se queda. El archivo que iba
+a medias no deja restos: si era una subida que iba a reemplazar un archivo del servidor, el
+servidor conserva la versión que tenía.
+
+Si cierras la ventana mientras se copia, prdrive pregunta si quieres cancelar la copia y cerrar.
+«Seguir» no cierra nada.
+
+### Si el programa se cierra de golpe
+
+Si la ventana se cierra de golpe (por ejemplo, la matas desde el Administrador de tareas) mientras
+se sube un archivo grande, puede quedar en el servidor un archivo temporal con una parte del
+archivo. prdrive no lo borra todavía: bórralo tú desde el servidor.
 
 ## La columna «Permisos» y el «—»
 
@@ -70,10 +131,13 @@ pantalla.
   otro puerto. Si vuelve a fallar, aparece **Reintentar**.
 - **«Este dispositivo no tiene conexión con ningún servidor.»**: no hay ningún servidor configurado
   en el dispositivo.
+- **Una copia que falla** (sin espacio, sin permiso para escribir, se corta la red): el panel lo
+  dice y ofrece **Reintentar**. Repite la copia con la misma respuesta de antes, y lo que ya
+  estaba copiado y es igual no se vuelve a copiar.
 - Cualquier otro mensaje es lo que dijo rclone, tal cual.
 
 ## Lo que no hace
 
-- **No escribe nada en el servidor.** Ni archivos, ni carpetas, ni cambios de nombre.
-- **Cerrar la ventana corta la conexión con el servidor.** No hace falta hacer nada más antes de
-  expulsar la unidad.
+- **No borra nada y no cambia nombres**, ni en el servidor ni en el equipo.
+- **Cerrar la ventana corta la conexión con el servidor.** Si hay una copia en marcha, lo pregunta
+  antes. No hace falta hacer nada más antes de expulsar la unidad.
