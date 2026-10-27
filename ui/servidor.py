@@ -41,6 +41,13 @@ _NO_EXISTE = ("directory not found", "object not found", "file not found", "no s
 _TIEMPO = ("timeout", "timed out", "deadline exceeded")
 """Cómo dice Go que el servidor no contestó (en minúsculas)."""
 
+PRIMER_ANO = 1970
+"""Año desde el que una fecha es de verdad: rclone da `0001-01-01T00:00:00Z` cuando no sabe la hora.
+
+Una fecha anterior no se puede pasar a hora local en todos los sistemas (en Windows
+`astimezone()` falla antes de 1970), así que se trata como desconocida.
+"""
+
 _FRACCION = re.compile(r"(\.\d{6})\d+")
 
 
@@ -68,7 +75,7 @@ class Entrada:
 
 
 def _fecha(texto: Any) -> datetime | None:
-    """Lee un `ModTime` de rclone; `None` si no se entiende.
+    """Lee un `ModTime` de rclone; `None` si no se entiende o es anterior a `PRIMER_ANO`.
 
     rclone puede dar hasta nanosegundos y un desfase (`+02:00`); `fromisoformat`
     solo admite microsegundos, así que se recorta la fracción.
@@ -76,9 +83,10 @@ def _fecha(texto: Any) -> datetime | None:
     if not isinstance(texto, str):
         return None
     try:
-        return datetime.fromisoformat(_FRACCION.sub(r"\1", texto))
+        fecha = datetime.fromisoformat(_FRACCION.sub(r"\1", texto))
     except ValueError:
         return None
+    return fecha if fecha.year >= PRIMER_ANO else None
 
 
 def _entrada(item: Any) -> Entrada | None:
@@ -189,12 +197,19 @@ class Navegacion:
         self.entradas: tuple[Entrada, ...] = ()
         self.sin_acceso: set[tuple[str, str]] = set()
         self._numero = 0
-        self._remote_pedido = remote
+
+    def _nueva(self, remote: str, ruta: str) -> Peticion:
+        """Numera una petición nueva, que sustituye a cualquier otra en vuelo."""
+        self._numero += 1
+        return Peticion(self._numero, remote, remote_picker.normalizar(ruta))
 
     def pedir(self, ruta: str) -> Peticion:
-        """Registra un listado de `ruta` en el último remote pedido; sustituye al anterior."""
-        self._numero += 1
-        return Peticion(self._numero, self._remote_pedido, remote_picker.normalizar(ruta))
+        """Registra un listado de `ruta` en el remote que se está enseñando.
+
+        Sustituye a la petición anterior, también a un `cambiar_remote()` en
+        vuelo: la ruta sale de la tabla que se ve, así que va a su remote.
+        """
+        return self._nueva(self.remote, ruta)
 
     def recibir(self, p: Peticion, entradas: tuple[Entrada, ...]) -> bool:
         """Acepta la respuesta de `p`; `False`, sin cambiar nada, si ya no es la última pedida."""
@@ -217,9 +232,8 @@ class Navegacion:
         return frase_error(error)
 
     def cambiar_remote(self, nombre: str) -> Peticion:
-        """Pide la raíz de otro remote; `remote` cambia cuando llega."""
-        self._remote_pedido = nombre
-        return self.pedir(RAIZ)
+        """Pide la raíz de otro remote; `remote` cambia solo cuando esa respuesta llega."""
+        return self._nueva(nombre, RAIZ)
 
     def hijo(self, nombre: str) -> str:
         """Devuelve la ruta de la carpeta `nombre` dentro de la actual."""
@@ -245,10 +259,11 @@ def dentro_de(config: Config, remote: str, ruta: str) -> str | None:
     """Devuelve la pareja cuya carpeta es `ruta` o la contiene, en ese remote.
 
     La comparación es por tramos: `/datos/notas2` no está dentro de `/datos/notas`.
+    Una pareja en la raíz del remote contiene todo el remote.
     """
     actual = remote_picker.normalizar(ruta)
     for carpeta, nombre in parejas_en(config, remote).items():
-        if carpeta != RAIZ and (actual == carpeta or actual.startswith(carpeta + "/")):
+        if actual == carpeta or actual.startswith(carpeta.rstrip("/") + "/"):
             return nombre
     return None
 
@@ -309,11 +324,14 @@ def tamano_legible(n: int | None) -> str:
 
 def fecha_legible(fecha: datetime | None) -> str:
     """Devuelve `dd/mm/aaaa hh:mm` en hora local; una fecha sin zona se enseña como viene."""
-    if fecha is None:
+    if fecha is None or fecha.year < PRIMER_ANO:
         return SIN_DATO
-    if fecha.tzinfo is not None:
-        fecha = fecha.astimezone()
-    return fecha.strftime("%d/%m/%Y %H:%M")
+    try:
+        if fecha.tzinfo is not None:
+            fecha = fecha.astimezone()
+        return fecha.strftime("%d/%m/%Y %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return SIN_DATO
 
 
 def cuantos(n: int) -> str:

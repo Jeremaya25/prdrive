@@ -11,7 +11,9 @@ propio remote y solo cuando la ruta coincide entera (`/datos/notas2` no está
 dentro de `/datos/notas`) y que cada fallo se dice en español.
 """
 
+import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from _harness import Checks, mkcfg
@@ -108,10 +110,20 @@ cam.recibir(cam.pedir("/x"), ENTRADAS)
 p = cam.cambiar_remote("b2")
 c("cambiar de remote pide la raíz de ese remote", (p.remote, p.ruta), ("b2", "/"))
 c("y hasta que llega no cambia lo que se enseña", (cam.remote, cam.ruta), ("nas", "/x"))
-c("una petición posterior sigue en el remote pedido", cam.pedir("/y").remote, "b2")
+c("un fallo del cambio deja el remote que se ve", (cam.fallo(p, ErrorRc("directory not found", 404)),
+  cam.remote, cam.ruta), ("Esa carpeta ya no existe en el servidor.", "nas", "/x"))
+c("y la siguiente petición va a ese remote, no al que falló",
+  (cam.pedir(cam.hijo("y")).remote, cam.pedir(cam.hijo("y")).ruta), ("nas", "/x/y"))
+p3 = cam.cambiar_remote("b2")
+clic = cam.pedir(cam.hijo("z"))
+c("un clic en una carpeta de la tabla vieja, con el cambio en vuelo, va al remote que se ve",
+  (clic.remote, clic.ruta), ("nas", "/x/z"))
+c("y sustituye al cambio de remote", (cam.recibir(p3, ()), cam.remote, cam.ruta, cam.entradas),
+  (False, "nas", "/x", ENTRADAS))
 p2 = cam.cambiar_remote("b2")
-c("llegado, remote y ruta cambian a la vez", (cam.recibir(p2, ()), cam.remote, cam.ruta),
-  (True, "b2", "/"))
+c("llegado, remote, ruta y entradas cambian a la vez", (cam.recibir(p2, ()), cam.remote, cam.ruta, cam.entradas),
+  (True, "b2", "/", ()))
+c("desde entonces se pide en el nuevo", cam.pedir("/w").remote, "b2")
 c("el permiso se recuerda por remote y ruta",
   (cam.fallo(cam.pedir("/q"), ErrorRc("permission denied", 500)), cam.sin_acceso),
   ("No tienes permiso para ver esta carpeta.", {("b2", "/q")}))
@@ -169,6 +181,11 @@ c("un prefijo de texto no es estar dentro", servidor.dentro_de(cfg, "nas", "/dat
 c("fuera de todas", servidor.dentro_de(cfg, "nas", "/datos"), None)
 c("dentro, pero en el remote de otra", servidor.dentro_de(cfg, "b2", "/datos/notas/x"), "Otra")
 c("la raíz no está dentro de nadie", servidor.dentro_de(cfg, "nas", "/"), None)
+cfg_raiz = mkcfg((), pairs=[{"name": "Todo", "local": "sync-data/todo", "remote_path": "/", "remote": "nas"}],
+                 defaults={"remote": "nas"})
+c("una pareja en la raíz del remote contiene todo el remote",
+  (servidor.dentro_de(cfg_raiz, "nas", "/a/b"), servidor.dentro_de(cfg_raiz, "nas", "/"),
+   servidor.dentro_de(cfg_raiz, "b2", "/a")), ("Todo", "Todo", None))
 
 # lo que se escribe en la tabla
 c("tamaños", [servidor.tamano_legible(n) for n in (None, 0, 4096, 1572864, 52428800, 1000, 1023)],
@@ -179,6 +196,31 @@ c("el redondeo no enseña 1024 de una unidad",
   servidor.tamano_legible(1024 * 1024 - 1), "1 MB")
 c("cuántos", [servidor.cuantos(n) for n in (0, 1, 3)], ["0 elementos", "1 elemento", "3 elementos"])
 c("sin fecha, una raya", servidor.fecha_legible(None), "—")
+SIN_HORA = "0001-01-01T00:00:00Z"  # lo que da rclone cuando no sabe la hora (carpetas en S3, GCS…)
+for zona in ("Europe/Madrid", "America/New_York", "UTC"):
+    anterior = os.environ.get("TZ")
+    os.environ["TZ"] = zona
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        raras = servidor.entradas_de({"list": [{"Name": "d", "IsDir": True, "ModTime": SIN_HORA},
+                                               {"Name": "v", "IsDir": False, "Size": 1, "ModTime": "1969-12-31T23:59:59Z"}]})
+        c(f"sin hora conocida ({zona}): la fecha es desconocida", [e.fecha for e in raras], [None, None])
+        c(f"y se enseña una raya ({zona})", [servidor.fecha_legible(e.fecha) for e in raras], ["—", "—"])
+        c(f"una fecha imposible de pasar a hora local tampoco rompe ({zona})",
+          servidor.fecha_legible(datetime.fromisoformat(SIN_HORA)), "—")
+    finally:
+        if anterior is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = anterior
+        if hasattr(time, "tzset"):
+            time.tzset()
+c("1970 ya vale", servidor.entradas_de({"list": [{"Name": "a", "IsDir": False, "ModTime": "1970-01-02T00:00:00Z"}]})[0].fecha is not None, True)
+c("las fracciones de 1 a 9 cifras se leen",
+  [servidor.entradas_de({"list": [{"Name": "a", "IsDir": False, "ModTime": f"2026-10-01T10:00:00.{'123456789'[:n]}Z"}]})[0].fecha
+   for n in range(1, 10)],
+  [datetime(2026, 10, 1, 10, 0, 0, int(("123456789"[:n] + "000000")[:6]), tzinfo=timezone.utc) for n in range(1, 10)])
 FECHA = datetime(2026, 3, 5, 9, 7, tzinfo=timezone.utc)
 c("la fecha en hora local, día/mes/año hh:mm",
   servidor.fecha_legible(FECHA), FECHA.astimezone().strftime("%d/%m/%Y %H:%M"))
