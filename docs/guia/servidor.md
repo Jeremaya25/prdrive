@@ -112,7 +112,7 @@ Si cierras la ventana mientras se copia, prdrive pregunta si quieres cancelar la
 
 Si la ventana se cierra de golpe (por ejemplo, la matas desde el Administrador de tareas) mientras
 se sube un archivo grande, puede quedar en el servidor un archivo temporal con una parte del
-archivo. prdrive no lo borra todavía: bórralo tú desde el servidor.
+archivo. prdrive no lo borra solo: si lo ves en la lista, elígelo y bórralo con **Borrar…**.
 
 ## Ordenar el servidor
 
@@ -130,7 +130,7 @@ Todo se hace en la carpeta que estás viendo. Los botones se encienden según lo
   vuelvas. No se puede pegar en la carpeta de la que salió, una carpeta dentro de sí misma, ni donde
   ya haya algo con el mismo nombre: renómbralo antes. Nunca se pisa nada.
 - **Borrar…** (Supr): antes cuenta lo que hay dentro («Mirando qué hay dentro…») y te pide
-  confirmación con los números: «Se borrará para siempre «fotos», con 1 234 archivos (3,4 GB).».
+  confirmación con los números: «Se borrará para siempre «fotos», con 1234 archivos (3,4 GB).».
   **No hay papelera: lo borrado no se recupera.**
 
 Mientras dura, un panel al pie dice qué va («3 de 10 elementos») y deja **Cancelar**. Un cambio
@@ -148,7 +148,9 @@ Para no romper tus parejas, **no deja** (verás «No se puede» y no se hace nad
 
 - Borrar, renombrar o mover **la carpeta de una pareja** (su carpeta en el servidor) ni una carpeta
   que la contenga: la sincronización lo vería como que se ha perdido todo.
-- Tocar **el catálogo de las parejas** (el fichero que comparten los dispositivos).
+- Tocar **el catálogo de las parejas** (el fichero que comparten los dispositivos) ni la carpeta
+  donde está, ni nada que haya dentro de ella (si el catálogo está en la raíz del servidor, solo
+  sus propios ficheros).
 - Mover o crear algo **dentro de la carpeta de una pareja de espejo de subida** (`up-mirror`): el
   servidor tiene que quedar igual que el equipo y su próxima pasada lo borraría.
 

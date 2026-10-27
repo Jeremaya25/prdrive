@@ -119,7 +119,7 @@ apagado mientras corre un cambio.
 **Borrar…** primero cuenta lo de dentro (en segundo plano, «Mirando qué hay dentro…» en la
 línea de la ventana; un `tamano()` por carpeta elegida) y luego abre la pantalla de
 confirmación (`tk_pairs.confirmar_plan()`, título «Borrar del servidor», nota «El servidor no
-tiene papelera.») con una línea por elemento: «Se borrará para siempre «fotos», con 1 234
+tiene papelera.») con una línea por elemento: «Se borrará para siempre «fotos», con 1234
 archivos (3,4 GB).» y «Se borrará para siempre «leeme.txt» (12 KB).». Si contar falla, se
 dice en el panel con «Reintentar» y no se borra nada.
 
