@@ -145,25 +145,38 @@ def arbol(raiz: Path, carpetas: int, ficheros: int = 0) -> Path:
 # Linux
 # ---------------------------------------------------------------------------
 _apt_al_dia = False
+_apt_fallidos: set[str] = set()
+"""Los paquetes que `apt()` ya no pudo instalar en esta ejecución."""
 
 
 def apt(*paquetes: str) -> None:
     """Instala paquetes de Ubuntu si faltan.
 
+    Un paquete que ya no se pudo instalar en esta ejecución no se vuelve a
+    intentar (`_apt_fallidos`): en las máquinas de GitHub cuyo núcleo no trae
+    exFAT, `apt-get install linux-modules-extra-<núcleo>` puede quedarse los
+    600 s enteros, y cada prueba que pide exFAT volvía a esperarlos hasta
+    agotar los 30 min del trabajo. Así una máquina así cuesta una espera, no una
+    por prueba.
+
     Raises:
-        Saltada: Si no se pueden instalar.
+        Saltada: Si no se pueden instalar, o ya falló antes.
     """
     global _apt_al_dia
     faltan = [p for p in paquetes
               if ejecutar(["dpkg", "-s", p], timeout=30, callado=True).returncode != 0]
     if not faltan:
         return
+    ya = [p for p in faltan if p in _apt_fallidos]
+    if ya:
+        raise Saltada(f"no se han podido instalar {', '.join(ya)} (ya falló antes)")
     if not _apt_al_dia:
         ejecutar(["apt-get", "update", "-qq"], timeout=300)
         _apt_al_dia = True
     r = ejecutar(["apt-get", "install", "-y", "-qq", "--no-install-recommends", *faltan],
                  timeout=600)
     if r.returncode != 0:
+        _apt_fallidos.update(faltan)
         raise Saltada(f"no se han podido instalar {', '.join(faltan)}")
 
 
