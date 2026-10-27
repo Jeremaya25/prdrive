@@ -682,4 +682,58 @@ except rcd.RcdCaido as e:
     caido = e
 c("sin nadie escuchando, RcdCaido", isinstance(caido, rcd.RcdCaido), True)
 
+
+# transferencias: copiar, seguir y cancelar un lote por rc
+class RcdFalso:
+    """Un `Rcd` de mentira: anota cada llamada y contesta lo que se le da (o lanza)."""
+
+    def __init__(self, respuesta=None) -> None:
+        self.llamadas = []   # (metodo, params)
+        self.respuesta = respuesta if respuesta is not None else {}
+
+    def llamar(self, metodo, params=None):
+        self.llamadas.append((metodo, params))
+        if isinstance(self.respuesta, Exception):
+            raise self.respuesta
+        return self.respuesta
+
+
+falso = RcdFalso({"jobid": 7, "executeId": "x"})
+jid = rcd.copiar(falso, "nas:/datos", "/home/u/Descargas", ["/a.txt", "/c/**"], omitir=False, grupo="lote-1")
+c("copiar es sync/copy", falso.llamadas[-1][0], "sync/copy")
+c("con lo elegido", falso.llamadas[-1][1], {
+    "srcFs": "nas:/datos", "dstFs": "/home/u/Descargas",
+    "createEmptySrcDirs": True, "_filter": {"IncludeRule": ["/a.txt", "/c/**"]},
+    "_async": True, "_group": "lote-1"})
+c("sin omitir no lleva _config", "_config" in falso.llamadas[-1][1], False)
+c("devuelve el jobid", jid, 7)
+rcd.copiar(falso, "a", "b", ["/x"], omitir=True, grupo="g")
+c("omitir es IgnoreExisting", falso.llamadas[-1][1]["_config"], {"IgnoreExisting": True})
+c("nunca otro método de sync", {m for m, _ in falso.llamadas if m.startswith("sync/")}, {"sync/copy"})
+
+falso = RcdFalso({})
+rcd.cancelar(falso, 7)
+c("cancelar es job/stop con el jobid", falso.llamadas[-1], ("job/stop", {"jobid": 7}))
+falso = RcdFalso(rcd.ErrorRc("job not found", 500))
+lanzo = False
+try:
+    rcd.cancelar(falso, 7)
+except Exception:
+    lanzo = True
+c("cancelar traga el ErrorRc de un job ya terminado", lanzo, False)
+falso = RcdFalso(rcd.RcdCaido("sin conexión"))
+lanzo = None
+try:
+    rcd.cancelar(falso, 7)
+except rcd.RcdCaido as e:
+    lanzo = e
+c("pero no traga RcdCaido", isinstance(lanzo, rcd.RcdCaido), True)
+
+falso = RcdFalso({"bytes": 10})
+c("progreso devuelve core/stats del grupo", rcd.progreso(falso, "g"), {"bytes": 10})
+c("y lo pide con core/stats", falso.llamadas[-1], ("core/stats", {"group": "g"}))
+falso = RcdFalso({"jobid": 7, "finished": False})
+c("estado devuelve job/status del jobid", rcd.estado(falso, 7), {"jobid": 7, "finished": False})
+c("y lo pide con job/status", falso.llamadas[-1], ("job/status", {"jobid": 7}))
+
 sys.exit(c.report())
