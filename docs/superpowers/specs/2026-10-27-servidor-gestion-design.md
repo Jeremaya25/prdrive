@@ -38,9 +38,12 @@ el catálogo para proteger las parejas de otros dispositivos (decisión 6).
    dentro del mismo remote.
 4. **Borrar cuenta antes lo que hay dentro**: «Se borrará para siempre: «fotos» con 1 234
    archivos (3,4 GB)…».
-5. **Cada acción es UN trabajo de rclone (`job/batch` asíncrono) que sigue la máquina de lotes
-   de la pieza 2**: el mismo panel de abajo, «Cancelar», un lote a la vez, la pregunta al
-   cerrar. Nada de llamadas síncronas de 60 s.
+5. **Cada acción es un lote que sigue la máquina de la pieza 2**: el mismo panel de abajo,
+   «Cancelar», un lote a la vez, la pregunta al cerrar. Nada de llamadas síncronas de 60 s.
+   **Revisada tras la prueba** (abajo): el lote no es un `job/batch` sino **un trabajo
+   asíncrono por elemento, lanzados uno tras otro** desde la ventana, todos en el mismo grupo de
+   estadísticas. «Cancelar» para antes del elemento siguiente; el que va acaba (rclone no para un
+   borrado a medias).
 6. **Se protegen las parejas de este dispositivo y la carpeta del catálogo; el catálogo no se
    lee.** Una pareja que solo tiene otro dispositivo no se conoce aquí: queda como límite
    conocido, dicho en la guía.
@@ -63,6 +66,12 @@ el catálogo para proteger las parejas de otros dispositivos (decisión 6).
   `{"error", "status", "input", "path"}` si no). **`success` es `true` aunque falle una orden**:
   el resultado se lee de `output.results`. `core/stats` del grupo cuenta `renames`, `deletes`,
   `deletedDirs` y `transfers`.
+- **`job/stop` no para un `job/batch`**: con un `purge` de 20 000 archivos en marcha, tras el
+  `job/stop` el `purge` acabó de borrarlos todos y **la orden siguiente se ejecutó igual**.
+  Por eso no se usa `job/batch` (decisión 5 revisada).
+- **Un borrado no se para a medias**: `job/stop` de un `operations/purge` asíncrono suelto deja
+  que borre los 20 000 archivos y solo falla al final («failed to rmdirs: context canceled»);
+  `operations/delete` hace lo mismo. «Cancelar» solo puede no empezar el elemento siguiente.
 
 ## Cómo se ve y cómo se usa
 
@@ -164,17 +173,17 @@ diálogo o el clic en «Pegar aquí» son la intención, y las tres tienen vuelt
 
 ### `common/rcd.py`
 
-- `lote_de_ordenes(r, ordenes, grupo) -> int`: un `job/batch` con `_async: true`,
-  `_group: grupo`, `concurrency: 1` y `inputs` = las órdenes, cada una con el mismo `_group`.
-  Devuelve el `jobid`. Lanza `ValueError` antes de llamar a nada si la lista está vacía o si
-  una orden tiene un `_path` fuera de `ORDENES_PERMITIDAS = {"operations/mkdir",
-  "operations/movefile", "operations/deletefile", "operations/purge", "sync/move"}`.
+- `lanzar_orden(r, orden, grupo) -> int`: lanza UNA orden asíncrona (`_async: true`,
+  `_group: grupo`) y devuelve su `jobid`. La orden es `{"_path": …, …parámetros}`. Lanza
+  `ValueError` antes de llamar a nada si el `_path` no está en `ORDENES_PERMITIDAS =
+  {"operations/mkdir", "operations/movefile", "operations/deletefile", "operations/purge",
+  "sync/move"}`.
 - `tamano(r, fs, remote) -> tuple[int, int]`: `operations/size`, `(archivos, bytes)`; un campo
   que falta o no es entero cuenta 0.
 - El seguimiento usa lo que ya hay: `progreso()`, `estado()`, `cancelar()`.
 - El invariante de la pieza 2 cambia de forma: `copiar()` sigue sin poder borrar nada (solo
-  `sync/copy`), y `sync/move`, `purge` y `deletefile` solo salen de `lote_de_ordenes()`.
-  `sync/sync` no sale de ningún sitio.
+  `sync/copy`), y `sync/move`, `purge` y `deletefile` solo salen de `lanzar_orden()`.
+  `sync/sync` y `job/batch` no salen de ningún sitio.
 
 ### `ui/gestion.py` (nuevo; decide, sin Tk, sin red, sin disco)
 
@@ -188,11 +197,13 @@ diálogo o el clic en «Pegar aquí» son la intención, y las tres tienen vuelt
 - `validar_pegado(op, nombres_en_destino) -> str | None`: misma carpeta, dentro de sí misma,
   nombre ocupado.
 - `rutas_tocadas(op) -> tuple[tuple[str, ...], tuple[str, ...]]`: `(salen, llegan)`.
-- `bloqueo(op, config) -> str | None` y `avisos(op, config) -> tuple[str, ...]`: la tabla de
+- `bloqueo(op, config, catalogo) -> str | None` (`catalogo` = `(remote, carpeta)` de
+  `model.carpeta_del_catalogo()`) y `avisos(op, config) -> tuple[str, ...]`: la tabla de
   arriba. La búsqueda de «la pareja más honda que contiene esta ruta» y de «las parejas que
   cuelgan de esta ruta» pasa a una función compartida con `transferencia` (que la usa ya en
   `afectadas_subida`), para que la regla no esté escrita dos veces.
-- `ordenes_de(op) -> list[dict]`: las entradas del `job/batch`, en el orden de los elementos:
+- `ordenes_de(op) -> list[dict]`: una orden por elemento (`{"_path": …, …}`), en el orden de los
+  elementos:
   - borrar: carpeta → `operations/purge` (`fs = "<remote>:/"`, `remote` = ruta sin la barra
     del principio); archivo → `operations/deletefile` igual;
   - renombrar y mover: carpeta → `sync/move` (`srcFs = "<remote>:/<origen>"`,
@@ -204,21 +215,26 @@ diálogo o el clic en «Pegar aquí» son la intención, y las tres tienen vuelt
   enseña `confirmar_plan()`, que solo lee esos dos campos (no es `pair_editor.EditPlan`: aquí
   no hay config que guardar; ejecutar es lanzar el lote). Al borrar, una línea por elemento con lo
   que hay dentro.
-- `titulo_de(op) -> str`, `resultado_de(estado, stats, cancelado, op) -> transferencia.Resultado`:
-  lee `output.results` orden a orden. Todo bien: «Borrados 3», «Movidos 2 a /x», «Renombrado a
+- `titulo_de(op) -> str`, `resultado_de(estados, stats, cancelado, op) ->
+  transferencia.Resultado`: `estados` es el `job/status` final de cada orden lanzada, en orden
+  (las que no se lanzaron por cancelar no están). Todo bien: «Borrados 3», «Movidos 2 a /x», «Renombrado a
   «b».», «Creada «n».» (con su singular). Algún fallo: «Borrados 2 de 3: «x» no se pudo: …», con
   la frase de `servidor.frase_error()`, un 404 como «ya no estaba» y un permiso como «No tienes
   permiso para {borrar|mover|crear} en {carpeta}.», tono «aviso» y sin «Reintentar» (el estado
-  ha cambiado: se relee y se vuelve a elegir). Cancelado: «Cancelado: borrados 1 de 3», y «el
-  que iba puede haber quedado a medias» cuando una orden acabó con error de cancelación.
+  ha cambiado: se relee y se vuelve a elegir). Cancelado: «Cancelado: borrados 1 de 3» (los
+  que acabaron bien de los elegidos), y «el que iba puede haber quedado a medias» cuando la
+  última orden lanzada acabó con error («context canceled»).
 
 ### `ui/tk_lote.py` (nuevo; la máquina de lotes, sacada de `tk_servidor.py`)
 
 Hoy la máquina (lanzar → sondear → «Sin respuesta…» → cancelar → resultado → la pregunta al
 cerrar) vive en cierres dentro de `tk_servidor.py` (981 líneas; deuda apuntada en
-`servidor.md`). Pasa a una clase `Seguimiento` (con la opción de no enseñar el panel hasta que el primer sondeo diga que sigue vivo) que recibe qué lanzar (una función que devuelve
-el `jobid`), cómo convertir `stats` en una línea del panel y cómo convertir el estado final en
-un `Resultado`. Conserva tal cual las reglas de la pieza 2: `FALLOS_PARA_AVISAR`, «job not
+`servidor.md`). Pasa a una clase `Seguimiento` (con la opción de no enseñar el panel hasta que un sondeo diga
+que el trabajo sigue vivo) que recibe **una lista de lanzadores** (cada uno, una función que
+lanza una orden y devuelve su `jobid`; una copia de la pieza 2 es una lista de uno), cómo
+convertir `stats` y la cuenta de elementos en una línea del panel, y cómo convertir los estados
+finales en un `Resultado`. Lanza el primero, lo sigue hasta `finished`, apunta su estado y lanza
+el siguiente; «Cancelar» manda `job/stop` al que va y no lanza más. Conserva tal cual las reglas de la pieza 2: `FALLOS_PARA_AVISAR`, «job not
 found», el `rcd` muerto, `cancelar` una sola vez, `_cancelar_y_esperar` al cerrar. Las
 transferencias y la gestión la usan las dos. Las pruebas de la pieza 2 en
 `tests/test_tk_servidor.py` siguen sin cambiar: son la red de la extracción.
@@ -245,8 +261,8 @@ pieza 2: un diálogo corre un bucle anidado y un listado puede cambiar `nav` mie
    con un `operations/list` no recursivo (nueva, renombrar, pegar; la lista en pantalla puede
    ser vieja), o un `tamano()` por carpeta (borrar). Un nombre ocupado se rechaza aquí.
 4. **Confirmar** con `confirmar_plan()` cuando toca (borrar siempre; las demás con avisos).
-5. **Lanzar** `lote_de_ordenes()` con un `_group` nuevo (`gestion-<n>`) y seguirlo con
-   `Seguimiento`.
+5. **Lanzar** las órdenes de `ordenes_de()` una tras otra con `lanzar_orden()`, con un
+   `_group` nuevo (`gestion-<n>`), y seguirlas con `Seguimiento`.
 6. **Acabar**: resultado en el panel o en la línea, releer la carpeta, elegir lo nuevo.
 
 ## Fallos
@@ -255,8 +271,10 @@ pieza 2: un diálogo corre un bucle anidado y un listado puede cambiar `nav` mie
   «Reconectar»; sondeos que fallan → «Sin respuesta…» sin soltar el lote; «job not found» →
   «No se sabe cómo acabó: revisa la carpeta.».
 - Por elemento, en el resultado (arriba). El resultado cuenta **elementos**, no archivos.
-- Cancelar: lo hecho queda hecho; el elemento que iba puede quedar a medias (una carpeta con
-  parte de sus archivos borrados o movidos) y se dice; se relee la carpeta.
+- Cancelar: no se lanza el elemento siguiente y el que va sigue hasta acabar (rclone no para un
+  borrado a medias; un movimiento que copia y borra, en un servidor sin movimiento propio, sí se
+  puede cortar y dejar a medias, y se dice); lo hecho queda hecho; se relee la carpeta. El panel
+  dice «Cancelando… se para al acabar «x».».
 - Mirar que falla: el panel lo dice con «Reintentar», y no se lanza nada.
 
 ## Límites conocidos (van a «Known, not fixed»)
@@ -279,9 +297,10 @@ pieza 2: un diálogo corre un bucle anidado y un listado puede cambiar `nav` mie
   × sale/llega, raíz, contenedor de raíz, renombrar al nombre de una raíz, catálogo y dentro del
   catálogo, pareja anidada, otro remote, la pareja del llavero); las entradas exactas de
   `ordenes_de` con nombres con espacios, `%`, `#`, `?`, `*`, `[`, `{`; `resultado_de` con todo
-  bien, un fallo escondido tras `success: true`, un 404, un permiso, y cancelado.
-- `tests/test_rcd.py`: `lote_de_ordenes` rechaza la lista vacía y un `_path` fuera de los
-  permitidos sin llamar a nada, y manda el `job/batch` con su forma; `tamano`.
+  bien, un fallo en medio, un 404, un permiso, cancelado tras el primero, y cancelado con el que
+  iba a medias.
+- `tests/test_rcd.py`: `lanzar_orden` rechaza un `_path` fuera de los permitidos (y `job/batch`)
+  sin llamar a nada, y manda la orden asíncrona con su grupo; `tamano`.
 - `tests/test_tk_gestion.py` (en `GUI`): el diálogo de nombre (selección sin extensión, motivo
   bajo el campo, «Aceptar» apagado, Intro/Escape).
 - `tests/test_tk_servidor.py`: cada flujo con el `rcd` falso; cortar → navegar → pegar; pegar
