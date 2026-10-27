@@ -8,6 +8,7 @@ El [README](../../README.md) tiene lo esencial. Aquí está el detalle, por tema
 | [Instalación](instalacion.md) | Preparar una unidad, para qué sistemas, unidades que ya existen, instalador de un solo fichero |
 | [Cifrar con VeraCrypt](cifrado.md) | Cifrar la unidad, abrirla y cerrarla en cualquier equipo, y Linux sin VeraCrypt |
 | [Uso diario](uso.md) | La ventana, las parejas, actualizar el programa y sus componentes |
+| [Ver lo que hay en el servidor](servidor.md) | «Servidor…»: recorrer el servidor desde la ventana, carpeta a carpeta; solo mira, no cambia nada |
 | [Configuración](configuracion.md) | `sync_config.toml`, flags de rclone, modos y filtros |
 | [Flags de rclone](flags-de-rclone.md) | Qué hace cada flag que puedes poner en una pareja: para qué sirve, si borra, en qué modos vale y un ejemplo |
 | [Conflictos y versiones](conflictos-y-versiones.md) | Qué pasa si un fichero cambia en los dos lados, y versiones anteriores |

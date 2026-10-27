@@ -1,7 +1,9 @@
 # «Servidor…»: explorar el remoto desde la ventana — diseño
 
-Fecha: 27/10/2026. Estado: **diseño aprobado en conversación, sin construir**. Es la pieza 1 de
-tres; cada pieza tiene su spec, su plan y su PR.
+Fecha: 27/10/2026. Estado: **construido (pieza 1)**: `common/rcd.py`, `ui/servidor.py`,
+`ui/tk_servidor.py` y el botón «Servidor…»; el diseño se aprobó en conversación. Falta probarlo en
+una máquina real (`docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`). Es la
+pieza 1 de tres; cada pieza tiene su spec, su plan y su PR.
 Lo que hay hoy: el «Examinar…» de `remote_path` (`ui/remote_picker.py` +
 `tk_pairs.explorador_remoto`, `docs/agents/reference/catalogue.md` «The remote folder picker»),
 que recorre solo carpetas con `rclone lsd` y solo crea con `mkdir`.
