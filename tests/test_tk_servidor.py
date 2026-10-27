@@ -124,6 +124,11 @@ ARRANQUES: list = []
 LLAMADAS_ARRANCAR: list = []
 
 
+def no_arranca():
+    """Un `rcd.arrancar` que falla, como cuando rclone no se puede ejecutar."""
+    raise ConfigError("No se puede ejecutar rclone: nada")
+
+
 def arrancar_falso() -> RcdFalso:
     LLAMADAS_ARRANCAR.append(1)
     return ARRANQUES.pop(0)
@@ -192,17 +197,20 @@ def pulsar(dlg, secuencia: str) -> None:
 TIEMPO = [0]
 
 
-def elegir_y_entrar(dlg, iid: str) -> None:
-    """Doble clic sobre la fila: dos pulsaciones seguidas en el mismo sitio."""
-    x0, y0, x1, y1 = dlg.tabla._lienzo.caja(iid)
+def doble_clic(dlg, x: int, y: int) -> None:
+    """Dos pulsaciones seguidas en el mismo sitio de la tabla."""
     marco = dlg.tabla.marco
     TIEMPO[0] += 10_000          # lejos del doble clic anterior: dos seguidos serían un triple
     for paso in (0, 50):
-        marco.event_generate("<ButtonPress-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2,
-                             time=TIEMPO[0] + paso)
-        marco.event_generate("<ButtonRelease-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2,
-                             time=TIEMPO[0] + paso + 10)
+        marco.event_generate("<ButtonPress-1>", x=x, y=y, time=TIEMPO[0] + paso)
+        marco.event_generate("<ButtonRelease-1>", x=x, y=y, time=TIEMPO[0] + paso + 10)
     dlg.update()
+
+
+def elegir_y_entrar(dlg, iid: str) -> None:
+    """Doble clic sobre la fila: dos pulsaciones seguidas en el mismo sitio."""
+    x0, y0, x1, y1 = dlg.tabla._lienzo.caja(iid)
+    doble_clic(dlg, (x0 + x1) // 2, (y0 + y1) // 2)
 
 
 with sandbox():
@@ -393,8 +401,6 @@ with sandbox():
     cerrar(dlg)
 
     # un arranque que falla se dice, con «Reintentar»
-    def no_arranca():
-        raise ConfigError("No se puede ejecutar rclone: nada")
     rcd.arrancar = no_arranca
     ABIERTAS.clear()
     previo = tk_servidor.mostrar
@@ -492,6 +498,73 @@ with sandbox():
       ("Este dispositivo no tiene conexión con ningún servidor.", 0))
     cerrar(dlg)
     model.RCLONE_CONF.write_text("[nas]\ntype = sftp\n", encoding="utf-8")
+
+    # -----------------------------------------------------------------------
+    # 11b. La tabla se activa como las demás (`al_activar`) y calla hasta tener un listado
+    # -----------------------------------------------------------------------
+    model.RCLONE_CONF.write_text("[nas]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
+                                 encoding="utf-8")
+    falso = RcdFalso(respuestas())
+    dlg = abrir(falso)
+    dlg.tabla.elegir("datos")
+    n = len(falso.listados())
+    x0, y0, x1, y1 = dlg.tabla._lienzo.caja("datos")
+    doble_clic(dlg, (x0 + x1) // 2, 2)                     # sobre la cabecera
+    c("doble clic en la cabecera con una fila elegida no entra en ella",
+      (len(falso.listados()), dlg.ruta.cget("text"), dlg.tabla.elegida), (n, "/", "datos"))
+    doble_clic(dlg, (x0 + x1) // 2, (y0 + y1) // 2)
+    c("doble clic en la fila elegida sí entra", (dlg.ruta.cget("text"), nombres(dlg)),
+      ("/datos", ["notas", "a.txt"]))
+    c("el doble clic y Intro son los de la tabla (`al_activar`), no unos atados por la ventana",
+      ("_doble_clic" in dlg.tabla.marco.bind("<Double-1>"),
+       "_intro" in dlg.tabla.marco.bind("<Return>"),
+       "_intro" in dlg.tabla.marco.bind("<KP_Enter>"),
+       dlg.tabla._lienzo.al_activar is not None), (True, True, True, True))
+    dlg.tabla.elegir("a.txt")
+    n = len(falso.listados())
+    a0, b0, a1, b1 = dlg.tabla._lienzo.caja("a.txt")
+    doble_clic(dlg, (a0 + a1) // 2, (b0 + b1) // 2)
+    c("doble clic en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
+      (n, "/datos"))
+    dlg.tabla.elegir("notas")
+    pulsar(dlg, "<KP_Enter>")
+    c("Intro del teclado numérico entra en la carpeta elegida", dlg.ruta.cget("text"),
+      "/datos/notas")
+    cerrar(dlg)
+
+    # «Esta carpeta está vacía.» solo con un listado delante
+    lento_ = threading.Event()
+    segundo_plano.lanzar = LANZAR_DE_VERDAD
+    tarda = RcdFalso(respuestas(lambda: (lento_.wait(5), lista())[1]))
+    dlg = abrir(tarda)
+    c("mientras conecta, la tabla no dice que esté vacía",
+      (dlg.tabla.vacio, tk_servidor.VACIA in textos_del_lienzo(dlg)), ("", False))
+    lento_.set()
+    fin = time.monotonic() + 5
+    while not dlg.cuenta.cget("text") and time.monotonic() < fin:
+        raiz.update()
+        time.sleep(0.01)
+    c("llegado el listado (vacío), sí lo dice",
+      (dlg.tabla.vacio, tk_servidor.VACIA in textos_del_lienzo(dlg)), (tk_servidor.VACIA, True))
+    cerrar(dlg)
+    segundo_plano.lanzar = segundo_plano.en_el_acto
+
+    # un cambio de remote sin rcd (rclone no arrancó) deja el desplegable en el de antes
+    rcd.arrancar = no_arranca
+    ABIERTAS.clear()
+    previo = tk_servidor.mostrar
+    tk_servidor.mostrar = lambda dlg_, parent=None: (ABIERTAS.append(dlg_), dlg_.update())
+    tk_servidor.open_dialog(raiz, CFG)
+    tk_servidor.mostrar = previo
+    dlg = ABIERTAS[0]
+    dlg.elegido.set("otro")
+    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    dlg.update()
+    c("sin rcd, elegir otro remote devuelve el desplegable al que se enseña",
+      (dlg.elegido.get(), frase(dlg), boton(dlg)),
+      ("nas", "No se puede ejecutar rclone: nada", "Reintentar"))
+    cerrar(dlg)
+    rcd.arrancar = arrancar_falso
 
     # -----------------------------------------------------------------------
     # 12. Cerrar con un listado en vuelo, con hilos de verdad

@@ -135,13 +135,11 @@ def _leer_conf() -> str:
 def _decir_vacio(tabla: Tabla, texto: str) -> None:
     """Cambia lo que dice la tabla cuando no tiene filas y la repinta.
 
-    `tk.Tabla` fija ese texto al crearse; aquí hace falta callar mientras no ha
-    llegado el primer listado, porque «Esta carpeta está vacía.» sobre una
-    ventana que aún conecta, o que no ha podido, mentiría.
+    La tabla nace callada: mientras no ha llegado el primer listado,
+    «Esta carpeta está vacía.» sobre una ventana que aún conecta, o que no ha
+    podido, mentiría.
     """
-    tabla._lienzo._vacio = texto                    # noqa: SLF001 — sin API pública para esto
-    if not tabla.orden:
-        tabla.poner([])
+    tabla.vacio = texto
 
 
 def open_dialog(parent, config: Config) -> None:
@@ -200,7 +198,7 @@ def open_dialog(parent, config: Config) -> None:
     accion.grid_remove()
     dlg.indicador, dlg.sondeo = indicador, sondeo      # como en «Dispositivos»: los tests los miran
 
-    tabla = Tabla(marco, COLUMNAS, al_elegir=lambda: None)
+    tabla = Tabla(marco, COLUMNAS, al_elegir=lambda: None, al_activar=lambda: entrar())
     tabla.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
     dlg.tabla, dlg.accion, dlg.elegido = tabla, accion, elegido
     dlg.ruta, dlg.arriba = ruta, arriba
@@ -276,7 +274,10 @@ def open_dialog(parent, config: Config) -> None:
             esperar: Si el hilo espera antes a que `rcd` conteste. Por defecto,
                 mientras la ventana no haya enseñado nada todavía.
         """
-        if estado["cerrado"] or estado["rcd"] is None:
+        if estado["cerrado"]:
+            return
+        if estado["rcd"] is None:
+            elegido.set(nav.remote)         # sin rcd no hay a quién pedir: no cambia nada
             return
         estado["ultima"] = pedida
         clase, valor = pedida
@@ -336,12 +337,11 @@ def open_dialog(parent, config: Config) -> None:
             lanzar_peticion(estado["ultima"], esperar=True)
 
     # ------------------------------------------------------------- navegar
-    def entrar(_evento=None) -> str:
-        """Entra en la carpeta elegida; un archivo no hace nada."""
+    def entrar() -> None:
+        """Entra en la carpeta elegida (`al_activar`: doble clic o Intro); un archivo, nada."""
         e = estado["entradas"].get(tabla.elegida)
         if e is not None and e.es_carpeta:
             lanzar_peticion(("ruta", nav.hijo(e.nombre)))
-        return "break"
 
     def subir(_evento=None) -> str:
         """Sube a la carpeta que contiene a la actual; la raíz es el techo."""
@@ -359,9 +359,6 @@ def open_dialog(parent, config: Config) -> None:
         if nuevo and nuevo != nav.remote:
             lanzar_peticion(("remote", nuevo))
 
-    # `Double-1` y `Return` sustituyen a los del lienzo, que solo abren si tiene `al_activar`.
-    for secuencia in ("<Double-1>", "<Return>", "<KP_Enter>"):
-        tabla.marco.bind(secuencia, entrar)
     tabla.marco.bind("<BackSpace>", subir)
     elegido.bind("<<ComboboxSelected>>", cambiar_remote)
 
