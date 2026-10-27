@@ -410,7 +410,10 @@ def main() -> int:
     if not se_ve and not IS_WIN:
         por_que_no_arranca()
     e = estado(app)
-    ver("el vigilante, en marcha", e["vigilante"], True)
+    # El vigilante arranca suelto después de KeePassXC: tarda en tomar su
+    # registro, así que se espera como se espera a KeePassXC.
+    ver("el vigilante, en marcha", esperar(lambda: estado(app)["vigilante"], 30) is not None, True)
+    e = estado(app)
     ver("su configuración, en la de la unidad",
         e["config"], ["keepassxc.ini", "keepassxc_local.ini", "raiz.txt"])
     ver("la línea de la ventana lo dice", e["linea"], f"{BASE}, abierto en KeePassXC.")

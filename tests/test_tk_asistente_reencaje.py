@@ -8,7 +8,10 @@ volver a centrarse, y solo se mueve lo justo para que su borde de abajo no se
 salga de la pantalla útil, que es cuando crece por abajo cerca del borde.
 
 Con Tk de verdad, en una pantalla de 1920x1080 con la pantalla útil fijada a
-1920x1040 (como en los demás tests de medidas), se comprueba:
+1920x1040 (como en los demás tests de medidas), se comprueba. La ventana se
+coloca donde la centraría esa pantalla de 1920x1080, no la de verdad: así el
+resultado no depende del monitor en que corre el test (en uno de 3440 de
+ancho, `centrar()` la dejaría fuera de la pantalla útil fijada):
 
 - que «¿Dónde?» → «Dispositivo» cambia a lo sumo de tamaño una vez y no
   mueve la ventana, cuando cabe;
@@ -51,7 +54,10 @@ from ui import tk as uitk  # noqa: E402
 # pinta el paso, como en los demás tests del asistente.
 segundo_plano.lanzar = segundo_plano.en_el_acto
 
-# La pantalla útil de la prueba: 1920x1040 (el monitor 1080p menos la barra).
+# La pantalla de la prueba: 1920x1080, y su pantalla útil, 1920x1040 (el
+# monitor 1080p menos la barra). Toda colocación del test sale de aquí, no de
+# la pantalla real del equipo.
+PANTALLA = (1920, 1080)
 PANTALLA_REAL = uitk.pantalla_util
 UTIL = (1920, 1040)
 uitk.pantalla_util = lambda win: UTIL
@@ -137,6 +143,9 @@ class Configures:
 def asistente(volumenes=()):
     """Devuelve `(ventana, asistente)` ya enseñados y centrados, en «¿Dónde?».
 
+    Se centra como lo haría `centrar()` en la pantalla de `PANTALLA`, no en la
+    real: así el test no depende del monitor del equipo.
+
     Args:
         volumenes: Las unidades que lista «Dispositivo».
     """
@@ -145,7 +154,10 @@ def asistente(volumenes=()):
     ventana.withdraw()
     wiz = tk_install.build(ventana)
     wiz.perfil = PERFIL
-    uitk.centrar(ventana)
+    ventana.update_idletasks()
+    ancho = max(ventana.winfo_width(), ventana.winfo_reqwidth())
+    alto = max(ventana.winfo_height(), ventana.winfo_reqheight())
+    ventana.geometry(f"+{max(0, (PANTALLA[0] - ancho) // 2)}+{centrado(alto)}")
     ventana.deiconify()
     bombear()
     return ventana, wiz
@@ -157,8 +169,8 @@ def arbol(wiz):
 
 
 def centrado(alto: int) -> int:
-    """Devuelve la `y` a la que `centrar()` pondría una ventana de ese alto."""
-    return max(0, (raiz.winfo_screenheight() - alto) // 2 - alto // 8)
+    """Devuelve la `y` a la que `centrar()` pondría una ventana de ese alto en `PANTALLA`."""
+    return max(0, (PANTALLA[1] - alto) // 2 - alto // 8)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +179,10 @@ def centrado(alto: int) -> int:
 ventana, wiz = asistente()
 antes = estado(ventana)
 c("(a) parte de «¿Dónde?»", wiz.pasos[wiz.indice][0], "¿Dónde?")
+# Si la ventana no cabe en la pantalla útil al empezar, el fallo dice la causa
+# y no que «se ha movido».
+c("(a) parte dentro de la pantalla útil (precondición)",
+  antes[2] + antes[0] <= UTIL[0] and antes[3] + antes[1] <= UTIL[1], True)
 registro = Configures(ventana)
 wiz.ir(+1)
 bombear()

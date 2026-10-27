@@ -257,6 +257,8 @@ def soltar_vhd(fichero: Path) -> None:
 
 
 _letras_usadas: set[str] = set()
+vhd_de: dict[str, Path] = {}
+"""El fichero `.vhdx` de cada letra que dio `volumen_windows()`, para desconectarlo y volver a conectarlo."""
 
 
 def es_administrador() -> bool:
@@ -293,6 +295,12 @@ def letra_libre() -> str:
                 and not _de_red(letra):
             _letras_usadas.add(letra)
             return letra
+    # Con todas gastadas por las pruebas anteriores de la ejecución (F34 es de las
+    # últimas), se vuelve a una que ya no existe: lleva un buen rato suelta.
+    for letra in "RSTUVWXYZQPON":
+        if not Path(f"{letra}:\\").exists() and not _de_red(letra):
+            _letras_usadas.add(letra)
+            return letra
     raise Saltada("no quedan letras de unidad libres")
 
 
@@ -319,6 +327,7 @@ def volumen_windows(tipo: str, letra: str | None = None, mb: int = 128):
                    "convert mbr noerr", "create partition primary",
                    f"format quick fs={tipo} label=PRUEBA", f"assign letter={letra}"])
     raiz = Path(f"{letra}:\\")
+    vhd_de[letra] = fichero
     if rc != 0 or not esperar(raiz.exists, 30):
         soltar_vhd(fichero)
         raise Saltada(f"diskpart no ha creado el volumen {tipo} (rc={rc})")
@@ -326,6 +335,20 @@ def volumen_windows(tipo: str, letra: str | None = None, mb: int = 128):
         yield raiz
     finally:
         soltar_vhd(fichero)
+
+
+def conectar_vhd(fichero: Path, letra: str) -> bool:
+    """Vuelve a conectar un disco virtual que se desconectó y devuelve si su letra reaparece.
+
+    Si Windows no le devuelve la letra, se la pone.
+    """
+    raiz = Path(f"{letra}:\\")
+    diskpart([f'select vdisk file="{fichero}"', "attach vdisk"])
+    if esperar(raiz.exists, 15):
+        return True
+    diskpart([f'select vdisk file="{fichero}"', "select partition 1",
+              f"assign letter={letra} noerr"])
+    return esperar(raiz.exists, 15)
 
 
 GUID_IO_VOLUME_LOCK = "50708874-c9af-11d1-8fef-00a0c9a06d32"
@@ -627,13 +650,20 @@ class Contenedor:
         Saltada: Si no hay VeraCrypt o no crea el contenedor.
     """
 
-    def __init__(self) -> None:
-        """Crea el contenedor; no lo monta."""
+    def __init__(self, carpeta_hc: Path | None = None) -> None:
+        """Crea el contenedor; no lo monta.
+
+        Args:
+            carpeta_hc: Dónde va el `.hc` (por ejemplo un VHD aparte); sin ella,
+                una carpeta de trabajo nueva.
+        """
         self.vc, formato = veracrypt()
         self.portable = self.vc.parent != VERACRYPT_INSTALADO
         self.letra = letra_libre()
         self.raiz = Path(f"{self.letra}:\\")
-        self.hc = carpeta("vc") / "prueba.hc"
+        if carpeta_hc is not None:
+            carpeta_hc.mkdir(parents=True, exist_ok=True)
+        self.hc = (carpeta_hc or carpeta("vc")) / "prueba.hc"
         ejecutar([str(formato), "/create", str(self.hc), "/size", "60M", "/password",
                   CLAVE_VERACRYPT, "/encryption", "AES", "/hash", "sha512", "/filesystem",
                   "NTFS", "/pim", "0", "/silent", "/force"], timeout=600)

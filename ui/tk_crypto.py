@@ -436,7 +436,8 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                         sistema.get(), estado.dinamico, seguimiento=seguimiento),
                     f"Creando {contenedor} ({bytes_ / 1024**3:.1f} GiB).\n"
                     + ("Es un contenedor dinámico: esto va a ser rápido."
-                       if estado.dinamico else espera.cget("text")),
+                       if estado.dinamico else espera.cget("text"))
+                    + (f"\n{crypto.AVISO_UAC_TAPADO}" if IS_WIN else ""),
                     progreso=None if seguimiento is None else seguimiento.progreso)
                 if not ok:
                     raise res if isinstance(res, Exception) else InstallError("Falló.")
@@ -445,7 +446,7 @@ def _panel_veracrypt(panel, wiz, hecho) -> None:
                 wiz.root, "montando el contenedor",
                 lambda: crypto.mount_container(estado.veracrypt, contenedor, password),
                 "Montando el contenedor.\nVeraCrypt puede pedir permisos de "
-                "administrador: acepta el aviso.")
+                "administrador: acepta el aviso.\n" + crypto.AVISO_UAC_TAPADO)
             if not ok:
                 raise res if isinstance(res, Exception) else InstallError("Falló.")
         except InstallError as e:

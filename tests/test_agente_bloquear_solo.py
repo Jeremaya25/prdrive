@@ -47,7 +47,10 @@ INSTALADO: list = [VC]
 penwatch.installed_veracrypt = lambda: INSTALADO[0]
 agente.veracrypt_propio = lambda: "C:/agente/veracrypt/VeraCrypt-x64.exe"
 RETENIDO: list = [True]             # lo que contesta vestibulo.retenido
-vestibulo.retenido = lambda hc: RETENIDO[0]
+# «Otra» (`FIS2`) sigue abierta todo el test: su `.hc` siempre retenido. Con un
+# solo valor para todos, al soltar el de la cifrada la otra pasaría por un
+# fantasma (`Agente._fantasmas_extraibles()`, #41).
+vestibulo.retenido = lambda hc: True if Path(hc).parent == FIS2 else RETENIDO[0]
 agente.IS_WIN = True                # la bandeja que oye la sesión es la de Windows
 
 SESION, SUSPENDER, APAGAR = equipo.AJUSTES_BLOQUEAR_SOLO

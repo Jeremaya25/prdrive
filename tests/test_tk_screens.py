@@ -797,13 +797,13 @@ with sandbox():
     c("la flota enseña un dispositivo por nota", sorted(filas), ["otro", "yo"])
     c("y marca cuál es este", (filas["yo"][0], filas["otro"][0]), ("✓", ""))
     c("la tabla: cuándo se le vio, desde qué equipo y cómo acabó (lo demás, a la ficha)",
-      titulos, ["Este", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
-    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {5})
+      titulos, ["Este", "", "Dispositivo", "Visto", "Último equipo", "Última pasada"])
+    c("cada fila lleva una celda por columna", {len(f) for f in filas.values()}, {6})
     c("«Último equipo» es el desde el que publicó por última vez",
-      filas["otro"][3], "OFICINA-07")
-    c("y de una nota que no lo apunta, una raya", filas["yo"][3], tk_fleet.SIN_DATO)
+      filas["otro"][4], "OFICINA-07")
+    c("y de una nota que no lo apunta, una raya", filas["yo"][4], tk_fleet.SIN_DATO)
     c("la última pasada sigue al final, y un «ok» se dice «bien»",
-      (filas["otro"][4], filas["yo"][4]), (tk_fleet.BIEN, tk_fleet.BIEN))
+      (filas["otro"][5], filas["yo"][5]), (tk_fleet.BIEN, tk_fleet.BIEN))
 
 # la columna «Último equipo»: solo el más reciente, la lista entera es de la ficha
 Recientes = fleet.Dispositivo(
@@ -816,7 +816,7 @@ c("el último equipo es el más reciente de la nota",
 c("sin equipos en la nota, una raya",
   tk_fleet.ultimo_equipo(Recientes._replace(equipos=())), tk_fleet.SIN_DATO)
 c("la columna está en la tabla", [k for k, *_ in tk_fleet.COLUMNAS],
-  ["aqui", "nombre", "visto", "equipo", "estado"])
+  ["aqui", "icono", "nombre", "visto", "equipo", "estado"])
 
 # la ficha: qué dice, sin dibujarla
 Linea = tk_fleet.Linea

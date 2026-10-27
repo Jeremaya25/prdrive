@@ -597,7 +597,7 @@ def _carpeta_cifrada(cuerpo, wiz) -> None:
                                   wiz.equipo_letra, password, wiz.equipo_tamano),
                           ("Abriendo" if existe else "Creando y montando")
                           + " el contenedor. VeraCrypt puede pedir permisos de "
-                            "administrador: acepta el aviso.")
+                            "administrador: acepta el aviso. " + crypto.AVISO_UAC_TAPADO)
         if not ok:
             messagebox.showerror(TITLE, str(res) or "Falló.", parent=wiz.root)
             return
