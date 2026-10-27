@@ -606,10 +606,16 @@ with sandbox():
     doble_clic(dlg, *centro(dlg, "a.txt"))
     c("doble clic en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
       (n, "/datos"))
-    elegir(dlg, "notas")
-    pulsar(dlg, "<KP_Enter>")
-    c("Intro del teclado numérico entra en la carpeta elegida", dlg.ruta.cget("text"),
-      "/datos/notas")
+    # Tk en Windows no tiene `KP_Enter` (`win/tkWinKey.c`: VK_RETURN es siempre `Return`): allí
+    # el Intro del teclado numérico llega como `<Return>`, ya comprobado, y generar `<KP_Enter>`
+    # no llega a ningún sitio (como en `test_tk_dialogos.py`).
+    if raiz.tk.call("tk", "windowingsystem") == "win32":
+        print("  (saltado) <KP_Enter>: en Windows Tk lo da como <Return>, ya comprobado")
+    else:
+        elegir(dlg, "notas")
+        pulsar(dlg, "<KP_Enter>")
+        c("Intro del teclado numérico entra en la carpeta elegida", dlg.ruta.cget("text"),
+          "/datos/notas")
     cerrar(dlg)
 
     # iids que podrían confundirse con otra cosa: números, llaves, espacios
