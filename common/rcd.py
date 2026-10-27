@@ -77,6 +77,8 @@ _PRCTL: Any = None
 """El puntero a `prctl` de libc, resuelto en el padre antes del `Popen` (`_resolver_prctl`)."""
 PR_SET_PDEATHSIG = 1
 """La opción de `prctl` que pide una señal cuando muere el padre."""
+_SIGKILL = getattr(signal, "SIGKILL", 9)
+"""`SIGKILL` (9 en todo POSIX); Windows no tiene `signal.SIGKILL`, pero allí no se usa."""
 _JOBS: list[Any] = []
 """Los handles de los Job Objects de Windows: viven tanto como el proceso, nunca se cierran."""
 
@@ -164,7 +166,7 @@ def _morir_con_el_padre() -> None:
     que acabase, el `rcd` moriría a los pocos segundos.
     """
     if _PRCTL is not None:
-        _PRCTL(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0)
+        _PRCTL(PR_SET_PDEATHSIG, int(_SIGKILL), 0, 0, 0)
 
 
 def atar_al_job(proceso: subprocess.Popen) -> bool:

@@ -15,8 +15,11 @@ de Windows, `PDEATHSIG` de Linux y `state/rcd.json` con el pid y la hora de crea
 `rcd.lanzar`, `rcd.peticion` y `rcd.puerto_libre` se sustituyen: ningún test
 arranca rclone. Tampoco se mata nada de verdad: `store.matar_arbol`, `pid_alive` y
 `creado` se sustituyen. Lo propio de Windows se fuerza con `rcd.os` y un
-`atar_al_job` falso; la llamada real a esa función solo corre en Windows. La única excepción es `peticion` contra un servidor HTTP de
-mentira en el propio proceso, para comprobar que no pasa por el proxy del sistema.
+`atar_al_job` falso (y falso por defecto en todo el fichero: ninguna comprobación
+toca los Job Objects de verdad con un proceso de mentira); la llamada real a esa
+función solo corre en Windows.
+
+La única excepción es `peticion` contra un servidor HTTP de mentira en el propio proceso, para comprobar que no pasa por el proxy del sistema.
 """
 
 import base64
@@ -87,6 +90,10 @@ def con_falsos(rastro: Rastro) -> None:
 
 
 lanzar_real, peticion_real, puerto_real = rcd.lanzar, rcd.peticion, rcd.puerto_libre
+# En Windows `arrancar()` llama a `atar_al_job`; con un `ProcesoFalso` no debe tocar la API real.
+atar_real = rcd.atar_al_job
+sin_job = lambda proceso: False  # noqa: E731
+rcd.atar_al_job = sin_job
 
 # Nada de lo de `store` que mira o mata procesos de verdad: lo que viva en el equipo no es de este test.
 matados: list[int] = []
@@ -531,7 +538,6 @@ with sandbox():
         c("ni sesión propia, sí sin consola",
           ("start_new_session" in opciones, opciones["creationflags"]), (False, model.CREATE_NO_WINDOW))
         atados = []
-        atar_real = rcd.atar_al_job
         rcd.atar_al_job = lambda p: atados.append(p) or True
         rastro = Rastro()
         con_falsos(rastro)
@@ -547,23 +553,30 @@ with sandbox():
         c("si atar_al_job devuelve False, arranca igual",
           (len(atados), r.proceso in store._HIJOS, rcd.fichero_estado().exists()), (2, True, True))
         store.soltar_hijo(rastro.proceso)
-        rcd.atar_al_job = atar_real
     finally:
         rcd.os = os_real
-    atados = []
-    rcd.atar_al_job = lambda p: atados.append(p) or True
-    con_falsos(Rastro())
-    rcd.arrancar()
-    c("en POSIX, arrancar() no toca el job", atados, [])
-    rcd.atar_al_job = atar_real
-    store.soltar_hijo(rastro.proceso)
+        rcd.atar_al_job = sin_job
+
+    # POSIX, forzado también: que no dependa de en qué sistema corre el test
+    rcd.os = SimpleNamespace(name="posix", environ=os.environ, path=os.path, getpid=os.getpid)
+    try:
+        atados = []
+        rcd.atar_al_job = lambda p: atados.append(p) or True
+        rastro = Rastro()
+        con_falsos(rastro)
+        rcd.arrancar()
+        c("en POSIX, arrancar() no toca el job", atados, [])
+        store.soltar_hijo(rastro.proceso)
+    finally:
+        rcd.os = os_real
+        rcd.atar_al_job = sin_job
 
     # atar_al_job de verdad
     if os.name == "nt":
         dormilon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                                     creationflags=model.CREATE_NO_WINDOW)
         try:
-            c("atar_al_job mete un proceso real en un Job Object", rcd.atar_al_job(dormilon), True)
+            c("atar_al_job mete un proceso real en un Job Object", atar_real(dormilon), True)
             c("y guarda el handle del job", len(rcd._JOBS) >= 1, True)
         finally:
             dormilon.kill()
@@ -571,7 +584,7 @@ with sandbox():
     else:
         dormilon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         try:
-            c("fuera de Windows, atar_al_job devuelve False sin lanzar", rcd.atar_al_job(dormilon), False)
+            c("fuera de Windows, atar_al_job devuelve False sin lanzar", atar_real(dormilon), False)
         finally:
             dormilon.kill()
             dormilon.wait()
