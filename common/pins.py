@@ -277,14 +277,19 @@ código» y el agente vuelve a preguntar.
 Windows: los tres ejecutables del ZIP oficial (`KeePassXC.exe`, la línea de
 órdenes y el proxy del navegador), resumidos tal cual salen del ZIP de
 `KEEPASSXC["windows-x64"]` una vez comprobado contra su SHA-256 (el 15/10/2026,
-sobre la 2.7.12). No se comprueban las DLL ni el resto de ficheros que van al
-lado: es lo que se aceptó al dejar la carpeta fuera de la huella. Linux: el
+sobre la 2.7.12). El resto de ficheros que van al lado no se resume en cada
+lanzamiento: de ellos se mira la forma, contra `common/keepassxc_arbol.json`
+(`components.keepassxc_arbol()`: ni uno de más, ni de menos, ni con otro
+tamaño; los de hasta 4 KiB, como `qt.conf`, también se resumen). Lo aceptado
+es una DLL cambiada en su sitio con el mismo tamaño. Linux: el
 AppImage, que no se repite aquí, porque su suma es la del paquete
 (`KEEPASSXC["linux-x64"]`). Linux ARM64 no tiene paquete: usa el KeePassXC del
 equipo, que no es de la unidad y no se comprueba.
 
-Al subir `KEEPASSXC_VERSION` se añade la entrada de la versión nueva y la vieja
-se QUEDA: un dispositivo cuyo código ya se actualizó y cuyo KeePassXC todavía
+Al subir `KEEPASSXC_VERSION` se añade la entrada de la versión nueva, se corre
+`python generar_arbol_keepassxc.py` (añade su árbol a `keepassxc_arbol.json`,
+comprobando antes que sus ejecutables den estas sumas) y la vieja se QUEDA, aquí
+y en el árbol: un dispositivo cuyo código ya se actualizó y cuyo KeePassXC todavía
 no sigue abriendo el suyo mientras su versión esté aquí. Como la entrada de
 Linux de la versión que se deja usa la suma de `KEEPASSXC`, que pasa a ser la
 nueva, antes de cambiarla se escribe esa suma en la entrada vieja, tal cual.

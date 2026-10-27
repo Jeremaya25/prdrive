@@ -46,9 +46,16 @@ def hacer_zip(ficheros: dict[str, bytes], arriba: str = ARRIBA) -> bytes:
     return buf.getvalue()
 
 
-BUENO = {".portable": b"", "KeePassXC.exe": b"MZ el programa", "keepassxc-cli.exe": b"MZ cli",
-         "keepassxc-proxy.exe": b"MZ proxy", "plugins/platforms/qwindows.dll": b"MZ qt"}
+RELLENO = b"\0" * (components.KEEPASSXC_RESUMIR_HASTA + 1)
+"""Para que los ficheros de mentira, como los de verdad, pasen de lo que el árbol resume."""
+BUENO = {".portable": b"", "KeePassXC.exe": b"MZ el programa" + RELLENO,
+         "keepassxc-cli.exe": b"MZ cli" + RELLENO, "keepassxc-proxy.exe": b"MZ proxy" + RELLENO,
+         "plugins/platforms/qwindows.dll": b"MZ qt" + RELLENO}
 ZIP = hacer_zip(BUENO)
+ARBOL = {rel: (len(datos), hashlib.sha256(datos).hexdigest()) for rel, datos in BUENO.items()}
+"""El árbol del ZIP de mentira, como lo daría `components.keepassxc_arbol()`."""
+components.keepassxc_arbol = lambda version, paquete: (
+    ARBOL if (version, paquete) == (pins.KEEPASSXC_VERSION, "windows-x64") else None)
 NOMBRE = pins.KEEPASSXC["windows-x64"][0]
 pins.KEEPASSXC["windows-x64"] = (NOMBRE, hashlib.sha256(ZIP).hexdigest())
 EJECUTABLES = (components.KEEPASSXC_EXE, "keepassxc-cli.exe", "keepassxc-proxy.exe")
@@ -166,12 +173,41 @@ c("ponerlo otra vez no toca nada", (keepassxc_bin.instalar(app), pedidas), ([], 
 # con el sello al día, un ejecutable que ya no es el fijado NO está al día: el sello dice de
 # dónde salió el paquete, no que sus ficheros sigan siendo esos
 dll = carpeta / "plugins" / "platforms" / "qwindows.dll"
-dll.write_bytes(b"MZ una DLL cambiada")
-c("una DLL cambiada no cuenta: la tabla no la fija, y es lo que se aceptó",
-  keepassxc_bin.al_dia(app), True)
+dll.write_bytes(b"MZ QT" + RELLENO)
+c("una DLL cambiada con el mismo tamaño no cuenta: solo se resumen los ejecutables, y es lo "
+  "que se aceptó", keepassxc_bin.al_dia(app), True)
 dll.write_bytes(BUENO["plugins/platforms/qwindows.dll"])
+# la forma de la carpeta sí: un fichero de más, de menos o con otro tamaño, como en comprobar()
+for que, rel, poner, quitar in (
+        ("una DLL añadida junto al exe", "VCRUNTIME140.dll",
+         lambda f: f.write_bytes(b"MZ"), None),
+        ("un plugin añadido", "plugins/imageformats/x.dll",
+         lambda f: (f.parent.mkdir(), f.write_bytes(b"MZ")), None),
+        ("una DLL con otro tamaño", "plugins/platforms/qwindows.dll",
+         lambda f: f.write_bytes(b"MZ una DLL cambiada"), None),
+        ("una DLL que falta", "plugins/platforms/qwindows.dll", lambda f: f.unlink(), None)):
+    fichero = carpeta.joinpath(*rel.split("/"))
+    poner(fichero)
+    components.keepassxc_anotar_alterado(app, "windows-x64", pins.KEEPASSXC_VERSION, rel)
+    c(f"con el sello al día, {que} ({rel}) no está al día",
+      (keepassxc_bin.al_dia(app), keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64")),
+      (False, [rel]))
+    hecho = keepassxc_bin.instalar(app)
+    c("  y ponerlo repone el paquete entero y olvida el apunte",
+      (len(hecho), keepassxc_bin.al_dia(app), components.keepassxc_alterado(app, "windows-x64"),
+       fichero.exists() == (rel in BUENO)), (1, True, {}, True))
+(carpeta / "config").mkdir()
+(carpeta / "config" / "org.keepassxc.keepassxc_browser_chrome.json").write_text("{}")
+c("los JSON del navegador en config/ no cuentan", keepassxc_bin.al_dia(app), True)
+ARBOL_BUENO = ARBOL
+ARBOL = None
+c("sin árbol de la versión fijada no se puede dar por bueno: no está al día",
+  keepassxc_bin.al_dia(app), False)
+ARBOL = ARBOL_BUENO
 for que, estropear in (
         ("un ejecutable con otros bytes", lambda f: f.write_bytes(b"MZ " + f.read_bytes())),
+        ("un ejecutable con otros bytes del mismo tamaño",
+         lambda f: f.write_bytes(f.read_bytes().upper())),
         ("un ejecutable vacío", lambda f: f.write_bytes(b"")),
         ("un ejecutable que falta", lambda f: f.unlink())):
     for nombre in EJECUTABLES:
@@ -184,7 +220,9 @@ for que, estropear in (
         c("  y ponerlo lo repone", (len(hecho), fichero.read_bytes(), keepassxc_bin.al_dia(app)),
           (1, BUENO[nombre], True))
 fichero = carpeta / "keepassxc-cli.exe"
-fichero.write_bytes(b"MZ otra cli")
+OTRA_CLI = b"MZ CLI" + RELLENO
+"""La CLI cambiada con el mismo tamaño: la forma cuadra y la suma no."""
+fichero.write_bytes(OTRA_CLI)
 visto: list[str] = []
 keepassxc_bin.instalar(app, progreso=visto.append)
 c.contains("  y dice qué fichero no cuadraba", " ".join(visto), "keepassxc-cli.exe")
@@ -206,7 +244,7 @@ def resumiendo(donde, apuntar):
 
 
 resumidos: list[str] = []
-fichero.write_bytes(b"MZ otra cli")
+fichero.write_bytes(OTRA_CLI)
 keepassxc_bin._resumen = resumiendo(carpeta, resumidos)
 try:
     hecho = keepassxc_bin.instalar(app)
@@ -225,11 +263,14 @@ c("  y con todo en su sitio, también una vez cada uno, y no hace nada",
   (sorted(resumidos), hecho), (sorted(EJECUTABLES), []))
 c("la lista de los que no cuadran sale vacía cuando todo cuadra",
   keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"), [])
-fichero.write_bytes(b"MZ otra cli")
-(carpeta / "KeePassXC.exe").unlink()
+fichero.write_bytes(OTRA_CLI)
+(carpeta / "KeePassXC.exe").write_bytes(BUENO["KeePassXC.exe"].upper())
 c("  y nombra solo los que no cuadran, en orden",
   keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"),
   ["KeePassXC.exe", "keepassxc-cli.exe"])
+(carpeta / "KeePassXC.exe").unlink()
+c("  y si la forma de la carpeta no cuadra, solo ese, sin resumir nada",
+  keepassxc_bin.ficheros_que_no_cuadran(app, "windows-x64"), ["KeePassXC.exe"])
 keepassxc_bin.instalar(app)
 real_tabla = pins.KEEPASSXC_EJECUTABLES
 pins.KEEPASSXC_EJECUTABLES = {}
@@ -241,7 +282,7 @@ c("  y con ella vuelve a estarlo", keepassxc_bin.al_dia(app), True)
 # lo apuntado por `comprobar()` se olvida cuando se repone, o cuando se ve que está bien
 components.keepassxc_anotar_alterado(app, "windows-x64", pins.KEEPASSXC_VERSION,
                                      "keepassxc-cli.exe")
-fichero.write_bytes(b"MZ otra cli")
+fichero.write_bytes(OTRA_CLI)
 real_libre = traveler.espacio_libre
 traveler.espacio_libre = lambda raiz: 1024
 rechaza("sin sitio no se toca nada", lambda: keepassxc_bin.instalar(app), "No cabe")

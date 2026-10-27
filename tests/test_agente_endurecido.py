@@ -718,6 +718,17 @@ c("  también al cambiar una suma", agente.huella(RH) not in (base, con_pins), T
 (app_h / "common" / "keepassxc.py").write_text("# la comprobación\n", encoding="utf-8")
 c("  y con common/keepassxc.py, que las comprueba", agente.huella(RH) != base, True)
 (app_h / "common" / "keepassxc.py").unlink()
+(app_h / "common" / "keepassxc_arbol.json").write_text(
+    '{"2.7.12": {"windows-x64": {"KeePassXC.exe": [1, "' + "0" * 64 + '"]}}}\n',
+    encoding="utf-8")
+con_arbol = agente.huella(RH)
+c("  y con common/keepassxc_arbol.json, la forma del paquete que se comprueba",
+  con_arbol != base, True)
+(app_h / "common" / "keepassxc_arbol.json").write_text(
+    '{"2.7.12": {"windows-x64": {"KeePassXC.exe": [2, "' + "0" * 64 + '"]}}}\n',
+    encoding="utf-8")
+c("  también al cambiar un tamaño", agente.huella(RH) not in (base, con_arbol), True)
+(app_h / "common" / "keepassxc_arbol.json").unlink()
 c("  quitado lo suyo, la huella vuelve a ser la de antes", agente.huella(RH), base)
 
 F.RAICES[:] = []

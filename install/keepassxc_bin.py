@@ -29,8 +29,10 @@ Cada fichero se vuelve a leer de la unidad y a resumir: una unidad que escribe
 mal no deja un KeePassXC a medias con un sello que diga que está bien.
 
 El sello dice de dónde salió el paquete, no que sus ficheros sigan siendo esos:
-`al_dia()` mira además que cada ejecutable que fija `pins.KEEPASSXC_EJECUTABLES`
-tenga su suma, y `instalar()` repone el paquete si uno no cuadra. Resumir 11 MB
+`al_dia()` mira además que la carpeta tenga la forma del árbol oficial
+(`common/keepassxc_arbol.json`, como `keepassxc.comprobar()`) y que cada
+ejecutable que fija `pins.KEEPASSXC_EJECUTABLES` tenga su suma, y `instalar()`
+repone el paquete si algo no cuadra. Resumir 11 MB
 es cosa del instalador y del aplicador, en segundo plano; la ventana, al
 pintarse, solo lee lo que apuntó `keepassxc.comprobar()` en `state/`
 (`components.keepassxc_pendiente()`), y `instalar()` lo olvida al reponer.
@@ -259,16 +261,41 @@ def _fijados(clave: str) -> dict[str, str]:
     return pins.KEEPASSXC_EJECUTABLES.get(pins.KEEPASSXC_VERSION, {}).get(clave, {})
 
 
-def ficheros_que_no_cuadran(app_dir: Path | str, clave: str = PAQUETE) -> list[str]:
-    """Devuelve cuáles de los ejecutables fijados de ese paquete no son los de la tabla.
+def _arbol(clave: str) -> dict[str, tuple[int, str]] | None:
+    """Devuelve el árbol oficial de ese paquete en la versión fijada (`keepassxc_arbol()`)."""
+    return components.keepassxc_arbol(pins.KEEPASSXC_VERSION, clave)
 
-    Un fichero que falta o que no se puede leer cuenta como que no cuadra. Lee
-    cada uno entero (11 MB en Windows, 47 en Linux): lo hace el instalador y el
+
+def _hay_con_que(clave: str) -> bool:
+    """Indica si esta versión de prdrive tiene con qué dar por bueno ese paquete.
+
+    Hacen falta los ejecutables fijados y, en un paquete que se ejecuta desde la
+    unidad (`components.keepassxc_usa_arbol()`), su árbol: sin él,
+    `keepassxc.comprobar()` tampoco lo dejaría lanzar.
+    """
+    return bool(_fijados(clave)) and (not components.keepassxc_usa_arbol(clave)
+                                      or _arbol(clave) is not None)
+
+
+def ficheros_que_no_cuadran(app_dir: Path | str, clave: str = PAQUETE) -> list[str]:
+    """Devuelve qué ficheros de ese paquete no son los oficiales, con su ruta en la carpeta.
+
+    Primero la forma de la carpeta contra el árbol oficial, como
+    `keepassxc.comprobar()` (`components.keepassxc_arbol_no_cuadra()`: un fichero
+    de más, de menos, con otro tamaño, o un enlace); si no cuadra, se devuelve
+    ese fichero y no se resume nada. Si cuadra, cada ejecutable fijado se resume
+    entero (11 MB en Windows, 47 en Linux): lo hace el instalador y el
     aplicador, en segundo plano, nunca la ventana al pintarse (`components`).
-    No mira las DLL ni el resto del paquete: es lo que se aceptó al dejar la
-    carpeta fuera de la huella del agente (`pins.KEEPASSXC_EJECUTABLES`).
+    Un fichero que falta o que no se puede leer cuenta como que no cuadra. Las
+    DLL no se resumen: de ellas se mira solo que estén y su tamaño. Sin árbol
+    de la versión fijada no se mira la forma; `al_dia()` ya no lo da por bueno.
     """
     carpeta = components.keepassxc_dir(app_dir, clave)
+    arbol = _arbol(clave) if components.keepassxc_usa_arbol(clave) else None
+    if arbol is not None:
+        fallo = components.keepassxc_arbol_no_cuadra(carpeta, arbol)
+        if fallo is not None:
+            return [fallo[0]]
     malos = []
     for nombre, suma in _fijados(clave).items():
         try:
@@ -281,15 +308,16 @@ def ficheros_que_no_cuadran(app_dir: Path | str, clave: str = PAQUETE) -> list[s
 
 
 def al_dia(app_dir: Path | str, clave: str = PAQUETE) -> bool:
-    """Indica si la unidad lleva ya ese KeePassXC: el fijado, y con sus ejecutables intactos.
+    """Indica si la unidad lleva ya ese KeePassXC: el fijado, con su forma y ejecutables intactos.
 
     El sello dice de dónde salió el paquete, no que sus ficheros sigan siendo
-    esos, así que además cada ejecutable que fija `pins.KEEPASSXC_EJECUTABLES`
-    ha de tener su suma. Si esta versión de prdrive no fija ninguno del paquete
-    no hay con qué comprobarlo y no se da por al día: `keepassxc.comprobar()`
+    esos, así que además la carpeta ha de tener la forma del árbol oficial y
+    cada ejecutable que fija `pins.KEEPASSXC_EJECUTABLES` su suma
+    (`ficheros_que_no_cuadran()`). Si esta versión de prdrive no tiene con qué
+    comprobarlo (`_hay_con_que()`) no se da por al día: `keepassxc.comprobar()`
     tampoco lo dejaría lanzar.
     """
-    return (_sello_al_dia(app_dir, clave) and bool(_fijados(clave))
+    return (_sello_al_dia(app_dir, clave) and _hay_con_que(clave)
             and not ficheros_que_no_cuadran(app_dir, clave))
 
 
@@ -303,10 +331,12 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
     """Deja en `app_dir/keepassxc/<clave>/` el KeePassXC fijado, con su sello.
 
     No mira si está en uso: eso lo hace quien lo pide (ver el docstring del
-    módulo). Si ya está el bueno, con sus ejecutables intactos (`al_dia()`), no
-    toca nada; con el sello al día y un ejecutable que no cuadra, lo vuelve a
-    poner. Lo que `keepassxc.comprobar()` apuntó de ese paquete en `state/` se
-    olvida al reponerlo y al ver que sus ficheros ya cuadraban.
+    módulo). Si ya está el bueno, con su forma y sus ejecutables intactos
+    (`al_dia()`), no toca nada; con el sello al día y un fichero que no cuadra
+    (uno de más, como una DLL añadida, uno de menos, otro tamaño o un ejecutable
+    cambiado), vuelve a poner la carpeta entera. Lo que `keepassxc.comprobar()`
+    apuntó de ese paquete en `state/` se olvida al reponerlo y al ver que sus
+    ficheros ya cuadraban.
 
     Returns:
         Lo hecho, una línea por paso; vacío si ya estaba.
@@ -324,7 +354,7 @@ def instalar(app_dir: Path | str, clave: str = PAQUETE,
     # Es `al_dia()`, pero resumiendo los ejecutables una sola vez (el AppImage son 47 MB).
     sello = _sello_al_dia(app_dir, clave)
     malos = ficheros_que_no_cuadran(app_dir, clave) if sello else []
-    if sello and _fijados(clave) and not malos:
+    if sello and _hay_con_que(clave) and not malos:
         components.keepassxc_olvidar_alterado(app_dir, clave)
         decir(f"KeePassXC {pins.KEEPASSXC_VERSION} ya está en la unidad.")
         return []

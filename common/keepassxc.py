@@ -35,13 +35,17 @@ funciones de módulo que los tests sustituyen; lo demás decide sin tocar nada,
 o toca solo ficheros del dispositivo.
 
 Nada de `.prdrive/keepassxc/` entra en la huella del agente (`agente.huella()`),
-así que cada ejecutable de la unidad que se lanza o se registra se compara antes
-con el SHA-256 de `pins.KEEPASSXC_EJECUTABLES` (`comprobar()`; en Linux,
-`preparar_appimage()` resume la copia que va a extraer). Si no cuadra no se
-lanza nada y se dice por qué (`NoOficial`), y lo que no cuadra se apunta en
-`state/` para que la ventana ofrezca «Actualizar…», que lo repone
-(`components.keepassxc_alterado()`). Las DLL y el resto de ficheros que van al
-lado del programa no se comprueban.
+así que antes de lanzar o registrar un ejecutable de la unidad se comprueba
+(`comprobar()`): en Windows, que la carpeta del paquete tenga la forma del árbol
+oficial (`common/keepassxc_arbol.json`: ni un fichero de más, ni de menos, ni
+con otro tamaño, ni enlaces), y que el ejecutable dé el SHA-256 de
+`pins.KEEPASSXC_EJECUTABLES`; en Linux, `preparar_appimage()` resume la copia
+que va a extraer. Si no cuadra no se lanza nada y se dice por qué
+(`NoOficial`), y lo que no cuadra se apunta en `state/` para que la ventana
+ofrezca «Actualizar…», que lo repone (`components.keepassxc_alterado()`). Lo que
+no se ve: un fichero del árbol que no es ejecutable (una DLL) cambiado en su
+sitio con el mismo tamaño, y lo que cambie entre la comprobación y el
+lanzamiento.
 """
 
 from __future__ import annotations
@@ -287,18 +291,14 @@ def _resumen(ruta: Path) -> str:
 # --- que lo que se lanza de la unidad sea el KeePassXC oficial
 
 class NoOficial(OSError):
-    """Un ejecutable de la unidad que no es el KeePassXC oficial: no se lanza ni se registra.
+    """El KeePassXC de la unidad no es el oficial: no se lanza ni se registra nada de él.
 
-    Su texto es lo que se le dice a la persona, y dice cómo seguir.
+    Puede ser el ejecutable (otra suma) o la carpeta de su paquete (un fichero
+    de más, de menos o con otro tamaño, o un enlace: `comprobar()`). Su texto es
+    lo que se le dice a la persona, y dice cómo seguir.
     """
 
 
-RESUMENES: dict[tuple[str, int, int], str] = {}
-"""Los SHA-256 ya calculados en este proceso, por `(ruta, tamaño, mtime_ns)`.
-
-Así abrir el llavero dos veces, o abrirlo y combinar, lee una sola vez cada
-ejecutable. Si la ruta, el tamaño o el mtime cambian, se vuelve a leer.
-"""
 NO_OFICIAL = ("El KeePassXC de la unidad no es el oficial ({motivo}), así que no se ha lanzado "
               "nada de él. {salida}")
 """Lo que se dice cuando un ejecutable no cuadra con su pin."""
@@ -328,7 +328,7 @@ def _alterado(motivo: str, app_dir: Path | None, paquete: str, version: str,
     Args:
         app_dir: El del dispositivo; `None`, el de este.
         version: La que dice el sello (la de `esperado()`).
-        fichero: El que no cuadra, tal como se llama en la carpeta del paquete.
+        fichero: El que no cuadra, con su ruta en la carpeta del paquete (con `/`).
     """
     components.keepassxc_anotar_alterado(app_dir, paquete, version, fichero)
     return _no_oficial(motivo)
@@ -368,15 +368,25 @@ def esperado(paquete: str | None, nombre: str,
 
 
 def comprobar(ruta: Path, paquete: str | None, app_dir: Path | None = None) -> None:
-    """Comprueba que ese fichero de la unidad es el oficial; si no, lanza `NoOficial`.
+    """Comprueba que ese ejecutable de la unidad y su paquete son los oficiales; si no, `NoOficial`.
 
     Se llama justo antes de lanzar o registrar cualquier ejecutable de
     `.prdrive/keepassxc/`: la ventana y su proxy, la línea de órdenes de
-    «Combinar» y de «dejar sin contraseña» y el registro del navegador. Compara
-    el SHA-256 con `esperado()`. No comprueba las DLL ni el resto de ficheros
-    que van al lado. Entre la comprobación y el lanzamiento el fichero puede
-    cambiar (una unidad extraíble no se puede bloquear), salvo el AppImage de
-    Linux, que `preparar_appimage()` resume ya copiado en el equipo.
+    «Combinar» y de «dejar sin contraseña» y el registro del navegador. Siempre
+    en segundo plano: resume el fichero entero cada vez, sin recordar nada de
+    otra vez (en FAT/exFAT nada de lo que da `stat()` se libra de quien escribe
+    en la unidad).
+
+    En un paquete de Windows (`components.keepassxc_usa_arbol()`), antes de
+    resumir, el ejecutable tiene que estar en la carpeta del paquete y esa
+    carpeta tiene que tener la forma del árbol oficial de la versión del sello
+    (`components.keepassxc_arbol()` y `keepassxc_arbol_no_cuadra()`): así una
+    DLL o un `qt.conf` añadidos junto al programa, que Windows y Qt cargarían,
+    no pasan. Luego compara el SHA-256 con `esperado()`. Lo que no se ve: un
+    fichero del árbol que no es este cambiado en su sitio con el mismo tamaño,
+    y lo que cambie entre la comprobación y el lanzamiento (una unidad
+    extraíble no se puede bloquear), salvo el AppImage de Linux, que
+    `preparar_appimage()` resume ya copiado en el equipo.
 
     Es de módulo para que los tests la sustituyan: los KeePassXC de mentira no
     son los oficiales.
@@ -387,17 +397,26 @@ def comprobar(ruta: Path, paquete: str | None, app_dir: Path | None = None) -> N
         app_dir: La carpeta del código de la unidad; por defecto, esta.
 
     Raises:
-        NoOficial: Si no cuadra con la tabla, no se puede leer o no hay con
-            qué compararlo.
+        NoOficial: Si no cuadra con la tabla o con el árbol, no se puede leer o
+            no hay con qué compararlo. Un fichero que no cuadra se apunta en
+            `state/` (`_alterado()`); que falte el árbol de esa versión, no.
     """
     app = model.APP_DIR if app_dir is None else app_dir
     version, oficial = esperado(paquete, ruta.name, app)
+    if components.keepassxc_usa_arbol(paquete):
+        carpeta = components.keepassxc_dir(app, paquete)
+        if os.path.normcase(os.path.abspath(ruta.parent)) != os.path.normcase(
+                os.path.abspath(carpeta)):
+            raise _no_oficial(f"{ruta.name} no está en la carpeta de su paquete")
+        arbol = components.keepassxc_arbol(version, paquete)
+        if arbol is None:
+            raise _no_oficial(f"prdrive no tiene la lista de ficheros de la versión {version}")
+        fallo = components.keepassxc_arbol_no_cuadra(carpeta, arbol)
+        if fallo is not None:
+            fichero, motivo = fallo
+            raise _alterado(f"{fichero} {motivo}", app_dir, paquete, version, fichero)
     try:
-        info = ruta.stat()
-        clave = (str(ruta), info.st_size, info.st_mtime_ns)
-        resumen = RESUMENES.get(clave)
-        if resumen is None:
-            resumen = RESUMENES[clave] = _resumen(ruta)
+        resumen = _resumen(ruta)
     except OSError as e:
         raise _alterado(f"no se ha podido leer {ruta.name}: {e}", app_dir, paquete, version,
                         ruta.name) from e
@@ -886,16 +905,21 @@ def json_nativo(carpeta: Path, navegador: str) -> Path:
 
 
 def abrir_navegador(exe: Path, paquete: str | None = None) -> list[str]:
-    """Apunta las cuatro claves del navegador a los JSON del KeePassXC de la unidad.
+    """Apunta las cuatro claves del navegador a los JSON del KeePassXC de la unidad, escritos antes.
 
     Se escriben las cuatro, haya lo que haya: en Windows `isBrowserEnabled()`
     solo mira que la clave tenga valor, y al arrancar `updateBinaryPaths()`
     rehace el JSON y la clave de todo lo «habilitado». Es lo que configura un
     equipo nuevo sin pasos (B2, B3); KeePassXC se las quedaría igualmente (B5).
     Lo que se registra es el proxy que lanza el navegador, y no se escribe
-    nada si no es el oficial (`comprobar()`). Antes de escribir se mira si la
-    `NativeMessagingHosts` de cada navegador estaba, y la que no estaba se
-    apunta (`NOTAS_NAVEGADOR`) para que al cerrar se borre solo esa.
+    nada si no es el oficial (`comprobar()`). Antes de cada clave se escribe el
+    JSON al que apunta (`manifiesto()` con ese proxy comprobado, de un
+    renombrado: `store.write_text()`), así lo registrado nombra el proxy
+    comprobado aunque KeePassXC no llegue a arrancar (K3) o el navegador se
+    adelante; si ese JSON no se puede escribir, su clave tampoco se escribe.
+    Antes de escribir se mira si la `NativeMessagingHosts` de cada navegador
+    estaba, y la que no estaba se apunta (`NOTAS_NAVEGADOR`) para que al cerrar
+    se borre solo esa.
 
     Args:
         exe: El `KeePassXC.exe` de la unidad; el proxy es el que tiene al lado.
@@ -907,14 +931,24 @@ def abrir_navegador(exe: Path, paquete: str | None = None) -> list[str]:
     Raises:
         NoOficial: Si el proxy de la unidad no es el oficial.
     """
-    comprobar(exe.with_name(PROXY), paquete_del_equipo() if paquete is None else paquete)
-    carpeta = exe.parent / "config"
+    proxy = exe.with_name(PROXY)
+    comprobar(proxy, paquete_del_equipo() if paquete is None else paquete)
+    carpeta = exe.parent / components.KEEPASSXC_CONFIG_PAQUETE
     fallos = []
     creadas = []
+    try:
+        carpeta.mkdir(exist_ok=True)
+    except OSError:
+        pass                                # cada JSON lo dirá al no poder escribirse
     for base, nombres in NAVEGADORES:
+        json_ = json_nativo(carpeta, nombres[0])
+        mozilla = base == "Software\\Mozilla"
+        if not store.write_text(json_, manifiesto(proxy, mozilla=mozilla)):
+            fallos.append(f"{json_}: no se ha podido escribir")
+            continue
         existia = registro.vacia(clave_hosts(base)) is not None
         try:
-            registro.escribir(clave_nativa(base), str(json_nativo(carpeta, nombres[0])))
+            registro.escribir(clave_nativa(base), str(json_))
         except OSError as e:
             fallos.append(f"{clave_nativa(base)}: {e}")
             continue

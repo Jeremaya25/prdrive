@@ -17,6 +17,7 @@ procesos se dicen, y `lanzar()` apunta la orden. Lo que se sujeta:
 import contextlib
 import io
 import os
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -195,6 +196,7 @@ try:
     raiz = tmpdir("prdrive-kpxc-raiz-")
     model.APP_DIR = raiz / ".prdrive"
     exe = components.keepassxc_exe(model.APP_DIR, "windows-x64")
+    exe.parent.mkdir(parents=True)          # el paquete está: lo exige comprobar()
     reg = Registro({"Software\\Google\\Chrome\\NativeMessagingHosts\\com.otro.programa":
                     "C:\\Otro\\otro.json"})
     usar(reg)
@@ -274,6 +276,7 @@ try:
     raiz = tmpdir("prdrive-kpxc-nativos-")
     model.APP_DIR = raiz / ".prdrive"
     exe = components.keepassxc_exe(model.APP_DIR, "windows-x64")
+    exe.parent.mkdir(parents=True)
     os.environ["LOCALAPPDATA"] = str(tmpdir("prdrive-kpxc-sin-instalado-"))
     # La nota es del equipo, y su carpeta puede no existir (sin agente instalado).
     equipo.DIR = tmpdir("prdrive-kpxc-equipo-") / "prdrive"
@@ -344,6 +347,7 @@ try:
     c("la nota vive en la carpeta del equipo mientras hace falta",
       len(list(equipo.DIR.glob("*"))), 1)
     model.APP_DIR = raiz / "agente-0.5.5"
+    shutil.rmtree(raiz / ".prdrive")        # la unidad se ha ido
     c("el agente, con la unidad ya ida, quita solo la NativeMessagingHosts que creó prdrive",
       (keepassxc.cerrar_navegador(carpeta_app=".prdrive", muertas=True),
        reg3.vacia(EDGE_H), reg3.vacia(MOZILLA_H), reg3.vacia(CHROMIUM_H)),
