@@ -329,7 +329,8 @@ del resto del llavero: no se repiten aquí.
 ### KeePassXC fuera de la huella, comprobado contra su SHA-256 (#117)
 
 `keepassxc/` ya no entra en la huella del agente; antes de lanzar o registrar
-un ejecutable de la unidad se compara con `pins.KEEPASSXC_EJECUTABLES`. Los
+un ejecutable de la unidad se compara con `pins.KEEPASSXC_EJECUTABLES`, y la
+forma de la carpeta de su paquete con `common/keepassxc_arbol.json` (#164). Los
 tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 
 | Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
@@ -338,6 +339,9 @@ tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 | KP2 | W | Con el KeePassXC 2.7.12 que deja el instalador (sin tocar nada a mano), exFAT y NTFS: «Abrir llavero», «Combinar» una copia de conflicto y la sonda del fichero llave (llavero sin contraseña). | Se abre y combina sin avisar de que no es el oficial: las sumas de la tabla son las de los ficheros que el instalador deja en la unidad. | `keepassxc.comprobar()` |
 | KP3 | W | Cambiar un byte de `keepassxc-proxy.exe` y, aparte, de `KeePassXC.exe`, con el sello intacto; «Abrir llavero». Luego, sin borrar nada, mirar la ventana y pulsar «Actualizar…». | No se abre, no se escribe ni la configuración ni ninguna clave del registro, y el aviso manda a «Actualizar…» (no a borrar ninguna carpeta). Tras el aviso, la ventana ofrece «Actualizar…» («lleva 2.7.12 (con ficheros que no cuadran)»); al pulsarlo se repone el paquete, se apaga el aviso (`state/keepassxc-no-oficial.json` sin el apunte) y se abre. | `NoOficial`, `SALIDA_ACTUALIZAR`, `keepassxc_bin.al_dia()` |
 | KP4 | L | KP2 en Linux x64 con el AppImage. Después, con lo extraído en `~/.cache/prdrive/keepassxc/`, cambiar el AppImage de la unidad; y lo mismo con esa caché borrada. | Con la caché al día se abre igual; sin ella no se extrae nada y el aviso lo dice. | `keepassxc.preparar_appimage()` |
+| KP5 | W (exFAT y NTFS) | Con el paquete que pone el instalador: «Abrir llavero», conectar el navegador, «Combinar» una copia, cerrar, expulsar y abrir en otro equipo con otra letra. Apuntar qué ficheros aparecen en `keepassxc\windows-x64\` que no vienen en el ZIP. | No sale ningún «no es el oficial» en ningún paso. Lo que aparece fuera del ZIP está directamente en `config\` (los JSON del navegador, algún `.ini`); si aparece otra cosa, se amplía lo admitido. | `keepassxc.comprobar()`, `components.keepassxc_arbol_no_cuadra()` (#164) |
+| KP6 | W | Añadir, por separado, un `VCRUNTIME140.dll` junto a `KeePassXC.exe`, un `qt.conf` distinto del oficial con el mismo tamaño, y un `plugins\imageformats\x.dll`; «Abrir llavero» con cada uno. | No se abre, no se escribe ninguna clave del registro ni ningún JSON nuevo, y el aviso nombra el fichero. La ventana ofrece «Actualizar…»; tras pulsarlo el fichero ya no está y el llavero se abre. | `keepassxc.comprobar()`, `keepassxc_bin.al_dia()`/`instalar()` (#164) |
+| KP7 | W | En un equipo sin el runtime de Visual C++ (K3), «Abrir llavero» y mirar los JSON a los que apuntan las cuatro claves de `HKCU\Software\…\NativeMessagingHosts\org.keepassxc.keepassxc_browser`. Luego, con el runtime instalado, repetir y conectar el navegador. | Sin el runtime, KeePassXC no arranca, pero cada clave apunta a un JSON que existe y cuyo `path` es el `keepassxc-proxy.exe` de la unidad. Con el runtime, el navegador conecta (B2). | `keepassxc.abrir_navegador()` (#164) |
 
 ### «Abrir llavero» desde la bandeja con las pasadas retenidas
 
