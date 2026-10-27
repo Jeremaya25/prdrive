@@ -711,6 +711,18 @@ rcd.copiar(falso, "a", "b", ["/x"], omitir=True, grupo="g")
 c("omitir es IgnoreExisting", falso.llamadas[-1][1]["_config"], {"IgnoreExisting": True})
 c("nunca otro método de sync", {m for m, _ in falso.llamadas if m.startswith("sync/")}, {"sync/copy"})
 
+# sin reglas, rclone copiaría el origen entero: se rechaza antes de llamar a rcd
+for reglas_malas in ([], ["/a", ""], ["  "]):
+    falso = RcdFalso({"jobid": 7})
+    error = None
+    try:
+        rcd.copiar(falso, "nas:/datos", "/home/u/Descargas", reglas_malas, omitir=False, grupo="g")
+    except ValueError as e:
+        error = e
+    c(f"reglas {reglas_malas!r}: ValueError", isinstance(error, ValueError), True)
+    c(f"reglas {reglas_malas!r}: no llama a rcd", falso.llamadas, [])
+c("y el mensaje lo dice", str(error), "copiar necesita al menos una regla")
+
 falso = RcdFalso({})
 rcd.cancelar(falso, 7)
 c("cancelar es job/stop con el jobid", falso.llamadas[-1], ("job/stop", {"jobid": 7}))

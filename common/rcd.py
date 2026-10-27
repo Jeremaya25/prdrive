@@ -502,9 +502,13 @@ def copiar(r: Rcd, origen: str, destino: str, reglas: list[str], omitir: bool, g
         El `jobid` del trabajo, para `estado` y `cancelar`.
 
     Raises:
+        ValueError: Si no hay reglas, o alguna está vacía o en blanco. Sin reglas,
+            rclone copiaría el origen entero; no se llama a `rcd`.
         ErrorRc: Si rclone no acepta la copia.
         RcdCaido: Si no se puede hablar con `rcd`.
     """
+    if not reglas or any(not regla.strip() for regla in reglas):
+        raise ValueError("copiar necesita al menos una regla")
     params: dict[str, Any] = {
         "srcFs": origen, "dstFs": destino, "createEmptySrcDirs": True,
         "_filter": {"IncludeRule": list(reglas)}, "_async": True, "_group": grupo}
