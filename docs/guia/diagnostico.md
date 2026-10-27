@@ -205,6 +205,12 @@ nombre nuevo llega a esa lista con la siguiente sincronización, y no hace falta
 red para guardarlo. Si lo dejas vacío, la unidad se queda sin nombre propio pero
 el dispositivo conserva el que tenía.
 
+**Y el de su ventana**: la ventana principal se llama «Pendrive de Pere · prdrive»
+y lleva el icono de la unidad (un `.ico` tuyo solo en Windows; en Linux, la marca
+de siempre), así que con varias unidades abiertas a la vez sabes cuál es cada
+ventana en la barra de tareas. Al abrirla dice «prdrive» un momento, hasta que
+lee el dispositivo, y al guardar aquí cambia en el acto.
+
 Se guarda en un `autorun.inf` en la raíz de la unidad donde están tus datos, y
 el icono dentro de `.prdrive/` (`.prdrive\icono-….ico`): en la raíz no queda
 nada más que el `autorun.inf`. Ese fichero **no ejecuta nada**: Windows dejó de

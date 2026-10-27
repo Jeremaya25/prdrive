@@ -4,7 +4,8 @@
 `leer()` junta en UNA pasada, pensada para un hilo de fondo, lo que la ventana
 principal, «Parejas» y «Ajustes» necesitan saber del dispositivo: el estado de
 cada pareja, las averías, los conflictos, los componentes, la raíz física del
-contenedor, el arranque automático y la línea del llavero. La ventana pinta
+contenedor, el arranque automático, la línea del llavero y cómo se llama el
+dispositivo y qué icono lleva (el título y el icono de la ventana). La ventana pinta
 primero con lo que ya tiene (la config, lo guardado) y cuando la lectura llega
 la aplica y la reparte a las demás pantallas (`Compartida`), que así no vuelven
 a leer lo mismo en el hilo de Tk.
@@ -13,7 +14,7 @@ No importa Tk ni ningún módulo pesado de `common/` al cargarse: cada lector se
 importa dentro de la función que lo usa, para que `import ui.instantanea` sea
 barato y lo pague quien lee. Cada lector es una función de módulo que los tests
 sustituyen (`revision.revisar`, `components.pendientes`, `cifrado.expulsion`...,
-y `estados_de` y `linea_del_llavero` de aquí).
+y `estados_de`, `linea_del_llavero` e `identidad_de` de aquí).
 
 La lectura no escribe nada del usuario. Lo único que puede escribir es
 `filters/<pareja>.txt` (lo regenera `bisync.filters_file_for()` cuando la config
@@ -28,7 +29,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 if TYPE_CHECKING:
@@ -42,6 +43,28 @@ def _vigilante_vacio() -> Resumen:
     """Devuelve el vigilante de «no se sabe»: lo que la ventana pinta sin esa línea."""
     from . import watch
     return watch.Resumen("no_disponible")
+
+
+@dataclass(frozen=True)
+class Identidad:
+    """Cómo se llama el dispositivo y qué icono lleva: lo que distingue su ventana.
+
+    Con varias ventanas de prdrive abiertas, una por unidad, es lo que dice de
+    cuál es cada una en la barra de tareas. Se compara por contenido: la
+    ventana solo cambia su título y su icono si ha cambiado algo.
+
+    Args:
+        nombre: El del dispositivo en la flota (`fleet.nombre()`), el que pone
+            «Nombre e icono de la unidad».
+        icono: La clave del icono de prdrive de la unidad (una de
+            `autorun.CLAVES_MARCA`, o `autorun.CLAVE_PROPIA`), o `""` si no
+            lleva ninguno.
+        fichero: El `.ico` de la unidad si es uno propio y existe; si no, `None`.
+    """
+
+    nombre: str = ""
+    icono: str = ""
+    fichero: Path | None = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -74,6 +97,8 @@ class Instantanea:
         llavero: La línea del llavero (`llavero_editor.Linea`), o `None` si el
             dispositivo no lo lleva.
         device_id: El id del dispositivo, o `None` si no se pudo leer.
+        identidad: Su nombre y su icono (`Identidad`), o `None` si no se
+            pudieron leer: la ventana se queda con los que tenga.
         fallos: Por campo que no se pudo leer, el `repr` del error.
         hecha: `time.time()` de cuando empezó la lectura.
         firma: De qué config es (`firma()`).
@@ -96,6 +121,7 @@ class Instantanea:
     vigilante: Resumen = field(default_factory=_vigilante_vacio)
     llavero: Linea | None = None
     device_id: str | None = None
+    identidad: Identidad | None = None
     fallos: Mapping[str, str] = field(default_factory=dict)
     hecha: float = field(default_factory=time.time)
     firma: tuple = ()
@@ -228,6 +254,25 @@ def _device_id() -> str | None:
     return fleet.device_id() or None
 
 
+def identidad_de() -> Identidad:
+    """Lee cómo se llama este dispositivo y qué icono lleva su unidad.
+
+    El nombre sale de `state/fleet.json` y el icono del `icon=` del
+    `autorun.inf` de la raíz, los dos que escribe «Nombre e icono de la
+    unidad» (`ui/volumen.py`). Es un punto de sustitución de los tests.
+    """
+    from common import autorun, fleet, model
+
+    clave = fleet.icono()
+    fichero = None
+    if clave == autorun.CLAVE_PROPIA:
+        # `clave_icono()` ya ha visto que es relativa y está dentro de `.prdrive/`.
+        relativa = PureWindowsPath(autorun.leer(model.DEVICE_ROOT).icono)
+        ruta = Path(model.DEVICE_ROOT).joinpath(*relativa.parts)
+        fichero = ruta if ruta.is_file() else None
+    return Identidad(fleet.nombre(), clave, fichero)
+
+
 def _raiz_fisica(device_id: str | None) -> Path | None:
     """Devuelve la raíz física del contenedor de ese dispositivo, o `None`.
 
@@ -343,13 +388,14 @@ def leer(config: Config, *,
         fallos["vigilante"] = repr(error)
         vigilante = _vigilante_vacio()
     llavero = intentar("llavero", leer_llavero, None)
+    identidad = intentar("identidad", identidad_de, None)
 
     return Instantanea(
         estados=estados, notas=notas_pareja, hallazgos=hallazgos, cuenta=cuenta,
         conflictos=conflictos, componentes=componentes, componentes_texto=texto,
         componentes_actualizables=actualizables, fisica=fisica, expulsion=expulsion,
         bloqueo=bloqueo, del_equipo=del_equipo, vigilante=vigilante, llavero=llavero,
-        device_id=device_id, fallos=fallos, hecha=hecha, firma=sello, huella=huella)
+        device_id=device_id, identidad=identidad, fallos=fallos, hecha=hecha, firma=sello, huella=huella)
 
 
 def vacia(config: Config) -> Instantanea:

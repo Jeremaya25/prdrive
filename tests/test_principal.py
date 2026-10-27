@@ -120,10 +120,12 @@ def importados_arriba(ruta: str) -> list[tuple[str, str]]:
 
 PERMITIDOS = {("__future__", "annotations"), ("dataclasses", "dataclass"),
               ("typing", "TYPE_CHECKING"), ("typing", "Collection"), ("typing", "Mapping"),
-              ("typing", "NamedTuple"), ("common", "model"), (".", "cuando")}
+              ("typing", "NamedTuple"), ("common", "APP_NAME"), ("common", "model"),
+              (".", "cuando")}
 """Los únicos imports de arriba.
 
-La biblioteca estándar, el `model` que ya carga `ui.prefs` y el `ui.cuando` del paquete.
+La biblioteca estándar, el `model` que ya carga `ui.prefs` (con él, `common` y su
+`APP_NAME`, para el título) y el `ui.cuando` del paquete.
 """
 c("el cuerpo del módulo solo importa lo permitido (watch y llavero_editor, dentro de estado())",
   sorted(set(importados_arriba("ui/principal.py")) - PERMITIDOS), [])
@@ -564,5 +566,20 @@ if instantanea is not None:
       (e.cargando, e.chip, e.reparacion, e.componentes, e.llavero, e.pie,
        [f.chip for f in e.filas]), (False, ("al día", "Ok.", "ok"), 0, None, None, None,
                                     [None, None, None]))
+
+
+# ---------------------------------------------------------------------------
+# El título: el del dispositivo, para distinguir una ventana de otra.
+# ---------------------------------------------------------------------------
+
+c("el título es «<dispositivo> · prdrive»", principal.titulo("Pendrive azul"),
+  "Pendrive azul · prdrive")
+c("  con los espacios de sobra quitados", principal.titulo("  Pendrive \t azul "),
+  "Pendrive azul · prdrive")
+c("  sin nombre (aún no leído, o vacío), solo el programa",
+  (principal.titulo(None), principal.titulo(""), principal.titulo("   ")),
+  ("prdrive", "prdrive", "prdrive"))
+c("  y si se llama como el programa, no se repite",
+  (principal.titulo("prdrive"), principal.titulo("PRDRIVE")), ("prdrive", "prdrive"))
 
 sys.exit(c.report())

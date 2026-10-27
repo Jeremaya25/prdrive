@@ -594,7 +594,7 @@ def nota_de(app_dir: Path | str | None, como_se_llama: str,
                        tipo="" if not model.es_equipo(app_dir) else model.TIPO_EQUIPO,
                        cifrado=_cifrado(app_dir, identificador),
                        entiende=ENTIENDE,
-                       icono=_icono(app_dir))
+                       icono=icono(app_dir))
 
 
 CIFRADO_VERACRYPT = "veracrypt"
@@ -618,12 +618,13 @@ def _cifrado(app_dir: Path | str | None, identificador: str) -> str:
     return CIFRADO_VERACRYPT if unidad is not None and unidad.cifrada else ""
 
 
-def _icono(app_dir: Path | str | None) -> str:
+def icono(app_dir: Path | str | None = None) -> str:
     """Devuelve la clave del icono de prdrive que tiene la unidad, o `""`.
 
     Sale del `icon=` del `autorun.inf` de la raíz (`DEVICE_ROOT`, que con
     VeraCrypt es el volumen montado) y de nada más. La raíz de un equipo no
-    publica ninguno: su `autorun.inf` no lo lee ningún Explorador. No lanza.
+    tiene ninguno: su `autorun.inf` no lo lee ningún Explorador. Lo publica la
+    nota y lo lleva la ventana principal (`ui/instantanea.py`). No lanza.
     """
     try:
         if model.es_equipo(app_dir):
