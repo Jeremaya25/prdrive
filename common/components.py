@@ -387,7 +387,7 @@ def keepassxc_arbol_no_cuadra(carpeta: Path | str,
     admiten fuera del árbol el sello (`KEEPASSXC_STAMP`) y cualquier fichero
     normal directamente en `KEEPASSXC_CONFIG_PAQUETE`. Una carpeta vacía que no
     es del árbol no cuenta: no lleva nada que cargar. Un fichero del árbol de
-    hasta `KEEPASSXC_RESUMIR_HASTA` se resume (el `qt.conf`); de los demás solo
+    hasta `KEEPASSXC_RESUMIR_HASTA` se resume (el `.portable`, los `.qm` vacíos); de los demás solo
     se mira el tamaño, así que uno cambiado en su sitio con el mismo tamaño no
     se ve aquí (de los ejecutables lo ve su suma, en `keepassxc.comprobar()`).
 

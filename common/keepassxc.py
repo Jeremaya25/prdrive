@@ -140,7 +140,15 @@ EXTRAIDO = "squashfs-root"
 SELLO_EXTRAIDO = "PRDRIVE-EXTRAIDO"
 """Al lado de `EXTRAIDO`: el SHA-256 del AppImage del que salió. Se escribe el último."""
 APPRUN = "AppRun"
-"""El arranque del AppImage extraído: elige `keepassxc`, `cli` o `proxy`."""
+"""El arranque del AppImage extraído: señal de una extracción completa, no se lanza.
+
+El de la 2.8.0 copia un icono y escribe su `.desktop` en `~/.local/share` (con
+`APPIMAGE` quitado, `Exec= %f`: una entrada rota que además pisa la de quien
+use un AppImage suyo) y arranca con `systemd-run --user --scope`, que sin sesión
+de usuario de systemd falla. Por eso se lanza `PROGRAMA_LINUX`.
+"""
+PROGRAMA_LINUX = Path("usr") / "bin" / "keepassxc"
+"""KeePassXC, dentro de lo extraído (como la línea de órdenes, encuentra sus bibliotecas por `RUNPATH`)."""
 CLI_LINUX = Path("usr") / "bin" / "keepassxc-cli"
 """La línea de órdenes, dentro de lo extraído (encuentra sus bibliotecas sola: `RUNPATH`)."""
 PROXY_LINUX = Path("usr") / "bin" / "keepassxc-proxy"
@@ -425,6 +433,11 @@ def comprobar(ruta: Path, paquete: str | None, app_dir: Path | None = None) -> N
                         version, ruta.name)
 
 
+def _extraccion_completa(carpeta: Path) -> bool:
+    """Dice si `carpeta` es un `squashfs-root/` entero: con `AppRun` y el programa."""
+    return (carpeta / APPRUN).is_file() and (carpeta / PROGRAMA_LINUX).is_file()
+
+
 def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
     """Devuelve la carpeta extraída del AppImage de la unidad en este equipo.
 
@@ -443,7 +456,7 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
         app_dir: La carpeta del código de la unidad; por defecto, esta.
 
     Returns:
-        La carpeta `squashfs-root/`, con `AppRun` dentro.
+        La carpeta `squashfs-root/`, con `AppRun` y `usr/bin/keepassxc` dentro.
 
     Raises:
         NoOficial: Si falta el sello, su versión no está en `pins`, o la copia
@@ -457,7 +470,7 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
     hecho = destino / EXTRAIDO
     try:
         if ((destino / SELLO_EXTRAIDO).read_text(encoding="utf-8").strip() == oficial
-                and (hecho / APPRUN).is_file()):
+                and _extraccion_completa(hecho)):
             return hecho
     except OSError:
         pass
@@ -473,7 +486,7 @@ def preparar_appimage(paquete: str, app_dir: Path | None = None) -> Path:
                             components.KEEPASSXC_APPIMAGE)
         copia.chmod(0o700)
         codigo = extraer_appimage(copia, nuevo)
-        if codigo != 0 or not (nuevo / EXTRAIDO / APPRUN).is_file():
+        if codigo != 0 or not _extraccion_completa(nuevo / EXTRAIDO):
             raise OSError(f"no se ha podido extraer el AppImage (código {codigo})")
         copia.unlink()
         (nuevo / SELLO_EXTRAIDO).write_text(oficial + "\n", encoding="utf-8")
@@ -778,6 +791,9 @@ def ajustar_config(raiz: Path | None = None, paquete: str | None = None,
     Al crear un fichero, además `AL_CREAR` / `AL_CREAR_LOCAL`. Los dos
     ficheros a la vez: KeePassXC trata un `keepassxc_local.ini` sin su
     `keepassxc.ini` como una configuración vieja y lo mueve (`Config::init()`).
+    Crear siempre el segundo evita además que `Config::init()` de la 2.8 se
+    lleve a este el `~/.cache/keepassxc/keepassxc.ini` del KeePassXC instalado
+    en el equipo, que mueve a donde se le diga si no existe.
     Los bytes se leen y se escriben tal cual (`surrogateescape`): QSettings
     escapa lo que no es ASCII, pero un fichero tocado a mano no se estropea.
 
@@ -1284,7 +1300,7 @@ def orden(exe: Path, base: Path, paquete: str | None = None,
     (`DatabaseOpenWidget::enterKey()` llama a `openDatabase()`), y con una base
     de contraseña y fichero llave sale «Desbloquear la base de datos ha fallado
     y no introdujo una contraseña». Ahí el fichero llave se elige en su diálogo.
-    En Linux, `exe` es el `AppRun` de lo extraído, y la configuración es la de
+    En Linux, `exe` es el `usr/bin/keepassxc` de lo extraído, y la configuración es la de
     `config/linux/`: `--config` es también lo que dice de qué unidad es
     (`llavero.pids_keepassxc()`).
     """
@@ -1828,7 +1844,8 @@ def abrir(ap: Apertura) -> Abierto:
       `KeePassXC.exe` de la unidad.
     - Linux x64: el AppImage, extraído en este equipo si hace falta
       (`preparar_appimage()`, unos segundos la primera vez), su configuración
-      con el proxy de lo extraído, y su `AppRun`.
+      con el proxy de lo extraído, y su `usr/bin/keepassxc` (no el `AppRun`:
+      escribiría un `.desktop` y un icono en el equipo, `APPRUN`).
     - Linux ARM64: el KeePassXC del equipo, con su configuración y sus
       manifiestos, que son de la persona; si no tiene passkeys, se dice.
 
@@ -1856,7 +1873,7 @@ def abrir(ap: Apertura) -> Abierto:
         return Abierto(esperar_arranque(proc), tuple(avisos), Path(orden_[0]))
     if es_appimage(ap.paquete):
         carpeta = preparar_appimage(ap.paquete)
-        programa = carpeta / APPRUN
+        programa = carpeta / PROGRAMA_LINUX
         if not ap.abierto:
             try:
                 ajustar_config(paquete=ap.paquete, proxy=carpeta / PROXY_LINUX)

@@ -63,6 +63,17 @@ c("  solo de paquetes que prdrive instala (Linux ARM64 usa el del equipo)",
   all(paquete in pins.KEEPASSXC for porversion in tabla.values() for paquete in porversion),
   True)
 
+ANTERIOR = "2.7.12"
+fila_vieja = tabla.get(ANTERIOR, {})
+c("la fila de la versión anterior (2.7.12) se queda, con sus tres sumas de Windows",
+  (V != ANTERIOR, sorted(fila_vieja.get("windows-x64", {})),
+   all(len(s) == 64 for s in fila_vieja.get("windows-x64", {}).values())),
+  (True, sorted(["KeePassXC.exe", "keepassxc-cli.exe", "keepassxc-proxy.exe"]), True))
+suma_linux = fila_vieja.get("linux-x64", {}).get(components.KEEPASSXC_APPIMAGE, "")
+c("  y la de Linux, una suma literal de 64 cifras distinta de la del pin actual",
+  (len(suma_linux) == 64 and all(h in "0123456789abcdef" for h in suma_linux),
+   suma_linux != pins.KEEPASSXC["linux-x64"][1]), (True, True))
+
 # --- la tabla del árbol, sobre los datos de verdad
 arboles_ok, sumas_ok = [], []
 for version, porpaquete in sorted(tabla.items()):
@@ -78,8 +89,9 @@ c("  y sus tres ejecutables dan las sumas de KEEPASSXC_EJECUTABLES",
   all(ok for _, ok in sumas_ok) and bool(sumas_ok), True)
 c("  la versión fijada tiene árbol", components.keepassxc_arbol(V, "windows-x64") is not None,
   True)
-c("  con el .portable y el qt.conf del ZIP (este se resume: es pequeño)",
-  [n in (components.keepassxc_arbol(V, "windows-x64") or {}) for n in (".portable", "qt.conf")],
+c("  con el .portable y un .qm pequeño del ZIP (los pequeños se resumen)",
+  [n in (components.keepassxc_arbol(V, "windows-x64") or {})
+   for n in (".portable", "translations/qt_en.qm")],
   [True, True])
 c("  y el AppImage de Linux no tiene árbol: se copia y se comprueba entero en el equipo",
   (components.keepassxc_usa_arbol("linux-x64"), components.keepassxc_usa_arbol("windows-x64")),

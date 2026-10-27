@@ -343,6 +343,20 @@ tests lo sujetan con ficheros de mentira; lo que solo prueba un equipo real:
 | KP6 | W | Añadir, por separado, un `VCRUNTIME140.dll` junto a `KeePassXC.exe`, un `qt.conf` distinto del oficial con el mismo tamaño, y un `plugins\imageformats\x.dll`; «Abrir llavero» con cada uno. | No se abre, no se escribe ninguna clave del registro ni ningún JSON nuevo, y el aviso nombra el fichero. La ventana ofrece «Actualizar…»; tras pulsarlo el fichero ya no está y el llavero se abre. | `keepassxc.comprobar()`, `keepassxc_bin.al_dia()`/`instalar()` (#164) |
 | KP7 | W | En un equipo sin el runtime de Visual C++ (K3), «Abrir llavero» y mirar los JSON a los que apuntan las cuatro claves de `HKCU\Software\…\NativeMessagingHosts\org.keepassxc.keepassxc_browser`. Luego, con el runtime instalado, repetir y conectar el navegador. | Sin el runtime, KeePassXC no arranca, pero cada clave apunta a un JSON que existe y cuyo `path` es el `keepassxc-proxy.exe` de la unidad. Con el runtime, el navegador conecta (B2). | `keepassxc.abrir_navegador()` (#164) |
 
+### KeePassXC 2.8.0 (#175)
+
+El llavero pasa a KeePassXC 2.8.0 (Qt 6; en Linux se lanza `usr/bin/keepassxc`
+y no el `AppRun`). Lo que solo prueba un equipo real:
+
+| Código | Dónde | Qué hacer | Qué se espera |
+|---|---|---|---|
+| KX1 | W y W10 | «Actualizar…» de un dispositivo con 2.7.12 y el llavero activo: con KeePassXC abierto, y luego cerrado. Después K1, B1 y KP2. | Abierto, se aplaza; cerrado, deja la 2.8.0 y se abre y conecta con el navegador. |
+| KX2 | W | Las passkeys BE/BS (PK1, PK2, PK4) con la 2.8.0. | Igual que con la 2.7.12. |
+| KX3 | W y L | Una base usada con 2.8.0 se abre y combina con 2.7.12 y al revés (V1–V4 entre 2.7.12 y 2.8.0). | Sin avisos de formato; combinan. |
+| KX4 | WA | A1 con el ZIP x64 2.8.0 emulado (Qt 6). | Abre y conecta como la 2.7.12. |
+| KX5 | L | LX3, LX4 y LX7 con el AppImage 2.8.0. | Sin `.desktop` ni icono nuevos en `~/.local/share` y sin unidad `app-org.keepassxc…scope`. |
+| KX6 | W | K3 (sin Visual C++) con la 2.8.0. | El aviso de siempre. |
+
 ### «Abrir llavero» desde la bandeja con las pasadas retenidas
 
 Con la pausa de la bandeja, la batería o el ahorro de energía, «Abrir llavero»
