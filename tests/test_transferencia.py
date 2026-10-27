@@ -181,4 +181,49 @@ c("varios avisos van separados por una línea en blanco",
   "Lo que subas a «A» lo bajará al dispositivo su próxima pasada.\n\n"
   "Lo que subas a «B» lo bajará al dispositivo su próxima pasada.")
 
+# --- El panel de progreso y cómo acaba un lote -------------------------------------------
+lote_subir = L("subir", "nas", "/datos", "/home/u", (E("a", False),))
+lote_bajar = L("bajar", "nas", "/datos", "/home/u/D", (E("a", False),))
+P = transferencia.progreso_de
+c("vacío no lanza", P({}, lote_subir, "/datos"),
+  transferencia.Progreso("Subiendo a /datos", "", "0 de 0 archivos · 0 B de 0 B", None, ""))
+c("a medias", P({"transfers": 3, "totalTransfers": 41, "bytes": 125829120, "totalBytes": 838860800,
+                 "speed": 4404019.2, "eta": 120, "transferring": [{"name": "fotos/a.jpg"}]},
+                lote_bajar, "/home/u/D"),
+  transferencia.Progreso("Bajando a /home/u/D", "fotos/a.jpg", "3 de 41 archivos · 120 MB de 800 MB",
+                         0.15, "4,2 MB/s · quedan 2 min"))
+c("eta nula", P({"speed": 1024, "eta": None}, lote_subir, "/").ritmo, "1 KB/s")
+c("sin velocidad no hay ritmo", P({"eta": 30}, lote_subir, "/").ritmo, "")
+c("velocidad cero tampoco", P({"speed": 0, "eta": 30}, lote_subir, "/").ritmo, "")
+c("eta en segundos", P({"speed": 1024, "eta": 59}, lote_subir, "/").ritmo, "1 KB/s · quedan 59 s")
+c("eta en minutos", P({"speed": 1024, "eta": 60}, lote_subir, "/").ritmo, "1 KB/s · quedan 1 min")
+c("eta en horas", P({"speed": 1024, "eta": 7200}, lote_subir, "/").ritmo, "1 KB/s · quedan 2 h")
+c("eta cero", P({"speed": 1024, "eta": 0}, lote_subir, "/").ritmo, "1 KB/s · quedan 0 s")
+c("totalBytes cero: barra indeterminada", P({"bytes": 5, "totalBytes": 0}, lote_subir, "/").fraccion, None)
+c("la fracción no pasa de 1", P({"bytes": 20, "totalBytes": 10}, lote_subir, "/").fraccion, 1.0)
+c("la fracción no baja de 0", P({"bytes": -5, "totalBytes": 10}, lote_subir, "/").fraccion, 0.0)
+c("transferring vacío", P({"transferring": []}, lote_subir, "/").archivo, "")
+c("transferring con una entrada sin nombre", P({"transferring": [{}]}, lote_subir, "/").archivo, "")
+c("valores nulos no lanzan", P({"transfers": None, "totalBytes": None, "speed": None, "eta": None,
+                               "transferring": None}, lote_subir, "/").cuenta,
+  "0 de 0 archivos · 0 B de 0 B")
+
+R = transferencia.resultado_de
+c("ok con omitidos", R({"success": True}, {"transfers": 38, "checks": 41}, False, "/datos"),
+  transferencia.Resultado("Copiados 38 · omitidos 3", "ok", False))
+c("ok sin omitidos", R({"success": True}, {"transfers": 5, "checks": 5}, False, "/datos"),
+  transferencia.Resultado("Copiados 5", "ok", False))
+c("ok sin stats", R({"success": True}, {}, False, "/datos"),
+  transferencia.Resultado("Copiados 0", "ok", False))
+c("cancelado", R({"success": False}, {"transfers": 12, "totalTransfers": 41}, True, "/datos"),
+  transferencia.Resultado("Cancelado: copiados 12 de 41", "aviso", False))
+c("cancelado aunque rclone diga éxito", R({"success": True}, {"transfers": 1, "totalTransfers": 2}, True, "/d").texto,
+  "Cancelado: copiados 1 de 2")
+c("permiso al escribir", R({"success": False, "error": "permission denied"}, {}, False, "/datos"),
+  transferencia.Resultado("No tienes permiso para escribir en /datos.", "aviso", True))
+c("otro error, en llano", R({"success": False, "error": "i/o timeout"}, {}, False, "/datos").texto,
+  "El servidor no ha contestado a tiempo.")
+c("un error se puede reintentar", R({"success": False, "error": "i/o timeout"}, {}, False, "/datos").reintentar, True)
+c("error sin texto no lanza", R({"success": False}, {}, False, "/datos").tono, "aviso")
+
 sys.exit(c.report())

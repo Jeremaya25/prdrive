@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from common import rcd
 from common.model import Config
 
 from . import remote_picker, servidor
@@ -270,3 +271,123 @@ def aviso(sentido: str, afectadas: Iterable[Afectada]) -> str | None:
         return None
     textos = [_AVISOS[sentido][a.modo].format(p=a.pareja) for a in afectadas]
     return "\n\n".join(textos) or None
+
+
+def _numero(stats: dict, clave: str) -> float:
+    """Devuelve un campo numérico de `core/stats`; 0 si falta, es nulo o no es un número."""
+    valor = stats.get(clave)
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return 0
+    return valor
+
+
+def _tiempo(segundos: float) -> str:
+    """Dice una duración como `N s` (< 60), `N min` (< 3600) o `N h`."""
+    n = max(0, int(segundos))
+    if n < 60:
+        return f"{n} s"
+    if n < 3600:
+        return f"{n // 60} min"
+    return f"{n // 3600} h"
+
+
+@dataclass(frozen=True)
+class Progreso:
+    """Lo que enseña el panel de progreso de un lote en marcha.
+
+    Args:
+        titulo: `Subiendo a …` o `Bajando a …`.
+        archivo: El archivo que se está copiando; vacío si rclone aún no dice cuál.
+        cuenta: `{hechos} de {total} archivos · {bytes} de {total_bytes}`.
+        fraccion: De 0 a 1; `None` si aún no se sabe el total (barra indeterminada).
+        ritmo: `{velocidad}/s · quedan {eta}`; solo la velocidad si no hay estimación,
+            vacío si no hay velocidad.
+    """
+
+    titulo: str
+    archivo: str
+    cuenta: str
+    fraccion: float | None
+    ritmo: str
+
+
+def progreso_de(stats: dict, lote: Lote, destino_visible: str) -> Progreso:
+    """Convierte un `core/stats` de rclone en los textos del panel.
+
+    Nunca lanza: antes de que acabe el listado `totalBytes` y `totalTransfers` valen 0,
+    `eta` es nulo y `transferring` puede faltar.
+
+    Args:
+        stats: La respuesta de `core/stats`; puede estar vacía.
+        lote: El lote en marcha (da el sentido).
+        destino_visible: El destino tal como lo ve el usuario.
+
+    Returns:
+        Los textos y la fracción del panel.
+    """
+    verbo = "Subiendo" if lote.sentido == SUBIR else "Bajando"
+    en_curso = stats.get("transferring")
+    primero = en_curso[0] if isinstance(en_curso, list) and en_curso else None
+    nombre = primero.get("name") if isinstance(primero, dict) else None
+    hechos = int(_numero(stats, "transfers"))
+    total = int(_numero(stats, "totalTransfers"))
+    enviados = int(_numero(stats, "bytes"))
+    total_bytes = int(_numero(stats, "totalBytes"))
+    fraccion = min(1.0, max(0.0, enviados / total_bytes)) if total_bytes > 0 else None
+    velocidad = _numero(stats, "speed")
+    ritmo = ""
+    if velocidad > 0:
+        ritmo = f"{servidor.tamano_legible(int(velocidad))}/s"
+        if isinstance(stats.get("eta"), (int, float)) and not isinstance(stats.get("eta"), bool):
+            ritmo += f" · quedan {_tiempo(stats['eta'])}"
+    return Progreso(
+        titulo=f"{verbo} a {destino_visible}",
+        archivo=nombre if isinstance(nombre, str) else "",
+        cuenta=(f"{hechos} de {total} archivos · {servidor.tamano_legible(max(0, enviados))} "
+                f"de {servidor.tamano_legible(total_bytes)}"),
+        fraccion=fraccion,
+        ritmo=ritmo,
+    )
+
+
+@dataclass(frozen=True)
+class Resultado:
+    """Cómo acabó un lote.
+
+    Args:
+        texto: La frase que se enseña.
+        tono: `"ok"` o `"aviso"`.
+        reintentar: Si se ofrece `Reintentar` (solo tras un fallo, no tras cancelar).
+    """
+
+    texto: str
+    tono: str
+    reintentar: bool
+
+
+def resultado_de(estado: dict, stats: dict, cancelado: bool, destino_visible: str) -> Resultado:
+    """Convierte el `job/status` y el `core/stats` finales en el resultado del lote.
+
+    Args:
+        estado: La respuesta de `job/status` del trabajo terminado.
+        stats: El último `core/stats` del lote.
+        cancelado: Si el usuario canceló (manda sobre lo que diga rclone).
+        destino_visible: El destino tal como lo ve el usuario.
+
+    Returns:
+        El texto, su tono y si se ofrece reintentar.
+    """
+    copiados = int(_numero(stats, "transfers"))
+    if cancelado:
+        return Resultado(
+            f"Cancelado: copiados {copiados} de {int(_numero(stats, 'totalTransfers'))}",
+            "aviso", False)
+    if estado.get("success"):
+        # Con `IgnoreExisting` y con archivos idénticos, rclone cuenta lo omitido en `checks`.
+        omitidos = int(_numero(stats, "checks")) - copiados
+        texto = f"Copiados {copiados}" + (f" · omitidos {omitidos}" if omitidos > 0 else "")
+        return Resultado(texto, "ok", False)
+    error = rcd.ErrorRc(str(estado.get("error") or "no se ha podido copiar"), 0)
+    if servidor.es_de_permiso(error):
+        return Resultado(f"No tienes permiso para escribir en {destino_visible}.", "aviso", True)
+    return Resultado(servidor.frase_error(error), "aviso", True)
