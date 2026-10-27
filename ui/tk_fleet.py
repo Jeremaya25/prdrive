@@ -39,11 +39,12 @@ from common import fleet
 from common.model import Config
 
 from . import cuando_sello, icons, perf_al_pintar, perf_empezar, segundo_plano, theme
-from .tk import (TITLE, CeldaChip, CeldaIcono, CeldaTexto, FilaTabla, Indicador, Sondeo,
+from .tk import (TITLE, CeldaChip, CeldaIcono, CeldaMarca, CeldaTexto, FilaTabla, Indicador, Sondeo,
                  Tabla, cabecera, centrar, cuerpo_visible, modal, mostrar, working)
 
 COLUMNAS = [
     ("aqui", "Este", 44),
+    ("icono", "", 28),
     ("nombre", "Dispositivo", 200),
     ("visto", "Visto", 110),
     ("equipo", "Último equipo", 130),
@@ -55,6 +56,10 @@ La versión y las plataformas se fueron a la ficha: en la tabla queda lo que se
 compara de un vistazo entre dispositivos. «Último equipo» es solo el más
 reciente (`Dispositivo.ultimo_equipo`); la lista entera, con sus fechas, está en
 el apartado «Equipos» de la ficha.
+
+La del icono no tiene título y mide 28: la marca (16), la holgura de la celda
+(2 + 2) y los dos lados de la rejilla (8), para que mida lo mismo con la tabla
+vacía que con la flota pintada.
 """
 
 SIN_DATO = "—"
@@ -204,6 +209,17 @@ def ultima_pasada(disp: fleet.Dispositivo) -> tuple[str, str]:
     return texto, _tono(disp)
 
 
+def icono(disp: fleet.Dispositivo) -> CeldaMarca:
+    """Devuelve la celda con la marca de prdrive en el color de ese dispositivo.
+
+    Un color de la marca (`icons.CAMPOS`) se pinta tal cual; todo lo demás (un
+    `.ico` propio, la raíz de un equipo, una nota sin el campo o con una clave
+    de una versión futura) lleva la marca por defecto. El texto es la clave
+    publicada, vacío si la nota no trae ninguna.
+    """
+    return CeldaMarca(icons.CAMPOS.get(disp.icono, icons.CAMPO), disp.icono)
+
+
 def fila(disp: fleet.Dispositivo, yo: str) -> FilaTabla:
     """Devuelve la fila de la tabla de un dispositivo."""
     texto, tono = ultima_pasada(disp)
@@ -215,6 +231,7 @@ def fila(disp: fleet.Dispositivo, yo: str) -> FilaTabla:
         estado = CeldaTexto(texto, "Pista.")
     return FilaTabla(disp.id, (
         CeldaIcono("ok", ESTE) if disp.id == yo else "",
+        icono(disp),
         CeldaTexto(disp.nombre + marca(disp), "Fuerte."),
         CeldaTexto(fecha(disp.last_seen), "Mono."),
         CeldaTexto(ultimo_equipo(disp), "Mono."),

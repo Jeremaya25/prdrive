@@ -22,8 +22,9 @@ fichero cuando llega el volumen.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 from . import APP_NAME, vestibulo
@@ -77,6 +78,67 @@ contenedor VeraCrypt, y así se reconoce para recogerlo o no tomarlo por
 contenido de nadie.
 """
 PREFIJO_ICONO = PREFIJO_RAIZ + BASE_ICONO
+
+
+CLAVES_MARCA = ("azul", "verde", "granate", "morado", "grafito")
+"""Las claves de los colores de la marca, en el orden en que se ofrecen.
+
+Copia a propósito de `icons.CAMPOS` y de `volumen.MARCAS`: `common/` no importa
+`ui/` y la nota de la flota las publica (`tests/test_volumen.py` las compara).
+"""
+CLAVE_PROPIA = "propio"
+"""Clave de un `.ico` que trae la persona."""
+
+_NOMBRE = re.compile(f"(?P<fuera>{re.escape(PREFIJO_RAIZ)})?"
+                     + re.escape(BASE_ICONO)
+                     + r"-(?P<clave>[a-z]+)(?:-[0-9a-f]{8})?"
+                     + re.escape(EXTENSION_ICONO), re.IGNORECASE)
+"""El nombre de uno de nuestros iconos.
+
+`fuera` es el prefijo que lleva uno suelto en una raíz (`PREFIJO_RAIZ`): se
+reconoce para recogerlo. Dentro de `.prdrive/`, donde se ponen, va sin él.
+"""
+
+
+def icono_nuestro(carpetas: tuple[str, ...], nombre: str,
+                  app: str) -> re.Match | None:
+    """Devuelve el encaje del nombre si es un icono nuestro bien puesto.
+
+    Bien puesto es donde lo dejaría prdrive: en la raíz con el prefijo o en
+    `.prdrive/` sin él.
+
+    Args:
+        carpetas: Las de la ruta relativa a la raíz.
+        nombre: El nombre del fichero.
+        app: El nombre de la carpeta del programa en la raíz.
+    """
+    hallado = _NOMBRE.fullmatch(nombre)
+    if hallado is None:
+        return None
+    donde = () if hallado["fuera"] else (app.lower(),)
+    return hallado if tuple(c.lower() for c in carpetas) == donde else None
+
+
+def clave_icono(icono: str, app: str) -> str:
+    """Devuelve la clave de un `icon=` que es de prdrive, o `""`.
+
+    Args:
+        icono: El valor de `icon=`.
+        app: El nombre de la carpeta del programa en la raíz.
+
+    Returns:
+        Una de `CLAVES_MARCA` o `CLAVE_PROPIA`, en minúsculas; vacía si no hay
+        icono, no es nuestro o no está donde lo dejaría prdrive.
+    """
+    if not icono:
+        return ""
+    *carpetas, nombre = PureWindowsPath(icono).parts
+    hallado = icono_nuestro(tuple(carpetas), nombre, app)
+    if hallado:
+        clave = hallado["clave"].lower()
+        if clave == CLAVE_PROPIA or clave in CLAVES_MARCA:
+            return clave
+    return ""
 
 
 def es_icono(nombre: str) -> bool:

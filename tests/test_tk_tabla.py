@@ -96,7 +96,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 from ui import icons, tk_tabla  # noqa: E402
 from ui import tk as uitk  # noqa: E402
-from ui.tk import CeldaChip, CeldaIcono, CeldaTexto, FilaTabla  # noqa: E402
+from ui.tk import CeldaChip, CeldaIcono, CeldaMarca, CeldaTexto, FilaTabla  # noqa: E402
 from ui.tk_tabla import CeldaCasilla, TablaLienzo  # noqa: E402
 
 errores: list[str] = []
@@ -452,6 +452,20 @@ suelta.poner([FilaTabla("a", (CeldaIcono("ok", "bien"), "texto suelto"))])
 c("una celda de icono se lee por lo que dice, y un texto suelto tal cual", suelta.leer(),
   [("bien", "texto suelto")])
 suelta.marco.destroy()
+iguales = {}
+for etiqueta, celda in (("icono", CeldaIcono("ok", "bien")),
+                        ("marca", CeldaMarca(icons.CAMPOS["verde"], "verde"))):
+    t_ = TablaLienzo(marco, (("", 0, False), ("Nombre", 0, False)))
+    t_.poner([FilaTabla("a", (celda, "texto"))])
+    cv_ = t_.marco
+    imagenes = [i for i in cv_.find_all() if cv_.type(i) == "image"]
+    caja = cv_.bbox(imagenes[0]) if imagenes else None
+    iguales[etiqueta] = (len(imagenes), t_._filas["a"].anchos[0], t_._filas["a"].alto,
+                         caja[2] - caja[0] if caja else 0, t_.leer())
+    t_.marco.destroy()
+c("una CeldaMarca mide y se dibuja como una CeldaIcono (imagen centrada, HOLGURA alrededor)",
+  iguales["marca"][:4], iguales["icono"][:4])
+c("y se lee por su texto", iguales["marca"][4], [("verde", "texto")])
 c("nada ha reventado", errores, [])
 dlg.destroy()
 
@@ -742,9 +756,12 @@ def rejilla_antigua(padre, columnas, filas, alto_fila: int = 36, vacio: str = ""
         for col, celda in enumerate(fila_.celdas):
             if isinstance(celda, CeldaChip):
                 widget = theme.chip(marco_, celda.texto, celda.tipo, celda.icono)
-            elif isinstance(celda, CeldaIcono):
+            elif isinstance(celda, (CeldaIcono, CeldaMarca)):
                 widget = ttk.Label(marco_, style=f"{sup}TLabel")
-                img = icons.get(marco_, celda.nombre, 16, theme.OK, theme.fondo_de(sup))
+                img = (icons.app_icon(marco_, icons.px(marco_, 16), celda.campo)
+                       if isinstance(celda, CeldaMarca)
+                       else icons.get(marco_, celda.nombre, 16, theme.OK,
+                                      theme.fondo_de(sup)))
                 if img is not None:
                     widget.configure(image=img)
                     widget.image = img

@@ -57,7 +57,7 @@ import time
 from typing import NamedTuple
 
 from . import icons, perf_activo, perf_al_pintar, theme
-from .tk import CeldaChip, CeldaIcono, CeldaTexto, FilaTabla
+from .tk import CeldaChip, CeldaIcono, CeldaMarca, CeldaTexto, FilaTabla
 
 HOLGURA = 2
 """Lo que una `ttk.Label` de clam pide alrededor de su texto o su imagen, en píxeles.
@@ -408,6 +408,8 @@ class TablaLienzo:
         """La imagen de una celda de casilla o de icono, o `None` si no se puede pintar."""
         if isinstance(celda, CeldaCasilla):
             return icons.casilla(self.marco, "marcada" if celda.marcada else "vacia", margen=0)
+        if isinstance(celda, CeldaMarca):
+            return icons.app_icon(self.marco, icons.px(self.marco, 16), celda.campo)
         return icons.get(self.marco, celda.nombre, 16, theme.OK, theme.fondo_de(superficie))
 
     def _celda(self, celda, tono: str) -> tuple[int, int]:
@@ -415,7 +417,7 @@ class TablaLienzo:
         if isinstance(celda, CeldaChip):
             chip = self._chip(celda)
             return chip.ancho, chip.alto
-        if isinstance(celda, (CeldaCasilla, CeldaIcono)):
+        if isinstance(celda, (CeldaCasilla, CeldaIcono, CeldaMarca)):
             img = self._imagen(celda, SUPERFICIE_FILA.get(tono, "Card."))
             lados = (img.width(), img.height()) if img is not None else (0, 0)
             return lados[0] + 2 * HOLGURA, lados[1] + 2 * HOLGURA
@@ -625,7 +627,7 @@ class TablaLienzo:
                                        anchor="nw", font=self._fuente("pista"), fill=chip.letra,
                                        tags=(*etiquetas, "texto"))
                 f.leidos.append((texto, ""))
-            elif isinstance(celda, (CeldaCasilla, CeldaIcono)):
+            elif isinstance(celda, (CeldaCasilla, CeldaIcono, CeldaMarca)):
                 img = self._imagen(celda, superficie)
                 if img is not None:
                     cv.create_image(x + HOLGURA, y0 + (alto - img.height()) // 2, image=img,

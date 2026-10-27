@@ -1107,6 +1107,17 @@ class CeldaIcono(NamedTuple):
     texto: str = ""
 
 
+class CeldaMarca(NamedTuple):
+    """Una celda de `Tabla` con la marca de prdrive pintada en un color.
+
+    Args:
+        campo: El color del campo de la marca (un valor de `icons.CAMPOS`).
+        texto: Lo que dice para quien no la ve.
+    """
+    campo: str
+    texto: str = ""
+
+
 class CeldaTexto(NamedTuple):
     """Una celda de `Tabla` con texto en un rol (`'Fuerte.'`, `'Mono.'`, `'MonoPista.'`…)."""
     texto: str
@@ -1118,7 +1129,7 @@ class FilaTabla(NamedTuple):
 
     Args:
         iid: Cómo se la llama al elegirla.
-        celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip` o `CeldaIcono`.
+        celdas: Una por columna: un texto, `CeldaTexto`, `CeldaChip`, `CeldaIcono` o `CeldaMarca`.
         tono: `''`, `'aviso'` (fondo ámbar), `'peligro'` (fondo rojo), `'propio'`
             (fondo del acento) o `'apagado'` (todo el texto en gris).
     """
