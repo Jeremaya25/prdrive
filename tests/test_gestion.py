@@ -12,6 +12,7 @@ import sys
 
 from _harness import Checks, mkcfg
 
+from common import rcd
 from ui import gestion, transferencia
 
 c = Checks("gestión del servidor: qué se puede tocar y qué dirá cada pareja")
@@ -366,5 +367,199 @@ cfg_dos = mkcfg((), pairs=[
 c("dos parejas en la misma carpeta: una línea por cada una, en el orden de la configuración",
   gestion.avisos(Op(B, "nas", "/m", (E("a", False),)), cfg_dos),
   (QUITA.format(p="Uno"), CONSERVA.format(p="Dos")))
+
+# --- ordenes_de ------------------------------------------------------------------------
+RARO = ("con espacio", "100%", "a#b?", "*[x]{y}")
+c("borrar una carpeta: purge, la ruta sin la barra del principio",
+  gestion.ordenes_de(Op(gestion.BORRAR, "nas", "/datos", (E("viejo", True),))),
+  [{"_path": "operations/purge", "fs": "nas:/", "remote": "datos/viejo"}])
+c("borrar un archivo: deletefile",
+  gestion.ordenes_de(Op(gestion.BORRAR, "nas", "/datos", (E("a.txt", False),))),
+  [{"_path": "operations/deletefile", "fs": "nas:/", "remote": "datos/a.txt"}])
+c("borrar en la raíz: sin barra y sin «//»",
+  gestion.ordenes_de(Op(gestion.BORRAR, "nas", "/", (E("x", True), E("y", False)))),
+  [{"_path": "operations/purge", "fs": "nas:/", "remote": "x"},
+   {"_path": "operations/deletefile", "fs": "nas:/", "remote": "y"}])
+c("una orden por elemento y en su orden",
+  [o["remote"] for o in gestion.ordenes_de(
+      Op(gestion.BORRAR, "nas", "/d", tuple(E(n, False) for n in RARO)))],
+  ["d/" + n for n in RARO])
+c("los nombres raros van tal cual, sin escapar (mover una carpeta)",
+  gestion.ordenes_de(Op(gestion.MOVER, "nas", "/a", tuple(E(n, True) for n in RARO), destino="/b")),
+  [{"_path": "sync/move", "srcFs": "nas:/a/" + n, "dstFs": "nas:/b/" + n,
+    "deleteEmptySrcDirs": True} for n in RARO])
+c("mover un archivo: movefile con el remote entero",
+  gestion.ordenes_de(Op(gestion.MOVER, "nas", "/a", (E("x y.txt", False),), destino="/b/c")),
+  [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": "a/x y.txt",
+    "dstFs": "nas:/", "dstRemote": "b/c/x y.txt"}])
+c("mover desde la raíz: la carpeta es «nas:/x»",
+  gestion.ordenes_de(Op(gestion.MOVER, "nas", "/", (E("x", True),), destino="/b")),
+  [{"_path": "sync/move", "srcFs": "nas:/x", "dstFs": "nas:/b/x", "deleteEmptySrcDirs": True}])
+c("mover a la raíz",
+  gestion.ordenes_de(Op(gestion.MOVER, "nas", "/a", (E("x", False),), destino="/")),
+  [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": "a/x",
+    "dstFs": "nas:/", "dstRemote": "x"}])
+c("renombrar una carpeta: sync/move al nombre nuevo",
+  gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", "/a", (E("v", True),), nombre="100%")),
+  [{"_path": "sync/move", "srcFs": "nas:/a/v", "dstFs": "nas:/a/100%",
+    "deleteEmptySrcDirs": True}])
+c("renombrar un archivo en la raíz: movefile",
+  gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", "/", (E("v.txt", False),), nombre="a#b?")),
+  [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": "v.txt",
+    "dstFs": "nas:/", "dstRemote": "a#b?"}])
+c("nueva carpeta: mkdir, una sola orden",
+  gestion.ordenes_de(Op(gestion.NUEVA, "nas", "/datos", nombre="*[x]{y}")),
+  [{"_path": "operations/mkdir", "fs": "nas:/", "remote": "datos/*[x]{y}"}])
+c("nueva carpeta en la raíz",
+  gestion.ordenes_de(Op(gestion.NUEVA, "nas", "/", nombre="con espacio")),
+  [{"_path": "operations/mkdir", "fs": "nas:/", "remote": "con espacio"}])
+c("ninguna orden se sale de la lista cerrada de rcd",
+  all(o["_path"] in rcd.ORDENES_PERMITIDAS
+      for op in (Op(gestion.BORRAR, "n", "/", (E("a", True), E("b", False))),
+                 Op(gestion.MOVER, "n", "/", (E("a", True), E("b", False)), destino="/z"),
+                 Op(gestion.RENOMBRAR, "n", "/", (E("a", True),), nombre="q"),
+                 Op(gestion.NUEVA, "n", "/", nombre="q"))
+      for o in gestion.ordenes_de(op)), True)
+
+# --- plan_de ---------------------------------------------------------------------------
+GRANDE = (1234, 3650722202)
+b_grande = Op(gestion.BORRAR, "nas", "/d", (E("fotos", True),))
+c("Plan está congelado y trae dos tuplas",
+  gestion.plan_de(b_grande, {"fotos": GRANDE}, ()),
+  gestion.Plan(("Se borrará para siempre «fotos», con 1234 archivos (3,4 GB).",), ()))
+c("una carpeta de un archivo",
+  gestion.plan_de(Op(gestion.BORRAR, "nas", "/d", (E("uno", True),)), {"uno": (1, 2048)}, ()
+                  ).consequences,
+  ("Se borrará para siempre «uno», con 1 archivo (2 KB).",))
+c("una carpeta vacía",
+  gestion.plan_de(Op(gestion.BORRAR, "nas", "/d", (E("hueca", True),)), {"hueca": (0, 0)}, ()
+                  ).consequences,
+  ("Se borrará para siempre «hueca», vacía.",))
+c("un archivo",
+  gestion.plan_de(Op(gestion.BORRAR, "nas", "/d", (E("a.txt", False),)), {"a.txt": (1, 1536)}, ()
+                  ).consequences,
+  ("Se borrará para siempre «a.txt» (1,5 KB).",))
+c("una línea por elemento, en su orden",
+  gestion.plan_de(Op(gestion.BORRAR, "nas", "/d", (E("hueca", True), E("a.txt", False))),
+                  {"a.txt": (1, 1536), "hueca": (0, 0)}, ()).consequences,
+  ("Se borrará para siempre «hueca», vacía.", "Se borrará para siempre «a.txt» (1,5 KB)."))
+c("los avisos pasan tal cual como warnings",
+  gestion.plan_de(b_grande, {"fotos": GRANDE}, ("uno", "dos")).warnings, ("uno", "dos"))
+c("renombrar",
+  gestion.plan_de(Op(gestion.RENOMBRAR, "nas", "/d", (E("a", True),), nombre="b"), {}, ()),
+  gestion.Plan(("«a» pasará a llamarse «b».",), ()))
+c("mover uno",
+  gestion.plan_de(Op(gestion.MOVER, "nas", "/d", (E("a", True),), destino="/z/"), {}, ()
+                  ).consequences,
+  ("Se moverá «a» de /d a /z.",))
+c("mover varios",
+  gestion.plan_de(Op(gestion.MOVER, "nas", "/", (E("a", True), E("b", False), E("c", False)),
+                     destino="/z"), {}, ("w",)),
+  gestion.Plan(("Se moverán 3 elementos de / a /z.",), ("w",)))
+c("nueva carpeta",
+  gestion.plan_de(Op(gestion.NUEVA, "nas", "/d", nombre="n"), {}, ()).consequences,
+  ("Se creará la carpeta «n» en /d.",))
+
+# --- titulo_de, progreso_de y cancelando_de ---------------------------------------------
+b3 = Op(gestion.BORRAR, "nas", "/datos", (E("a", True), E("b", False), E("c", False)))
+m2 = Op(gestion.MOVER, "nas", "/datos", (E("a", True), E("b", False)), destino="/otra")
+r1 = Op(gestion.RENOMBRAR, "nas", "/datos", (E("a", False),), nombre="b")
+n1 = Op(gestion.NUEVA, "nas", "/datos", nombre="nueva")
+c("título de borrar", gestion.titulo_de(b3), "Borrando en /datos")
+c("título de mover", gestion.titulo_de(m2), "Moviendo a /otra")
+c("título de renombrar", gestion.titulo_de(r1), "Renombrando «a» a «b»")
+c("título de crear", gestion.titulo_de(n1), "Creando la carpeta «nueva»")
+p0 = gestion.progreso_de(b3, {}, 1, 3)
+c("progreso con stats vacías: no lanza", (p0.titulo, p0.archivo, p0.cuenta, p0.ritmo),
+  ("Borrando en /datos", "", "1 de 3 elementos", ""))
+c("  y la fracción es hechos/total", p0.fraccion, 1 / 3)
+c("  es del tipo del panel de la pieza 2", isinstance(p0, transferencia.Progreso), True)
+c("borrar cuenta los archivos que rclone borró",
+  gestion.progreso_de(b3, {"deletes": 120}, 1, 3).cuenta, "1 de 3 elementos · 120 archivos borrados")
+c("  con deletes en 0 no lo dice", gestion.progreso_de(b3, {"deletes": 0}, 1, 3).cuenta,
+  "1 de 3 elementos")
+c("  ni si no es un número", gestion.progreso_de(b3, {"deletes": None}, 1, 3).cuenta,
+  "1 de 3 elementos")
+c("mover no cuenta archivos borrados",
+  gestion.progreso_de(m2, {"deletes": 120}, 0, 2).cuenta, "0 de 2 elementos")
+c("sin elementos que contar la barra es indeterminada", gestion.progreso_de(n1, {}, 0, 0).fraccion,
+  None)
+c("al acabar la fracción es 1", gestion.progreso_de(b3, {}, 3, 3).fraccion, 1.0)
+c("cancelando nombra el elemento que va",
+  (gestion.cancelando_de(b3, 0), gestion.cancelando_de(b3, 2)),
+  ("Cancelando… se para al acabar «a».", "Cancelando… se para al acabar «c»."))
+c("cancelando una carpeta nueva nombra la carpeta",
+  gestion.cancelando_de(n1, 0), "Cancelando… se para al acabar «nueva».")
+
+# --- resultado_de ----------------------------------------------------------------------
+OK = {"success": True}
+
+
+def mal(texto):
+    return {"success": False, "error": texto}
+
+
+def res(op, estados, cancelado=False):
+    r = gestion.resultado_de(op, estados, {}, cancelado)
+    return (r.texto, r.tono, r.reintentar)
+
+
+b1 = Op(gestion.BORRAR, "nas", "/datos", (E("x", True),))
+m1 = Op(gestion.MOVER, "nas", "/datos", (E("x", True),), destino="/otra")
+c("borrar uno, bien", res(b1, [OK]), ("Borrado «x».", "ok", False))
+c("borrar tres, bien", res(b3, [OK, OK, OK]), ("Borrados 3.", "ok", False))
+c("mover uno, bien", res(m1, [OK]), ("Movido «x» a /otra.", "ok", False))
+c("mover dos, bien", res(m2, [OK, OK]), ("Movidos 2 a /otra.", "ok", False))
+c("renombrar, bien", res(r1, [OK]), ("Renombrado a «b».", "ok", False))
+c("crear, bien", res(n1, [OK]), ("Creada «nueva».", "ok", False))
+c("un fallo en medio por 404: se cuentan los que fueron bien",
+  res(b3, [OK, mal("object not found"), OK]),
+  ("Borrados 2 de 3: «b» no se pudo: ya no estaba", "aviso", False))
+c("  el 404 también si el texto no trae código", res(b3, [mal("directory not found"), OK, OK])[0],
+  "Borrados 2 de 3: «a» no se pudo: ya no estaba")
+c("un fallo al mover varios",
+  res(m2, [mal("boom"), OK]),
+  ("Movidos 1 de 2: «a» no se pudo: rclone dice: boom", "aviso", False))
+c("un permiso al borrar uno solo: la forma de un elemento",
+  res(b1, [mal("permission denied")]),
+  ("No se pudo borrar «x»: No tienes permiso para borrar en /datos.", "aviso", False))
+c("un fallo al borrar uno solo, desconocido",
+  res(b1, [mal("algo raro")])[0], "No se pudo borrar «x»: rclone dice: algo raro")
+c("mover uno solo que falla",
+  res(m1, [mal("object not found")])[0], "No se pudo mover «x»: ya no estaba")
+c("  y por permisos (la carpeta es la de origen)",
+  res(m1, [mal("SSH_FX_PERMISSION_DENIED")])[0],
+  "No se pudo mover «x»: No tienes permiso para mover en /datos.")
+c("renombrar con permisos denegados",
+  res(r1, [mal("permission denied")])[0],
+  "No se pudo renombrar «a»: No tienes permiso para renombrar en /datos.")
+c("renombrar que falla",
+  res(r1, [mal("boom")]), ("No se pudo renombrar «a»: rclone dice: boom", "aviso", False))
+c("crear que falla por permisos",
+  res(n1, [mal("permission denied")])[0],
+  "No se pudo crear «nueva»: No tienes permiso para crear en /datos.")
+c("un fallo sin texto se cita igual",
+  res(b1, [{"success": False}])[0].startswith("No se pudo borrar «x»: "), True)
+c("cancelado tras el primero de tres",
+  res(b3, [OK], cancelado=True), ("Cancelado: borrados 1 de 3", "aviso", False))
+c("cancelado al mover",
+  res(m2, [OK], cancelado=True)[0], "Cancelado: movidos 1 de 2")
+c("cancelado con el último lanzado en error: puede haber quedado a medias",
+  res(b3, [OK, mal("context canceled")], cancelado=True)[0],
+  "Cancelado: borrados 1 de 3 · «b» puede haber quedado a medias")
+c("  el primero a medias",
+  res(m2, [mal("context canceled")], cancelado=True)[0],
+  "Cancelado: movidos 0 de 2 · «a» puede haber quedado a medias")
+c("cancelado sin haber lanzado nada",
+  res(b3, [], cancelado=True)[0], "Cancelado: borrados 0 de 3")
+c("cancelar manda aunque el último fuera bien y no fueran todos",
+  res(b3, [OK, OK], cancelado=True)[0], "Cancelado: borrados 2 de 3")
+c("un renombrado que acabó antes de cancelar sigue siendo bien hecho",
+  res(r1, [OK], cancelado=True), ("Renombrado a «b».", "ok", False))
+c("nunca se ofrece Reintentar",
+  any(res(op, st, cn)[2] for op, st, cn in (
+      (b3, [OK, mal("x"), OK], False), (m2, [mal("x")], True), (r1, [mal("x")], False),
+      (n1, [mal("x")], False), (b1, [mal("permission denied")], False))), False)
+
 
 sys.exit(c.report())

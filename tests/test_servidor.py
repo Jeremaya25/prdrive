@@ -154,6 +154,11 @@ c("es_de_permiso: texto, 403 y lo demás",
 c("directory not found", servidor.frase_error(ErrorRc("error in ListJSON: directory not found", 404)),
   FRASES["no existe"])
 c("un 404 a secas también", servidor.frase_error(ErrorRc("lo que sea", 404)), FRASES["no existe"])
+c("no_existe: un 404", servidor.no_existe(ErrorRc("lo que sea", 404)), True)
+c("no_existe: el texto de rclone, sin código (un job/status no trae HTTP)",
+  servidor.no_existe(ErrorRc("object not found", 0)), True)
+c("no_existe: con una excepción cualquiera", servidor.no_existe(ValueError("no such file")), True)
+c("no_existe: otro fallo no", servidor.no_existe(ErrorRc("permission denied", 0)), False)
 c("timeout", servidor.frase_error(ErrorRc("read tcp: i/o timeout", 500)), FRASES["tiempo"])
 c("rcd caído", servidor.frase_error(RcdCaido()), FRASES["rcd"])
 c("rcd caído aunque su texto hable de conexiones",

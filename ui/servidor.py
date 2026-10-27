@@ -312,6 +312,14 @@ def es_de_permiso(error: Exception) -> bool:
     return (isinstance(error, ErrorRc) and error.estado == 403) or _dice(error, _PERMISO)
 
 
+def no_existe(error: Exception) -> bool:
+    """Si el error dice que lo pedido ya no está (un 404, o el texto de rclone).
+
+    El texto basta: el `error` de un `job/status` llega sin código HTTP.
+    """
+    return (isinstance(error, ErrorRc) and error.estado == 404) or _dice(error, _NO_EXISTE)
+
+
 def es_sin_red(error: Exception) -> bool:
     """Si el error es que no se llega al servidor (no que `rcd` esté caído)."""
     return not isinstance(error, RcdCaido) and _dice(error, _SIN_RED)
@@ -331,7 +339,7 @@ def frase_error(error: Exception) -> str:
         return "No tienes permiso para ver esta carpeta."
     if es_sin_red(error):
         return "No hay conexión con el servidor."
-    if (isinstance(error, ErrorRc) and error.estado == 404) or _dice(error, _NO_EXISTE):
+    if no_existe(error):
         return "Esa carpeta ya no existe en el servidor."
     if _dice(error, _TIEMPO):
         return "El servidor no ha contestado a tiempo."

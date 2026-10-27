@@ -15,9 +15,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from common import rcd
 from common.model import Config
 
-from . import remote_picker, transferencia
+from . import remote_picker, servidor, transferencia
 from .transferencia import Elemento
 
 BORRAR = "borrar"
@@ -244,3 +245,219 @@ def avisos(op: Operacion, config: Config) -> tuple[str, ...]:
                 if texto not in textos:
                     textos.append(texto)
     return tuple(textos)
+
+
+def _sin_barra(ruta: str) -> str:
+    """Devuelve la ruta sin la barra del principio: así se pasa un `remote` a rclone (`""` en la raíz)."""
+    return remote_picker.normalizar(ruta).lstrip("/")
+
+
+def _fs(remote: str, ruta: str = "/") -> str:
+    """Devuelve el `fs` de rclone para una ruta, siempre por la raíz absoluta: `remote:/ruta`."""
+    return f"{remote}:/{_sin_barra(ruta)}"
+
+
+def ordenes_de(op: Operacion) -> list[dict]:
+    """Devuelve las órdenes de rclone de la operación, una por elemento y en su orden.
+
+    Los nombres van tal cual, sin escapar: estas órdenes no llevan filtros. Todas salen
+    por `rcd.lanzar_orden()`, que solo admite `rcd.ORDENES_PERMITIDAS`.
+
+    Args:
+        op: La operación. `NUEVA` produce una sola orden.
+
+    Returns:
+        Borrar: `operations/purge` (carpeta) u `operations/deletefile` (archivo).
+        Renombrar y mover: `sync/move` (carpeta) u `operations/movefile` (archivo).
+        Nueva carpeta: `operations/mkdir`.
+    """
+    if op.tipo == NUEVA:
+        return [{"_path": "operations/mkdir", "fs": _fs(op.remote),
+                 "remote": _sin_barra(_unir(op.carpeta, op.nombre or ""))}]
+    ordenes: list[dict] = []
+    for e in op.elementos:
+        origen = _unir(op.carpeta, e.nombre)
+        if op.tipo == BORRAR:
+            camino = "operations/purge" if e.es_carpeta else "operations/deletefile"
+            ordenes.append({"_path": camino, "fs": _fs(op.remote), "remote": _sin_barra(origen)})
+            continue
+        if op.tipo == RENOMBRAR:
+            llegada = _unir(op.carpeta, op.nombre or "")
+        else:
+            llegada = _unir(op.destino or "", e.nombre)
+        if e.es_carpeta:
+            ordenes.append({"_path": "sync/move", "srcFs": _fs(op.remote, origen),
+                            "dstFs": _fs(op.remote, llegada), "deleteEmptySrcDirs": True})
+        else:
+            ordenes.append({"_path": "operations/movefile", "srcFs": _fs(op.remote),
+                            "srcRemote": _sin_barra(origen), "dstFs": _fs(op.remote),
+                            "dstRemote": _sin_barra(llegada)})
+    return ordenes
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Lo que enseña `confirmar_plan()` antes de lanzar la operación.
+
+    Args:
+        consequences: Una línea por cosa que va a pasar.
+        warnings: Lo que dirá la próxima pasada de cada pareja alcanzada (`avisos`).
+    """
+
+    consequences: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+def _consecuencia_de_borrar(e: Elemento, conteo: tuple[int, int]) -> str:
+    """Dice qué se pierde al borrar `e`, con lo que hay dentro si es una carpeta."""
+    archivos, tamano = conteo
+    if not e.es_carpeta:
+        return f"Se borrará para siempre «{e.nombre}» ({servidor.tamano_legible(tamano)})."
+    if archivos <= 0:
+        return f"Se borrará para siempre «{e.nombre}», vacía."
+    cuantos = "1 archivo" if archivos == 1 else f"{archivos} archivos"
+    return f"Se borrará para siempre «{e.nombre}», con {cuantos} ({servidor.tamano_legible(tamano)})."
+
+
+def plan_de(op: Operacion, conteos: dict[str, tuple[int, int]],
+            avisos: tuple[str, ...]) -> Plan:
+    """Devuelve lo que hay que enseñar para confirmar la operación.
+
+    Args:
+        op: La operación.
+        conteos: Para `BORRAR`, de cada elemento por su nombre, `(archivos, bytes)`: una
+            carpeta, lo que dice `rcd.tamano`; un archivo, `(1, su tamaño)`. Las demás
+            acciones no lo usan.
+        avisos: Lo que devuelve `avisos(op, config)`; pasa tal cual como `warnings`.
+
+    Returns:
+        Las consecuencias (al borrar, una línea por elemento y en su orden) y los avisos.
+    """
+    if op.tipo == BORRAR:
+        lineas = tuple(_consecuencia_de_borrar(e, conteos.get(e.nombre, (0, 0)))
+                       for e in op.elementos)
+    elif op.tipo == RENOMBRAR:
+        lineas = (f"«{op.elementos[0].nombre}» pasará a llamarse «{op.nombre}».",)
+    elif op.tipo == MOVER:
+        origen = remote_picker.normalizar(op.carpeta)
+        destino = remote_picker.normalizar(op.destino or "")
+        if len(op.elementos) == 1:
+            lineas = (f"Se moverá «{op.elementos[0].nombre}» de {origen} a {destino}.",)
+        else:
+            lineas = (f"Se moverán {len(op.elementos)} elementos de {origen} a {destino}.",)
+    else:
+        lineas = (f"Se creará la carpeta «{op.nombre}» en {remote_picker.normalizar(op.carpeta)}.",)
+    return Plan(lineas, tuple(avisos))
+
+
+def _nombre_de(op: Operacion, indice: int) -> str:
+    """Devuelve el nombre del elemento `indice`; en `NUEVA`, que no tiene elementos, el de la carpeta."""
+    return op.elementos[indice].nombre if op.elementos else (op.nombre or "")
+
+
+def titulo_de(op: Operacion) -> str:
+    """Devuelve el título del panel de progreso de la operación."""
+    if op.tipo == BORRAR:
+        return f"Borrando en {remote_picker.normalizar(op.carpeta)}"
+    if op.tipo == MOVER:
+        return f"Moviendo a {remote_picker.normalizar(op.destino or '')}"
+    if op.tipo == RENOMBRAR:
+        return f"Renombrando «{_nombre_de(op, 0)}» a «{op.nombre}»"
+    return f"Creando la carpeta «{op.nombre}»"
+
+
+def progreso_de(op: Operacion, stats: dict, hechos: int, total: int) -> transferencia.Progreso:
+    """Convierte la cuenta de elementos y el `core/stats` del lote en los textos del panel.
+
+    Nunca lanza: `stats` puede estar vacío o traer campos nulos.
+
+    Args:
+        op: La operación en marcha.
+        stats: La respuesta de `core/stats`; puede estar vacía.
+        hechos: Elementos que ya acabaron.
+        total: Elementos del lote (0 si aún no se sabe).
+
+    Returns:
+        El panel: sin archivo ni ritmo (rclone no los da en un borrado o un movimiento) y
+        con la fracción `hechos / total`, o `None` (barra indeterminada) si `total` es 0.
+    """
+    cuenta = f"{hechos} de {total} elementos"
+    borrados = stats.get("deletes")
+    if isinstance(borrados, bool) or not isinstance(borrados, (int, float)):
+        borrados = 0
+    if op.tipo == BORRAR and borrados > 0:
+        cuenta += f" · {int(borrados)} archivos borrados"
+    fraccion = min(1.0, max(0.0, hechos / total)) if total > 0 else None
+    return transferencia.Progreso(titulo_de(op), "", cuenta, fraccion, "")
+
+
+def cancelando_de(op: Operacion, indice: int) -> str:
+    """Devuelve la línea del panel mientras se cancela: el elemento `indice` es el que no se corta."""
+    return f"Cancelando… se para al acabar «{_nombre_de(op, indice)}»."
+
+
+_VERBO = {BORRAR: "borrar", MOVER: "mover", RENOMBRAR: "renombrar", NUEVA: "crear"}
+"""El infinitivo de cada acción, para «No se pudo …» y «No tienes permiso para …»."""
+_PARTICIPIO = {BORRAR: "borrados", MOVER: "movidos"}
+"""El plural de lo hecho, para los resultados de varios elementos."""
+
+
+def _frase_del_fallo(op: Operacion, estado: dict) -> str:
+    """Dice por qué falló una orden: ya no estaba, falta permiso o lo que cuenta rclone."""
+    verbo = _VERBO[op.tipo]
+    error = rcd.ErrorRc(str(estado.get("error") or f"no se ha podido {verbo}"), 0)
+    if servidor.no_existe(error):
+        return "ya no estaba"
+    if servidor.es_de_permiso(error):
+        return f"No tienes permiso para {verbo} en {remote_picker.normalizar(op.carpeta)}."
+    return servidor.frase_error(error)
+
+
+def resultado_de(op: Operacion, estados: list[dict], stats: dict,
+                 cancelado: bool) -> transferencia.Resultado:
+    """Convierte el `job/status` de cada orden lanzada en el resultado de la operación.
+
+    El resultado cuenta elementos, no archivos, y nunca ofrece `Reintentar`: el estado del
+    servidor ha cambiado y se relee para volver a elegir.
+
+    Args:
+        op: La operación.
+        estados: El `job/status` final de cada orden lanzada, en orden (las que no se
+            lanzaron por cancelar no están). Una orden fue bien si su `success` es cierto.
+        stats: El último `core/stats` del lote (no se usa: se cuenta por órdenes).
+        cancelado: Si el usuario canceló. En `BORRAR` y `MOVER` manda sobre lo demás; un
+            renombrado o una carpeta nueva son una sola orden y valen por cómo acabó.
+
+    Returns:
+        El texto, su tono (`"ok"` solo si todo fue bien) y `reintentar=False`.
+    """
+    total = len(op.elementos) if op.elementos else 1
+    bien = [bool(e.get("success")) for e in estados]
+    hechos = sum(bien)
+    destino = remote_picker.normalizar(op.destino or "")
+    if cancelado and op.tipo in _PARTICIPIO:
+        texto = f"Cancelado: {_PARTICIPIO[op.tipo]} {hechos} de {total}"
+        if estados and not bien[-1]:
+            texto += f" · «{_nombre_de(op, len(estados) - 1)}» puede haber quedado a medias"
+        return transferencia.Resultado(texto, "aviso", False)
+    if hechos == total and len(estados) == total:
+        if op.tipo == BORRAR:
+            texto = f"Borrado «{op.elementos[0].nombre}»." if total == 1 else f"Borrados {total}."
+        elif op.tipo == MOVER:
+            texto = (f"Movido «{op.elementos[0].nombre}» a {destino}." if total == 1
+                     else f"Movidos {total} a {destino}.")
+        elif op.tipo == RENOMBRAR:
+            texto = f"Renombrado a «{op.nombre}»."
+        else:
+            texto = f"Creada «{op.nombre}»."
+        return transferencia.Resultado(texto, "ok", False)
+    # La primera orden que falló; si ninguna lo hizo es que quedaron sin lanzar.
+    falla = bien.index(False) if False in bien else len(estados)
+    frase = (_frase_del_fallo(op, estados[falla]) if falla < len(estados)
+             else "no se llegó a lanzar")
+    nombre = _nombre_de(op, min(falla, total - 1))
+    if total > 1 and op.tipo in _PARTICIPIO:
+        texto = f"{_PARTICIPIO[op.tipo].capitalize()} {hechos} de {total}: «{nombre}» no se pudo: {frase}"
+    else:
+        texto = f"No se pudo {_VERBO[op.tipo]} «{nombre}»: {frase}"
+    return transferencia.Resultado(texto, "aviso", False)
