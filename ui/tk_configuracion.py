@@ -14,6 +14,10 @@ Solo dibuja. Tres cosas, y las dos últimas no siempre:
   buzón (`watch.pedir_al_conectar`, `watch.pedir_ajuste_unidad`). Cada una va
   en su propia fila (`_casilla()`), de modo que no se pisan aunque algún día
   salgan a la vez.
+- «Bloquearla al bloquear la sesión / al suspender / al cerrar sesión o
+  apagar», solo las que el agente dice que puede cumplir en esta raíz cifrada
+  (`watch.bloquear_solo`). También del agente: una petición por casilla
+  cambiada (`watch.pedir_ajuste_unidad`).
 
 Nada se guarda hasta «Guardar», y lo que no ha cambiado no se escribe. Se
 dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
@@ -49,7 +53,7 @@ def _casilla(marco, fila: int, texto: str, valor: bool, ayuda: str):
         fila: La fila de su rejilla; cada tarjeta, la suya.
         texto: Lo que dice la casilla.
         valor: Si empieza marcada.
-        ayuda: La frase de debajo, que dice qué hace.
+        ayuda: La frase de debajo, que dice qué hace; vacía, ninguna.
 
     Returns:
         La variable de la casilla, para leer al «Guardar» si ha cambiado.
@@ -64,9 +68,10 @@ def _casilla(marco, fila: int, texto: str, valor: bool, ayuda: str):
     marcada = tk.BooleanVar(marco, value=valor)
     ttk.Checkbutton(tarjeta, text=texto, variable=marcada,
                     style="Card.Fuerte.TCheckbutton").grid(row=0, column=0, sticky="w")
-    ttk.Label(tarjeta, style="Card.Pista.TLabel", justify="left",
-              wraplength=theme.medida(520), text=ayuda).grid(
-        row=1, column=0, sticky="w", pady=(theme.E1, 0))
+    if ayuda:
+        ttk.Label(tarjeta, style="Card.Pista.TLabel", justify="left",
+                  wraplength=theme.medida(520), text=ayuda).grid(
+            row=1, column=0, sticky="w", pady=(theme.E1, 0))
     return marcada
 
 
@@ -78,6 +83,7 @@ def construir(panel: Panel, config: Config) -> None:
     _parejas, actual, _nota = prefs.startup_defaults(config)
     pedir = watch.pedir_al_iniciar()
     conectar = watch.pedir_al_conectar()
+    solos = watch.bloquear_solo() or {}
     dlg, marco = panel.ventana, panel.marco
 
     que = "esta carpeta" if model.es_equipo() else "este dispositivo"
@@ -133,6 +139,14 @@ def construir(panel: Panel, config: Config) -> None:
             watch.ayuda_al_conectar(conectar.cifrado)
             + " Lo guarda el agente de este equipo, no la unidad.")
         fila += 1
+    # Las de bloquearla sola: una por evento de Windows; la ayuda, común, bajo la última.
+    bloquear: dict = {}
+    for n, (clave, valor) in enumerate(solos.items()):
+        bloquear[clave] = _casilla(
+            marco, fila, watch.TEXTO_BLOQUEAR_SOLO[clave], valor,
+            watch.ayuda_bloquear_solo() + f" Lo guarda el agente de este equipo, no {que}."
+            if n == len(solos) - 1 else "")
+        fila += 1
 
     def guardar() -> None:
         """Guarda lo que ha cambiado y cierra; si algo no se puede, lo dice y se queda."""
@@ -142,8 +156,10 @@ def construir(panel: Panel, config: Config) -> None:
             messagebox.showerror(TITLE, str(e), parent=dlg)
             return
         cambia_conectar = conectada is not None and bool(conectada.get()) != conectar.valor
+        cambian = {k: bool(v.get()) for k, v in bloquear.items() if bool(v.get()) != solos[k]}
         algo = minutos != actual or (marcada is not None
-                                     and bool(marcada.get()) != pedir) or cambia_conectar
+                                     and bool(marcada.get()) != pedir) or cambia_conectar \
+            or bool(cambian)
         if minutos != actual:
             if not prefs.guardar_intervalo(config, minutos):
                 messagebox.showerror(TITLE, f"No he podido guardar el intervalo en "
@@ -158,6 +174,12 @@ def construir(panel: Panel, config: Config) -> None:
             panel.devolver(True)
         if cambia_conectar:
             if not watch.pedir_ajuste_unidad("pedir_al_conectar", bool(conectada.get())):
+                messagebox.showerror(TITLE, "No he podido dejarle la petición al "
+                                            "agente.", parent=dlg)
+                return
+            panel.devolver(True)
+        for clave, valor in cambian.items():
+            if not watch.pedir_ajuste_unidad(clave, valor):
                 messagebox.showerror(TITLE, "No he podido dejarle la petición al "
                                             "agente.", parent=dlg)
                 return

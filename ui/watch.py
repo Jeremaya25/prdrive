@@ -513,6 +513,51 @@ def ayuda_al_conectar(cifrado: str) -> str:
     }.get(cifrado, "")
 
 
+TEXTO_BLOQUEAR_SOLO = {
+    "bloquear_al_bloquear_sesion": "Bloquearla al bloquear la sesión (Win+L)",
+    "bloquear_al_suspender": "Bloquearla al suspender el equipo",
+    "bloquear_al_cerrar_sesion": "Bloquearla al cerrar sesión o apagar (si Windows da tiempo)",
+}
+"""Lo que dice la casilla de cada ajuste de bloquear sola (`equipo.AJUSTES_BLOQUEAR_SOLO`)."""
+
+
+def bloquear_solo() -> dict[str, bool] | None:
+    """Devuelve los ajustes de «Bloquearla …» que el agente puede cumplir en esta raíz, o `None`.
+
+    Los dice el agente en la fila de esta raíz en `estado.json` (`bloquear_solo`,
+    `Agente.resumen()`): solo si la atiende, la tiene en su lista, es una raíz
+    cifrada con VeraCrypt que sabe bloquear, hay VeraCrypt instalado y oye esos
+    eventos de Windows. Así un agente anterior, Linux, un equipo sin bandeja o
+    una unidad sin cifrar no enseñan nada. Solo lee ese fichero y no lanza nada.
+
+    Returns:
+        Por clave de `equipo.AJUSTES_BLOQUEAR_SOLO`, en su orden, su valor; solo
+        las que trae la fila. `None` si no trae ninguna.
+    """
+    try:
+        from common import equipo
+        mia = fleet.device_id()
+        for fila in equipo.leer_estado().get("unidades") or []:
+            if fila.get("id") != mia:
+                continue
+            dice = fila.get("bloquear_solo")
+            if not isinstance(dice, dict):
+                return None
+            puede = {k: dice[k] for k in equipo.AJUSTES_BLOQUEAR_SOLO
+                     if isinstance(dice.get(k), bool)}
+            return puede or None
+    except Exception:                                   # noqa: BLE001
+        return None
+    return None
+
+
+def ayuda_bloquear_solo() -> str:
+    """Devuelve la frase de ayuda común de las casillas «Bloquearla …»."""
+    return ("El agente la cierra él solo cuando Windows avisa, sin forzar nunca: si hay "
+            "una sincronización en marcha, su ventana abierta o un programa con un "
+            "fichero dentro, la deja abierta y te lo dice al volver.")
+
+
 def pedir_ajuste_unidad(clave: str, valor) -> bool:
     """Pide al agente que cambie un ajuste de ESTA unidad (`equipo.AJUSTES_DE_UNIDAD`).
 

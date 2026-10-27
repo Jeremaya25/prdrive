@@ -353,6 +353,10 @@ no las atiende hasta que se actualicen.
 SIN_VERACRYPT = ("No hay VeraCrypt en este equipo: ni instalado ni el del agente. "
                  "Vuelve a pasar el asistente, que se lo pone, o instala VeraCrypt.")
 """Lo que se dice cuando hay que abrir una raíz y no hay VeraCrypt."""
+TEXTO_EVENTO = {"": "", equipo.EVENTO_BLOQUEO: "Al bloquear la sesión",
+                equipo.EVENTO_SUSPENSION: "Al suspender el equipo",
+                equipo.EVENTO_FIN: "Al cerrar la sesión"}
+"""Cómo se dice, en un aviso, el evento de la sesión que pidió bloquear una raíz."""
 SIN_RCLONE = ("no encuentro el rclone del agente; sin él no ejecuto nada de las "
               "unidades. Reinstala el agente o actualízalo.")
 """Lo que se dice cuando el agente no tiene rclone propio."""
@@ -1249,19 +1253,56 @@ def bloqueada(unidad: equipo.Unidad) -> bool:
         return False
 
 
-def orden_bloquear(unidad: equipo.Unidad) -> list[str] | None:
-    """Devuelve el desmontaje de la raíz cifrada, o `None` sin VeraCrypt.
+def bloqueada_unidad(fisica: Path, raiz: Path) -> bool:
+    """Indica si el contenedor de una unidad con vestíbulo ya está cerrado.
 
-    SIN `/silent`, como `Expulsar PRDRIVE.bat`: con un fichero abierto dentro
-    VeraCrypt pregunta si forzar, y esa decisión es de la persona. Sin
-    VeraCrypt es que no hay ni el instalado ni el del agente.
+    Es la prueba de `bloqueada()` con el `.hc` de su raíz física: libre, y el
+    volumen de dentro ido.
+
+    Args:
+        fisica: La raíz física de la unidad, donde están su marca y su `.hc`.
+        raiz: Donde estaba montado el volumen de dentro (su letra).
     """
-    exe = veracrypt_de_la_raiz()
+    return (vestibulo.retenido(fisica / penwatch.CONTAINER_FILE) is not True
+            and not presente(raiz))
+
+
+def orden_bloquear(unidad: equipo.Unidad, desatendido: bool = False,
+                   raiz: Path | None = None, veracrypt: str | None = None) -> list[str] | None:
+    """Devuelve el desmontaje de una raíz cifrada, o `None` sin el VeraCrypt que hace falta.
+
+    Pedido por una persona va SIN `/silent`, como `Expulsar PRDRIVE.bat`: con
+    un fichero abierto dentro VeraCrypt pregunta si forzar, y esa decisión es
+    suya. Sin VeraCrypt es que no hay ni el instalado ni el del agente.
+
+    Desatendido (al bloquear la sesión, suspender o apagar) no hay nadie que
+    conteste, así que ni pregunta ni fuerza: `/silent` y nunca `/force`. En
+    `UnmountVolumeBase()` (`src/Common/Dlgcode.c` de VeraCrypt), con `Silent`
+    no sale la espera ni, si el volumen tiene ficheros abiertos
+    (`ERR_FILES_OPEN`), el «¿forzar?» (`AskWarnYesNoTopmost`), y el `Error()`
+    del fallo no enseña nada: el volumen se queda montado. Forzar es
+    `bForceUnmount`, que solo pone `/force` (`src/Mount/Mount.c`). Y solo con
+    el VeraCrypt INSTALADO: el portable del agente pide UAC en cada
+    desmontaje, y con la sesión bloqueada saldría uno que nadie ha pedido.
+
+    Args:
+        unidad: La raíz de la lista.
+        desatendido: Si no hay nadie delante.
+        raiz: El volumen de dentro de una unidad con vestíbulo (Windows), que
+            se desmonta por su letra; sin ella, la raíz del equipo cifrada.
+        veracrypt: El VeraCrypt instalado, si ya se sabe; sin él, desatendido
+            se pregunta (`penwatch.installed_veracrypt()`).
+    """
+    exe = (veracrypt or penwatch.installed_veracrypt()) if desatendido \
+        else veracrypt_de_la_raiz()
     if exe is None:
         return None
     if IS_WIN:
-        return [exe, "/dismount", unidad.letra or unidad.ruta[:1], "/quit"]
-    if hay_pantalla():
+        letra = str(raiz)[:1] if raiz is not None else unidad.letra or unidad.ruta[:1]
+        return [exe, "/dismount", letra, *(["/silent"] if desatendido else []), "/quit"]
+    if raiz is not None:
+        return None                 # el vestíbulo de una unidad lo cierra su script
+    if hay_pantalla() and not desatendido:
         return [exe, "-d", unidad.contenedor]
     return [exe, "--text", "--non-interactive", "-d", unidad.contenedor]
 
@@ -1474,6 +1515,14 @@ class Bloqueo:
             llavero: va antes que VeraCrypt.
         llavero_desde: Cuándo se lanzó.
         llavero_cerrado: Si ya acabó bien.
+        por: El evento de la sesión de Windows que lo pidió
+            (`equipo.EVENTO_BLOQUEO`, `EVENTO_SUSPENSION`), o vacío si lo pidió
+            una persona. Con él no hay nadie delante: VeraCrypt va desatendido
+            (`orden_bloquear(desatendido=True)`), no se espera a la ventana de
+            la raíz y lo que no se pudo se dice al volver (`Agente.sin_bloquear`).
+        fisica: La raíz física de una unidad con vestíbulo (su marca y su
+            `.hc`); `None` en la raíz del equipo cifrada.
+        raiz: Donde está montado el volumen de dentro de esa unidad.
     """
     desde: float
     proc: Any = None
@@ -1482,6 +1531,9 @@ class Bloqueo:
     llavero: Any = None
     llavero_desde: float = 0.0
     llavero_cerrado: bool = False
+    por: str = ""
+    fisica: Path | None = None
+    raiz: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -1729,9 +1781,11 @@ class Agente:
             enchufadas y bloqueadas con BitLocker, con su raíz, por id.
         desbloqueos_bitlocker: La ventana de desbloqueo de Windows pedida para
             cada una de esas (su proceso), por id.
-        con_vestibulo: Los ids de las unidades cuya marca de vestíbulo vio el
-            último recorrido, con el contenedor cerrado o abierto: son las de
-            VeraCrypt (`_cifrado_de()`).
+        con_vestibulo: Las unidades cuya marca de vestíbulo vio el último
+            recorrido, con el contenedor cerrado o abierto, con su raíz física
+            (la de la marca y el `.hc`), por id: son las de VeraCrypt
+            (`_cifrado_de()`), y la raíz física es la que dice si su
+            contenedor se ha cerrado (`bloqueada_unidad()`).
         vestibulos_pedidos: Cuándo se le pidió a VeraCrypt por última vez que
             abriera el contenedor de cada unidad cerrada, por id: un atajo no
             lo vuelve a pedir durante `GRACIA_ABRIR`.
@@ -1818,6 +1872,20 @@ class Agente:
             abrió, o se pidió algo de ella (conectada, o a la vista y
             bloqueada) desde la bandeja, su ventana o un atajo. Es lo que
             decide sobre qué unidad actúa un atajo.
+        sin_bloquear: Las raíces que un evento de la sesión pidió bloquear y
+            no se han podido, con el evento y el motivo, por id: se dicen una
+            vez, al volver la persona (`_decir_sin_bloquear()`).
+        sesion_bloqueada: Si la bandeja ha dicho que la sesión de Windows está
+            bloqueada y todavía no que se ha desbloqueado.
+        suspendido: Si la bandeja ha dicho que el equipo se suspende y todavía
+            no que ha vuelto.
+        al_salir: Las órdenes de VeraCrypt que se lanzan si Windows cierra la
+            sesión o se apaga (`lanzar_al_salir()`), preparadas en cada vuelta
+            para no hacer nada más en ese momento. Se sustituye entera: la lee
+            el hilo de la bandeja.
+        veracrypt_instalado: El VeraCrypt instalado en este equipo, el único
+            con el que se bloquea sin nadie delante, o `None`.
+        veracrypt_mirado: Cuándo se miró (`MIRAR_EMBLEMA`).
     """
     reloj: Any = time.time
     ajustes: equipo.Ajustes = field(default_factory=equipo.leer_ajustes)
@@ -1854,7 +1922,7 @@ class Agente:
     fantasmas_extraibles: set[str] = field(default_factory=set)
     bitlocker: dict[str, Path] = field(default_factory=dict)
     desbloqueos_bitlocker: dict[str, Any] = field(default_factory=dict)
-    con_vestibulo: set[str] = field(default_factory=set)
+    con_vestibulo: dict[str, Path] = field(default_factory=dict)
     vestibulos_pedidos: dict[str, float] = field(default_factory=dict)
     al_abrirse: dict[str, AlAbrirse] = field(default_factory=dict)
     bloqueadas_desde: dict[str, float] = field(default_factory=dict)
@@ -1902,6 +1970,12 @@ class Agente:
     atajos_respuesta: dict | None = None
     ventana_atajos: Any = None
     usadas: dict[str, float] = field(default_factory=dict)
+    sin_bloquear: dict[str, tuple[str, str]] = field(default_factory=dict)
+    sesion_bloqueada: bool = False
+    suspendido: bool = False
+    al_salir: tuple[list[str], ...] = ()
+    veracrypt_instalado: str | None = None
+    veracrypt_mirado: float = -math.inf
 
     def vuelta(self, recorrer: bool = True) -> pl.Decision | None:
         """Hace una vuelta del agente y devuelve lo que decidió lanzar, si algo.
@@ -1954,6 +2028,7 @@ class Agente:
         decision = None
         if self.pasada is None and not self.terminar and not self._heredada():
             decision = self._decidir(ahora)
+        self._preparar_al_salir()           # tras lanzar: una pasada recién lanzada cuenta
         self._escribir_estado()
         for con in self.conexiones.values():
             con.vista = None                # la mirada vale para esta vuelta, no para la siguiente
@@ -2005,7 +2080,7 @@ class Agente:
         self.letras_vistas = letras
         self._fantasmas(abiertas)
         self._fantasmas_extraibles(abiertas, cerradas)
-        self.con_vestibulo = set(cerradas)
+        self.con_vestibulo = dict(cerradas)
 
         for uid in list(self.vistas):
             if uid not in abiertas:
@@ -4184,11 +4259,16 @@ class Agente:
         Primero se espera a que nada lo impida (la pareja en curso, la foto de
         una de sus carpetas durante `ESPERA_VENTANA` como mucho, su ventana);
         si lleva llavero, se cierra (`_cerrar_llavero()`); luego VeraCrypt
-        desmonta y se espera a verlo cerrado.
+        desmonta y se espera a verlo cerrado. Es la raíz del equipo cifrada o,
+        pedida por un evento de la sesión (`Bloqueo.por`), también una unidad
+        con vestíbulo (`Bloqueo.fisica`). Con `por` no hay nadie delante:
+        VeraCrypt va desatendido, una ventana abierta hace abandonar en el
+        acto y lo que no se pudo se guarda para decirlo al volver
+        (`_no_bloqueada()`).
         """
         for uid, b in list(self.bloqueos.items()):
             unidad = self.ajustes.unidades.get(uid)
-            if unidad is None or not unidad.cifrada:
+            if unidad is None or not (unidad.cifrada or b.fisica is not None):
                 del self.bloqueos[uid]
                 continue
             nombre = nombre_guardado(unidad, uid)
@@ -4204,19 +4284,23 @@ class Agente:
                     continue                # y la foto en curso: tiene la carpeta abierta
                 if con is not None and _registro_vivo(
                         con.raiz, penwatch.UI_LOCK_REL) is not None:
-                    # Su ventana pide bloquear y se cierra; se le da un rato.
-                    if ahora - b.desde >= ESPERA_VENTANA:
+                    # Su ventana pide bloquear y se cierra; se le da un rato. A
+                    # un evento de la sesión, no: nadie va a cerrarla.
+                    if b.por or ahora - b.desde >= ESPERA_VENTANA:
                         del self.bloqueos[uid]
-                        avisar(f"{nombre}: no la bloqueo",
-                               "Su ventana sigue abierta. Ciérrala y vuelve a pedirlo.",
-                               True)
+                        self._no_bloqueada(uid, b, f"{nombre}: no la bloqueo",
+                                           "Su ventana sigue abierta. Ciérrala y vuelve a "
+                                           "pedirlo.", "su ventana estaba abierta")
                     continue
                 if con is not None and not self._cerrar_llavero(con, b, ahora):
                     continue
-                cmd = orden_bloquear(unidad)
+                cmd = orden_bloquear(unidad, desatendido=bool(b.por),
+                                     raiz=b.raiz if b.fisica is not None else None)
                 if cmd is None:
                     del self.bloqueos[uid]
-                    avisar(f"{nombre}: no la puedo bloquear", SIN_VERACRYPT, True)
+                    self._no_bloqueada(uid, b, f"{nombre}: no la puedo bloquear",
+                                       SIN_VERACRYPT,
+                                       "no hay VeraCrypt instalado en este equipo")
                     continue
                 self._soltar_avisos(uid)
                 if con is not None:
@@ -4228,27 +4312,238 @@ class Agente:
                                     **_opciones_hijo(equipo.DIR, separado=True))
                 except OSError as e:
                     del self.bloqueos[uid]
-                    avisar(f"{nombre}: no he podido lanzar VeraCrypt", str(e), True)
+                    self._no_bloqueada(uid, b, f"{nombre}: no he podido lanzar VeraCrypt",
+                                       str(e), f"no he podido lanzar VeraCrypt ({e})")
                     continue
                 b.lanzado = ahora
-                diario(f"{nombre}: bloqueando; si algo tiene un fichero abierto "
+                diario(f"{nombre}: bloqueando ({TEXTO_EVENTO[b.por].lower()}); si algo "
+                       f"tiene un fichero abierto dentro, se queda abierta" if b.por else
+                       f"{nombre}: bloqueando; si algo tiene un fichero abierto "
                        f"dentro, VeraCrypt pregunta si forzar")
                 continue
-            if bloqueada(unidad):
+            if (bloqueada_unidad(b.fisica, b.raiz) if b.fisica is not None
+                    else bloqueada(unidad)):
                 del self.bloqueos[uid]
                 self.desbloqueos.pop(uid, None)
                 self.fantasmas.discard(uid)
+                self.sin_bloquear.pop(uid, None)
                 if con is not None:
-                    self._desconectar(uid, ahora, {})
+                    # Una unidad sigue a la vista cerrada: «ya pedida», como al expulsarla.
+                    self._desconectar(uid, ahora,
+                                      {uid: b.fisica} if b.fisica is not None else {})
                 diario(f"{nombre}: bloqueada")
                 continue
             salio = not _sigue_vivo(b.proc, b.copia)
             if (salio and ahora - b.lanzado >= GRACIA_DESMONTAJE) \
                     or ahora - b.lanzado >= ESPERA_DESMONTAJE:
                 del self.bloqueos[uid]
-                avisar(f"{nombre}: sigue abierta",
-                       "VeraCrypt no la ha cerrado: si un programa tiene un fichero "
-                       "abierto dentro, ciérralo y vuelve a bloquear.", True)
+                self._no_bloqueada(uid, b, f"{nombre}: sigue abierta",
+                                   "VeraCrypt no la ha cerrado: si un programa tiene un "
+                                   "fichero abierto dentro, ciérralo y vuelve a bloquear.",
+                                   "un programa tenía un fichero abierto dentro")
+
+    def _no_bloqueada(self, uid: str, b: Bloqueo, titulo: str, texto: str,
+                      motivo: str) -> None:
+        """Dice que un «Bloquear» no ha salido: en el acto, o al volver si lo pidió la sesión.
+
+        Pedido por una persona, es un aviso ya. Pedido por un evento de la
+        sesión (`Bloqueo.por`) no hay nadie delante: se guarda en
+        `sin_bloquear` y sale una vez al volver (`_decir_sin_bloquear()`).
+
+        Args:
+            uid: El id de la raíz.
+            b: El bloqueo, ya quitado de `bloqueos`.
+            titulo: El título del aviso inmediato.
+            texto: Su texto.
+            motivo: Lo que se dice al volver, en minúsculas y sin punto.
+        """
+        if not b.por:
+            avisar(titulo, texto, True)
+            return
+        self.sin_bloquear[uid] = (b.por, motivo)
+        diario(f"{nombre_guardado(self.ajustes.unidades.get(uid), uid)}: no la he bloqueado "
+               f"({TEXTO_EVENTO[b.por].lower()}): {motivo}")
+        self._decir_sin_bloquear()
+
+    def _veracrypt_del_equipo(self) -> str | None:
+        """Devuelve el VeraCrypt instalado (`penwatch.installed_veracrypt()`), mirado cada `MIRAR_EMBLEMA`.
+
+        Es el único con el que el agente bloquea sin nadie delante
+        (`orden_bloquear()`): en Windows mirarlo es leer el registro, y no se
+        hace en cada vuelta.
+        """
+        ahora = self.reloj()
+        if ahora - self.veracrypt_mirado >= MIRAR_EMBLEMA:
+            self.veracrypt_instalado = penwatch.installed_veracrypt()
+            self.veracrypt_mirado = ahora
+        return self.veracrypt_instalado
+
+    def _bloqueable(self, uid: str) -> bool:
+        """Indica si un evento de la sesión puede bloquear esa raíz ahora.
+
+        Es una raíz de la lista abierta (conectada), que no se está expulsando
+        ni actualizando: la raíz del equipo cifrada, o, en Windows, una unidad
+        con vestíbulo de VeraCrypt (`con_vestibulo`) con su código aceptado
+        (ni `cambiada`, ni `vieja`, ni `a_medias`) y que no está en modo `nada`.
+        BitLocker y las unidades sin cifrar, nunca. Que haya VeraCrypt
+        instalado no se mira aquí: sin él, el bloqueo se intenta y se dice que
+        no se ha podido.
+        """
+        unidad = self.ajustes.unidades.get(uid)
+        con = self.conexiones.get(uid)
+        if unidad is None or con is None or uid in self.expulsiones \
+                or con.actualizacion is not None:
+            return False
+        if unidad.cifrada:
+            return True
+        return (IS_WIN and not unidad.es_raiz and unidad.modo != equipo.NADA
+                and uid in self.con_vestibulo and not con.cambiada and not con.vieja
+                and not con.a_medias)
+
+    def _evento_de_sesion(self, evento: Any, ahora: float) -> None:
+        """Atiende lo que la bandeja de Windows oye de la sesión (`equipo.PIDE_SESION`).
+
+        Al bloquear la sesión o suspender el equipo, cada raíz que tiene puesto
+        su ajuste de ese evento (`equipo.BLOQUEAR_AL`) y es bloqueable
+        (`_bloqueable()`) recibe su `Bloqueo` con `por`, y deja de encolarse,
+        como con «Bloquear». Lo demás es lo de siempre (`_bloqueos()`): se
+        espera a la pareja en curso, nunca se fuerza. Es seguridad, no
+        sincronización: no mira la moderación ni la pausa. Si el equipo se
+        duerme antes de acabar, sigue al despertar. Al desbloquear la sesión
+        se cancela lo que todavía no ha lanzado VeraCrypt y se dice, una vez
+        por raíz, lo que no se ha podido bloquear.
+
+        Args:
+            evento: `equipo.EVENTO_BLOQUEO`, `EVENTO_DESBLOQUEO` o
+                `EVENTO_SUSPENSION`.
+            ahora: La hora del reloj del agente.
+        """
+        if evento == equipo.EVENTO_DESBLOQUEO:
+            self.sesion_bloqueada = self.suspendido = False
+            diario("la sesión de Windows se ha desbloqueado")
+            for uid, b in list(self.bloqueos.items()):
+                if b.por and b.proc is None:
+                    del self.bloqueos[uid]
+                    self.sin_bloquear[uid] = (b.por, self._por_que_espera(uid, b))
+            self._decir_sin_bloquear()
+            return
+        clave = equipo.BLOQUEAR_AL.get(evento) if evento in equipo.EVENTOS_DE_SESION else None
+        if clave is None:
+            diario(f"evento de la sesión desconocido: {evento!r}; ignorado")
+            return
+        if evento == equipo.EVENTO_BLOQUEO:
+            self.sesion_bloqueada = True
+            diario("la sesión de Windows se ha bloqueado")
+        else:
+            self.suspendido = True
+            diario("el equipo se suspende")
+        for uid, unidad in self.ajustes.unidades.items():
+            if not getattr(unidad, clave) or uid in self.bloqueos or not self._bloqueable(uid):
+                continue
+            con = self.conexiones[uid]
+            fisica = None if unidad.cifrada else self.con_vestibulo.get(uid)
+            self.bloqueos[uid] = Bloqueo(ahora, por=evento, fisica=fisica,
+                                         raiz=None if fisica is None else con.raiz)
+            self.urgentes = [u for u in self.urgentes if u[0] != uid]
+            self.sin_bloquear.pop(uid, None)
+            diario(f"{con.nombre}: se bloquea sola ({TEXTO_EVENTO[evento].lower()})")
+
+    def _por_que_espera(self, uid: str, b: Bloqueo) -> str:
+        """Devuelve por qué un bloqueo de la sesión no había lanzado VeraCrypt todavía."""
+        if self.pasada is not None and self.pasada.tarea.raiz == uid:
+            return "había una sincronización en marcha"
+        if b.llavero is not None and not b.llavero_cerrado:
+            return "su llavero todavía se estaba cerrando"
+        if self._mirando(uid):
+            return "se estaba mirando una de sus carpetas"
+        return "no ha dado tiempo"
+
+    def _decir_sin_bloquear(self) -> None:
+        """Dice, una vez por raíz, lo que un evento de la sesión no ha podido bloquear.
+
+        Solo con la persona delante: ni con la sesión bloqueada ni con el
+        equipo suspendido. Sin una bandeja que oiga la sesión, sale al volver
+        de la suspensión (`PIDE_DESPERTAR`).
+        """
+        if self.sesion_bloqueada or self.suspendido:
+            return
+        for uid, (por, motivo) in sorted(self.sin_bloquear.items()):
+            nombre = nombre_guardado(self.ajustes.unidades.get(uid), uid)
+            avisar(f"{nombre}: no la he bloqueado", f"{TEXTO_EVENTO[por]}: {motivo}.", True)
+        self.sin_bloquear.clear()
+
+    def _preparar_al_salir(self) -> None:
+        """Deja en `al_salir` lo que se lanza si Windows cierra la sesión o se apaga.
+
+        Es el desmontaje desatendido (`orden_bloquear(desatendido=True)`) de
+        cada raíz con `bloquear_al_cerrar_sesion` que es bloqueable y está
+        libre: sin una pasada suya en marcha, sin su ventana abierta, sin su
+        KeePassXC abierto y sin otro bloqueo en curso. Solo con la bandeja de
+        Windows, que es quien oye el fin de la sesión.
+        """
+        ordenes: list[list[str]] = []
+        quieren = [uid for uid, u in self.ajustes.unidades.items()
+                   if u.bloquear_al_cerrar_sesion]
+        exe = self._veracrypt_del_equipo() if quieren and IS_WIN \
+            and self.bandeja is not None else None
+        for uid in quieren if exe else ():
+            con = self.conexiones.get(uid)
+            if (not self._bloqueable(uid) or con.ventana or uid in self.keepassxc
+                    or uid in self.bloqueos
+                    or (self.pasada is not None and self.pasada.tarea.raiz == uid)):
+                continue
+            unidad = self.ajustes.unidades[uid]
+            cmd = orden_bloquear(unidad, desatendido=True, veracrypt=exe,
+                                 raiz=None if unidad.cifrada else con.raiz)
+            if cmd is not None:
+                ordenes.append(cmd)
+        self.al_salir = tuple(ordenes)
+
+    def lanzar_al_salir(self) -> int:
+        """Lanza lo que `al_salir` tiene preparado, sin esperar a nada. Es el fin de la sesión.
+
+        Se llama desde el hilo de la bandeja al llegar `WM_ENDSESSION`: tras
+        contestar, Windows puede terminar el proceso, así que no hay vuelta
+        del agente que valga. Solo lanza: no toca el estado del agente, no
+        suelta locks ni cierra el llavero, y lo que no salga no se avisa (solo
+        queda en el diario).
+
+        Returns:
+            Cuántas órdenes se han lanzado.
+        """
+        ordenes = self.al_salir
+        lanzadas = 0
+        for cmd in ordenes:
+            try:
+                lanzar(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, cwd=str(equipo.DIR), close_fds=True,
+                       **({"creationflags": penwatch.CREATE_NO_WINDOW} if IS_WIN else {}))
+                lanzadas += 1
+            except OSError:
+                pass
+        if ordenes:
+            diario(f"se cierra la sesión: lanzo el bloqueo de {lanzadas} de "
+                   f"{len(ordenes)} raíz{'es' if len(ordenes) != 1 else ''}")
+        return lanzadas
+
+    def _bloquear_solo(self, con: Conexion) -> dict[str, bool] | None:
+        """Devuelve los ajustes de bloquear sola que este agente puede cumplir en esa raíz.
+
+        Es lo que la ventana enseña como casillas (`watch.bloquear_solo()`):
+        cada clave de `equipo.AJUSTES_BLOQUEAR_SOLO` cuyo evento se oye aquí,
+        con su valor. El bloqueo de la sesión exige que la bandeja se haya
+        registrado para oírlo (`oye_sesion`); la suspensión y el fin de la
+        sesión, la bandeja de Windows. Sin raíz bloqueable, sin VeraCrypt
+        instalado o sin bandeja, `None`.
+        """
+        if not IS_WIN or self.bandeja is None or not self._bloqueable(con.id) \
+                or self._veracrypt_del_equipo() is None:
+            return None
+        unidad = self.ajustes.unidades[con.id]
+        claves = [k for k in equipo.AJUSTES_BLOQUEAR_SOLO
+                  if k != "bloquear_al_bloquear_sesion"
+                  or getattr(self.bandeja, "oye_sesion", False)]
+        return {k: getattr(unidad, k) for k in claves}
 
     def _cerrar_llavero(self, con: Conexion, b: Bloqueo, ahora: float) -> bool:
         """Cierra el llavero de una raíz antes de bloquearla; dice si ya se puede seguir.
@@ -4292,9 +4587,10 @@ class Agente:
             rc = 1
         if rc == 1:
             del self.bloqueos[con.id]
-            avisar(f"{nombre}: no la bloqueo",
-                   "KeePassXC sigue abierto: puede que esté preguntando algo. Ciérralo "
-                   "y vuelve a bloquearla.", True)
+            self._no_bloqueada(con.id, b, f"{nombre}: no la bloqueo",
+                               "KeePassXC sigue abierto: puede que esté preguntando algo. "
+                               "Ciérralo y vuelve a bloquearla.",
+                               "KeePassXC seguía abierto (quizá preguntando algo)")
             return False
         b.llavero_cerrado = True
         return True
@@ -4800,9 +5096,10 @@ class Agente:
         """Atiende las peticiones del buzón de `agente.pide` y las de la bandeja.
 
         Lo que la bandeja pide de UNA raíz cuenta como usarla; «Sincronizar todo
-        ahora» (`todas`) no.
+        ahora» (`todas`) no. Un evento de la sesión (`equipo.PIDE_SESION`) solo
+        vale de la bandeja: por el fichero se rechaza.
         """
-        pendientes = equipo.recoger()
+        pendientes = [(p, False) for p in equipo.recoger()]
         while True:
             try:
                 p = self.peticiones.get_nowait()
@@ -4810,10 +5107,16 @@ class Agente:
                 break
             if isinstance(p, dict) and not p.get("todas"):
                 self._usada(p.get("id"), ahora)
-            pendientes.append(p)
-        for p in pendientes:
+            pendientes.append((p, True))
+        for p, de_bandeja in pendientes:
             try:
-                self._atender_peticion(p, ahora)
+                if p.get("pide") != equipo.PIDE_SESION:
+                    self._atender_peticion(p, ahora)
+                elif de_bandeja:
+                    self._evento_de_sesion(p.get("evento"), ahora)
+                else:
+                    diario(f"un evento de la sesión por el buzón ({p.get('evento')!r}): "
+                           f"solo lo dice la bandeja; ignorado")
             except Exception as e:                      # noqa: BLE001
                 diario(f"petición ilegible {p!r}: {e}")
 
@@ -4852,7 +5155,8 @@ class Agente:
         de una raíz, expulsar una unidad extraíble, despertar, sondear, un cambio de red, cambiar un ajuste,
         una pasada urgente, actualizar el agente o una raíz, un atajo de
         teclado pulsado, guardar los atajos o abrir la ventana que los graba,
-        pausa, sigue y parar.
+        pausa, sigue y parar. Los eventos de la sesión (`equipo.PIDE_SESION`)
+        no llegan aquí: `_buzon()` los separa, porque solo valen de la bandeja.
 
         Args:
             p: La petición.
@@ -4981,6 +5285,10 @@ class Agente:
             if ahora - self.despertado >= DESPERTAR_DOBLE:
                 diario("el equipo vuelve de la suspensión")
             self.despertado = ahora
+            # Lo que la suspensión no pudo bloquear se dice ya, salvo que la
+            # sesión siga bloqueada: entonces, al desbloquearla.
+            self.suspendido = False
+            self._decir_sin_bloquear()
         elif que == equipo.PIDE_SONDEAR:
             # «Probar ahora» en un aviso de «Sin conexión»: la sonda de cada
             # remoto sin conexión, ya, en vez de a su hora.
@@ -5043,9 +5351,12 @@ class Agente:
         """Cambia un ajuste de UNA unidad de la lista (`equipo.AJUSTES_DE_UNIDAD`).
 
         Lo que no vale se deja en el diario y no toca nada: otra clave, una
-        unidad que no está en la lista, una raíz de este equipo (su ajuste es
-        el global `pedir_al_iniciar`) o un valor que no es verdadero, falso ni
-        `None` («lo de siempre»).
+        unidad que no está en la lista, una raíz de este equipo donde ese
+        ajuste no cabe o un valor que no es verdadero, falso ni `None`. Se
+        decide clave por clave: `pedir_al_conectar` no vale en ninguna raíz
+        del equipo (su ajuste es el global `pedir_al_iniciar`), y los de
+        bloquear sola (`equipo.AJUSTES_BLOQUEAR_SOLO`) valen en una raíz del
+        equipo cifrada pero no en una sin cifrar; en ellos `None` es apagado.
 
         Args:
             uid: El id de la unidad.
@@ -5056,13 +5367,17 @@ class Agente:
             diario(f"ajuste de unidad desconocido: {clave!r}")
             return
         unidad = self.ajustes.unidades.get(uid)
-        if unidad is None or unidad.es_raiz:
-            diario(f"ajuste {clave} de {uid[:8]!r}: no es una unidad de la lista")
+        solo = clave in equipo.AJUSTES_BLOQUEAR_SOLO
+        if unidad is None or (unidad.es_raiz and not (solo and unidad.cifrada)):
+            diario(f"ajuste {clave} de {uid[:8]!r}: no es una unidad de la lista"
+                   + (" donde quepa" if unidad is not None else ""))
             return
         nombre = nombre_guardado(unidad, uid)
         if valor is not None and not isinstance(valor, bool):
             diario(f"{nombre}: ajuste {clave} = {valor!r}: no es sí, no ni lo de siempre")
             return
+        if solo:
+            valor = bool(valor)
         self._guardar(self.ajustes.con_unidad(replace(unidad, **{clave: valor})))
         diario(f"{nombre}: ajuste {clave} = {valor}")
 
@@ -5593,6 +5908,9 @@ class Agente:
                              "llavero_conflicto": len(con.copias),
                              "expulsable": self._expulsable(con),
                              "expulsando": con.id in self.expulsiones})
+            solo = self._bloquear_solo(con)
+            if solo:
+                unidades[-1]["bloquear_solo"] = solo
         cerradas = [nombre_guardado(u, u.id) for u in self.ajustes.cifradas.values()
                     if u.id not in self.conexiones and u.id not in self.ausentes]
         return {"pid": os.getpid(), "pausado": self.pausado, "retenido": self.retenido,
@@ -5918,6 +6236,7 @@ def poner_bandeja(agente: Agente, vigia: Vigia) -> Any:
         diario(f"no he podido pintar los iconos de la bandeja: {e}")
 
     b = bandeja_windows.Bandeja(SCRIPT_DIR, pedir, lambda: vigia.despertar(montajes=True))
+    b.fin_de_sesion = agente.lanzar_al_salir
     if not b.arrancar():
         diario("no he podido poner la bandeja: sigo sin ella")
         return None
@@ -6208,6 +6527,18 @@ def cmd_run(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _bloquea_sola(u: equipo.Unidad) -> str:
+    """Devuelve cuándo bloquea el agente esa raíz por sí solo, para `status`; vacío si nunca."""
+    cuando = [texto for clave, texto in (
+        ("bloquear_al_bloquear_sesion", "al bloquear la sesión"),
+        ("bloquear_al_suspender", "al suspender"),
+        ("bloquear_al_cerrar_sesion", "al cerrar sesión o apagar")) if getattr(u, clave)]
+    if not cuando:
+        return ""
+    return "se bloquea sola " + (", ".join(cuando[:-1]) + " y " + cuando[-1]
+                                 if len(cuando) > 1 else cuando[0])
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     """Imprime qué atiende el agente y cómo."""
     aj = equipo.leer_ajustes()
@@ -6226,6 +6557,8 @@ def cmd_status(_args: argparse.Namespace) -> int:
             print(f"  cifrada: {u.contenedor}; al iniciar sesión "
                   + ("se pide la contraseña" if aj.pedir_al_iniciar
                      else "no se pide nada (agente.py desbloquear)"))
+        if _bloquea_sola(u):
+            print(f"  {_bloquea_sola(u)}")
     unidades = [u for u in aj.unidades.values() if not u.es_raiz]
     print("Unidades en la lista:" if unidades else "Unidades en la lista: ninguna")
     for u in unidades:
@@ -6233,7 +6566,8 @@ def cmd_status(_args: argparse.Namespace) -> int:
               f"{equipo.TEXTO_MODO[u.modo]}" + (pausa if u.pausada else "")
               + ("" if u.pedir_al_conectar is None else
                  " · al conectarla " + ("se pide" if u.pedir_al_conectar else "no se pide")
-                 + " la contraseña"))
+                 + " la contraseña")
+              + (f" · {_bloquea_sola(u)}" if _bloquea_sola(u) else ""))
     estado = equipo.leer_estado() if vivo else {}
     if estado.get("retenido"):
         print(f"No se lanza nada: {estado['retenido']}")

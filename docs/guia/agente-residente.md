@@ -179,6 +179,21 @@ agente»**. El diseño completo está en
   **la primera vez en un equipo** (o si le pones BitLocker más tarde en otro)
   tienes que desbloquearla tú desde el Explorador; después ya la conoce. De un
   disco con BitLocker que no es de prdrive no dice nada.
+- **Que se bloquee sola cuando te vas** (Windows, con VeraCrypt instalado). En
+  «Ajustes → Configuración» de una unidad VeraCrypt abierta, o de la raíz
+  cifrada de este equipo, hay tres casillas: **Bloquearla al bloquear la sesión
+  (Win+L)**, **Bloquearla al suspender el equipo** y **Bloquearla al cerrar
+  sesión o apagar (si Windows da tiempo)**. De fábrica, ninguna. El agente la
+  cierra él solo cuando Windows avisa, **sin forzar nunca**: espera a que acabe
+  la sincronización en marcha, y si su ventana está abierta o un programa tiene
+  un fichero dentro, la deja abierta y te lo dice una vez al volver («no la he
+  bloqueado», con el motivo). Al volver no te pide la contraseña: ábrela cuando
+  quieras con «Abrir PRDRIVE» o «Desbloquear…». Al apagar, Windows da muy poco
+  tiempo, así que es lo que se pueda. Como «Pedir la contraseña al conectarla»,
+  es un ajuste de este equipo, no de la unidad; solo sale con el agente
+  atendiéndola, con el icono de la bandeja y con VeraCrypt instalado (el
+  portable pediría permiso de administrador cada vez). BitLocker no, porque
+  bloquearlo exige administrador.
 - **Sincroniza al cambiar los ficheros, si una pareja lo pide.** Con `watch = true`
   (solo donde el local es origen: bisync, up y up-mirror) el agente escucha los
   avisos del sistema sobre la carpeta de la pareja (inotify en Linux; en
