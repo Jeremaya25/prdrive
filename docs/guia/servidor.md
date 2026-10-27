@@ -121,22 +121,29 @@ Todo se hace en la carpeta que estás viendo. Los botones se encienden según lo
 - **Nueva carpeta…** (Ctrl+Mayús+N): pide el nombre y crea la carpeta aquí. Al acabar, queda elegida.
 - **Renombrar…** (F2): con **una** fila elegida, pide el nombre nuevo. Un nombre no puede estar
   vacío, ni llevar «/», ni ser «.» o «..», ni ser el de otra cosa de la carpeta (aquí `Fotos` y
-  `fotos` cuentan como el mismo nombre, porque muchos servidores los tratan como uno).
+  `fotos` cuentan como el mismo nombre, porque muchos servidores los tratan como uno). Cambiar solo
+  las mayúsculas del propio nombre (`fotos` → `Fotos`) se hace en dos pasos, por un nombre de paso
+  como `fotos.prdrive-1`: en un servidor que no distingue mayúsculas, hacerlo de un golpe podría
+  borrar el archivo. Si el segundo paso falla, el resultado te dice con qué nombre se quedó
+  («se quedó como «fotos.prdrive-1»»): renómbralo tú.
 - **Mover**, con cortar y pegar: elige lo que quieras mover y pulsa **Cortar** (Ctrl+X). Encima de la
   lista aparece «3 elementos para mover desde /datos», con **Pegar aquí** y **Cancelar**. Entra en la
   carpeta de destino y pulsa **Pegar aquí** (Ctrl+V). Mientras no pegues, no se ha tocado nada.
   Puedes cambiar de carpeta, y también de servidor, con lo cortado puesto, pero solo se puede pegar
   en el servidor del que se cortó: en otro, la línea lo dice y **Pegar aquí** está apagado hasta que
   vuelvas. No se puede pegar en la carpeta de la que salió, una carpeta dentro de sí misma, ni donde
-  ya haya algo con el mismo nombre: renómbralo antes. Nunca se pisa nada.
+  ya haya algo con el mismo nombre: renómbralo antes. Nunca se pisa nada. Si renombras o borras
+  algo de lo cortado antes de pegar, deja de estar cortado.
 - **Borrar…** (Supr): antes cuenta lo que hay dentro («Mirando qué hay dentro…») y te pide
   confirmación con los números: «Se borrará para siempre «fotos», con 1234 archivos (3,4 GB).».
   **No hay papelera: lo borrado no se recupera.**
 
 Mientras dura, un panel al pie dice qué va («3 de 10 elementos») y deja **Cancelar**. Un cambio
-sale de elemento en elemento: **Cancelar no corta el elemento que va, para antes del siguiente**
-(rclone no sabe parar un borrado a medias). Por eso el panel dice «se para al acabar «x»», y si ese
-elemento acabó mal, el resultado avisa de que puede haber quedado a medias. Al terminar, la carpeta
+sale de elemento en elemento: **Cancelar para antes del siguiente; el elemento que va puede acabar
+o quedarse a medias** (rclone no promete parar un borrado en el acto, ni dejarlo seguir hasta el
+final). Por eso el panel dice «se para al acabar «x»», y si ese elemento acabó mal, el resultado
+avisa de que puede haber quedado a medias («Cancelado: borrados 0 de 3 · «x» puede haber quedado a
+medias»): mira cómo ha quedado. Al terminar, la carpeta
 se vuelve a leer sola. El resultado no ofrece «Reintentar»: mira cómo ha quedado y elige otra vez.
 
 Si cierras la ventana con un cambio en marcha, prdrive pregunta si lo cancelas y cierras.
@@ -148,11 +155,14 @@ Para no romper tus parejas, **no deja** (verás «No se puede» y no se hace nad
 
 - Borrar, renombrar o mover **la carpeta de una pareja** (su carpeta en el servidor) ni una carpeta
   que la contenga: la sincronización lo vería como que se ha perdido todo.
-- Tocar **el catálogo de las parejas** (el fichero que comparten los dispositivos) ni la carpeta
-  donde está, ni nada que haya dentro de ella (si el catálogo está en la raíz del servidor, solo
-  sus propios ficheros).
+- Tocar **el catálogo de las parejas** (el fichero que comparten los dispositivos), la carpeta
+  donde está, nada que haya dentro de ella ni ninguna carpeta que la contenga (si el catálogo está
+  en la raíz del servidor, solo sus propios ficheros).
 - Mover o crear algo **dentro de la carpeta de una pareja de espejo de subida** (`up-mirror`): el
   servidor tiene que quedar igual que el equipo y su próxima pasada lo borraría.
+
+Para esto da igual cómo se escriban las mayúsculas: en un servidor que no las distingue, `fotos`
+es la carpeta de una pareja que está en `Fotos`.
 
 En las demás parejas deja seguir, pero antes **avisa** con lo que hará la próxima pasada, por
 ejemplo «La próxima pasada de «Fotos» lo quitará también del dispositivo.» o «El dispositivo
@@ -180,7 +190,8 @@ pantalla.
   pasa estando dentro, vuelve a intentarlo con **Releer** cuando haya red.
 - **«Esa carpeta ya no existe en el servidor.»**: alguien la ha borrado o movido. Sube con ↑.
 - **«El servidor no ha contestado a tiempo.»**: el servidor tarda demasiado. Vuelve a intentarlo con
-  **Releer**.
+  **Releer**. Si pasa al mirar antes de un cambio (por ejemplo, contando una carpeta enorme antes
+  de borrarla), no se ha hecho nada y el panel ofrece **Reintentar**.
 - **«Se ha perdido la conexión con rclone.»**: el programa que habla con el servidor se ha parado.
   **Reconectar** lo vuelve a poner en marcha y repite la última carpeta.
 - **«El puerto que se eligió para rclone ya lo usa otro programa.»**: prdrive prueba una vez más con
@@ -188,8 +199,8 @@ pantalla.
 - **«Este dispositivo no tiene conexión con ningún servidor.»**: no hay ningún servidor configurado
   en el dispositivo.
 - **«Ya hay algo que se llama… en esta carpeta.»** o **«Ya hay «x» en… : renómbralo antes.»**: ese
-  nombre está cogido (lo mira el servidor justo antes de actuar, aunque la lista esté vieja).
-  Cambia el nombre.
+  nombre está cogido (lo mira el servidor justo antes de actuar, aunque la lista esté vieja, y
+  otra vez después de que digas «sí» a un aviso). Cambia el nombre.
 - **Un cambio que falla**: el panel dice qué elemento y por qué («ya no estaba», «No tienes permiso
   para borrar en /datos.», o lo que dijo rclone). Si ha fallado a mitad, dice cuántos se hicieron.
 - **Una copia que falla** (sin espacio, sin permiso para escribir, se corta la red): el panel lo

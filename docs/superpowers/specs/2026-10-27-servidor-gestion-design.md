@@ -36,7 +36,7 @@ el catálogo para proteger las parejas de otros dispositivos (decisión 6).
    la próxima pasada.
 3. **Mover es cortar y pegar** en la misma ventana: «Cortar», navegar, «Pegar aquí». Solo
    dentro del mismo remote.
-4. **Borrar cuenta antes lo que hay dentro**: «Se borrará para siempre: «fotos» con 1 234
+4. **Borrar cuenta antes lo que hay dentro**: «Se borrará para siempre: «fotos» con 1234
    archivos (3,4 GB)…».
 5. **Cada acción es un lote que sigue la máquina de la pieza 2**: el mismo panel de abajo,
    «Cancelar», un lote a la vez, la pregunta al cerrar. Nada de llamadas síncronas de 60 s.
@@ -93,7 +93,11 @@ primer carácter). Se rechaza, con el motivo bajo el campo y «Aceptar» apagado
 - `.` o `..`;
 - uno que ya existe en la carpeta, sin distinguir mayúsculas (`casefold()` en los dos lados,
   como los choques de la pieza 2). Cambiar solo las mayúsculas del propio elemento
-  (`foto.jpg` → `Foto.jpg`) sí vale; el mismo nombre exacto no hace nada.
+  (`foto.jpg` → `Foto.jpg`) sí vale; el mismo nombre exacto no hace nada. **Revisado en la
+  revisión final:** ese renombrado va en dos órdenes por un nombre temporal libre
+  (`foto.jpg` → `foto.jpg.prdrive-N` → `Foto.jpg`, `gestion.con_temporal`): el backend sftp de
+  rclone no declara `CaseInsensitive` y, en un servidor que no distingue mayúsculas,
+  `movefile a→A` borra el origen.
 
 El nombre se usa tal cual (no se recortan espacios por dentro ni por los lados salvo el caso de
 solo espacios: un nombre con un espacio al final es válido en el servidor).
@@ -291,7 +295,8 @@ pieza 2: un diálogo corre un bucle anidado y un listado puede cambiar `nav` mie
 - **Servidores sin movimiento en el servidor** (algunos WebDAV, S3): `sync/move` y `movefile`
   copian y borran; una carpeta grande tarda, y el panel lo sigue. Fila pendiente en real.
 - **Cambiar solo mayúsculas** en un servidor que no las distingue (OpenSSH en Windows, SMB):
-  sin probar; fila pendiente en real.
+  va por un nombre temporal (arriba); sin probar en real, fila G2. Si falla el segundo paso el
+  elemento se queda con el nombre temporal y el resultado lo dice.
 
 ## Pruebas
 
