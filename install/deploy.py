@@ -406,11 +406,125 @@ def precompilar_dispositivo(device_root: Path | str,
     return precompilar(app_dir(device_root), python, progreso=progreso)
 
 
+class CopiaIncompleta(InstallError):
+    """La copia del programa ha dejado ficheros sin sustituir.
+
+    El resto del programa ya es el nuevo, pero `VERSION` no se ha tocado: el
+    dispositivo sigue diciendo que lleva la versión anterior para que la
+    actualización se vuelva a ofrecer. `str(e)` es el mensaje para el usuario.
+
+    Attributes:
+        pendientes: `(ruta relativa a .prdrive/, motivo)` de cada fichero que
+            no se ha podido escribir.
+    """
+
+    def __init__(self, pendientes: list[tuple[str, str]]):
+        self.pendientes = list(pendientes)
+        lineas = [f"No he podido sustituir {len(self.pendientes)} ficheros "
+                  "del programa:"]
+        lineas += [f"  {ruta}: {motivo}" for ruta, motivo in self.pendientes]
+        lineas.append(
+            "El resto ya es de la versión nueva, pero el dispositivo sigue "
+            "diciendo que lleva la anterior para que la actualización se vuelva "
+            "a ofrecer. Cierra las demás ventanas de prdrive abiertas sobre esta "
+            "unidad y vuelve a intentarlo; si sigue fallando, pasa el instalador "
+            "sobre la unidad con la ventana cerrada.")
+        super().__init__("\n".join(lineas))
+
+
+VERSION_FILE = "VERSION"
+"""El fichero de `DEPLOY_FILES` que `deploy_code()` escribe el último.
+
+Es lo que dice qué versión lleva el dispositivo: solo se escribe cuando todo lo
+demás ha llegado, para que una copia a medias se siga ofreciendo como
+actualización pendiente.
+"""
+
+_BLOQUE = 1024 * 1024  # bytes
+
+
+def copiar_fichero(src: Path, dst: Path) -> None:
+    """Copia un fichero del programa al dispositivo, con sus metadatos.
+
+    Punto de indirección: los tests lo sustituyen para simular un fichero en
+    uso, que en Linux no se puede bloquear.
+
+    Raises:
+        OSError: Si no se puede escribir el destino.
+    """
+    shutil.copy2(src, dst)
+
+
+def _igual(src: Path, dst: Path) -> bool:
+    """Dice si `dst` existe y tiene exactamente los mismos bytes que `src`.
+
+    Un error al leer cualquiera de los dos cuenta como «distinto». No usa
+    `filecmp.cmp`, que guarda resultados en caché por la firma de `stat`.
+    """
+    try:
+        if not dst.is_file() or src.stat().st_size != dst.stat().st_size:
+            return False
+        with open(src, "rb") as a, open(dst, "rb") as b:
+            while True:
+                trozo = a.read(_BLOQUE)
+                if trozo != b.read(_BLOQUE):
+                    return False
+                if not trozo:
+                    return True
+    except OSError:
+        return False
+
+
+def _motivo(e: OSError) -> str:
+    """Explica en español por qué no se ha podido escribir un fichero."""
+    # ERROR_SHARING_VIOLATION (32) y ERROR_LOCK_VIOLATION (33) de Windows.
+    if getattr(e, "winerror", None) in (32, 33):
+        return ("lo tiene abierto otro programa (por ejemplo, una ventana de "
+                "prdrive abierta sobre esta unidad)")
+    return str(e.strerror or e)
+
+
+def _poner(src: Path, dst: Path, rel: str,
+           pendientes: list[tuple[str, str]]) -> None:
+    """Copia `src` a `dst` salvo que ya sea idéntico; un fallo se apunta en `pendientes`."""
+    if _igual(src, dst):
+        return
+    try:
+        copiar_fichero(src, dst)
+    except OSError as e:
+        pendientes.append((rel, _motivo(e)))
+
+
+def _copiar_arbol(src: Path, destino: Path, nombre: str,
+                  pendientes: list[tuple[str, str]]) -> None:
+    """Copia el paquete `src` a `destino/nombre` fichero a fichero.
+
+    Filtra con `NO_COPIAR` como `shutil.copytree`, crea las carpetas que falten
+    y no borra nada del destino. Lo que no se puede escribir se apunta en
+    `pendientes` con su ruta relativa a `.prdrive/` y se sigue con el resto.
+    """
+    for dirpath, dirnames, filenames in os.walk(src):
+        ignorados = NO_COPIAR(dirpath, dirnames + filenames)
+        dirnames[:] = sorted(d for d in dirnames if d not in ignorados)
+        rel_dir = Path(nombre) / Path(dirpath).relative_to(src)
+        try:
+            (destino / rel_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            pendientes.append((rel_dir.as_posix() + "/", _motivo(e)))
+            dirnames[:] = []
+            continue
+        for f in sorted(filenames):
+            if f in ignorados:
+                continue
+            rel = rel_dir / f
+            _poner(Path(dirpath) / f, destino / rel, rel.as_posix(), pendientes)
+
+
 def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None,
                 origen: Path | str | None = None,
                 progreso: Callable[[str], None] | None = None,
                 con_pyc: bool = True) -> list[Path]:
-    """Copia el programa al dispositivo y devuelve lo que ha escrito.
+    """Copia el programa al dispositivo y devuelve lo que ha desplegado.
 
     Es una copia y no un espejo: lo que hubiera en `.prdrive/` de una versión
     anterior se sobrescribe fichero a fichero, pero nada de fuera se toca. Por
@@ -421,6 +535,13 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
     con el rclone que puede estar corriendo desde `bin/`, hace perder a
     penwatch su marcador de estructura (y relanzar la interfaz solo) y apaga un
     servicio en marcha al desaparecerle el `sync_config.toml`.
+
+    Un fichero que ya es idéntico al del destino no se escribe: ahorra
+    escrituras en el USB y no choca con lo que otro proceso tenga abierto (las
+    fuentes de `ui/fuentes/`, que la ventana registra con `AddFontResourceExW`).
+    Uno distinto que no se puede escribir no aborta la copia: se apunta y se
+    sigue con el resto. `VERSION` se escribe lo último y solo si todo lo demás
+    ha llegado.
 
     Args:
         rclone_binary: El rclone a dejar en `bin/`. Sin él no se toca `bin/`,
@@ -434,11 +555,27 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
             control en una unidad casi llena.
 
     Raises:
-        InstallError: Si falta algo en el origen o no se puede copiar.
+        InstallError: Si falta algo en el origen (sin haber escrito nada) o no
+            se puede crear `.prdrive/`.
+        CopiaIncompleta: Si algún fichero no se ha podido sustituir; `VERSION`
+            queda como estaba y no se precompila.
     """
     base = Path(origen) if origen else deploy_source()
     destino = app_dir(device_root)
     escrito: list[Path] = []
+
+    # Antes de escribir nada: un instalador roto no deja un dispositivo a medias.
+    for nombre in DEPLOY_FILES:
+        if not (base / nombre).is_file():
+            raise InstallError(
+                f"El instalador no lleva {nombre} dentro (buscado en {base}).\n"
+                "Si lo has compilado tú, revisa el --add-data de "
+                "build_installer.py.")
+    for nombre in DEPLOY_TREES:
+        if not (base / nombre).is_dir():
+            raise InstallError(
+                f"El instalador no lleva el paquete {nombre}/ dentro "
+                f"(buscado en {base}).")
 
     try:
         destino.mkdir(parents=True, exist_ok=True)
@@ -446,31 +583,22 @@ def deploy_code(device_root: Path | str, rclone_binary: Path | str | None = None
         raise InstallError(f"No he podido crear {destino}: {e}") from e
     hide(destino)
 
+    pendientes: list[tuple[str, str]] = []
     for nombre in DEPLOY_FILES:
-        src = base / nombre
-        if not src.is_file():
-            raise InstallError(
-                f"El instalador no lleva {nombre} dentro (buscado en {base}).\n"
-                "Si lo has compilado tú, revisa el --add-data de "
-                "build_installer.py.")
-        try:
-            shutil.copy2(src, destino / nombre)
-        except OSError as e:
-            raise InstallError(f"No he podido copiar {nombre}: {e}") from e
+        if nombre == VERSION_FILE:
+            continue
+        _poner(base / nombre, destino / nombre, nombre, pendientes)
+        escrito.append(destino / nombre)
+    for nombre in DEPLOY_TREES:
+        _copiar_arbol(base / nombre, destino, nombre, pendientes)
         escrito.append(destino / nombre)
 
-    for nombre in DEPLOY_TREES:
-        src = base / nombre
-        if not src.is_dir():
-            raise InstallError(
-                f"El instalador no lleva el paquete {nombre}/ dentro "
-                f"(buscado en {base}).")
-        try:
-            shutil.copytree(src, destino / nombre, ignore=NO_COPIAR,
-                            dirs_exist_ok=True)
-        except OSError as e:
-            raise InstallError(f"No he podido copiar {nombre}/: {e}") from e
-        escrito.append(destino / nombre)
+    if not pendientes:
+        _poner(base / VERSION_FILE, destino / VERSION_FILE, VERSION_FILE,
+               pendientes)
+    if pendientes:
+        raise CopiaIncompleta(pendientes)
+    escrito.append(destino / VERSION_FILE)
 
     if rclone_binary is not None:
         escrito.append(copy_rclone(device_root, rclone_binary))

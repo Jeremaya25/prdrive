@@ -556,11 +556,178 @@ c("y no deja nada escrito en el dispositivo", list(con_conf_roto.rglob("*")), []
 # un origen incompleto se dice, no se instala a medias
 roto = tmpdir() / "roto"
 roto.mkdir()
+sin_nada = tmpdir() / "x"
 try:
-    deploy.deploy_code(tmpdir() / "x", rclone_falso, origen=roto)
+    deploy.deploy_code(sin_nada, rclone_falso, origen=roto)
     c("un instalador sin el árbol dentro se queja", "no lanzó", "InstallError")
 except InstallError as e:
     c.contains("un instalador sin el árbol dentro se queja", str(e), "sync.py")
+c("y no escribe nada", sin_nada.exists(), False)
+# Con lo suelto pero sin un paquete tampoco: se mira todo antes de escribir.
+solo_sueltos = arbol_falso()
+_shutil_rm = __import__("shutil").rmtree
+_shutil_rm(solo_sueltos / "ui")
+sin_ui = tmpdir() / "sin-ui"
+try:
+    deploy.deploy_code(sin_ui, origen=solo_sueltos)
+    c("sin ui/ se queja", "no lanzó", "InstallError")
+except InstallError as e:
+    c.contains("sin ui/ se queja", str(e), "ui/")
+c("y tampoco escribe nada", sin_ui.exists(), False)
+
+# #179: lo idéntico no se escribe, lo que no se puede escribir se apunta
+#
+# En Windows la ventana que lanza «Actualizar…» tiene abiertas las fuentes de
+# `ui/fuentes/` (`AddFontResourceExW`) y sobrescribirlas daba WinError 32. Un
+# fichero en uso no se puede simular en Linux: se sustituye `copiar_fichero()`.
+import hashlib  # noqa: E402
+
+copiar_real = deploy.copiar_fichero
+precompilar_real = deploy.precompilar_dispositivo
+copiados: list[str] = []
+
+
+def registrador(src, dst):
+    """Apunta qué se copia (relativo a `.prdrive/`) y lo copia de verdad."""
+    copiados.append(Path(dst).relative_to(app_179).as_posix())
+    copiar_real(src, dst)
+
+
+def con_fuentes() -> Path:
+    """Un origen como `arbol_falso()` y con `ui/fuentes/X.ttf`."""
+    base = arbol_falso()
+    (base / "ui" / "fuentes").mkdir()
+    (base / "ui" / "fuentes" / "X.ttf").write_bytes(b"FUENTE")
+    return base
+
+
+# instalación limpia: VERSION llega y es lo último que se escribe
+origen_179 = con_fuentes()
+(origen_179 / "VERSION").write_text("1.0\n", encoding="utf-8")
+limpio = tmpdir() / "limpio"
+app_179 = limpio / deploy.APP_SUBDIR
+deploy.copiar_fichero = registrador
+try:
+    deploy.deploy_code(limpio, origen=origen_179, con_pyc=False)
+finally:
+    deploy.copiar_fichero = copiar_real
+c("instalación limpia: llega VERSION",
+  (app_179 / "VERSION").read_text(encoding="utf-8"), "1.0\n")
+c("y es lo último que se escribe", copiados[-1:], ["VERSION"])
+c("y llegan las fuentes", "ui/fuentes/X.ttf" in copiados, True)
+c("el __pycache__ tampoco viaja fichero a fichero",
+  any("__pycache__" in x for x in copiados), False)
+
+# un origen idéntico no escribe nada
+copiados.clear()
+deploy.copiar_fichero = registrador
+try:
+    deploy.deploy_code(limpio, origen=origen_179, con_pyc=False)
+finally:
+    deploy.copiar_fichero = copiar_real
+c("con un origen idéntico no se copia ningún fichero", copiados, [])
+
+# lo cambiado y lo nuevo sí
+(origen_179 / "common" / "model.py").write_text("# model nuevo\n", encoding="utf-8")
+(origen_179 / "ui" / "nueva").mkdir()
+(origen_179 / "ui" / "nueva" / "cosa.py").write_text("# cosa\n", encoding="utf-8")
+copiados.clear()
+deploy.copiar_fichero = registrador
+try:
+    deploy.deploy_code(limpio, origen=origen_179, con_pyc=False)
+finally:
+    deploy.copiar_fichero = copiar_real
+c("solo se copia lo cambiado y lo nuevo, en una subcarpeta nueva",
+  sorted(copiados), ["common/model.py", "ui/nueva/cosa.py"])
+c("y lo nuevo llega",
+  (app_179 / "ui" / "nueva" / "cosa.py").read_text(encoding="utf-8"), "# cosa\n")
+
+# una fuente distinta y en uso: se copia el resto y VERSION se queda viejo
+(origen_179 / "VERSION").write_text("2.0\n", encoding="utf-8")
+(origen_179 / "ui" / "fuentes" / "X.ttf").write_bytes(b"FUENTE CAMBIADA")
+(origen_179 / "ui" / "tk.py").write_text("# tk nuevo\n", encoding="utf-8")
+(origen_179 / "common" / "model.py").write_text("# model 2\n", encoding="utf-8")
+
+
+def en_uso(src, dst):
+    """Como Windows con una fuente que la ventana tiene registrada."""
+    if Path(dst).name == "X.ttf":
+        e = OSError(13, "El proceso no tiene acceso al archivo")
+        e.winerror = 32
+        raise e
+    copiar_real(src, dst)
+
+
+precompilados: list[Path] = []
+deploy.copiar_fichero = en_uso
+deploy.precompilar_dispositivo = lambda raiz, progreso=None: precompilados.append(raiz)
+error_179 = None
+try:
+    deploy.deploy_code(limpio, origen=origen_179)
+except InstallError as e:
+    error_179 = e
+finally:
+    deploy.copiar_fichero = copiar_real
+    deploy.precompilar_dispositivo = precompilar_real
+c("un fichero en uso da CopiaIncompleta",
+  isinstance(error_179, deploy.CopiaIncompleta), True)
+c("que nombra el fichero",
+  [r for r, _ in getattr(error_179, "pendientes", [])], ["ui/fuentes/X.ttf"])
+c.contains("y dice por qué", str(error_179), "otro programa")
+c.contains("y cuál en el mensaje", str(error_179), "ui/fuentes/X.ttf")
+c("el resto sí se copia: ui/tk.py",
+  (app_179 / "ui" / "tk.py").read_text(encoding="utf-8"), "# tk nuevo\n")
+c("y common/model.py",
+  (app_179 / "common" / "model.py").read_text(encoding="utf-8"), "# model 2\n")
+c("VERSION sigue siendo el viejo",
+  (app_179 / "VERSION").read_text(encoding="utf-8"), "1.0\n")
+c("y no se precompila", precompilados, [])
+
+# un OSError sin winerror da el motivo del sistema
+deploy.copiar_fichero = lambda src, dst: (_ for _ in ()).throw(
+    OSError(28, "No queda espacio en el dispositivo"))
+try:
+    deploy.deploy_code(limpio, origen=origen_179, con_pyc=False)
+    c("sin sitio también se dice", "no lanzó", "CopiaIncompleta")
+except deploy.CopiaIncompleta as e:
+    c.contains("sin sitio también se dice", str(e), "No queda espacio")
+finally:
+    deploy.copiar_fichero = copiar_real
+
+# --update con un fichero pendiente: rc 1 por main() y el texto por report()
+informado: list[list[str]] = []
+report_real = instalador.report
+fuente_real = deploy.deploy_source
+instalador.report = informado.append
+deploy.copiar_fichero = en_uso
+deploy.deploy_source = lambda: origen_179
+try:
+    rc_179 = instalador.main(["--update", str(limpio)])
+finally:
+    instalador.report = report_real
+    deploy.copiar_fichero = copiar_real
+    deploy.deploy_source = fuente_real
+c("--update con un fichero en uso acaba en rc 1", rc_179, 1)
+c.contains("y lo dice por report()", "\n".join(sum(informado, [])),
+           "ui/fuentes/X.ttf")
+c("y VERSION sigue siendo el viejo",
+  (app_179 / "VERSION").read_text(encoding="utf-8"), "1.0\n")
+
+# Una release que CAMBIE una fuente seguiría sin poder aplicarse desde la
+# ventana en Windows: es la ventana la que las retiene (#179).
+FUENTES_SHA256 = {
+    "NotoSans-Bold.ttf": "b44a45959694adbc524553497cdbabec0965ea07de00fc4bf3cfec7ca4239b38",
+    "NotoSans-Italic.ttf": "85aa4cbc20a3a2cf61ec1c99a534c9861d9b88790e43e14c66c93ec94145336d",
+    "NotoSans-Regular.ttf": "f597e287ceabefe55dcecb6a67fefe415d71730e8f121d869bc7f7a80f7bca55",
+    "NotoSans-SemiBold.ttf": "23ce309a4aaba751ebeb5063112a4d1a5fa21c3328f2e401da63c6bb14a6c9f9",
+    "NotoSansMono-Bold.ttf": "3376548a1e6a648754ba664157f6dd467f9a02f106df8ef59d2668dc48f04ffe",
+    "NotoSansMono-Regular.ttf": "df57118a2cd473f09c1cafe7490b34631e6cd6fe6909426fefdccba39fc632ae",
+}
+fuentes = Path(__file__).resolve().parent.parent / "ui" / "fuentes"
+c("las fuentes de ui/fuentes/ no cambian (cambiarlas exige antes resolver cómo "
+  "se actualizan desde la ventana en Windows, que las tiene abiertas: #179)",
+  {f.name: hashlib.sha256(f.read_bytes()).hexdigest()
+   for f in sorted(fuentes.glob("*.ttf"))}, FUENTES_SHA256)
 
 # carpetas locales
 c("las carpetas de las parejas elegidas",
