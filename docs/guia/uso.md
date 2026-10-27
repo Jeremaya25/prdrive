@@ -112,6 +112,11 @@ estado de bisync, los filtros, los diarios, el rclone, el Python del dispositivo
 los lanzadores se quedan donde estaban. rclone y Python son componentes, no
 código: el zip de la release no los lleva.
 
+Si otro programa tiene abierto algún fichero del programa (por ejemplo, otra
+ventana de prdrive abierta sobre la misma unidad), la actualización dice cuál no
+ha podido sustituir y el dispositivo sigue ofreciéndola: cierra las otras
+ventanas de prdrive y vuelve a pulsar «Actualizar…».
+
 Si no quieres esperar a que la ventana mire por su cuenta (lo hace al abrirse y
 como mucho una vez cada 24 horas), **«Ajustes… → Actualizaciones → Buscar
 actualizaciones»** pregunta a GitHub en ese momento y te dice debajo del botón
