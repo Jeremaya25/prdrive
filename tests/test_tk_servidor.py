@@ -1335,6 +1335,7 @@ with sandbox():
     for variante in ("se recupera", "sigue sin contestar"):
         dialogos(destino=str(tmpdir()), preguntar=False)
         recupera = threading.Event()
+        visto = threading.Event()       # el test ya vio el aviso: entonces se recupera
         fallos_ = [0]
         fallan = tk_servidor.FALLOS_PARA_AVISAR + 1
 
@@ -1342,7 +1343,7 @@ with sandbox():
             if recupera.is_set():
                 return ACABADO
             fallos_[0] += 1
-            if fallos_[0] > fallan and variante == "se recupera":
+            if visto.is_set() and variante == "se recupera":
                 return CORRIENDO
             if fallos_[0] % 2:
                 raise rcd.RcdCaido("timed out")
@@ -1373,8 +1374,12 @@ with sandbox():
             c("  tras mucho tiempo sin respuesta el lote no se dio por acabado",
               (botones_de(dlg), len(copias(falso)), fallos_[0] > fallan), (("disabled",) * 3, 1, True))
         else:
+            # el aviso solo dura mientras falla: se recupera cuando el test ya lo vio
+            # (si no, en una máquina lenta el aviso puede ir y venir entre dos miradas)
+            hasta = fallos_[0] + 2
+            visto.set()
             c("  al contestar otra vez la línea de aviso se quita y el lote sigue",
-              (bombear(lambda: fallos_[0] > fallan + 2 and frase(dlg) == ""), botones_de(dlg)[0],
+              (bombear(lambda: fallos_[0] > hasta and frase(dlg) == ""), botones_de(dlg)[0],
                len(copias(falso))), (True, "disabled", 1))
         recupera.set()
         c("  cuando por fin contesta que acabó, acaba bien y los botones vuelven",
