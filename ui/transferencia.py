@@ -154,9 +154,19 @@ def _mas_hondas(contienen: list[tuple[int, str]]) -> set[str]:
     return {nombre for h, nombre in contienen if h == hondura}
 
 
-def _carpetas_de_parejas(config: Config, remote: str) -> list[tuple[str, str]]:
-    """Devuelve `(carpeta, nombre)` de cada pareja de ese remote, con la carpeta normalizada."""
-    return [(remote_picker.normalizar(p.remote_path), p.name)
+def _plegada(ruta: str, sin_mayusculas: bool) -> str:
+    """La ruta normalizada y, con `sin_mayusculas`, pasada por `casefold()`."""
+    ruta = remote_picker.normalizar(ruta)
+    return ruta.casefold() if sin_mayusculas else ruta
+
+
+def _carpetas_de_parejas(config: Config, remote: str,
+                         sin_mayusculas: bool = False) -> list[tuple[str, str]]:
+    """Devuelve `(carpeta, nombre)` de cada pareja de ese remote, con la carpeta normalizada.
+
+    Con `sin_mayusculas` la carpeta va además pasada por `casefold()`.
+    """
+    return [(_plegada(p.remote_path, sin_mayusculas), p.name)
             for p in config.pairs if p.remote_name == remote]
 
 
@@ -165,7 +175,8 @@ def _contiene(carpeta: str, ruta: str) -> bool:
     return ruta == carpeta or ruta.startswith(carpeta.rstrip("/") + "/")
 
 
-def parejas_que_contienen(config: Config, remote: str, ruta: str) -> set[str]:
+def parejas_que_contienen(config: Config, remote: str, ruta: str,
+                          sin_mayusculas: bool = False) -> set[str]:
     """Devuelve las parejas más hondas cuya carpeta es la ruta o la contiene.
 
     Son TODAS las que comparten esa carpeta más honda, no solo una: si dos parejas
@@ -176,32 +187,37 @@ def parejas_que_contienen(config: Config, remote: str, ruta: str) -> set[str]:
         config: Configuración con las parejas.
         remote: Remote de la ruta; las parejas de otros remotes no cuentan.
         ruta: Ruta del servidor.
+        sin_mayusculas: Si se da, la ruta y las carpetas de las parejas se comparan tras
+            `casefold()` en los dos lados, como en un servidor que no distingue
+            mayúsculas (la gestión del servidor); las transferencias comparan exacto.
 
     Returns:
         Los nombres de esas parejas; vacío si ninguna carpeta de pareja la contiene.
     """
-    destino = remote_picker.normalizar(ruta)
+    destino = _plegada(ruta, sin_mayusculas)
     return _mas_hondas([
         (len(carpeta.rstrip("/")), nombre)
-        for carpeta, nombre in _carpetas_de_parejas(config, remote)
+        for carpeta, nombre in _carpetas_de_parejas(config, remote, sin_mayusculas)
         if _contiene(carpeta, destino)
     ])
 
 
-def parejas_bajo(config: Config, remote: str, ruta: str) -> set[str]:
+def parejas_bajo(config: Config, remote: str, ruta: str, sin_mayusculas: bool = False) -> set[str]:
     """Devuelve las parejas cuya carpeta es la ruta o cuelga de ella.
 
     Args:
         config: Configuración con las parejas.
         remote: Remote de la ruta; las parejas de otros remotes no cuentan.
         ruta: Ruta del servidor.
+        sin_mayusculas: Como en `parejas_que_contienen`: compara tras `casefold()` en los
+            dos lados.
 
     Returns:
         Los nombres de esas parejas; vacío si ninguna carpeta de pareja está en la ruta
         ni por debajo.
     """
-    objetivo = remote_picker.normalizar(ruta)
-    return {nombre for carpeta, nombre in _carpetas_de_parejas(config, remote)
+    objetivo = _plegada(ruta, sin_mayusculas)
+    return {nombre for carpeta, nombre in _carpetas_de_parejas(config, remote, sin_mayusculas)
             if _contiene(objetivo, carpeta)}
 
 

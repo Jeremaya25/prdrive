@@ -4,11 +4,14 @@
 Lo que se comprueba es lo que, si falla, deja a un dispositivo sin su carpeta o sin su
 catálogo: que un nombre no vale si lleva `/`, está vacío o ya existe (sin mirar mayúsculas),
 que un pegado no pisa ni se mete dentro de sí mismo, qué rutas salen y cuáles llegan en cada
-acción, qué se bloquea (raíz de una pareja, catálogo, llegar a una `up-mirror`) y qué avisa
-la próxima pasada de cada pareja.
+acción, qué se bloquea (raíz de una pareja, catálogo, llegar a una `up-mirror`, sin mirar
+mayúsculas) y qué avisa la próxima pasada de cada pareja; que un renombrado que solo cambia
+mayúsculas pasa por un nombre temporal, que ninguna orden sale con un nombre vacío, `.`,
+`..` o con `/`, y qué queda cortado tras borrar o renombrar.
 """
 
 import sys
+from dataclasses import replace
 
 from _harness import Checks, mkcfg
 
@@ -616,6 +619,136 @@ c("nunca se ofrece Reintentar",
   any(res(op, st, cn)[2] for op, st, cn in (
       (b3, [OK, mal("x"), OK], False), (m2, [mal("x")], True), (r1, [mal("x")], False),
       (n1, [mal("x")], False), (b1, [mal("permission denied")], False))), False)
+
+
+# --- renombrar cambiando solo mayúsculas: dos órdenes por un nombre temporal ----------
+# El backend sftp de rclone no declara `CaseInsensitive`: en un OpenSSH de Windows,
+# `movefile a→A` cree que son el mismo archivo y BORRA el origen.
+c("Operacion sin temporal por defecto", Op(gestion.RENOMBRAR, "nas", "/").temporal, None)
+c("nombre temporal: el primero libre", gestion.nombre_temporal("a", ["a", "b"]), "a.prdrive-1")
+c("  salta los ocupados, sin mirar mayúsculas",
+  gestion.nombre_temporal("a", ["a", "A.PRDRIVE-1", "a.prdrive-2"]), "a.prdrive-3")
+c("  con un nombre raro, tal cual", gestion.nombre_temporal("foto ", ["foto "]), "foto .prdrive-1")
+rm = Op(gestion.RENOMBRAR, "nas", "/datos", (E("a", False),), nombre="A")
+c("con_temporal: solo mayúsculas pone el temporal libre",
+  gestion.con_temporal(rm, ["a", "a.prdrive-1"]).temporal, "a.prdrive-2")
+c("  y no cambia lo demás", replace(gestion.con_temporal(rm, ["a"]), temporal=None), rm)
+c("  un nombre distinto no lleva temporal",
+  gestion.con_temporal(Op(gestion.RENOMBRAR, "nas", "/d", (E("a", False),), nombre="b"),
+                       ["a"]).temporal, None)
+c("  ni el mismo nombre exacto",
+  gestion.con_temporal(Op(gestion.RENOMBRAR, "nas", "/d", (E("a", False),), nombre="a"),
+                       ["a"]).temporal, None)
+c("  ni otra acción",
+  gestion.con_temporal(Op(gestion.NUEVA, "nas", "/d", nombre="A"), ["a"]).temporal, None)
+c("  un temporal viejo se recalcula con el listado nuevo",
+  gestion.con_temporal(gestion.con_temporal(rm, ["a"]), ["a", "a.prdrive-1"]).temporal,
+  "a.prdrive-2")
+c("dos movefile por el temporal, con los nombres tal cual",
+  gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", "/d", (E("mi foto", False),), nombre="Mi Foto",
+                        temporal="mi foto.prdrive-1")),
+  [{"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": "d/mi foto",
+    "dstFs": "nas:/", "dstRemote": "d/mi foto.prdrive-1"},
+   {"_path": "operations/movefile", "srcFs": "nas:/", "srcRemote": "d/mi foto.prdrive-1",
+    "dstFs": "nas:/", "dstRemote": "d/Mi Foto"}])
+c("una carpeta: dos sync/move por el temporal, en la raíz",
+  gestion.ordenes_de(Op(gestion.RENOMBRAR, "nas", "/", (E("fotos ", True),), nombre="Fotos ",
+                        temporal="fotos .prdrive-1")),
+  [{"_path": "sync/move", "srcFs": "nas:/fotos ", "dstFs": "nas:/fotos .prdrive-1",
+    "deleteEmptySrcDirs": True},
+   {"_path": "sync/move", "srcFs": "nas:/fotos .prdrive-1", "dstFs": "nas:/Fotos ",
+    "deleteEmptySrcDirs": True}])
+rt = Op(gestion.RENOMBRAR, "nas", "/datos", (E("a", False),), nombre="A", temporal="a.prdrive-1")
+c("el progreso cuenta UN elemento: a mitad, 0 de 1",
+  (gestion.progreso_de(rt, {}, 1, 2).cuenta, gestion.progreso_de(rt, {}, 1, 2).fraccion),
+  ("0 de 1 elementos", 0.0))
+c("  al acabar las dos, 1 de 1", gestion.progreso_de(rt, {}, 2, 2).cuenta, "1 de 1 elementos")
+c("  cancelando nombra el elemento en las dos órdenes",
+  (gestion.cancelando_de(rt, 0), gestion.cancelando_de(rt, 1)),
+  ("Cancelando… se para al acabar «a».",) * 2)
+c("las dos bien: renombrado", res(rt, [OK, OK]), ("Renombrado a «A».", "ok", False))
+c("la primera falla: no se pudo, con su frase", res(rt, [mal("permission denied")]),
+  ("No se pudo renombrar «a»: No tienes permiso para renombrar en /datos.", "aviso", False))
+QUEDO = ("No se pudo renombrar «a»: se quedó como «a.prdrive-1».", "aviso", False)
+c("la segunda falla: se quedó con el temporal", res(rt, [OK, mal("boom")]), QUEDO)
+c("  cancelado entre las dos: lo mismo", res(rt, [OK], cancelado=True), QUEDO)
+c("  la segunda sin lanzar: lo mismo", res(rt, [OK]), QUEDO)
+c("  cancelado en la primera, que falló: no se pudo",
+  res(rt, [mal("context canceled")], cancelado=True)[0],
+  "No se pudo renombrar «a»: rclone dice: context canceled")
+
+# --- ordenes_de: un nombre que no es de un elemento no sale nunca ----------------------
+for malo in ("", ".", "..", "a/b", "/"):
+    for op in (Op(gestion.BORRAR, "nas", "/d", (E(malo, True),)),
+               Op(gestion.MOVER, "nas", "/d", (E(malo, False),), destino="/z"),
+               Op(gestion.RENOMBRAR, "nas", "/d", (E(malo, False),), nombre="b"),
+               Op(gestion.RENOMBRAR, "nas", "/d", (E("a", False),), nombre=malo),
+               Op(gestion.RENOMBRAR, "nas", "/d", (E("a", False),), nombre="A", temporal=malo),
+               Op(gestion.NUEVA, "nas", "/d", nombre=malo)):
+        try:
+            gestion.ordenes_de(op)
+            lanzo = None
+        except ValueError as exc:
+            lanzo = exc
+        c(f"{op.tipo} con el nombre {malo!r}: ValueError", isinstance(lanzo, ValueError), True)
+
+# --- parejas y catálogo: sin mirar mayúsculas -----------------------------------------
+cfg_may = mkcfg((), pairs=[
+    {"name": "Fotos", "local": "sync-data/fotos", "remote_path": "/datos/Fotos", "mode": "bisync"},
+    {"name": "Copia", "local": "sync-data/copia", "remote_path": "/Datos/Copia", "mode": "up-mirror"}])
+c("borrar /datos/fotos con una pareja en /datos/Fotos se bloquea",
+  gestion.bloqueo(Op(B, "nas", "/datos", (E("fotos", True),)), cfg_may, None),
+  RAIZ.format(p="Fotos"))
+c("  y /DATOS, que la contiene",
+  gestion.bloqueo(Op(B, "nas", "/", (E("DATOS", True),)), cfg_may, None), RAIZ.format(p="Fotos"))
+c("llegar dentro de una up-mirror escrita con otras mayúsculas se bloquea",
+  gestion.bloqueo(Op(gestion.NUEVA, "nas", "/datos/copia", nombre="x"), cfg_may, None),
+  LLEGAR)
+c("el aviso de una pareja escrita con otras mayúsculas",
+  gestion.avisos(Op(B, "nas", "/datos/fotos", (E("x", False),)), cfg_may),
+  ("La próxima pasada de «Fotos» lo quitará también del dispositivo.",))
+c("el catálogo /PRDRIVE-catalog/ contra /prdrive-catalog se bloquea",
+  gestion.bloqueo(Op(B, "nas", "/", (E("prdrive-catalog", True),)), cfg_may,
+                  ("nas", "/PRDRIVE-catalog/")), CATALOGO)
+c("  y dentro de él",
+  gestion.bloqueo(Op(gestion.NUEVA, "nas", "/Prdrive-Catalog", nombre="x"), cfg_may,
+                  ("nas", "/PRDRIVE-catalog/")), CATALOGO)
+c("  y sus ficheros en la raíz, con otras mayúsculas",
+  gestion.bloqueo(Op(B, "nas", "/", (E("REMOTE.TOML", False),)), cfg_may, ("nas", "/")), CATALOGO)
+c("las de la pieza 2 siguen distinguiendo mayúsculas",
+  (transferencia.parejas_bajo(cfg_may, "nas", "/datos/fotos"),
+   transferencia.parejas_que_contienen(cfg_may, "nas", "/datos/fotos/x")), (set(), set()))
+
+# --- plan_de: un borrado sin su cuenta es un error de quien llama, nunca «vacía» --------
+try:
+    gestion.plan_de(Op(B, "nas", "/d", (E("fotos", True),)), {}, ())
+    sin_cuenta = None
+except KeyError as exc:
+    sin_cuenta = exc
+c("plan_de sin la cuenta de un elemento: KeyError", isinstance(sin_cuenta, KeyError), True)
+
+# --- podar_corte: lo cortado que se fue de su carpeta deja de estar cortado ------------
+ca, cb = E("a.txt", False), E("b.txt", False)
+CORTE = ("nas", "/datos", (ca, cb))
+ren_a = Op(gestion.RENOMBRAR, "nas", "/datos/", (ca,), nombre="x.txt")
+c("renombrar uno de lo cortado lo quita del corte",
+  gestion.podar_corte(CORTE, ren_a, [OK]), ("nas", "/datos", (cb,)))
+c("  si falló, sigue cortado", gestion.podar_corte(CORTE, ren_a, [mal("boom")]), CORTE)
+c("  en dos pasos, basta con que saliera el primero",
+  gestion.podar_corte(CORTE, Op(gestion.RENOMBRAR, "nas", "/datos", (ca,), nombre="A.txt",
+                                temporal="a.txt.prdrive-1"), [OK, mal("boom")]),
+  ("nas", "/datos", (cb,)))
+c("borrar lo cortado: solo lo que se borró",
+  gestion.podar_corte(CORTE, Op(B, "nas", "/datos", (ca, cb)), [mal("boom"), OK]),
+  ("nas", "/datos", (ca,)))
+c("  si no queda nada, no hay corte",
+  gestion.podar_corte(CORTE, Op(B, "nas", "/datos", (cb, ca)), [OK, OK]), None)
+c("otra carpeta no toca el corte",
+  gestion.podar_corte(CORTE, Op(B, "nas", "/otra", (ca,)), [OK]), CORTE)
+c("otro remote tampoco", gestion.podar_corte(CORTE, Op(B, "otro", "/datos", (ca,)), [OK]), CORTE)
+c("crear una carpeta tampoco",
+  gestion.podar_corte(CORTE, Op(gestion.NUEVA, "nas", "/datos", nombre="a.txt"), [OK]), CORTE)
+c("sin corte, nada", gestion.podar_corte(None, ren_a, [OK]), None)
 
 
 sys.exit(c.report())

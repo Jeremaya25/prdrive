@@ -42,17 +42,21 @@ los decide `ui/gestion.py`, y el diálogo del nombre y la barra son de
 `ui/tk_gestion.py`. El flujo: elegir → bloquear → mirar en segundo plano (los
 nombres del destino, o lo que hay dentro de lo que se borra) → confirmar cuando
 toca → lanzar → releer la carpeta que se ve y elegir lo nuevo. Un nombre nunca se
-lanza sobre otro que ya existe: los del destino se releen justo antes.
+lanza sobre otro que ya existe: los del destino se releen justo antes, y otra vez tras
+el «sí» de una confirmación. Un renombrado que solo cambia mayúsculas pasa por un
+nombre temporal libre (`gestion.con_temporal`).
 
 Mover es cortar, navegar y pegar: «Cortar» apunta `(remote, carpeta, elementos)` y
 enseña una línea encima de la lista («3 elementos para mover desde /datos»); «Pegar
 aquí» mueve lo cortado a la carpeta que se ve, en el mismo remote. Lo cortado no se
-toca hasta pegar y se quita al pegar, con «Cancelar» o al cortar otra cosa.
+toca hasta pegar y se quita al pegar, con «Cancelar» o al cortar otra cosa; lo que un
+borrado o un renombrado saca de su carpeta deja de estar cortado.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from functools import partial
 from typing import NamedTuple
 
@@ -377,6 +381,18 @@ def _contar_borrado(r: rcd.Rcd, op: gestion.Operacion,
         else:
             conteos[e.nombre] = (1, tamanos.get(e.nombre, 0))
     return conteos
+
+
+def _fallo_al_mirar(r: rcd.Rcd, error: Exception) -> Exception:
+    """Devuelve el error con el que acaba mirar el servidor antes de actuar.
+
+    Un `RcdCaido` con el proceso vivo es una respuesta que no llegó (el tope de 60 s de
+    una carpeta enorme, una conexión cortada): se dice como un fallo al mirar, con
+    «Reintentar», y no como la conexión perdida. Con el proceso muerto, sí lo es.
+    """
+    if isinstance(error, rcd.RcdCaido) and r.vivo:
+        return rcd.ErrorRc(str(error), 0)
+    return error
 
 
 def _resultado_de_mirar(estados: list[dict], _stats: dict, _cancelado: bool):
@@ -941,8 +957,9 @@ def open_dialog(parent, config: Config) -> None:
     def nuevo_trabajo_gestion(op: gestion.Operacion) -> tk_lote.Trabajo:
         """Abre el trabajo de una operación: apaga los botones mientras se prepara y se sigue.
 
-        Las órdenes ya están listas; qué dirá el resultado se pone al lanzar
-        (`lanzar_gestion`), porque antes de eso lo único que puede fallar es mirar.
+        Las órdenes, el progreso y qué dirá el resultado se vuelven a poner al lanzar
+        (`lanzar_gestion`), con la operación ya comprobada contra el servidor: antes de
+        eso lo único que puede fallar es mirar.
         """
         estado["n_lote"] += 1
         t = seg.abrir(tk_lote.Trabajo(
@@ -971,6 +988,8 @@ def open_dialog(parent, config: Config) -> None:
         Cuando llega el listado queda elegido lo nuevo (la carpeta creada, el nombre
         nuevo, lo pegado) si sigue a la vista, y un resultado que fue a la línea de la ventana
         (el panel no llegó a salir) se vuelve a poner: leer la carpeta lo habría borrado.
+        Lo cortado que un borrado o un renombrado sacó de su carpeta deja de estar cortado
+        (`gestion.podar_corte`).
         """
         if op.tipo == gestion.MOVER:
             # Lo que se ve y se relee es el destino. Si salió alguna orden, lo cortado ya no
@@ -983,27 +1002,51 @@ def open_dialog(parent, config: Config) -> None:
         else:
             carpeta = op.carpeta
             nuevos = (op.nombre,) if op.tipo in (gestion.NUEVA, gestion.RENOMBRAR) and op.nombre else ()
+            podado = gestion.podar_corte(estado["corte"], op, t.estados)
+            if podado != estado["corte"]:
+                estado["corte"] = podado
+                pintar_corte()
         nota = resultado.texto if resultado.tono == "ok" and not t.panel_visto else ""
         estado["tras"] = (op.remote, carpeta, nota, nuevos)
         repetir()
 
     def lanzar_gestion(t: tk_lote.Trabajo, op: gestion.Operacion) -> None:
-        """Lanza las órdenes de la operación una tras otra y las sigue."""
+        """Lanza las órdenes de la operación una tras otra y las sigue.
+
+        Las órdenes, el progreso, «Cancelando…», el resultado y lo que se hace al acabar
+        salen de `op` tal como llega aquí: un renombrado lleva ya su nombre temporal.
+        """
+        t.lanzadores = [partial(_lanzar_orden, o) for o in gestion.ordenes_de(op)]
+        t.progreso = partial(gestion.progreso_de, op)
+        t.cancelando = partial(gestion.cancelando_de, op)
         t.resultado = partial(gestion.resultado_de, op)
+        t.al_acabar = partial(releer_tras_gestion, op, t)
         seg.lanzar(t)
 
     def confirmar_y_lanzar(t: tk_lote.Trabajo, op: gestion.Operacion, plan: gestion.Plan,
-                           titulo: str, nota: str) -> None:
-        """Enseña lo que va a pasar y, con un «sí», lanza; con un «no» no lanza nada y libera la ventana."""
+                           titulo: str, nota: str,
+                           al_aceptar: Callable[[], None] | None = None) -> None:
+        """Enseña lo que va a pasar y, con un «sí», sigue; con un «no» no lanza nada y libera la ventana.
+
+        Args:
+            t: El trabajo de la operación.
+            op: La operación.
+            plan: Lo que se enseña.
+            titulo: El título de la confirmación.
+            nota: La nota de la confirmación.
+            al_aceptar: Lo que se hace con el «sí»; sin él, lanzar `op`.
+        """
         from . import tk_pairs
 
         sigue = tk_pairs.confirmar_plan(dlg, plan, titulo, nota)
         if not seg.vigente(t):
             return
-        if sigue:
-            lanzar_gestion(t, op)
-        else:
+        if not sigue:
             seg.soltar()
+        elif al_aceptar is not None:
+            al_aceptar()
+        else:
+            lanzar_gestion(t, op)
 
     def libre_tras_dialogo() -> bool:
         """Si, vuelta del diálogo, la ventana sigue abierta, conectada y sin otro cambio en marcha."""
@@ -1047,28 +1090,37 @@ def open_dialog(parent, config: Config) -> None:
             return
         mirar_destino(nuevo_trabajo_gestion(op), op, actual)
 
-    def mirar_destino(t: tk_lote.Trabajo, op: gestion.Operacion, actual: str | None) -> None:
-        """Relee en segundo plano los nombres de la carpeta del destino (al pegar, la de `destino`)."""
+    def mirar_destino(t: tk_lote.Trabajo, op: gestion.Operacion, actual: str | None,
+                      confirmado: bool = False) -> None:
+        """Relee en segundo plano los nombres de la carpeta del destino (al pegar, la de `destino`).
+
+        Con `confirmado` es la segunda lectura, la de después del «sí»: si todo sigue
+        libre se lanza sin volver a preguntar.
+        """
         indicador.poner(MIRANDO, True)
         accion.grid_remove()
         carpeta = (op.destino or "") if op.tipo == gestion.MOVER else op.carpeta
         sondeo_lote.esperar(
             segundo_plano.lanzar(partial(_nombres_de, t.rcd, op.remote, carpeta)),
-            partial(destino_mirado, t, op, actual))
+            partial(destino_mirado, t, op, actual, confirmado))
 
     def destino_mirado(t: tk_lote.Trabajo, op: gestion.Operacion, actual: str | None,
-                       encargo) -> None:
+                       confirmado: bool, encargo) -> None:
         """Con los nombres de ahora: rechaza el que ya existe; si no, confirma (con avisos) y lanza.
 
         Al pegar se rechaza lo que `gestion.validar_pegado` no admite y, después, lo que
         bloquean las parejas y el catálogo (`gestion.bloqueo`): la persona sigue con lo
-        cortado.
+        cortado. Un renombrado que solo cambia mayúsculas toma aquí su nombre temporal,
+        libre en este listado (`gestion.con_temporal`). La confirmación deja pasar el
+        tiempo que tarde la persona, así que tras el «sí» se vuelve a mirar y a comprobar
+        todo (`confirmado`) antes de lanzar.
         """
         if not seg.vigente(t):
             return
         decir("", "Pista.")
         if encargo.error is not None:
-            seg.acabar_con_error(t, encargo.error, partial(reintentar_nombre, op, actual))
+            seg.acabar_con_error(t, _fallo_al_mirar(t.rcd, encargo.error),
+                                 partial(reintentar_nombre, op, actual))
             return
         if op.tipo == gestion.MOVER:
             motivo = (gestion.validar_pegado(op, encargo.resultado)
@@ -1079,9 +1131,11 @@ def open_dialog(parent, config: Config) -> None:
             seg.soltar()
             avisar(dlg, "No se puede", motivo, "Ambar.")
             return
+        op = gestion.con_temporal(op, encargo.resultado)
         avisos = gestion.avisos(op, config)
-        if avisos:
-            confirmar_y_lanzar(t, op, gestion.plan_de(op, {}, avisos), "Carpeta de una pareja", "")
+        if avisos and not confirmado:
+            confirmar_y_lanzar(t, op, gestion.plan_de(op, {}, avisos), "Carpeta de una pareja", "",
+                               al_aceptar=partial(mirar_destino, t, op, actual, True))
         else:
             lanzar_gestion(t, op)
 
@@ -1130,7 +1184,8 @@ def open_dialog(parent, config: Config) -> None:
             return
         decir("", "Pista.")
         if encargo.error is not None:
-            seg.acabar_con_error(t, encargo.error, partial(reintentar_borrado, op, tamanos))
+            seg.acabar_con_error(t, _fallo_al_mirar(t.rcd, encargo.error),
+                                 partial(reintentar_borrado, op, tamanos))
             return
         plan = gestion.plan_de(op, encargo.resultado, gestion.avisos(op, config))
         confirmar_y_lanzar(t, op, plan, "Borrar del servidor", "El servidor no tiene papelera.")

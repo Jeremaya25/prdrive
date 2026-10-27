@@ -6,14 +6,15 @@ salen y las que llegan), qué se bloquea porque rompería una pareja o el catál
 dirá la próxima pasada de cada pareja alcanzada.
 
 Las rutas son absolutas (`/datos/x`) y la raíz es `/`. Las parejas se comparan siempre
-contra las del MISMO remote, por tramos de ruta y con la más honda por delante
-(`transferencia.parejas_que_contienen`).
+contra las del MISMO remote, por tramos de ruta, con la más honda por delante
+(`transferencia.parejas_que_contienen`) y sin mirar mayúsculas: en un servidor que no las
+distingue `/datos/fotos` es la carpeta de la pareja de `/datos/Fotos`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from common import rcd
 from common.model import Config
@@ -42,6 +43,8 @@ class Operacion:
         elementos: Lo elegido dentro de `carpeta`. `RENOMBRAR` lleva uno; `NUEVA`, ninguno.
         destino: Ruta absoluta de la carpeta a la que se pega (solo `MOVER`).
         nombre: El nombre nuevo (`RENOMBRAR`) o el de la carpeta nueva (`NUEVA`).
+        temporal: Solo en un `RENOMBRAR` que cambia solo mayúsculas (`con_temporal`): el
+            nombre libre por el que pasa, en dos órdenes, antes de llegar a `nombre`.
     """
 
     tipo: str
@@ -50,6 +53,7 @@ class Operacion:
     elementos: tuple[Elemento, ...] = ()
     destino: str | None = None
     nombre: str | None = None
+    temporal: str | None = None
 
 
 def _unir(carpeta: str, nombre: str) -> str:
@@ -86,6 +90,47 @@ def validar_nombre(nombre: str, existentes: Iterable[str], actual: str | None = 
     if nombre.casefold() in ocupados:
         return f"Ya hay algo que se llama «{nombre}» en esta carpeta."
     return None
+
+
+def nombre_temporal(actual: str, existentes: Iterable[str]) -> str:
+    """Devuelve el nombre libre por el que pasa un renombrado que solo cambia mayúsculas.
+
+    Es `{actual}.prdrive-{n}` con el menor `n` ≥ 1 que no está en la carpeta, comparado
+    con `casefold()`.
+
+    Args:
+        actual: El nombre que lleva ahora el elemento, tal cual.
+        existentes: Los nombres que hay ahora en la carpeta.
+    """
+    ocupados = {e.casefold() for e in existentes}
+    n = 1
+    while f"{actual}.prdrive-{n}".casefold() in ocupados:
+        n += 1
+    return f"{actual}.prdrive-{n}"
+
+
+def con_temporal(op: Operacion, existentes: Iterable[str]) -> Operacion:
+    """Devuelve el renombrado con su nombre temporal si solo cambia mayúsculas; si no, sin él.
+
+    El backend sftp de rclone no declara `CaseInsensitive`: en un servidor que no distingue
+    mayúsculas (OpenSSH de Windows, un disco APFS) `movefile a→A` encuentra «A», cree que es
+    el mismo archivo y BORRA el origen, y `sync/move fotos→Fotos` borra cada archivo. Así que
+    ese renombrado va en dos órdenes: `actual → temporal → nombre`.
+
+    Args:
+        op: La operación; si no es un `RENOMBRAR` se devuelve tal cual.
+        existentes: Los nombres que hay AHORA en la carpeta (el listado recién leído).
+
+    Returns:
+        La operación con `temporal` recalculado sobre `existentes`, o con `temporal=None`
+        si el nombre nuevo no es el actual con otras mayúsculas.
+    """
+    if op.tipo != RENOMBRAR or not op.elementos:
+        return op
+    actual, nombre = op.elementos[0].nombre, op.nombre or ""
+    if nombre != actual and nombre.casefold() == actual.casefold():
+        return replace(op, temporal=nombre_temporal(actual, existentes))
+    return replace(op, temporal=None)
 
 
 def validar_pegado(op: Operacion, nombres_en_destino: Iterable[str]) -> str | None:
@@ -166,6 +211,8 @@ _BLOQUEO_LLEGADA = ("«{p}» deja el servidor igual que el dispositivo: lo que p
 def _toca_el_catalogo(ruta: str, carpeta: str) -> bool:
     """Dice si `ruta` es la carpeta del catálogo, la contiene o está dentro de ella.
 
+    Compara sin mirar mayúsculas (`casefold()` en los dos lados).
+
     Args:
         ruta: Ruta normalizada del servidor.
         carpeta: La carpeta del catálogo (`model.carpeta_del_catalogo`). Es la raíz del
@@ -174,9 +221,10 @@ def _toca_el_catalogo(ruta: str, carpeta: str) -> bool:
     """
     from common import catalog
 
-    catalogo = remote_picker.normalizar(carpeta)
+    ruta = ruta.casefold()
+    catalogo = remote_picker.normalizar(carpeta).casefold()
     if catalogo == "/":
-        return ruta in {"/" + n for n in catalog.NOMBRES}
+        return ruta in {("/" + n).casefold() for n in catalog.NOMBRES}
     return (ruta == catalogo or catalogo.startswith(ruta.rstrip("/") + "/")
             or ruta.startswith(catalogo + "/"))
 
@@ -188,7 +236,8 @@ def bloqueo(op: Operacion, config: Config, catalogo: tuple[str, str] | None) -> 
     que salen o de las que llegan, es la raíz de una pareja o la contiene; 2) es la
     carpeta del catálogo, la contiene o está dentro; 3) llega estrictamente dentro de una
     pareja `up-mirror` (la más honda), cuya próxima pasada la borraría. Salir de una
-    `up-mirror` no bloquea: es un aviso (`avisos`).
+    `up-mirror` no bloquea: es un aviso (`avisos`). Las rutas se comparan sin mirar
+    mayúsculas, en los dos lados.
 
     Args:
         op: La operación.
@@ -202,7 +251,7 @@ def bloqueo(op: Operacion, config: Config, catalogo: tuple[str, str] | None) -> 
     salen, llegan = rutas_tocadas(op)
     tocadas = salen + llegan
     for ruta in tocadas:
-        nombres = transferencia.parejas_bajo(config, op.remote, ruta)
+        nombres = transferencia.parejas_bajo(config, op.remote, ruta, sin_mayusculas=True)
         if nombres:
             primera = next(p.name for p in config.pairs if p.name in nombres)
             return _BLOQUEO_RAIZ.format(p=primera)
@@ -211,7 +260,8 @@ def bloqueo(op: Operacion, config: Config, catalogo: tuple[str, str] | None) -> 
             return _BLOQUEO_CATALOGO
     for ruta in llegan:
         # Si la ruta fuera la propia raíz de la pareja ya habría hablado la primera regla.
-        nombres = transferencia.parejas_que_contienen(config, op.remote, ruta)
+        nombres = transferencia.parejas_que_contienen(config, op.remote, ruta,
+                                                      sin_mayusculas=True)
         for p in config.pairs:
             if p.name in nombres and p.mode.name == "up-mirror":
                 return _BLOQUEO_LLEGADA.format(p=p.name)
@@ -240,8 +290,8 @@ def avisos(op: Operacion, config: Config) -> tuple[str, ...]:
     """Devuelve lo que dirá la próxima pasada de cada pareja que la operación toca.
 
     Una línea por pareja y lado: primero las que salen, luego las que llegan. Cuenta las
-    parejas más hondas que contienen cada ruta (todas las que comparten esa carpeta), en el
-    orden de la configuración y sin repetir. No mira `bloqueo`.
+    parejas más hondas que contienen cada ruta (todas las que comparten esa carpeta), sin
+    mirar mayúsculas, en el orden de la configuración y sin repetir. No mira `bloqueo`.
 
     Args:
         op: La operación.
@@ -255,7 +305,8 @@ def avisos(op: Operacion, config: Config) -> tuple[str, ...]:
     for rutas, tabla in ((salen, _AVISO_SALE), (llegan, _AVISO_LLEGA)):
         nombres: set[str] = set()
         for ruta in rutas:
-            nombres |= transferencia.parejas_que_contienen(config, op.remote, ruta)
+            nombres |= transferencia.parejas_que_contienen(config, op.remote, ruta,
+                                                           sin_mayusculas=True)
         for p in config.pairs:
             plantilla = tabla.get(p.mode.name)
             if p.name in nombres and plantilla is not None:
@@ -292,6 +343,27 @@ def fs_de_ruta(remote: str, carpeta: str, nombre: str = "") -> str:
     return _fs(remote, _remoto(carpeta, nombre))
 
 
+def _nombre_valido(nombre: str) -> str:
+    """Devuelve `nombre` si puede ser el de un elemento de una carpeta.
+
+    Raises:
+        ValueError: Si es `""`, `.`, `..` o lleva `/`: la orden actuaría sobre la carpeta
+            que lo contiene, o sobre otra.
+    """
+    if nombre in ("", ".", "..") or "/" in nombre:
+        raise ValueError(f"nombre no válido para una orden: {nombre!r}")
+    return nombre
+
+
+def _mover(remote: str, es_carpeta: bool, origen: str, llegada: str) -> dict:
+    """La orden que lleva `origen` a `llegada` (rutas sin barra inicial) en el mismo remote."""
+    if es_carpeta:
+        return {"_path": "sync/move", "srcFs": _fs(remote, origen), "dstFs": _fs(remote, llegada),
+                "deleteEmptySrcDirs": True}
+    return {"_path": "operations/movefile", "srcFs": _fs(remote), "srcRemote": origen,
+            "dstFs": _fs(remote), "dstRemote": llegada}
+
+
 def ordenes_de(op: Operacion) -> list[dict]:
     """Devuelve las órdenes de rclone de la operación, una por elemento y en su orden.
 
@@ -299,35 +371,44 @@ def ordenes_de(op: Operacion) -> list[dict]:
     por `rcd.lanzar_orden()`, que solo admite `rcd.ORDENES_PERMITIDAS`.
 
     Args:
-        op: La operación. `NUEVA` produce una sola orden.
+        op: La operación. `NUEVA` produce una sola orden; un `RENOMBRAR` con `temporal`,
+            dos (`actual → temporal → nombre`).
 
     Returns:
         Borrar: `operations/purge` (carpeta) u `operations/deletefile` (archivo).
         Renombrar y mover: `sync/move` (carpeta) u `operations/movefile` (archivo).
         Nueva carpeta: `operations/mkdir`.
+
+    Raises:
+        ValueError: Si un nombre (de un elemento, el nuevo o el temporal) es `""`, `.`,
+            `..` o lleva `/`. No se devuelve ninguna orden.
     """
     if op.tipo == NUEVA:
         return [{"_path": "operations/mkdir", "fs": _fs(op.remote),
-                 "remote": _remoto(op.carpeta, op.nombre or "")}]
+                 "remote": _remoto(op.carpeta, _nombre_valido(op.nombre or ""))}]
     ordenes: list[dict] = []
     for e in op.elementos:
-        origen = _remoto(op.carpeta, e.nombre)
+        origen = _remoto(op.carpeta, _nombre_valido(e.nombre))
         if op.tipo == BORRAR:
             camino = "operations/purge" if e.es_carpeta else "operations/deletefile"
             ordenes.append({"_path": camino, "fs": _fs(op.remote), "remote": origen})
             continue
-        if op.tipo == RENOMBRAR:
-            llegada = _remoto(op.carpeta, op.nombre or "")
-        else:
-            llegada = _remoto(op.destino or "", e.nombre)
-        if e.es_carpeta:
-            ordenes.append({"_path": "sync/move", "srcFs": _fs(op.remote, origen),
-                            "dstFs": _fs(op.remote, llegada), "deleteEmptySrcDirs": True})
-        else:
-            ordenes.append({"_path": "operations/movefile", "srcFs": _fs(op.remote),
-                            "srcRemote": origen, "dstFs": _fs(op.remote),
-                            "dstRemote": llegada})
+        if op.tipo == MOVER:
+            ordenes.append(_mover(op.remote, e.es_carpeta, origen,
+                                  _remoto(op.destino or "", e.nombre)))
+            continue
+        llegada = _remoto(op.carpeta, _nombre_valido(op.nombre or ""))
+        if op.temporal is not None:
+            paso = _remoto(op.carpeta, _nombre_valido(op.temporal))
+            ordenes.append(_mover(op.remote, e.es_carpeta, origen, paso))
+            origen = paso
+        ordenes.append(_mover(op.remote, e.es_carpeta, origen, llegada))
     return ordenes
+
+
+def _por_elemento(op: Operacion) -> int:
+    """Cuántas órdenes lleva cada elemento: dos en un renombrado por un nombre temporal."""
+    return 2 if op.temporal is not None else 1
 
 
 @dataclass(frozen=True)
@@ -367,10 +448,13 @@ def plan_de(op: Operacion, conteos: dict[str, tuple[int, int]],
 
     Returns:
         Las consecuencias (al borrar, una línea por elemento y en su orden) y los avisos.
+
+    Raises:
+        KeyError: Si a un `BORRAR` le falta la cuenta de un elemento: nunca se dice
+            «vacía» de lo que no se contó.
     """
     if op.tipo == BORRAR:
-        lineas = tuple(_consecuencia_de_borrar(e, conteos.get(e.nombre, (0, 0)))
-                       for e in op.elementos)
+        lineas = tuple(_consecuencia_de_borrar(e, conteos[e.nombre]) for e in op.elementos)
     elif op.tipo == RENOMBRAR:
         lineas = (f"«{op.elementos[0].nombre}» pasará a llamarse «{op.nombre}».",)
     elif op.tipo == MOVER:
@@ -409,13 +493,17 @@ def progreso_de(op: Operacion, stats: dict, hechos: int, total: int) -> transfer
     Args:
         op: La operación en marcha.
         stats: La respuesta de `core/stats`; puede estar vacía.
-        hechos: Elementos que ya acabaron.
-        total: Elementos del lote (0 si aún no se sabe).
+        hechos: Órdenes que ya acabaron.
+        total: Órdenes del lote (0 si aún no se sabe).
 
     Returns:
-        El panel: sin archivo ni ritmo (rclone no los da en un borrado o un movimiento) y
-        con la fracción `hechos / total`, o `None` (barra indeterminada) si `total` es 0.
+        El panel: sin archivo ni ritmo (rclone no los da en un borrado o un movimiento),
+        con la cuenta en elementos (un renombrado por un nombre temporal son dos órdenes
+        y un elemento, hecho solo al acabar las dos) y la fracción de elementos hechos, o
+        `None` (barra indeterminada) si `total` es 0.
     """
+    k = _por_elemento(op)
+    hechos, total = hechos // k, total // k
     cuenta = f"{hechos} de {total} elementos"
     borrados = stats.get("deletes")
     if isinstance(borrados, bool) or not isinstance(borrados, (int, float)):
@@ -427,8 +515,8 @@ def progreso_de(op: Operacion, stats: dict, hechos: int, total: int) -> transfer
 
 
 def cancelando_de(op: Operacion, indice: int) -> str:
-    """Devuelve la línea del panel mientras se cancela: el elemento `indice` es el que no se corta."""
-    return f"Cancelando… se para al acabar «{_nombre_de(op, indice)}»."
+    """Devuelve la línea del panel mientras se cancela: el elemento de la orden `indice` es el que no se corta."""
+    return f"Cancelando… se para al acabar «{_nombre_de(op, indice // _por_elemento(op))}»."
 
 
 _VERBO = {BORRAR: "borrar", MOVER: "mover", RENOMBRAR: "renombrar", NUEVA: "crear"}
@@ -463,9 +551,19 @@ def resultado_de(op: Operacion, estados: list[dict], stats: dict,
         cancelado: Si el usuario canceló. En `BORRAR` y `MOVER` manda sobre lo demás; un
             renombrado o una carpeta nueva son una sola orden y valen por cómo acabó.
 
+    Un renombrado por un nombre temporal es un elemento de dos órdenes: si salió la primera
+    y no la segunda (falló, se canceló o no llegó a lanzarse) el elemento se quedó con el
+    nombre temporal, y eso es lo que se dice.
+
     Returns:
         El texto, su tono (`"ok"` solo si todo fue bien) y `reintentar=False`.
     """
+    if op.temporal is not None and estados and estados[0].get("success"):
+        if len(estados) > 1 and estados[1].get("success"):
+            return transferencia.Resultado(f"Renombrado a «{op.nombre}».", "ok", False)
+        return transferencia.Resultado(
+            f"No se pudo renombrar «{_nombre_de(op, 0)}»: se quedó como «{op.temporal}».",
+            "aviso", False)
     total = len(op.elementos) if op.elementos else 1
     bien = [bool(e.get("success")) for e in estados]
     hechos = sum(bien)
@@ -496,3 +594,37 @@ def resultado_de(op: Operacion, estados: list[dict], stats: dict,
     else:
         texto = f"No se pudo {_VERBO[op.tipo]} «{nombre}»: {frase}"
     return transferencia.Resultado(texto, "aviso", False)
+
+
+Corte = tuple[str, str, tuple[Elemento, ...]]
+"""Lo cortado en la ventana: `(remote, carpeta, elementos)`."""
+
+
+def podar_corte(corte: Corte | None, op: Operacion, estados: list[dict]) -> Corte | None:
+    """Devuelve lo cortado sin los elementos que la operación sacó de su carpeta.
+
+    Un borrado o un renombrado en la carpeta del corte (mismo remote) quita del corte cada
+    elemento cuya orden fue bien (en dos pasos, basta la primera: ya no está con su
+    nombre). Pegarlo después movería un nombre que ya no está.
+
+    Args:
+        corte: Lo cortado, o `None`.
+        op: La operación que acabó.
+        estados: El `job/status` final de cada orden lanzada, en orden.
+
+    Returns:
+        El mismo `corte` si nada de él salió; uno con los que quedan; o `None` si no queda
+        ninguno.
+    """
+    if corte is None or op.tipo not in (BORRAR, RENOMBRAR):
+        return corte
+    remote, carpeta, elementos = corte
+    if remote != op.remote or remote_picker.normalizar(carpeta) != remote_picker.normalizar(op.carpeta):
+        return corte
+    k = _por_elemento(op)
+    salieron = {e.nombre for i, e in enumerate(op.elementos)
+                if i * k < len(estados) and estados[i * k].get("success")}
+    quedan = tuple(e for e in elementos if e.nombre not in salieron)
+    if len(quedan) == len(elementos):
+        return corte
+    return (remote, carpeta, quedan) if quedan else None

@@ -20,7 +20,11 @@ lo que se les pidió. Lo que se comprueba es lo que ve y lo que dispara la perso
 - cortar y pegar: la línea del corte, «Pegar aquí» (botón, Ctrl+V y menú), los rechazos
   (misma carpeta, dentro de sí misma, nombre ocupado, otro remote), el bloqueo de un
   up-mirror y el aviso de una pareja, el orden de las órdenes, cancelar y fallar a mitad;
-- cerrar con un cambio en marcha.
+- cerrar con un cambio en marcha;
+- renombrar cambiando solo mayúsculas (dos `movefile` por un nombre temporal libre), volver
+  a mirar el destino tras el «sí» de una confirmación, un `RcdCaido` al mirar con el `rcd`
+  vivo («Reintentar») o muerto («Reconectar»), y lo cortado que un renombrado o un borrado
+  saca de su carpeta.
 """
 
 from __future__ import annotations
@@ -950,6 +954,170 @@ with sandbox():
     c("cerrar a mitad de un pegado pregunta con el texto de los cambios",
       DIALOGOS["preguntar"][0][:2],
       ("Cambio en marcha", "Hay un cambio en marcha en el servidor. ¿Cancelarlo y cerrar?"))
+    F.cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 7. Lo que puede perder datos en un servidor real: mayúsculas, el «sí» que tarda, mirar
+    # -----------------------------------------------------------------------
+    def boton_accion(dlg) -> str:
+        """El botón de la línea de la ventana («Reconectar», «Reintentar»), o "" si no se ve."""
+        return str(dlg.accion.cget("text")) if dlg.accion.winfo_manager() else ""
+
+    # -- renombrar cambiando solo mayúsculas: dos `movefile` por un nombre temporal libre
+    for estados, dicho, en_panel in (
+            (None, "Renombrado a «A.txt».", False),
+            ({2: [fallado("boom")]},
+             "No se pudo renombrar «a.txt»: se quedó como «a.txt.prdrive-2».", True)):
+        dialogos(nombre="A.txt")
+        falso = servidor_gestion(estados=estados)
+        CONTENIDO["datos"].append(item("a.txt.prdrive-1"))
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        elegir(dlg, "a.txt")
+        pulsar(dlg, "<F2>")
+        c(f"[{dicho}] renombrar a.txt → A.txt lanza dos `movefile`",
+          (bombear(lambda: len(falso.lanzadas) == 2), [m for m, _p in falso.lanzadas]),
+          (True, ["operations/movefile", "operations/movefile"]))
+        c("  por el primer temporal libre en el listado (a.txt.prdrive-1 está ocupado)",
+          [(p["srcRemote"], p["dstRemote"]) for p in falso.ordenes()],
+          [("datos/a.txt", "datos/a.txt.prdrive-2"), ("datos/a.txt.prdrive-2", "datos/A.txt")])
+        c("  el segundo solo tras el `finished` del primero",
+          falso.cronologia.index(("estado", 1, True))
+          < falso.cronologia.index(("lanzar", 2, "operations/movefile")), True)
+        visto = (lambda: frase_panel(dlg)) if en_panel else (lambda: frase(dlg))
+        c(f"  y acaba diciendo {dicho!r}", bombear(lambda: visto() == dicho), True)
+        F.cerrar(dlg)
+
+    # -- tras el «sí» se vuelve a mirar: un nombre que aparece mientras se confirma se rechaza
+    NOTAS = {"v": []}
+
+    def confirmar_y_crear(nombre: str):
+        """Una confirmación durante la que otro cliente crea `nombre` en «/datos/notas»."""
+        def confirmar(parent, plan, titulo, nota, suelto=False):
+            NOTAS["v"].append(item(nombre, True))
+            return falso_confirmar(parent, plan, titulo, nota, suelto)
+        return confirmar
+
+    for aparece, rechazo in ((None, None),
+                             ("Semana", "Ya hay algo que se llama «semana» en esta carpeta.")):
+        dialogos(nombre="semana", confirmar=True)
+        NOTAS["v"] = [item("hoy.txt")]
+        falso = servidor_gestion(otras={("operations/list", "datos/notas"):
+                                        lambda: lista(*NOTAS["v"])})
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        entrar_en(dlg, "notas")
+        bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+        if aparece:
+            tk_pairs.confirmar_plan = confirmar_y_crear(aparece)
+        antes = listados_de(falso, "datos/notas")
+        al_lanzar_vistos: list[int] = []
+        falso.al_lanzar = lambda _m, _p: al_lanzar_vistos.append(listados_de(falso, "datos/notas"))
+        dlg.barra.nueva.invoke()
+        if rechazo is None:
+            c("crear en una pareja con un «sí»: se pregunta una vez y se lanza",
+              (bombear(lambda: len(falso.lanzadas) == 1), [m for m, _p in falso.lanzadas],
+               len(CONFIRMAR["llamadas"])), (True, ["operations/mkdir"], 1))
+            c("  tras mirar el destino antes de preguntar y otra vez después del «sí»",
+              al_lanzar_vistos, [antes + 2])
+        else:
+            bombear(lambda: bool(DIALOGOS["avisar"]))
+            c("un nombre que aparece mientras se confirma se rechaza tras el «sí»",
+              (DIALOGOS["avisar"], falso.lanzadas, encendidos(dlg)[0]),
+              ([("No se puede", rechazo)], [], True))
+        tk_pairs.confirmar_plan = falso_confirmar
+        F.cerrar(dlg)
+
+    # -- lo mismo al pegar: se rechaza y lo cortado sigue
+    dialogos(confirmar=True)
+    falso = servidor_mover()
+    NOTAS["v"] = [item("hoy.txt")]
+    falso.respuestas[("operations/list", "datos/notas")] = lambda: lista(*NOTAS["v"])
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    entrar_en(dlg, "notas")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+    tk_pairs.confirmar_plan = confirmar_y_crear("B.TXT")
+    dlg.cortado.pegar.invoke()
+    bombear(lambda: bool(DIALOGOS["avisar"]))
+    c("pegar en una pareja: un nombre que aparece mientras se confirma se rechaza tras el «sí»",
+      (len(CONFIRMAR["llamadas"]), DIALOGOS["avisar"], falso.lanzadas, linea(dlg)[0],
+       encendidos(dlg)[0]),
+      (1, [("No se puede", "Ya hay «b.txt» en /datos/notas: renómbralo antes.")], [], True, True))
+    tk_pairs.confirmar_plan = falso_confirmar
+    F.cerrar(dlg)
+
+    # -- mirar sin respuesta con el rcd vivo es un fallo al mirar; con el rcd muerto, la conexión
+    for vivo, dicho, reintentar_, boton_ in (
+            (True, "El servidor no ha contestado a tiempo.", True, ""),
+            (False, tk_servidor.PERDIDA, False, "Reconectar")):
+        dialogos(confirmar=True)
+        falso = servidor_gestion(
+            tamanos={"nas:/datos/fotos": rcd.RcdCaido("rclone no contesta: timed out")})
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        elegir(dlg, "fotos")
+        falso.vivo = vivo
+        dlg.barra.borrar.invoke()
+        c(f"[vivo={vivo}] contar lo que se borra sin respuesta: {dicho!r}",
+          (frase_panel(dlg), bool(dlg.panel.reintentar.winfo_manager()), boton_accion(dlg),
+           falso.lanzadas), (dicho, reintentar_, boton_, []))
+        F.cerrar(dlg)
+
+        dialogos(nombre="c.txt")
+        falso = servidor_gestion()
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        fallos = [rcd.RcdCaido("rclone no contesta: timed out")]
+        falso.respuestas[("operations/list", "datos")] = (
+            lambda: (_ for _ in ()).throw(fallos.pop()) if fallos else lista(*CONTENIDO["datos"]))
+        elegir(dlg, "a.txt")
+        falso.vivo = vivo
+        pulsar(dlg, "<F2>")
+        c(f"[vivo={vivo}] mirar el destino sin respuesta: {dicho!r}",
+          (bombear(lambda: frase_panel(dlg) != ""), frase_panel(dlg),
+           bool(dlg.panel.reintentar.winfo_manager()), boton_accion(dlg), falso.lanzadas),
+          (True, dicho, reintentar_, boton_, []))
+        if vivo:
+            dlg.panel.reintentar.invoke()
+            c("  «Reintentar» vuelve a mirar y renombra",
+              (bombear(lambda: len(falso.lanzadas) == 1), falso.ordenes()[0]["dstRemote"]),
+              (True, "datos/c.txt"))
+        F.cerrar(dlg)
+
+    # -- renombrar o borrar en la carpeta del corte saca del corte lo que se fue
+    dialogos(nombre="x.txt")
+    falso = servidor_mover()
+    al_mover(falso)
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "a.txt", "b.txt")
+    dlg.barra.cortar.invoke()
+    elegir(dlg, "a.txt")
+    pulsar(dlg, "<F2>")
+    c("renombrar a.txt (cortado con b.txt) lo saca del corte",
+      bombear(lambda: linea(dlg)[1] == "1 elemento para mover desde /datos"), True)
+    a(dlg, "otra")
+    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    dlg.cortado.pegar.invoke()
+    c("  y pegar mueve solo b.txt",
+      (bombear(lambda: len(falso.lanzadas) == 2),
+       [(p["srcRemote"], p["dstRemote"]) for p in falso.ordenes()]),
+      (True, [("datos/a.txt", "datos/x.txt"), ("datos/b.txt", "otra/b.txt")]))
+    F.cerrar(dlg)
+
+    dialogos(confirmar=True)
+    falso = servidor_mover()
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "b.txt")
+    dlg.barra.cortar.invoke()
+    dlg.barra.borrar.invoke()
+    c("borrar lo único cortado quita la línea del corte",
+      (bombear(lambda: not linea(dlg)[0]), [m for m, _p in falso.lanzadas]),
+      (True, ["operations/deletefile"]))
     F.cerrar(dlg)
 
     # Mientras corre, la línea de «Sin respuesta…» de un cambio dice que sigue en marcha
