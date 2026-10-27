@@ -58,7 +58,7 @@ GUI = {
     "test_tk_atajos.py", "test_tk_densidad.py", "test_tk_desinstalar.py", "test_tk_dialogos.py",
     "test_tk_ensenar.py",
     "test_tk_equipo_lecturas.py", "test_tk_espera.py", "test_tk_flags_ayuda.py",
-    "test_tk_flags_guia.py", "test_tk_flota_vista.py", "test_tk_letra.py",
+    "test_tk_flags_guia.py", "test_tk_flota_vista.py", "test_tk_letra.py", "test_tk_lote.py",
     "test_tk_llavero.py",
     "test_tk_medidas.py", "test_tk_panel.py", "test_tk_parejas_resync.py",
     "test_tk_parejas_vista.py", "test_tk_pasada.py",

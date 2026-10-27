@@ -136,11 +136,15 @@ class Panel:
         self.reintentar.grid_remove()
         self._poner(self.titulo, self.archivo, self.cuenta, self.barra, self.ritmo, self.cancelar)
 
-    def mostrar_cancelando(self) -> None:
-        """Dice «Cancelando…» y deja «Cancelar» sin efecto hasta el siguiente progreso."""
+    def mostrar_cancelando(self, texto: str = CANCELANDO) -> None:
+        """Dice «Cancelando…» y deja «Cancelar» sin efecto hasta el siguiente progreso.
+
+        Args:
+            texto: Lo que se dice en la línea del archivo; por defecto, «Cancelando…».
+        """
         self._enseñar()
         self._quitar_todo_menos_progreso()
-        self.archivo.configure(text=CANCELANDO)
+        self.archivo.configure(text=texto)
         self.cancelar.configure(state="disabled")
 
     def mostrar_resultado(self, r: transferencia.Resultado) -> None:

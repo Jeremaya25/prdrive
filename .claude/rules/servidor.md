@@ -8,6 +8,8 @@ paths:
   - "tests/test_transferencia.py"
   - "ui/gestion.py"
   - "tests/test_gestion.py"
+  - "ui/tk_lote.py"
+  - "tests/test_tk_lote.py"
   - "ui/tk_servidor.py"
   - "tests/test_tk_servidor.py"
   - "ui/tk_transferencia.py"
