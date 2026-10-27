@@ -78,6 +78,7 @@ class Trabajo:
         cerrando: Si se está cancelando para cerrar la ventana.
         fallos: Seguimientos seguidos sin respuesta.
         panel_visto: Si el panel llegó a enseñarse.
+        lanzando: Si hay una orden en vuelo, lanzándose y sin `jobid` todavía.
     """
 
     rcd: rcd.Rcd
@@ -100,6 +101,7 @@ class Trabajo:
     cerrando: bool = False
     fallos: int = 0
     panel_visto: bool = False
+    lanzando: bool = False
 
 
 def _sondear(r: rcd.Rcd, jobid: int, grupo: str) -> tuple[dict, dict]:
@@ -159,6 +161,7 @@ class Seguimiento:
         self._al_cambiar = al_cambiar
         self._tras = None
         self._parado = False
+        self._despues: Callable[[], None] | None = None
         self.activo: Trabajo | None = None
         self.reintento: Callable[[], None] | None = None
 
@@ -199,12 +202,17 @@ class Seguimiento:
 
     def _lanzar_orden(self, t: Trabajo) -> None:
         """Lanza en segundo plano la orden `t.indice`."""
+        t.lanzando = True
         self._sondeo.esperar(
             segundo_plano.lanzar(partial(t.lanzadores[t.indice], t.rcd, t.grupo)),
             partial(self._lanzada, t))
 
     def _lanzada(self, t: Trabajo, encargo) -> None:
         """Con el `jobid` en la mano, enseña el panel y empieza a seguir la orden."""
+        t.lanzando = False
+        if t.cerrando:
+            self._parar_la_lanzada(t, encargo)
+            return
         if not self.vigente(t):
             return
         if encargo.error is not None:
@@ -217,6 +225,22 @@ class Seguimiento:
         if not t.panel_tardio or t.panel_visto:
             self._pintar(t, t.stats)
         self._pedir_progreso(t)
+
+    def _parar_la_lanzada(self, t: Trabajo, encargo) -> None:
+        """Se pidió cerrar mientras esta orden se lanzaba: la para y espera antes de cerrar.
+
+        Si la orden no llegó a lanzarse no hay nada que parar y se cierra ya.
+        """
+        despues, self._despues = self._despues, None
+        if despues is None or self._parado:
+            return
+        if encargo.error is not None:
+            despues()
+            return
+        t.jobid = encargo.resultado
+        self._sondeo.esperar(
+            segundo_plano.lanzar(partial(_cancelar_y_esperar, t.rcd, t.jobid)),
+            lambda _encargo: despues())
 
     def _pedir_progreso(self, t: Trabajo) -> None:
         """Pide en segundo plano el progreso y el estado de la orden que va."""
@@ -348,7 +372,7 @@ class Seguimiento:
             return
         if isinstance(error, rcd.ErrorRc):
             fallido = {"success": False, "error": error.mensaje}
-            resultado = t.resultado([*t.estados, fallido], t.stats, False)
+            resultado = t.resultado([*t.estados, fallido], t.stats, t.cancelado)
         else:
             resultado = transferencia.Resultado(servidor.frase_error(error), "aviso", True)
         self._acabar(t, resultado, reintento=reintento)
@@ -379,6 +403,8 @@ class Seguimiento:
 
         Se espera en segundo plano hasta `rcd.ESPERA_QUIT` (`_cancelar_y_esperar`) y
         entonces se llama a `despues()`. El trabajo deja de ser vigente: nada más se pinta.
+        Si se cierra entre dos órdenes, con la siguiente lanzándose, se espera a su
+        `jobid` y es esa la que se para: no queda una orden suelta al parar el `rcd`.
 
         Args:
             despues: Lo que se hace cuando rclone paró (cerrar la ventana).
@@ -391,8 +417,12 @@ class Seguimiento:
         if t is None or t.jobid is None:
             return False
         t.cerrando = t.cancelado = True
-        self._quitar_espera()
         self._mostrar_cancelando(t)
+        if t.lanzando:
+            self._despues = despues      # `_lanzada` recoge el `jobid` y la para
+            self._quitar_espera(solo_temporizador=True)
+            return True
+        self._quitar_espera()
         self._sondeo.esperar(
             segundo_plano.lanzar(partial(_cancelar_y_esperar, t.rcd, t.jobid)),
             lambda _encargo: despues())

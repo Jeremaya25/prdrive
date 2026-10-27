@@ -24,6 +24,7 @@ comprueba es lo que ve la persona y lo que le llega a rclone:
 from __future__ import annotations
 
 import sys
+import threading
 import time
 
 from _harness import Checks
@@ -46,6 +47,7 @@ from ui.tk import Sondeo  # noqa: E402
 errores: list[str] = []
 raiz.report_callback_exception = (
     lambda tipo, valor, _tb: errores.append(f"{tipo.__name__}: {valor}"))
+LANZAR_DE_VERDAD = segundo_plano.lanzar
 segundo_plano.lanzar = segundo_plano.en_el_acto
 
 CORRIENDO = {"finished": False}
@@ -194,8 +196,12 @@ def pausa(veces: int = 30) -> None:
 # --- 1. tres órdenes, una tras otra --------------------------------------------
 e = Escena(RcdFalso({1: [CORRIENDO, ACABADO], 2: [CORRIENDO, CORRIENDO, ACABADO],
                      3: [ACABADO]}))
-t = e.empezar()
-c("abrir apaga el panel y avisa del cambio", (e.seg.activo is t, e.cambios >= 1), (True, True))
+e.panel.mostrar_progreso(transferencia.Progreso("viejo", "", "", 0.1, ""))
+t = e.trabajo()
+e.seg.abrir(t)
+c("abrir deja el panel oculto y avisa del cambio",
+  (e.seg.activo is t, e.a_la_vista(), e.cambios >= 1), (True, False, True))
+e.seg.lanzar(t)
 c("termina con el resultado de las tres", bombear(lambda: e.resultados != []), True)
 c("  lanzadas en orden", e.lanzados, [1, 2, 3])
 c("  `resultado` recibió los tres estados, sin cancelar",
@@ -248,14 +254,14 @@ c("cancelar la última cuando ésta acaba bien no cuenta como cancelado",
   [r[2] for r in e.resultados], [False])
 e.cerrar()
 
-# cancelar en medio, entre dos órdenes: la siguiente no se lanza
+# cancelar con la primera en marcha y que ésta acabe bien: la siguiente no se lanza
 e = Escena(RcdFalso({1: [CORRIENDO], 2: [ACABADO]}))
 e.falso.parar_con = ACABADO             # acaba bien justo cuando se pide cancelar
 e.empezar(jobids=(1, 2))
 bombear(lambda: ("estado", 1, False) in e.falso.orden)
 e.seg.cancelar()
 bombear(lambda: e.resultados != [])
-c("cancelar y que la orden acabe bien: la siguiente no se lanza y se dice cancelado",
+c("cancelar la primera y que acabe bien: la siguiente no se lanza y se dice cancelado",
   (e.lanzados, [r[2] for r in e.resultados], len(e.resultados[0][0])), ([1], [True], 1))
 e.cerrar()
 
@@ -423,6 +429,88 @@ c("  `job/stop` con su jobid, y después `despues()`",
   (e.falso.paradas(), bombear(lambda: llamado == ["cerrado"])), ([1], True))
 c("  dejó de ser vigente, así que ya no pinta", e.seg.vigente(t), False)
 e.cerrar()
+
+# --- 12. el hueco entre dos órdenes (con hilos de verdad) -----------------------
+class Hueco:
+    """Tres lanzadores donde el segundo se queda esperando dentro del hilo hasta que se le suelta."""
+
+    def __init__(self, falla: Exception | None = None) -> None:
+        self.e = Escena(RcdFalso({1: [ACABADO], 2: [CORRIENDO], 3: [ACABADO]}))
+        self.entrado = threading.Event()
+        self.soltar = threading.Event()
+        self.falla = falla
+        self.t = self.e.trabajo()
+        original = self.t.lanzadores[1]
+
+        def segundo(r, grupo):
+            self.entrado.set()
+            self.soltar.wait(5)
+            if self.falla is not None:
+                raise self.falla
+            return original(r, grupo)
+        self.t.lanzadores[1] = segundo
+
+    def hasta_el_hueco(self) -> None:
+        """Abre el trabajo, lo lanza y espera a que el segundo lanzador esté dentro del hilo."""
+        segundo_plano.lanzar = LANZAR_DE_VERDAD
+        self.e.seg.abrir(self.t)
+        self.e.seg.lanzar(self.t)
+        bombear(self.entrado.is_set)
+
+    def fin(self) -> None:
+        self.soltar.set()
+        segundo_plano.lanzar = segundo_plano.en_el_acto
+        self.e.cerrar()
+
+
+# cerrar en el hueco: se espera al `jobid` de la que se lanza y se para ELLA antes de cerrar
+h = Hueco()
+h.hasta_el_hueco()
+c("el segundo lanzador está en vuelo; el primero ya acabó", (h.t.lanzando, h.t.jobid, h.t.estados),
+  (True, 1, [ACABADO]))
+cerrado: list[list[int]] = []
+c("cerrar en el hueco espera (True)",
+  h.e.seg.cerrar_cancelando(lambda: cerrado.append(h.e.falso.paradas())), True)
+pausa(10)
+c("  mientras la orden se lanza no se cierra", cerrado, [])
+h.soltar.set()
+c("  al llegar su `jobid` se para ELLA y solo entonces se cierra",
+  bombear(lambda: cerrado != []), True)
+c("  el `job/stop` fue a la orden 2 antes de `despues()`", 2 in cerrado[0], True)
+c("  y la tercera no se lanzó", h.e.lanzados, [1, 2])
+h.fin()
+
+# cerrar en el hueco y que la orden no llegue a lanzarse: se cierra igual
+h = Hueco(falla=rcd.ErrorRc("boom", 500))
+h.hasta_el_hueco()
+cerrado = []
+h.e.seg.cerrar_cancelando(lambda: cerrado.append(h.e.falso.paradas()))
+h.soltar.set()
+c("si la orden en vuelo falla, se cierra igual, sin parar nada",
+  (bombear(lambda: cerrado != []), cerrado), (True, [[]]))
+h.fin()
+
+# «Cancelar» en el hueco: la orden que sale se para al recibir su jobid y no sigue ninguna
+h = Hueco()
+h.hasta_el_hueco()
+h.e.seg.cancelar()
+h.soltar.set()
+c("«Cancelar» en el hueco: la orden que salió se para también",
+  bombear(lambda: 2 in h.e.falso.paradas()), True)
+c("  acaba sin lanzar la tercera, con cancelado=True y los dos estados",
+  (bombear(lambda: h.e.resultados != []), h.e.lanzados, [r[2] for r in h.e.resultados],
+   [len(r[0]) for r in h.e.resultados]), (True, [1, 2], [True], [2]))
+h.fin()
+
+# «Cancelar» en el hueco y que la orden en vuelo falle: el resultado sabe que se canceló
+h = Hueco(falla=rcd.ErrorRc("boom", 500))
+h.hasta_el_hueco()
+h.e.seg.cancelar()
+h.soltar.set()
+c("«Cancelar» y la orden siguiente falla al lanzar: `resultado` recibe cancelado=True",
+  (bombear(lambda: h.e.resultados != []), [r[2] for r in h.e.resultados],
+   [[e.get("success") for e in r[0]] for r in h.e.resultados]), (True, [True], [[True, False]]))
+h.fin()
 
 c("nada ha reventado por el camino", errores, [])
 sys.exit(c.report())
