@@ -27,7 +27,8 @@ lo que ve la persona:
   respuestas, el filtro escapado que llega a `sync/copy`, el panel con un
   progreso que avanza, el resultado, «Cancelar» (una sola vez), «Reintentar»,
   la conexión perdida a mitad (con el proceso muerto), un seguimiento sin respuesta
-  con el `rcd` vivo (el lote no se libera ni hay segundo `sync/copy`), y cerrar con un lote en marcha (con hilos de
+  con el `rcd` vivo (el lote no se libera ni hay segundo `sync/copy`), el destino
+  fijado antes del diálogo del sistema, y cerrar con un lote en marcha (con hilos de
   verdad: `job/stop` antes de `parar()`, ninguna excepción de Tk).
 """
 
@@ -1380,6 +1381,53 @@ with sandbox():
       (True, "", 1))
     cerrar(dlg)
 
+    # --- 13h3. Un listado que llega con el diálogo abierto no cambia a dónde va el lote
+    # El diálogo del sistema corre su propio bucle de eventos: mientras está abierto
+    # puede llegar el listado de otra carpeta y mover `nav`.
+    destino_ = tmpdir()
+    origen_ = tmpdir()
+    (origen_ / "sube.txt").write_text("x", encoding="utf-8")
+    (origen_ / "carpeta").mkdir()
+    (origen_ / "carpeta" / "dentro.txt").write_text("x", encoding="utf-8")
+    ventana: dict = {}
+
+    def entrar_durante_el_dialogo(respuesta):
+        """Un diálogo que, mientras está abierto, deja llegar el listado de «datos»."""
+        def dialogo(parent, inicial):
+            dlg_ = ventana["dlg"]
+            elegir_y_entrar(dlg_, "datos")
+            bombear(lambda: str(dlg_.ruta.cget("text")) == "/datos")
+            return respuesta
+        return dialogo
+
+    previos_ = (tk_servidor.elegir_destino, tk_servidor.elegir_archivos, tk_servidor.elegir_carpeta)
+    for nombre_, boton_, ajustar in (
+            ("bajar", "bajar", lambda: setattr(tk_servidor, "elegir_destino",
+                                                entrar_durante_el_dialogo(str(destino_)))),
+            ("subir archivos", "subir_archivos", lambda: setattr(
+                tk_servidor, "elegir_archivos",
+                entrar_durante_el_dialogo([str(origen_ / "sube.txt")]))),
+            ("subir carpeta", "subir_carpeta", lambda: setattr(
+                tk_servidor, "elegir_carpeta", entrar_durante_el_dialogo(str(origen_ / "carpeta"))))):
+        dialogos()
+        falso = servidor_lote(estados=(ACABADO,), estadisticas=(stats(1, 1, 5, 5),),
+                              otras={("operations/list", "carpeta"): lista()})
+        dlg = abrir(falso)
+        ventana["dlg"] = dlg
+        ajustar()
+        elegir_varias(dlg, "leeme.txt")
+        getattr(dlg, boton_).invoke()
+        c(f"[{nombre_}] mientras el diálogo estaba abierto se entró en «datos»",
+          bombear(lambda: len(copias(falso)) == 1) and str(dlg.ruta.cget("text")), "/datos")
+        cp = copias(falso)[0]
+        c("  y el lote va a donde se vio al pulsar: la raíz, no «datos»",
+          (cp["srcFs"], cp["dstFs"]) if nombre_ == "bajar" else (cp["dstFs"],),
+          ("nas:/", str(destino_)) if nombre_ == "bajar" else ("nas:/",))
+        if nombre_ == "bajar":
+            c("  con la selección de entonces", cp["_filter"]["IncludeRule"], ["/leeme.txt"])
+        cerrar(dlg)
+        (tk_servidor.elegir_destino, tk_servidor.elegir_archivos,
+         tk_servidor.elegir_carpeta) = previos_
 
     # --- 13i. Cerrar con un lote en marcha, con hilos de verdad -----------------
     segundo_plano.lanzar = LANZAR_DE_VERDAD

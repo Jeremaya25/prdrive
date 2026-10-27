@@ -684,31 +684,37 @@ def open_dialog(parent, config: Config) -> None:
         elementos = elementos_elegidos()
         if estado["lote"] is not None or estado["rcd"] is None or not elementos:
             return
+        # Lo que se ve ahora se apunta antes del diálogo: su bucle de eventos deja
+        # llegar un listado que cambiaría `nav` y los nombres elegidos ya no serían de esa carpeta.
+        remote, ruta_remota = nav.remote, nav.ruta
         destino = elegir_destino(dlg, estado["carpeta"])
         if not destino:
             return
         estado["carpeta"] = destino
-        empezar(transferencia.Lote(transferencia.BAJAR, nav.remote, nav.ruta, destino, elementos))
+        empezar(transferencia.Lote(transferencia.BAJAR, remote, ruta_remota, destino, elementos))
 
-    def subir_a_la_vista(carpeta: str, elementos: tuple[transferencia.Elemento, ...]) -> None:
-        """Sube esos elementos de `carpeta` (del equipo) a la carpeta del servidor que se ve."""
+    def subir_a(remote: str, ruta_remota: str, carpeta: str,
+                elementos: tuple[transferencia.Elemento, ...]) -> None:
+        """Sube esos elementos de `carpeta` (del equipo) a esa carpeta del servidor."""
         estado["carpeta"] = carpeta
-        empezar(transferencia.Lote(transferencia.SUBIR, nav.remote, nav.ruta, carpeta, elementos))
+        empezar(transferencia.Lote(transferencia.SUBIR, remote, ruta_remota, carpeta, elementos))
 
     def subir_archivos() -> None:
         """«Subir archivos…»: pide archivos del equipo y los sube a la carpeta que se ve."""
         if estado["lote"] is not None or estado["rcd"] is None:
             return
+        remote, ruta_remota = nav.remote, nav.ruta      # antes del diálogo, como en «Bajar…»
         rutas = elegir_archivos(dlg, estado["carpeta"])
         if rutas:
             nombres = dict.fromkeys(os.path.basename(r) for r in rutas)
-            subir_a_la_vista(os.path.dirname(rutas[0]),
-                             tuple(transferencia.Elemento(n, False) for n in nombres))
+            subir_a(remote, ruta_remota, os.path.dirname(rutas[0]),
+                    tuple(transferencia.Elemento(n, False) for n in nombres))
 
     def subir_carpeta() -> None:
         """«Subir carpeta…»: pide una carpeta del equipo y la sube, entera, a la que se ve."""
         if estado["lote"] is not None or estado["rcd"] is None:
             return
+        remote, ruta_remota = nav.remote, nav.ruta      # antes del diálogo, como en «Bajar…»
         ruta = elegir_carpeta(dlg, estado["carpeta"])
         if not ruta:
             return
@@ -716,7 +722,7 @@ def open_dialog(parent, config: Config) -> None:
         if not nombre:
             avisar(dlg, "No se puede", SIN_RAIZ, "Ambar.")
             return
-        subir_a_la_vista(padre, (transferencia.Elemento(nombre, True),))
+        subir_a(remote, ruta_remota, padre, (transferencia.Elemento(nombre, True),))
 
     def empezar(lote: transferencia.Lote) -> None:
         """Avisa o bloquea según las parejas alcanzadas y, si sigue, empieza a contar choques."""
