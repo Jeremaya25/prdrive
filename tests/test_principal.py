@@ -80,7 +80,8 @@ from ui import principal, watch
 cfg = {CONFIG_DEL_HIJO}
 inst = SimpleNamespace(notas={{}}, cuenta=0, conflictos={{}}, componentes_texto=None,
                        componentes_actualizables=False, expulsion=None, bloqueo=None,
-                       del_equipo=False, llavero=None, vigilante=watch.Resumen("sin_instalar"))
+                       del_equipo=False, llavero=None, remotes_servidor=(),
+                       vigilante=watch.Resumen("sin_instalar"))
 principal.estado(cfg, aviso=None, nueva=None, instalada=None, tiempos={{}}, marcadas=(),
                  en_curso=False, inst=inst)
 print(json.dumps(sorted(sys.modules)))
@@ -97,6 +98,7 @@ cfg = {CONFIG_DEL_HIJO}
 inst = SimpleNamespace(notas={{}}, cuenta=0, conflictos={{}}, componentes_texto=None,
                        componentes_actualizables=False, expulsion=None, bloqueo=None,
                        del_equipo=False, vigilante=watch.Resumen("sin_instalar"),
+                       remotes_servidor=(),
                        llavero=SimpleNamespace(texto="x", aviso=False, abrir=True))
 principal.estado(cfg, aviso=None, nueva=None, instalada=None, tiempos={{}}, marcadas=(),
                  en_curso=False, inst=inst)
@@ -163,7 +165,8 @@ def lectura(**cambios) -> SimpleNamespace:
     """Una lectura sin nada que decir, con los campos de `Instantanea` que lee `estado()`."""
     campos = dict(notas={}, cuenta=0, conflictos={}, componentes=(), componentes_texto=None,
                   componentes_actualizables=False, expulsion=None, bloqueo=None,
-                  del_equipo=False, llavero=None, vigilante=SIN_INSTALAR)
+                  del_equipo=False, llavero=None, remotes_servidor=("nas",),
+                  vigilante=SIN_INSTALAR)
     campos.update(cambios)
     return SimpleNamespace(**campos)
 
@@ -435,8 +438,8 @@ def base(**cambios) -> principal.Estado:
         reparacion=0, version=None, componentes=None, componentes_boton=False,
         filas=(principal.Fila("docs", "bisync", "—", None),), ultima="",
         marcadas=frozenset({"docs"}), llavero=None, arranque=None, pausa=None,
-        servicio=(principal.INICIAR, "Iniciar servicio"), pie=None, en_curso=False,
-        cargando=False)
+        servicio=(principal.INICIAR, "Iniciar servicio"), pie=None, servidor=True,
+        en_curso=False, cargando=False)
     campos.update(cambios)
     return principal.Estado(**campos)
 
@@ -452,25 +455,27 @@ LLAVERO_QUE_NO_ABRE = principal.Linea("t", True, "Abrir llavero", False)
 
 c("los controles son los de la tabla, ni uno más ni uno menos",
   sorted(principal.controles(base())),
-  sorted(["sincronizar", "servicio", "parejas", "ajustes", "reparacion", "llavero", "pie",
-          "componentes", "version", "descartar", "arranque", "marcar_todas"]))
+  sorted(["sincronizar", "servicio", "parejas", "servidor", "ajustes", "reparacion", "llavero",
+          "pie", "componentes", "version", "descartar", "arranque", "marcar_todas"]))
 
 # Todas las combinaciones, cada fila de la tabla escrita aparte.
 total = 0
 malas = []
 ocupado_y_pulsable = []
 for (en_curso, cargando, llave, pie, (comp, comp_boton), accion, parejas, reparacion, version,
-     aviso, arranque) in itertools.product(
+     aviso, arranque, con_servidor) in itertools.product(
         (False, True), (False, True),
         (None, SOLO_LLAVERO_ABRIR, LLAVERO_QUE_NO_ABRE),
         (None, principal.EXPULSAR, principal.BLOQUEAR),
         ((None, False), ("texto", True), ("texto", False)),
         ((principal.INICIAR, "Iniciar servicio"), (watch.PAUSAR, "Pausar"),
          (watch.REANUDAR, "Reanudar"), (watch.SEGUIR, "Reanudar todo")),
-        (1, 3), (0, 2), (None, "v"), (None, "a"), (None, SOLO_LLAVERO_ABRIR)):
+        (1, 3), (0, 2), (None, "v"), (None, "a"), (None, SOLO_LLAVERO_ABRIR),
+        (False, True)):
     e = base(en_curso=en_curso, cargando=cargando, llavero=llave, pie=pie, componentes=comp,
              componentes_boton=comp_boton, servicio=accion, filas=filas_de(parejas),
-             reparacion=reparacion, version=version, aviso=aviso, arranque=arranque)
+             reparacion=reparacion, version=version, aviso=aviso, arranque=arranque,
+             servidor=con_servidor)
     esperado = {
         # siempre se ve; se pulsa sin pasada en curso y con la lectura ya llegada
         "sincronizar": C(True, (not en_curso) and (not cargando)),
@@ -481,6 +486,8 @@ for (en_curso, cargando, llave, pie, (comp, comp_boton), accion, parejas, repara
         # las dos pantallas se abren mientras llega la lectura, no durante la pasada
         "parejas": C(True, not en_curso),
         "ajustes": C(True, not en_curso),
+        # «Servidor…» siempre se ve; se pulsa sin pasada y con algún servidor al que ir
+        "servidor": C(True, (not en_curso) and con_servidor),
         # la línea de «Reparación…» no se enseña durante la pasada
         "reparacion": C(reparacion > 0 and not en_curso, True),
         "llavero": C(llave is not None,
@@ -500,8 +507,9 @@ for (en_curso, cargando, llave, pie, (comp, comp_boton), accion, parejas, repara
         malas.append((obtenido, esperado))
     if en_curso:
         # nada de lo que toca `state/` se pulsa durante la pasada
-        ocupado_y_pulsable += [k for k in ("sincronizar", "parejas", "ajustes", "llavero", "pie",
-                                           "componentes", "version") if obtenido[k].activo]
+        ocupado_y_pulsable += [k for k in ("sincronizar", "parejas", "servidor", "ajustes",
+                                           "llavero", "pie", "componentes", "version")
+                               if obtenido[k].activo]
         if accion[0] == principal.INICIAR and obtenido["servicio"].activo:
             ocupado_y_pulsable.append("servicio")
 c(f"controles(): las {total} combinaciones dan la tabla", malas[:1], [])
@@ -521,12 +529,27 @@ c("componentes: sin botón no hay nada que pulsar",
 c("marcar_todas: con una pareja no hace falta", principal.controles(base())["marcar_todas"],
   C(False, True))
 
+# «Servidor…»: siempre se ve; se pulsa con algún servidor (de la lectura) y sin pasada.
+c("servidor: sin lectura se ve y está apagado",
+  (estado(inst=None).servidor, principal.controles(estado(inst=None))["servidor"]),
+  (False, C(True, False)))
+c("  con la lectura y algún servidor, se pulsa",
+  (estado().servidor, principal.controles(estado())["servidor"]), (True, C(True, True)))
+c("  durante una pasada, apagado",
+  principal.controles(estado(en_curso=True))["servidor"], C(True, False))
+c("  con la lectura y sin ningún servidor, apagado",
+  (estado(inst=lectura(remotes_servidor=())).servidor,
+   principal.controles(estado(inst=lectura(remotes_servidor=())))["servidor"]),
+  (False, C(True, False)))
+
 # Mientras llega la lectura (primer pintado): solo se abren las dos pantallas.
 primero = principal.controles(estado(inst=None))
 c("cargando: «Sincronizar ahora» e «Iniciar servicio» apagados",
   (primero["sincronizar"], primero["servicio"]), (C(True, False), C(True, False)))
 c("  «Parejas…» y «Ajustes…» abiertos, que se pulsan nada más pintar",
   (primero["parejas"], primero["ajustes"]), (C(True, True), C(True, True)))
+c("  y «Servidor…» a la espera de saber si hay a dónde ir",
+  primero["servidor"], C(True, False))
 c("  sin llavero, sin «Expulsar», sin «Reparación…» y sin aviso de componentes",
   (primero["llavero"].visible, primero["pie"].visible, primero["componentes"].visible,
    primero["reparacion"].visible, primero["arranque"].visible), (False,) * 5)

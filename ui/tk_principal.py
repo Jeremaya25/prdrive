@@ -39,7 +39,7 @@ Cada una es `(primera fila, última fila, fila de la reserva)`: las filas que se
 juntas y, de ellas, la que está vacía hasta que llega la lectura del dispositivo, donde se
 guarda el sitio de lo que llega (una fila más alta que su bloque lo centraría). «arriba» es
 lo de encima de la lista de parejas; «abajo», lo que hay entre ella y el pie, con
-«Parejas…» y «Ajustes…», que siempre están.
+«Parejas…», «Servidor…» y «Ajustes…», que siempre están.
 """
 
 CHIP_RESERVADO = ("al día", "Ok.", "ok")
@@ -62,6 +62,7 @@ class Acciones(NamedTuple):
         servicio: El botón del servicio; recibe la acción que enseña
             (`principal.INICIAR`, o la del agente: pausar, reanudar, seguir).
         parejas: «Parejas…».
+        servidor: «Servidor…».
         ajustes: «Ajustes…».
         reparacion: «Reparación…», el botón de la línea de cosas que revisar.
         llavero: «Abrir llavero».
@@ -77,6 +78,7 @@ class Acciones(NamedTuple):
     sincronizar: Callable[[], None]
     servicio: Callable[[str], None]
     parejas: Callable[[], None]
+    servidor: Callable[[], None]
     ajustes: Callable[[], None]
     reparacion: Callable[[], None]
     llavero: Callable[[], None]
@@ -198,6 +200,10 @@ class VistaPrincipal:
                                    command=acciones.parejas)
         theme.boton_icono(self._parejas, "parejas", theme.ACENTO, theme.PAPEL)
         self._parejas.grid(row=0, column=0, sticky="w")
+        self._servidor = ttk.Button(pantallas, text="Servidor…", style="Quiet.TButton",
+                                    command=acciones.servidor)
+        theme.boton_icono(self._servidor, "nas", theme.ACENTO, theme.PAPEL)
+        self._servidor.grid(row=0, column=1, sticky="w", padx=(theme.E3, 0))
         self._ajustes = ttk.Button(pantallas, text="Ajustes…", style="Quiet.TButton",
                                    command=acciones.ajustes)
         theme.boton_icono(self._ajustes, "gear", theme.ACENTO, theme.PAPEL)
@@ -282,7 +288,7 @@ class VistaPrincipal:
                if b is not None]
         botones = {
             "sincronizar": self._sincronizar, "servicio": self._servicio,
-            "parejas": self._parejas, "ajustes": self._ajustes,
+            "parejas": self._parejas, "servidor": self._servidor, "ajustes": self._ajustes,
             "reparacion": getattr(self._bloques.get("reparacion"), "boton", None),
             "llavero": getattr(self._bloques.get("llavero"), "boton", None),
             "pie": next((b for b in pie if a_la_vista(b)), pie[0] if pie else None),
@@ -788,6 +794,7 @@ class VistaPrincipal:
         self._activar(self._sincronizar, ctl["sincronizar"].activo)
         self._activar(self._servicio, ctl["servicio"].activo)
         self._activar(self._parejas, ctl["parejas"].activo)
+        self._activar(self._servidor, ctl["servidor"].activo)
         self._activar(self._ajustes, ctl["ajustes"].activo)
         self._activar(getattr(self._bloques.get("llavero"), "boton", None),
                       ctl["llavero"].activo)

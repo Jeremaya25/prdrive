@@ -45,3 +45,8 @@ Only draws; `open_dialog(parent, config)` is a modal «Servidor» built like «D
 - **Rows.** iid = the entry's name; a pair's folder gets `"  ⇄ {nombre}"` in its name cell; a locked folder (`sin_acceso` or `sin_acceso_previo`) has the `candado` icon and tone `apagado`. Double click, Intro and KP_Enter enter the chosen folder (bound on the canvas, replacing the table's own, which needs an `al_activar` `tk.Tabla` does not pass), Backspace and «↑» go up.
 - **«Esta carpeta está vacía.»** is only set (`_decir_vacio`) once a listing has arrived: `tk.Tabla` fixes it at creation and a connecting or unreachable window must not say it.
 - **Closing** (`WM_DELETE_WINDOW` and `<Destroy>`) runs `parar()` once, in the background, guarded by a flag; `Sondeo` cancels with the window, so a late answer finds nobody. `tests/test_tk_servidor.py` covers it with real threads.
+
+## The button in the main window
+
+- **«Servidor…»** sits in the `pantallas` frame between «Parejas…» (column 0) and «Ajustes…» (column 2), `Quiet.TButton` with the `nas` icon; `VentanaPrincipal.abrir_servidor()` calls `tk_servidor.open_dialog(self.root, self.config)` and reads nothing again on return (the window changes neither the config nor the state). `ui.tk_servidor` is in `ui.tk.PRECARGA`.
+- **Enabled when** `principal.controles()["servidor"]` is `libre and e.servidor` (visible always): no pass in progress and `Estado.servidor`, i.e. the shared read (`Instantanea.remotes_servidor`, `instantanea.leer()` under its own `try`) found at least one remote in `rclone.conf` after `servidor.remotes_de()` removed the internal ones and the device's `combine`. A missing `rclone.conf` is `()` and no entry in `fallos`; without a read yet it is off.
