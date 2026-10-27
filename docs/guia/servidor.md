@@ -24,7 +24,7 @@ enseña la carpeta de arriba del todo.
 - **Arriba**, el desplegable elige el servidor. A su derecha va la **carpeta en la que estás**.
   **↑** sube a la carpeta de encima (en la de arriba del todo no hace nada). **Releer** vuelve
   a leer la carpeta, por si algo ha cambiado.
-- **La tabla**, con las carpetas primero y luego los archivos:
+- **La lista**, con las carpetas primero y luego los archivos:
   - **Nombre**: con su icono.
   - **Tamaño**: en B, KB, MB… Las carpetas no llevan tamaño («—»): el servidor no lo da sin
     recorrerlas.
@@ -39,8 +39,7 @@ Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
 - **⇄ Nombre**, junto al nombre de una carpeta: es la carpeta de la pareja «Nombre», en ese mismo
   servidor. Si estás dentro de una carpeta de pareja, la ventana lo dice arriba: «Estás dentro de
-  la pareja «Nombre»». Esta versión solo lo señala. Más adelante, esas carpetas se protegerán de
-  cambios.
+  la pareja «Nombre»». Esta versión solo lo señala.
 - **Candado**: no puedes entrar en esa carpeta. Aparece cuando, al intentar entrar, el servidor
   dice que no tienes permiso. Mientras la ventana siga abierta, la carpeta se queda apagada con el
   candado. El candado no lleva texto: se reconoce por el dibujo.
@@ -49,14 +48,14 @@ Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
 Los permisos son los de Linux: tres cifras, como `755` (el dueño puede todo; los demás, leer y
 entrar). Con la versión de rclone que trae prdrive ahora, los servidores SFTP **no dan los
-permisos**, y la columna dice «—» en todas sus filas. Es lo esperado, no un fallo. Cuando una versión
-de rclone que los dé llegue a prdrive, la columna se rellena sola.
+permisos**, y la columna dice «—» en todas sus filas. Es lo esperado, no un fallo. Cuando rclone los dé,
+la columna los mostrará.
 
 Por eso, de momento, el candado sale solo después de intentar entrar, no antes.
 
 ## Si algo falla
 
-Lo que pasa aparece en la línea de arriba de la tabla, y la carpeta que veías antes se queda en
+Lo que pasa aparece en la línea de arriba de la lista, y la carpeta que veías antes se queda en
 pantalla.
 
 - **«No tienes permiso para ver esta carpeta.»**: sale el candado. Nada más.
@@ -75,7 +74,6 @@ pantalla.
 
 ## Lo que no hace
 
-- **No escribe nada en el servidor.** Ni archivos, ni carpetas, ni cambios de nombre. Copiar y subir
-  llegarán en otra versión.
+- **No escribe nada en el servidor.** Ni archivos, ni carpetas, ni cambios de nombre.
 - **Cerrar la ventana corta la conexión con el servidor.** No hace falta hacer nada más antes de
   expulsar la unidad.
