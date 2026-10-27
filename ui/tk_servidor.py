@@ -67,6 +67,9 @@ INTERVALO_PROGRESO_MS = 500
 """Milisegundos entre dos peticiones de `core/stats` y `job/status` de un lote."""
 MIRANDO = "Mirando el destino…"
 PERDIDA = "Se perdió la conexión con rclone."
+SIN_RESPUESTA = "Sin respuesta de rclone… la copia sigue en marcha; se vuelve a intentar."
+FALLOS_PARA_AVISAR = 3
+"""Cuántos seguimientos seguidos sin respuesta hacen falta para decirlo en la ventana."""
 TITULO_CIERRE = "Transferencia en marcha"
 TEXTO_CIERRE = "Hay una transferencia en marcha. ¿Cancelarla y cerrar?"
 SIN_RAIZ = "Elige una carpeta, no la raíz de una unidad."
@@ -651,7 +654,7 @@ def open_dialog(parent, config: Config) -> None:
         estado["reintento"] = None
         activo = {"lote": lote, "destino": _destino_visible(lote), "rcd": estado["rcd"],
                   "grupo": f"lote-{estado['n_lote']}", "jobid": None, "cancelado": False,
-                  "cerrando": False}
+                  "cerrando": False, "fallos": 0}
         estado["lote"] = activo
         panel.ocultar()
         actualizar_botones()
@@ -799,9 +802,12 @@ def open_dialog(parent, config: Config) -> None:
         if not vigente(activo):
             return
         if encargo.error is not None:
-            acabar_con_error(activo, encargo.error,
-                             partial(reintentar_copia, activo["lote"], activo.get("omitir", False)))
+            sin_respuesta(activo, encargo.error)
             return
+        if activo["fallos"]:
+            if activo["fallos"] >= FALLOS_PARA_AVISAR:
+                decir("", "Pista.")
+            activo["fallos"] = 0
         stats, st = encargo.resultado
         if st.get("finished"):
             cancelado = activo["cancelado"] and not st.get("success")
@@ -812,6 +818,23 @@ def open_dialog(parent, config: Config) -> None:
         else:
             panel.mostrar_progreso(
                 transferencia.progreso_de(stats, activo["lote"], activo["destino"]))
+        estado["tras"] = dlg.after(INTERVALO_PROGRESO_MS, partial(sondear, activo))
+
+    def sin_respuesta(activo: dict, error: Exception) -> None:
+        """Un seguimiento falló: con el `rcd` vivo se sigue intentando; si murió, el lote acabó.
+
+        Mientras el proceso vive, la copia puede seguir corriendo aunque rclone no
+        conteste (una petición perdida, un tiempo de espera), así que el lote
+        sigue activo y los botones apagados: solo acaba cuando `job/status` dice
+        `finished`, cuando el proceso muere o cuando se cierra. Nunca se ofrece
+        «Reintentar» con una copia que puede estar en marcha.
+        """
+        if not activo["rcd"].vivo:
+            acabar_con_error(activo, rcd.RcdCaido(str(error)), None)
+            return
+        activo["fallos"] += 1
+        if activo["fallos"] == FALLOS_PARA_AVISAR:
+            decir(SIN_RESPUESTA, "Aviso.")
         estado["tras"] = dlg.after(INTERVALO_PROGRESO_MS, partial(sondear, activo))
 
     def soltar_lote() -> None:

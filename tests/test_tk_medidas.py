@@ -120,7 +120,8 @@ class RcdMedidas:
     def parar(self) -> None:
         pass
 
-    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+    def llamar(self, metodo: str, params: dict | None = None,
+               timeout: float | None = None) -> dict:
         # Un lote: el trabajo no acaba (el panel a medias) o falla (su resultado).
         if metodo == "sync/copy":
             return {"jobid": 1}

@@ -300,6 +300,9 @@ with sandbox():
       cabeceras["Authorization"], f"Basic {autorizacion}")
     c("con el tope de las peticiones", tope, rcd.TIMEOUT_PETICION)
     rastro.respuestas = [(200, "{}")]
+    r.llamar("core/pid", timeout=2.5)
+    c("con un tope propio si se da", rastro.peticiones[-1][3], 2.5)
+    rastro.respuestas = [(200, "{}")]
     r.llamar("core/pid")
     c("sin parámetros manda un objeto vacío", json.loads(rastro.peticiones[-1][1]), {})
 
@@ -690,9 +693,11 @@ class RcdFalso:
     def __init__(self, respuesta=None) -> None:
         self.llamadas = []   # (metodo, params)
         self.respuesta = respuesta if respuesta is not None else {}
+        self.topes = []      # el `timeout` de cada llamada
 
-    def llamar(self, metodo, params=None):
+    def llamar(self, metodo, params=None, timeout=None):
         self.llamadas.append((metodo, params))
+        self.topes.append(timeout)
         if isinstance(self.respuesta, Exception):
             raise self.respuesta
         return self.respuesta
@@ -744,8 +749,11 @@ c("pero no traga RcdCaido", isinstance(lanzo, rcd.RcdCaido), True)
 falso = RcdFalso({"bytes": 10})
 c("progreso devuelve core/stats del grupo", rcd.progreso(falso, "g"), {"bytes": 10})
 c("y lo pide con core/stats", falso.llamadas[-1], ("core/stats", {"group": "g"}))
+c("  con un tope corto: es una petición diminuta", falso.topes[-1], rcd.TIMEOUT_SONDEO)
+c("  mucho menor que el de una petición normal", rcd.TIMEOUT_SONDEO < rcd.TIMEOUT_PETICION, True)
 falso = RcdFalso({"jobid": 7, "finished": False})
 c("estado devuelve job/status del jobid", rcd.estado(falso, 7), {"jobid": 7, "finished": False})
 c("y lo pide con job/status", falso.llamadas[-1], ("job/status", {"jobid": 7}))
+c("  con el mismo tope corto", falso.topes[-1], rcd.TIMEOUT_SONDEO)
 
 sys.exit(c.report())

@@ -26,7 +26,8 @@ lo que ve la persona:
   múltiple, el bloqueo y el aviso por pareja, el aviso de choques con sus tres
   respuestas, el filtro escapado que llega a `sync/copy`, el panel con un
   progreso que avanza, el resultado, «Cancelar» (una sola vez), «Reintentar»,
-  la conexión perdida a mitad, y cerrar con un lote en marcha (con hilos de
+  la conexión perdida a mitad (con el proceso muerto), un seguimiento sin respuesta
+  con el `rcd` vivo (el lote no se libera ni hay segundo `sync/copy`), y cerrar con un lote en marcha (con hilos de
   verdad: `job/stop` antes de `parar()`, ninguna excepción de Tk).
 """
 
@@ -97,7 +98,8 @@ class RcdFalso:
         if self.error_esperar is not None:
             raise self.error_esperar
 
-    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+    def llamar(self, metodo: str, params: dict | None = None,
+               timeout: float | None = None) -> dict:
         params = params or {}
         self.llamadas.append((metodo, params))
         self.orden.append(metodo)
@@ -782,13 +784,13 @@ with sandbox():
     class RcdLote(RcdFalso):
         """Un servidor donde lo que no se ha dicho que exista, no existe (`stat` → 404)."""
 
-        def llamar(self, metodo, params=None):
+        def llamar(self, metodo, params=None, timeout=None):
             params = params or {}
             if metodo == "operations/stat" and (metodo, params.get("remote")) not in self.respuestas:
                 self.llamadas.append((metodo, params))
                 self.orden.append(metodo)
                 raise rcd.ErrorRc("object not found", 404)
-            return super().llamar(metodo, params)
+            return super().llamar(metodo, params, timeout)
 
     def servidor_lote(estadisticas=(stats(),), estados=(ACABADO,), otras=None) -> RcdFalso:
         """Un servidor que acepta un `sync/copy` (jobid 7) y cuenta cómo va."""
@@ -1262,6 +1264,7 @@ with sandbox():
 
     def se_cae():
         if hay.is_set():
+            falso.vivo = False                  # el proceso murió: la copia murió con él
             raise rcd.RcdCaido("Connection refused")
         return CORRIENDO
     falso = servidor_lote(otras={("job/status", None): se_cae})
@@ -1279,6 +1282,104 @@ with sandbox():
       (botones_de(dlg)[0], bool(dlg.panel.reintentar.winfo_manager()), len(copias(falso))),
       ("normal", False, 1))
     cerrar(dlg)
+
+    # lo mismo si el seguimiento falla con un error de rclone y el proceso ya murió
+    dialogos(destino=str(tmpdir()))
+    hay = threading.Event()
+
+    def se_cae_con_error():
+        if hay.is_set():
+            falso.vivo = False
+            raise rcd.ErrorRc("HTTP 500", 500)
+        return CORRIENDO
+    falso = servidor_lote(otras={("job/status", None): se_cae_con_error})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    bombear(lambda: panel_a_la_vista(dlg))
+    hay.set()
+    c("un ErrorRc del seguimiento con el proceso muerto también es conexión perdida",
+      bombear(lambda: frase_panel(dlg) == "Se perdió la conexión con rclone."), True)
+    c("  con «Reconectar», los botones libres y sin «Reintentar»",
+      (boton(dlg), botones_de(dlg)[0], bool(dlg.panel.reintentar.winfo_manager())),
+      ("Reconectar", "normal", False))
+    cerrar(dlg)
+
+    # --- 13h2. Un seguimiento que falla con el rcd vivo no libera el lote -------
+    # Mientras el proceso viva la copia puede seguir: nada de «Reintentar» ni de
+    # un segundo `sync/copy`; solo acaba cuando `job/status` dice `finished`.
+    for variante in ("se recupera", "sigue sin contestar"):
+        dialogos(destino=str(tmpdir()), preguntar=False)
+        recupera = threading.Event()
+        fallos_ = [0]
+        fallan = tk_servidor.FALLOS_PARA_AVISAR + 1
+
+        def seguimiento():
+            if recupera.is_set():
+                return ACABADO
+            fallos_[0] += 1
+            if fallos_[0] > fallan and variante == "se recupera":
+                return CORRIENDO
+            if fallos_[0] % 2:
+                raise rcd.RcdCaido("timed out")
+            raise rcd.ErrorRc("HTTP 500", 500)
+        falso = servidor_lote(otras={("job/status", None): seguimiento})
+        dlg = abrir(falso)
+        elegir_varias(dlg, "leeme.txt")
+        falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+        dlg.bajar.invoke()
+        c(f"[{variante}] el seguimiento falla varias veces y se dice en la ventana",
+          bombear(lambda: frase(dlg) == tk_servidor.SIN_RESPUESTA), True)
+        c("  el lote sigue: los tres botones apagados, el panel a la vista, sin «Reintentar»",
+          (botones_de(dlg), panel_a_la_vista(dlg), bool(dlg.panel.reintentar.winfo_manager()),
+           boton(dlg)), (("disabled", "disabled", "disabled"), True, False, ""))
+        dlg.bajar.invoke()
+        dlg.subir_archivos.invoke()
+        c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
+          (1, []))
+        LLAMADAS_DIALOGOS["preguntar"].clear()
+        dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
+        c("  cerrar sigue preguntando (la copia puede estar en marcha)",
+          (len(LLAMADAS_DIALOGOS["preguntar"]), bool(dlg.winfo_exists()), falso.paradas),
+          (1, True, 0))
+        if variante == "sigue sin contestar":
+            for _ in range(40):                 # y se sigue intentando, sin acabar
+                raiz.update()
+                time.sleep(0.005)
+            c("  tras mucho tiempo sin respuesta el lote no se dio por acabado",
+              (botones_de(dlg), len(copias(falso)), fallos_[0] > fallan), (("disabled",) * 3, 1, True))
+        else:
+            c("  al contestar otra vez la línea de aviso se quita y el lote sigue",
+              (bombear(lambda: fallos_[0] > fallan + 2 and frase(dlg) == ""), botones_de(dlg)[0],
+               len(copias(falso))), (True, "disabled", 1))
+        recupera.set()
+        c("  cuando por fin contesta que acabó, acaba bien y los botones vuelven",
+          bombear(lambda: frase_panel(dlg) == "Copiados 0"), True)
+        c("  la línea de aviso se quita", frase(dlg) != tk_servidor.SIN_RESPUESTA, True)
+        c("  y nunca hubo un segundo sync/copy", (len(copias(falso)), botones_de(dlg)[0]),
+          (1, "normal"))
+        cerrar(dlg)
+
+    # un fallo suelto (menos que FALLOS_PARA_AVISAR) ni siquiera se dice
+    dialogos(destino=str(tmpdir()))
+    fallos_ = [0]
+
+    def un_tropiezo():
+        fallos_[0] += 1
+        if fallos_[0] == 1:
+            raise rcd.RcdCaido("timed out")
+        return ACABADO
+    falso = servidor_lote(otras={("job/status", None): un_tropiezo})
+    dlg = abrir(falso)
+    elegir_varias(dlg, "leeme.txt")
+    falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
+    dlg.bajar.invoke()
+    c("un solo fallo del seguimiento: el lote acaba bien, sin avisos ni segundo copy",
+      (bombear(lambda: frase_panel(dlg) == "Copiados 0"), frase(dlg), len(copias(falso))),
+      (True, "", 1))
+    cerrar(dlg)
+
 
     # --- 13i. Cerrar con un lote en marcha, con hilos de verdad -----------------
     segundo_plano.lanzar = LANZAR_DE_VERDAD

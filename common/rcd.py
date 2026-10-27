@@ -45,6 +45,7 @@ from .model import ConfigError
 ESPERA_ARRANQUE = 10.0  # segundos hasta que `rc/noop` contesta
 ESPERA_QUIT = 3.0       # segundos que se le dan a salir tras `core/quit` antes de matarlo
 TIMEOUT_PETICION = 60.0  # segundos por llamada
+TIMEOUT_SONDEO = 5.0     # segundos por llamada de seguimiento (`progreso`, `estado`)
 SONDEO = 0.1            # segundos entre dos `rc/noop` mientras arranca
 
 _FRASES_PUERTO_OCUPADO = ("address already in use", "only one usage of each socket address")
@@ -380,12 +381,15 @@ class Rcd:
                 raise ConfigError(f"rclone no ha contestado en {tope:g} s.")
             time.sleep(SONDEO)
 
-    def llamar(self, metodo: str, params: dict | None = None) -> dict:
+    def llamar(self, metodo: str, params: dict | None = None,
+               timeout: float | None = None) -> dict:
         """Llama a un método de la API de `rcd`.
 
         Args:
             metodo: El método, p. ej. `operations/list`.
             params: Sus parámetros.
+            timeout: Segundos antes de darla por perdida (`RcdCaido`); por defecto
+                `TIMEOUT_PETICION`.
 
         Returns:
             La respuesta, ya como diccionario.
@@ -396,7 +400,7 @@ class Rcd:
         """
         estado, texto = peticion(
             f"{self.url}{metodo}", json.dumps(params or {}).encode("utf-8"),
-            self._cabeceras, TIMEOUT_PETICION)
+            self._cabeceras, TIMEOUT_PETICION if timeout is None else timeout)
         try:
             datos = json.loads(texto) if texto.strip() else {}
         except ValueError:
@@ -532,7 +536,7 @@ def progreso(r: Rcd, grupo: str) -> dict:
         ErrorRc: Si rclone contesta con un error.
         RcdCaido: Si no se puede hablar con `rcd`.
     """
-    return r.llamar("core/stats", {"group": grupo})
+    return r.llamar("core/stats", {"group": grupo}, timeout=TIMEOUT_SONDEO)
 
 
 def estado(r: Rcd, jobid: int) -> dict:
@@ -549,7 +553,7 @@ def estado(r: Rcd, jobid: int) -> dict:
         ErrorRc: Si rclone contesta con un error (p. ej. un trabajo ya caducado).
         RcdCaido: Si no se puede hablar con `rcd`.
     """
-    return r.llamar("job/status", {"jobid": jobid})
+    return r.llamar("job/status", {"jobid": jobid}, timeout=TIMEOUT_SONDEO)
 
 
 def cancelar(r: Rcd, jobid: int) -> None:

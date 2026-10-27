@@ -63,6 +63,10 @@ Mientras se copia, un panel al pie de la lista muestra qué archivo va, cuántos
 velocidad y cuánto falta. Puedes seguir mirando carpetas mientras tanto. Solo hay una copia a la
 vez: mientras dura, los tres botones están apagados.
 
+Si rclone tarda en contestar, la ventana dice «Sin respuesta de rclone…»: la copia puede seguir en
+marcha, así que los botones siguen apagados y prdrive vuelve a preguntar solo. Si rclone se ha
+cerrado de verdad, lo dice y te deja «Reconectar».
+
 ### Si algo ya existe
 
 Si en la carpeta de destino hay archivos con el mismo nombre y en el mismo sitio, prdrive
