@@ -145,9 +145,10 @@ Windows.
     señal salta cuando muere el hilo que lo lanzó, no el proceso**: el `Popen` se hace en el hilo
     de Tk (es instantáneo) y solo la espera a `rc/noop` va en segundo plano.
 - **Cinturón 3, sobrevive uno**: `state/rcd.json` guarda el PID y su hora de creación
-  (`store.creado()`), nunca la contraseña. Al arrancar otro, y en `--doctor`, si ese PID sigue
+  (`store.creado()`), nunca la contraseña. Al arrancar otro, si ese PID sigue
   vivo **y** su hora de creación coincide (no es otro proceso que heredó el número), se mata con
-  `store.matar_arbol()`; si no coincide, solo se borra el fichero.
+  `store.matar_arbol()` (por eso se lanza como jefe de su sesión en POSIX); si no coincide,
+  solo se borra el fichero. `--doctor` no lo toca: imprime el estado sin tocar nada.
 - **Canal**: solo `127.0.0.1`; sin `--rc-web-gui` y sin `--rc-no-auth`. Con usuario y contraseña
   aleatorios que solo viven en memoria, otro usuario del equipo no puede usarlo para leer el
   `rclone.conf` (`config/dump`) ni el servidor.
@@ -178,8 +179,10 @@ Windows.
 **Cuándo se piden.** Al elegir un remote se pregunta una vez `operations/fsinfo` y se piden
 permisos (`opt.metadata = true` en cada listado) **solo si**:
 1. `Features.ReadMetadata` es verdadero, y
-2. el tipo del backend (`Name` de `fsinfo`) está en `LEE_PERMISOS_EN_EL_LISTADO = {"sftp",
-   "local"}`, los backends cuyos metadatos salen del mismo listado.
+2. el tipo del backend (la línea `type =` de su sección en el `rclone.conf`; el `Name` de
+   `fsinfo` es el nombre del remote, no su tipo) está en `LEE_PERMISOS_EN_EL_LISTADO =
+   {"sftp", "local"}`, los backends cuyos metadatos salen del mismo listado. Un `crypt` sobre
+   un SFTP es `crypt`: no se piden.
 
 La condición 2 no es una lista de versiones: es lo que impide la consulta cara. Pedir `metadata`
 a un backend que la lee **por objeto** (S3, con un `HEAD` por archivo) convertiría cada carpeta
