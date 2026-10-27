@@ -602,7 +602,10 @@ with sandbox():
     dlg = abrir(falso)
     c("sin cortar no hay línea", linea(dlg)[0], False)
     entrar_en(dlg, "datos")
-    c("  ni nada que pegar en el menú", (linea(dlg)[0],), (False,))
+    dlg.lista.event_generate("<Button-3>", x=5, y=5)
+    dlg.update()
+    c("  ni nada que pegar en el menú", str(DIALOGOS["menus"][-1].entrycget(3, "state")),
+      "disabled")
     elegir(dlg, "fotos", "a.txt")
     dlg.barra.cortar.invoke()
     c("«Cortar» enseña la línea: cuántos y desde dónde, con «Pegar aquí» encendido",
@@ -617,6 +620,7 @@ with sandbox():
       (True, False, True, True))
     a(dlg, "otra")
     c("al navegar la línea sigue igual", linea(dlg), (True, "2 elementos para mover desde /datos", True))
+    elegir(dlg, "viejo.txt")                     # una fila elegida en el destino no es lo cortado
     antes = listados_de(falso, "otra")
     pulsar(dlg, "<Control-v>")
     c("Ctrl+V pega: lanza `sync/move` y `movefile`, en ese orden",
@@ -629,6 +633,9 @@ with sandbox():
     c("  el archivo: `movefile` entre sus rutas, en el mismo grupo",
       (p2["srcFs"], p2["srcRemote"], p2["dstFs"], p2["dstRemote"], p2["_group"]),
       ("nas:/", "datos/a.txt", "nas:/", "otra/a.txt", "gestion-1"))
+    c("  y nada sale de la fila elegida en el destino",
+      {x for p in falso.ordenes() for x in p.values() if isinstance(x, str) and "viejo" in x},
+      set())
     c("  la segunda solo tras el `finished` de la primera",
       falso.cronologia.index(("estado", 1, True))
       < falso.cronologia.index(("lanzar", 2, "operations/movefile")), True)
@@ -871,6 +878,60 @@ with sandbox():
     c("  «Reintentar» vuelve a mirar y mueve",
       (bombear(lambda: len(falso.lanzadas) == 1), bombear(lambda: not linea(dlg)[0])),
       (True, True))
+    F.cerrar(dlg)
+
+    # -- «Reintentar» tras no poder mirar el destino, con lo cortado ya cambiado
+    for que in ("«Cancelar» de la línea", "cortar otra cosa"):
+        dialogos()
+        falso = servidor_mover()
+        al_mover(falso)
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        elegir(dlg, "b.txt")
+        dlg.barra.cortar.invoke()
+        a(dlg, "otra")
+        bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+        fallos = [rcd.ErrorRc("permission denied", 403)]
+        falso.respuestas[("operations/list", "otra")] = (
+            lambda: (_ for _ in ()).throw(fallos.pop()) if fallos
+            else lista(*CONTENIDO_OTRA["v"]))
+        dlg.cortado.pegar.invoke()
+        c(f"[{que}] la lectura del destino falló y el panel ofrece «Reintentar»",
+          bool(dlg.panel.reintentar.winfo_manager()), True)
+        if que.startswith("«"):
+            dlg.cortado.cancelar.invoke()
+            c("  «Cancelar» de la línea la quita (la ventana está libre)", linea(dlg)[0], False)
+        else:
+            a(dlg, "datos")
+            elegir(dlg, "a.txt")
+            dlg.barra.cortar.invoke()
+            a(dlg, "otra")
+            c("  lo cortado ahora es otra cosa", linea(dlg)[1],
+              "1 elemento para mover desde /datos")
+        dlg.panel.reintentar.invoke()
+        dlg.update()
+        c("  «Reintentar» no mueve lo viejo ni lanza nada",
+          (falso.lanzadas, bool(dlg.panel.reintentar.winfo_manager())), ([], False))
+        if not que.startswith("«"):
+            dlg.cortado.pegar.invoke()
+            c("  y lo cortado de ahora se pega bien (solo el nuevo)",
+              (bombear(lambda: len(falso.lanzadas) == 1), falso.lanzadas[0][1]["srcRemote"]),
+              (True, "datos/a.txt"))
+        F.cerrar(dlg)
+
+    # -- «Cancelar» de la línea se apaga mientras corre un cambio
+    dialogos()
+    falso = servidor_mover(estados={1: [CORRIENDO] * 60 + [ACABADO]})
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    elegir(dlg, "fotos")
+    dlg.barra.cortar.invoke()
+    c("con la ventana libre «Cancelar» de la línea está encendido",
+      not dlg.cortado.cancelar.instate(["disabled"]), True)
+    a(dlg, "otra")
+    dlg.cortado.pegar.invoke()
+    bombear(lambda: panel_a_la_vista(dlg))
+    c("  y mientras corre el pegado, apagado", dlg.cortado.cancelar.instate(["disabled"]), True)
     F.cerrar(dlg)
 
     # -- cerrar la ventana de en medio de un pegado

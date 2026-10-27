@@ -626,6 +626,7 @@ def open_dialog(parent, config: Config) -> None:
         corte.texto.configure(text=gestion.texto_corte(len(elementos), carpeta,
                                                        remote != nav.remote))
         corte.pegar.state(["!disabled" if puede_pegar() else "disabled"])
+        corte.cancelar.state(["!disabled" if libre() else "disabled"])
         corte.grid()
 
     def actualizar_botones() -> None:
@@ -1050,7 +1051,7 @@ def open_dialog(parent, config: Config) -> None:
         """Relee en segundo plano los nombres de la carpeta del destino (al pegar, la de `destino`)."""
         indicador.poner(MIRANDO, True)
         accion.grid_remove()
-        carpeta = op.destino or "" if op.tipo == gestion.MOVER else op.carpeta
+        carpeta = (op.destino or "") if op.tipo == gestion.MOVER else op.carpeta
         sondeo_lote.esperar(
             segundo_plano.lanzar(partial(_nombres_de, t.rcd, op.remote, carpeta)),
             partial(destino_mirado, t, op, actual))
@@ -1085,9 +1086,19 @@ def open_dialog(parent, config: Config) -> None:
             lanzar_gestion(t, op)
 
     def reintentar_nombre(op: gestion.Operacion, actual: str | None) -> None:
-        """«Reintentar» tras no poder mirar el destino: vuelve a mirar."""
-        if libre():
-            mirar_destino(nuevo_trabajo_gestion(op), op, actual)
+        """«Reintentar» tras no poder mirar el destino: vuelve a mirar.
+
+        Un pegado solo se repite si lo cortado sigue siendo lo mismo: si la persona lo
+        quitó o cortó otra cosa mientras tanto, no se lanza nada y el panel se quita.
+        """
+        if not libre():
+            return
+        if op.tipo == gestion.MOVER and estado["corte"] != (op.remote, op.carpeta, op.elementos):
+            seg.reintento = None
+            panel.ocultar()
+            reajustar()
+            return
+        mirar_destino(nuevo_trabajo_gestion(op), op, actual)
 
     # -- borrar: contar lo de dentro, confirmar y lanzar
     def borrar_elegidos() -> None:
