@@ -238,11 +238,11 @@ el `.pyc` de lo que ejecuta.
 BIBLIOTECA = (
     "argparse", "base64", "calendar", "collections", "contextlib", "copy", "csv", "ctypes",
     "ctypes.util", "ctypes.wintypes", "dataclasses", "datetime", "fnmatch",
-    "functools", "getpass", "hashlib", "importlib", "json", "pathlib", "platform", "queue",
-    "re", "secrets", "shutil", "signal", "socket", "struct", "subprocess",
+    "functools", "getpass", "hashlib", "http.client", "importlib", "json", "pathlib",
+    "platform", "queue", "re", "secrets", "shutil", "signal", "socket", "struct", "subprocess",
     "tempfile", "threading", "tkinter", "tkinter.filedialog", "tkinter.font",
-    "tkinter.messagebox", "tkinter.ttk", "tomllib", "typing", "urllib.request",
-    "uuid", "webbrowser", "winreg", "xml.sax.saxutils", "zipfile",
+    "tkinter.messagebox", "tkinter.ttk", "tomllib", "typing", "urllib.error",
+    "urllib.request", "uuid", "webbrowser", "winreg", "xml.sax.saxutils", "zipfile",
 )
 """Módulos de la biblioteca estándar que importa prdrive y calienta `precompilar()`.
 
