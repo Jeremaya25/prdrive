@@ -241,7 +241,6 @@ class TablaLienzo:
         al_elegir: El del constructor; se puede cambiar.
         puede_dejar: El del constructor; se puede cambiar.
         al_activar: El del constructor; se puede cambiar.
-        vacio: Lo que se dice cuando no hay ninguna fila; se puede cambiar.
         filas: Por `iid`, la `FilaTabla` que se dibuja.
         orden: Los `iid`, de arriba abajo.
         elegida: El `iid` de la fila elegida, o `None`.
@@ -313,25 +312,6 @@ class TablaLienzo:
                 cv.bind("<Leave>", lambda _e: self._salir())
             cv.bind("<FocusIn>", lambda _e: self._foco(True))
             cv.bind("<FocusOut>", lambda _e: self._foco(False))
-
-    @property
-    def vacio(self) -> str:
-        """Lo que se dice cuando no hay ninguna fila."""
-        return self._vacio
-
-    @vacio.setter
-    def vacio(self, texto: str) -> None:
-        """Cambia lo que se dice sin filas; sin ellas, lo repinta y lo vuelve a medir.
-
-        Con filas no se toca nada: el texto se usará la próxima vez que se
-        quede sin ninguna.
-        """
-        if texto == self._vacio:
-            return
-        self._vacio = texto
-        if not self.orden:
-            self._tarjeta_hecha = ()            # misma medida, otro texto: la tarjeta se rehace
-            self.poner([])
 
     # ------------------------------------------------------------- la letra
     def _fuente(self, letra: str) -> str:

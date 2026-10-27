@@ -5,17 +5,21 @@ Ningún test arranca rclone ni toca la red: `rcd.arrancar` devuelve un `RcdFalso
 que contesta desde un diccionario y apunta cada llamada. Lo que se comprueba es
 lo que ve la persona:
 
-- la tabla con las filas de «/», la columna de permisos en «—» y qué se le
+- la lista (una `ttk.Treeview`) con las filas de «/», lo que SE VE en ella (el
+  texto del árbol con el nombre y la marca «⇄», el icono, tamaño, fecha y la
+  columna de permisos en «—»), y qué se le
   pidió al servidor (`noMimeType` y nada más) mientras `fsinfo` no dice que sabe
   dar permisos;
 - doble clic, Intro, Retroceso, «↑», «Releer» y el desplegable de remotes;
 - la carpeta de una pareja marcada, y el aviso al estar dentro de ella;
-- un permiso denegado deja la tabla como estaba, lo dice y pone el candado;
+- un permiso denegado deja la lista como estaba, lo dice y pone el candado;
 - `rcd` caído → «Reconectar» (lo relanza y repite la petición); puerto ocupado
   → un solo reintento; sin red al abrir → «Reintentar»; sin remotes → no se
   arranca nada;
 - con permisos (SFTP + `ReadMetadata`): el listado pide metadatos, la columna
   enseña `755` y una carpeta ajena sin acceso sale con candado antes de entrar;
+- una carpeta de 5 000 entradas se abre y se ve entera (la tabla de un lienzo
+  moría con `BadAlloc` pasadas ~850 filas);
 - cerrar la ventana con un listado en vuelo, con hilos de verdad: `parar()` una
   vez y ninguna excepción de Tk.
 """
@@ -42,7 +46,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import segundo_plano, tk_servidor  # noqa: E402
+from ui import icons, segundo_plano, theme, tk_servidor  # noqa: E402
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -167,7 +171,8 @@ def cerrar(dlg) -> None:
 
 
 def nombres(dlg) -> list[str]:
-    return list(dlg.tabla.orden)
+    """Los `iid` de la lista, de arriba abajo."""
+    return [str(i) for i in dlg.lista.get_children()]
 
 
 def frase(dlg) -> str:
@@ -179,18 +184,57 @@ def boton(dlg) -> str:
     return str(dlg.accion.cget("text")) if dlg.accion.winfo_manager() else ""
 
 
-def textos_del_lienzo(dlg) -> list[str]:
-    marco = dlg.tabla.marco
-    return [marco.itemcget(i, "text") for i in marco.find_all() if marco.type(i) == "text"]
+def dice_vacia(dlg) -> bool:
+    """Si la etiqueta «Esta carpeta está vacía.» está puesta sobre la lista."""
+    return dlg.vacia.winfo_manager() == "place" and str(dlg.vacia.cget("text")) == tk_servidor.VACIA
 
 
-def fila(dlg, iid: str):
-    return dlg.tabla._lienzo.filas[iid]
+def texto(dlg, iid: str) -> str:
+    """Lo que se lee en la columna del árbol: el nombre y, si la hay, la marca de pareja."""
+    return str(dlg.lista.item(iid, "text")).strip()
+
+
+def valores(dlg, iid: str) -> tuple[str, str, str]:
+    """Tamaño, fecha y permisos tal como se ven."""
+    return tuple(str(dlg.lista.set(iid, c)) for c in ("tamano", "modificado", "permisos"))
+
+
+def imagen(dlg, iid: str) -> str:
+    """El nombre de la imagen de la fila en Tk (`""` si no lleva)."""
+    foto = dlg.lista.item(iid, "image")
+    return " ".join(str(f) for f in foto) if isinstance(foto, (tuple, list)) else str(foto)
+
+
+def icono(dlg, iid: str) -> str:
+    """El nombre del icono de la fila, comparando su imagen con las del tema."""
+    foto = imagen(dlg, iid)
+    for nombre in ("carpeta", "file", "candado"):
+        if foto == str(icons.get(dlg.lista, nombre, 16, theme.TINTA3, theme.SUPERFICIE)):
+            return nombre
+    return foto
+
+
+def tono(dlg, iid: str) -> str:
+    return " ".join(str(t) for t in dlg.lista.item(iid, "tags"))
+
+
+def lo_que_se_ve(dlg) -> list[tuple]:
+    """Todo lo que la lista dibuja, fila a fila."""
+    return [(i, texto(dlg, i), valores(dlg, i), icono(dlg, i), tono(dlg, i)) for i in nombres(dlg)]
+
+
+def cabeceras(dlg) -> list[str]:
+    return [str(dlg.lista.heading(c, "text")) for c in ("#0", "tamano", "modificado", "permisos")]
+
+
+def elegir(dlg, iid: str) -> None:
+    dlg.lista.selection_set(iid)
+    dlg.lista.focus(iid)
 
 
 def pulsar(dlg, secuencia: str) -> None:
-    dlg.tabla.marco.focus_force()
-    dlg.tabla.marco.event_generate(secuencia)
+    dlg.lista.focus_force()
+    dlg.lista.event_generate(secuencia)
     dlg.update()
 
 
@@ -198,19 +242,25 @@ TIEMPO = [0]
 
 
 def doble_clic(dlg, x: int, y: int) -> None:
-    """Dos pulsaciones seguidas en el mismo sitio de la tabla."""
-    marco = dlg.tabla.marco
+    """Dos pulsaciones seguidas en el mismo sitio de la lista."""
+    lista = dlg.lista
     TIEMPO[0] += 10_000          # lejos del doble clic anterior: dos seguidos serían un triple
     for paso in (0, 50):
-        marco.event_generate("<ButtonPress-1>", x=x, y=y, time=TIEMPO[0] + paso)
-        marco.event_generate("<ButtonRelease-1>", x=x, y=y, time=TIEMPO[0] + paso + 10)
+        lista.event_generate("<ButtonPress-1>", x=x, y=y, time=TIEMPO[0] + paso)
+        lista.event_generate("<ButtonRelease-1>", x=x, y=y, time=TIEMPO[0] + paso + 10)
     dlg.update()
 
 
+def centro(dlg, iid: str) -> tuple[int, int]:
+    """El centro de la fila `iid` en la lista (tiene que estar a la vista)."""
+    dlg.update()
+    x, y, ancho, alto = dlg.lista.bbox(iid)
+    return x + ancho // 2, y + alto // 2
+
+
 def elegir_y_entrar(dlg, iid: str) -> None:
-    """Doble clic sobre la fila: dos pulsaciones seguidas en el mismo sitio."""
-    x0, y0, x1, y1 = dlg.tabla._lienzo.caja(iid)
-    doble_clic(dlg, (x0 + x1) // 2, (y0 + y1) // 2)
+    """Doble clic sobre la fila."""
+    doble_clic(dlg, *centro(dlg, iid))
 
 
 with sandbox():
@@ -225,12 +275,13 @@ with sandbox():
     c("el título de la ventana", dlg.title().endswith("Servidor"), True)
     c("se arrancó un solo rcd, en el hilo de Tk", len(LLAMADAS_ARRANCAR), 1)
     c("se esperó a que contestara", falso.esperas, 1)
-    c("la tabla tiene las filas de «/»: carpetas primero", nombres(dlg),
+    c("la lista tiene las filas de «/»: carpetas primero", nombres(dlg),
       ["datos", "privado", "leeme.txt"])
-    c("la columna Permisos dice «—» en todas", {dlg.tabla.filas[i][3] for i in nombres(dlg)}, {"—"})
+    c("la columna Permisos dice «—» en todas", {valores(dlg, i)[2] for i in nombres(dlg)}, {"—"})
     c("el tamaño de una carpeta es «—» y el de un archivo, legible",
-      (dlg.tabla.filas["datos"][1], dlg.tabla.filas["leeme.txt"][1]), ("—", "2 KB"))
-    c("las columnas", dlg.tabla.cabeceras, ["Nombre", "Tamaño", "Modificado", "Permisos"])
+      (valores(dlg, "datos")[0], valores(dlg, "leeme.txt")[0]), ("—", "2 KB"))
+    c("la fecha se lee", valores(dlg, "leeme.txt")[1].endswith(":00"), True)
+    c("las columnas", cabeceras(dlg), ["Nombre", "Tamaño", "Modificado", "Permisos"])
     c("se pidió fsinfo y no metadata",
       [p["opt"] for p in falso.listados()], [{"noMimeType": True}])
     c("fsinfo con el mismo fs que los listados",
@@ -242,9 +293,17 @@ with sandbox():
     c("el indicador no dice nada y no hay botón", (frase(dlg), boton(dlg)), ("", ""))
     c("el desplegable enseña el remote", dlg.elegido.get(), "nas")
     c("una carpeta y un archivo llevan su icono",
-      (fila(dlg, "datos").celdas[0].nombre, fila(dlg, "leeme.txt").celdas[0].nombre),
-      ("carpeta", "file"))
-    c("«datos» no es la carpeta de ninguna pareja: sin marca", dlg.tabla.filas["datos"][0], "datos")
+      (icono(dlg, "datos"), icono(dlg, "leeme.txt")), ("carpeta", "file"))
+    c("«datos» no es la carpeta de ninguna pareja: sin marca", texto(dlg, "datos"), "datos")
+    # Lo que SE VE: el texto del árbol, la imagen y los valores de cada fila.
+    vista = [(i, str(dlg.lista.item(i, "text")), tuple(map(str, dlg.lista.item(i, "values"))),
+              imagen(dlg, i)) for i in nombres(dlg)]
+    c("cada fila dice su nombre en el árbol",
+      [v[1].strip() for v in vista], ["datos", "privado", "leeme.txt"])
+    c("  y sus valores (tamaño, fecha, permisos)",
+      [(v[2][0], v[2][2]) for v in vista], [("—", "—"), ("—", "—"), ("2 KB", "—")])
+    c("  y todas llevan una imagen", all(v[3] for v in vista), True)
+    c("  y se ve la columna del árbol, con el nombre", sorted(str(x) for x in dlg.lista.cget("show")), ["headings", "tree"])
 
     # -----------------------------------------------------------------------
     # 2. Entrar con doble clic, la marca de la pareja, el aviso y subir
@@ -252,9 +311,11 @@ with sandbox():
     elegir_y_entrar(dlg, "datos")
     c("doble clic en «datos» lista «datos»", falso.listados()[-1]["remote"], "datos")
     c("la ruta de arriba dice «/datos»", dlg.ruta.cget("text"), "/datos")
-    c("la tabla tiene lo de «datos»", nombres(dlg), ["notas", "a.txt"])
-    c("la carpeta de la pareja enseña «  ⇄ Notas»", dlg.tabla.filas["notas"][0], "notas  ⇄ Notas")
-    c("un archivo no lleva marca", dlg.tabla.filas["a.txt"][0], "a.txt")
+    c("la lista tiene lo de «datos»", nombres(dlg), ["notas", "a.txt"])
+    c("la carpeta de la pareja enseña «  ⇄ Notas» en el texto que se ve",
+      (texto(dlg, "notas"), "⇄ Notas" in str(dlg.lista.item("notas", "text"))),
+      ("notas  ⇄ Notas", True))
+    c("un archivo no lleva marca", texto(dlg, "a.txt"), "a.txt")
     c("fuera de la pareja el indicador calla", frase(dlg), "")
     elegir_y_entrar(dlg, "notas")
     c("dentro de la pareja: el indicador lo dice", frase(dlg), "Estás dentro de la pareja «Notas».")
@@ -266,10 +327,10 @@ with sandbox():
     n = len(falso.listados())
     dlg.arriba.invoke()
     c("«↑» en la raíz no pide nada", len(falso.listados()), n)
-    dlg.tabla.elegir("datos")
+    elegir(dlg, "datos")
     pulsar(dlg, "<Return>")
     c("Intro entra en la carpeta elegida", dlg.ruta.cget("text"), "/datos")
-    dlg.tabla.elegir("a.txt")
+    elegir(dlg, "a.txt")
     n = len(falso.listados())
     pulsar(dlg, "<Return>")
     c("Intro en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
@@ -282,7 +343,7 @@ with sandbox():
     # -----------------------------------------------------------------------
     falso = RcdFalso(respuestas())
     dlg = abrir(falso)
-    c("una carpeta con filas no dice que esté vacía", tk_servidor.VACIA in textos_del_lienzo(dlg), False)
+    c("una carpeta con filas no dice que esté vacía", dice_vacia(dlg), False)
     elegir_y_entrar(dlg, "datos")
     falso.respuestas[("operations/list", "datos")] = lista()
     botones = []
@@ -299,25 +360,27 @@ with sandbox():
     c("«Releer» vuelve a pedir la carpeta y se ve vacía",
       (falso.listados()[-1]["remote"], nombres(dlg), dlg.cuenta.cget("text")),
       ("datos", [], "0 elementos"))
-    c("una carpeta vacía lo dice", tk_servidor.VACIA in textos_del_lienzo(dlg), True)
+    c("una carpeta vacía lo dice", dice_vacia(dlg), True)
     cerrar(dlg)
 
     # -----------------------------------------------------------------------
-    # 4. Un permiso denegado deja la tabla, lo dice y pone el candado
+    # 4. Un permiso denegado deja la lista, lo dice y pone el candado
     # -----------------------------------------------------------------------
     falso = RcdFalso(respuestas())
     dlg = abrir(falso)
-    antes = dlg.tabla.leer()
+    antes = lo_que_se_ve(dlg)
     elegir_y_entrar(dlg, "privado")
-    c("la tabla sigue con las filas de antes", (nombres(dlg), dlg.tabla.leer()),
-      (["datos", "privado", "leeme.txt"], antes))
+    c("la lista sigue con las filas de antes (salvo el candado)",
+      (nombres(dlg), [f[:3] for f in lo_que_se_ve(dlg)]),
+      (["datos", "privado", "leeme.txt"], [f[:3] for f in antes]))
     c("la ruta no cambia", dlg.ruta.cget("text"), "/")
     c("el indicador lo dice", frase(dlg), "No tienes permiso para ver esta carpeta.")
     c("y no hay botón", boton(dlg), "")
     c("«privado» lleva candado y tono apagado",
-      (fila(dlg, "privado").celdas[0].nombre, fila(dlg, "privado").tono), ("candado", "apagado"))
-    c("las demás no", (fila(dlg, "datos").celdas[0].nombre, fila(dlg, "datos").tono),
-      ("carpeta", ""))
+      (icono(dlg, "privado"), tono(dlg, "privado")), ("candado", "apagado"))
+    c("las demás no", (icono(dlg, "datos"), tono(dlg, "datos")), ("carpeta", "ok"))
+    c("el tono apagado es el de la tinta suave del tema",
+      str(dlg.lista.tag_configure("apagado", "foreground")), theme.TINTA3)
     cerrar(dlg)
 
     # -----------------------------------------------------------------------
@@ -327,7 +390,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_y_entrar(dlg, "datos")
     c("una carpeta que ya no existe", frase(dlg), "Esa carpeta ya no existe en el servidor.")
-    c("y la tabla sigue", nombres(dlg), ["datos", "privado", "leeme.txt"])
+    c("y la lista sigue", nombres(dlg), ["datos", "privado", "leeme.txt"])
     cerrar(dlg)
 
     # -----------------------------------------------------------------------
@@ -339,13 +402,13 @@ with sandbox():
     elegir_y_entrar(dlg, "datos")
     c("se dice que se perdió rclone", frase(dlg), "Se ha perdido la conexión con rclone.")
     c("sale «Reconectar», no «Reintentar»", boton(dlg), "Reconectar")
-    c("la tabla sigue", dlg.ruta.cget("text"), "/")
+    c("la lista sigue", dlg.ruta.cget("text"), "/")
     dlg.accion.invoke()
     c("se relanzó rcd", len(LLAMADAS_ARRANCAR), 2)
     c("el viejo se paró", primero.paradas, 1)
     c("el nuevo se esperó y repitió «datos»",
       (segundo.esperas, segundo.listados()[-1]["remote"]), (1, "datos"))
-    c("la tabla ya tiene lo de «datos» y no queda botón",
+    c("la lista ya tiene lo de «datos» y no queda botón",
       (nombres(dlg), boton(dlg), frase(dlg)), (["notas", "a.txt"], "", ""))
     cerrar(dlg)
     c("al cerrar solo se para el que vive", (primero.paradas, segundo.paradas), (1, 1))
@@ -358,7 +421,7 @@ with sandbox():
     uno.error_esperar = ocupado
     dlg = abrir(uno, dos)
     c("PuertoOcupado una vez: se relanza una sola vez", len(LLAMADAS_ARRANCAR), 2)
-    c("  y la tabla sale", nombres(dlg), ["datos", "privado", "leeme.txt"])
+    c("  y la lista sale", nombres(dlg), ["datos", "privado", "leeme.txt"])
     c("  sin error", (frase(dlg), boton(dlg)), ("", ""))
     c("  y el que no pudo abrir el puerto se paró (no queda apuntado)", uno.paradas, 1)
     cerrar(dlg)
@@ -369,7 +432,7 @@ with sandbox():
     c("PuertoOcupado dos veces: no se prueba una tercera", len(LLAMADAS_ARRANCAR), 2)
     c("  el indicador dice el error y deja reintentarlo", (frase(dlg), boton(dlg)),
       (str(ocupado), "Reintentar"))
-    c("  y la tabla sigue vacía", nombres(dlg), [])
+    c("  y la lista sigue vacía", nombres(dlg), [])
     cerrar(dlg)
 
     # -----------------------------------------------------------------------
@@ -380,8 +443,7 @@ with sandbox():
     dlg = abrir(falso)
     c("la primera petición falla sin red", frase(dlg), "No hay conexión con el servidor.")
     c("sale «Reintentar»", boton(dlg), "Reintentar")
-    c("la tabla no dice «vacía» sobre un servidor que no contesta",
-      tk_servidor.VACIA in textos_del_lienzo(dlg), False)
+    c("la lista no dice «vacía» sobre un servidor que no contesta", dice_vacia(dlg), False)
     falso.respuestas[("operations/list", "")] = lista(item("x.txt"))
     dlg.accion.invoke()
     c("«Reintentar» repite la petición de apertura sin relanzar rcd",
@@ -427,7 +489,7 @@ with sandbox():
     c("elegir otro remote lista su raíz con su fs", nuevo.listados()[-1]["fs"], "otro:/")
     c("  y pregunta por sus permisos con ese mismo fs",
       [p for m, p in nuevo.llamadas if m == "operations/fsinfo"][-1], {"fs": "otro:/"})
-    c("  la tabla es la de la raíz del otro", nombres(dlg), ["raiz-de-otro"])
+    c("  la lista es la de la raíz del otro", nombres(dlg), ["raiz-de-otro"])
     elegir_y_entrar(dlg, "raiz-de-otro")
     c("  y los listados siguientes van al otro remote", nuevo.listados()[-1]["fs"], "otro:/")
     cerrar(dlg)
@@ -441,7 +503,7 @@ with sandbox():
     dlg.elegido.set("otro")
     dlg.elegido.event_generate("<<ComboboxSelected>>")
     dlg.update()
-    c("un cambio de remote fallido deja la tabla y el desplegable en el de antes",
+    c("un cambio de remote fallido deja la lista y el desplegable en el de antes",
       (nombres(dlg), dlg.elegido.get(), frase(dlg)),
       (antes, "nas", "rclone dice: no existe"))
     cerrar(dlg)
@@ -465,12 +527,12 @@ with sandbox():
       [p for m, p in conmeta.llamadas if m == "operations/stat"],
       [{"fs": "nas:", "remote": "", "opt": {"metadata": True}}])
     c("la columna enseña los permisos",
-      {i: dlg.tabla.filas[i][3] for i in nombres(dlg)},
+      {i: valores(dlg, i)[2] for i in nombres(dlg)},
       {"publica": "755", "ajena": "700", "mia": "700", "a.txt": "644"})
     c("la carpeta 0o40700 de otro dueño sale con candado antes de entrar",
-      (fila(dlg, "ajena").celdas[0].nombre, fila(dlg, "ajena").tono), ("candado", "apagado"))
-    c("la mía, con la misma máscara, no", fila(dlg, "mia").celdas[0].nombre, "carpeta")
-    c("la pública tampoco", fila(dlg, "publica").celdas[0].nombre, "carpeta")
+      (icono(dlg, "ajena"), tono(dlg, "ajena")), ("candado", "apagado"))
+    c("la mía, con la misma máscara, no", icono(dlg, "mia"), "carpeta")
+    c("la pública tampoco", icono(dlg, "publica"), "carpeta")
     cerrar(dlg)
 
     webdav = RcdFalso({("operations/fsinfo", None): FSINFO_SI,
@@ -500,36 +562,46 @@ with sandbox():
     model.RCLONE_CONF.write_text("[nas]\ntype = sftp\n", encoding="utf-8")
 
     # -----------------------------------------------------------------------
-    # 11b. La tabla se activa como las demás (`al_activar`) y calla hasta tener un listado
+    # 11b. Doble clic solo sobre una fila, Intro, y «vacía» solo con un listado delante
     # -----------------------------------------------------------------------
     model.RCLONE_CONF.write_text("[nas]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
                                  encoding="utf-8")
     falso = RcdFalso(respuestas())
     dlg = abrir(falso)
-    dlg.tabla.elegir("datos")
+    elegir(dlg, "datos")
     n = len(falso.listados())
-    x0, y0, x1, y1 = dlg.tabla._lienzo.caja("datos")
-    doble_clic(dlg, (x0 + x1) // 2, 2)                     # sobre la cabecera
+    cx, cy = centro(dlg, "datos")
+    c("la cabecera es la cabecera para Tk", dlg.lista.identify_region(cx, 2), "heading")
+    doble_clic(dlg, cx, 2)                                  # sobre la cabecera
     c("doble clic en la cabecera con una fila elegida no entra en ella",
-      (len(falso.listados()), dlg.ruta.cget("text"), dlg.tabla.elegida), (n, "/", "datos"))
-    doble_clic(dlg, (x0 + x1) // 2, (y0 + y1) // 2)
-    c("doble clic en la fila elegida sí entra", (dlg.ruta.cget("text"), nombres(dlg)),
+      (len(falso.listados()), dlg.ruta.cget("text"), dlg.lista.selection()), (n, "/", ("datos",)))
+    doble_clic(dlg, 1, 2)                                   # sobre «Nombre», en el borde
+    c("  ni en el borde de la cabecera", (len(falso.listados()), dlg.ruta.cget("text")), (n, "/"))
+    cx, cy = centro(dlg, "datos")
+    doble_clic(dlg, cx, cy)
+    c("doble clic en una fila sí entra", (dlg.ruta.cget("text"), nombres(dlg)),
       ("/datos", ["notas", "a.txt"]))
-    c("el doble clic y Intro son los de la tabla (`al_activar`), no unos atados por la ventana",
-      ("_doble_clic" in dlg.tabla.marco.bind("<Double-1>"),
-       "_intro" in dlg.tabla.marco.bind("<Return>"),
-       "_intro" in dlg.tabla.marco.bind("<KP_Enter>"),
-       dlg.tabla._lienzo.al_activar is not None), (True, True, True, True))
-    dlg.tabla.elegir("a.txt")
+    elegir(dlg, "a.txt")
     n = len(falso.listados())
-    a0, b0, a1, b1 = dlg.tabla._lienzo.caja("a.txt")
-    doble_clic(dlg, (a0 + a1) // 2, (b0 + b1) // 2)
+    doble_clic(dlg, *centro(dlg, "a.txt"))
     c("doble clic en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
       (n, "/datos"))
-    dlg.tabla.elegir("notas")
+    elegir(dlg, "notas")
     pulsar(dlg, "<KP_Enter>")
     c("Intro del teclado numérico entra en la carpeta elegida", dlg.ruta.cget("text"),
       "/datos/notas")
+    cerrar(dlg)
+
+    # iids que podrían confundirse con otra cosa: números, llaves, espacios
+    raros = ["123", "{llave}", "con espacio", "a\\b", "0"]
+    falso = RcdFalso(respuestas(lista(*[item(n_, True) for n_ in raros],
+                                      item("zeta.txt", tamano=1))))
+    dlg = abrir(falso)
+    c("nombres raros son iids distintos y completos",
+      sorted(nombres(dlg)), sorted([*raros, "zeta.txt"]))
+    c("  y se leen tal cual en el árbol", sorted(texto(dlg, i) for i in raros), sorted(raros))
+    elegir_y_entrar(dlg, "123")
+    c("  y se entra en una carpeta de nombre numérico", falso.listados()[-1]["remote"], "123")
     cerrar(dlg)
 
     # «Esta carpeta está vacía.» solo con un listado delante
@@ -537,17 +609,39 @@ with sandbox():
     segundo_plano.lanzar = LANZAR_DE_VERDAD
     tarda = RcdFalso(respuestas(lambda: (lento_.wait(5), lista())[1]))
     dlg = abrir(tarda)
-    c("mientras conecta, la tabla no dice que esté vacía",
-      (dlg.tabla.vacio, tk_servidor.VACIA in textos_del_lienzo(dlg)), ("", False))
+    c("mientras conecta, la lista no dice que esté vacía", dice_vacia(dlg), False)
     lento_.set()
     fin = time.monotonic() + 5
     while not dlg.cuenta.cget("text") and time.monotonic() < fin:
         raiz.update()
         time.sleep(0.01)
-    c("llegado el listado (vacío), sí lo dice",
-      (dlg.tabla.vacio, tk_servidor.VACIA in textos_del_lienzo(dlg)), (tk_servidor.VACIA, True))
+    c("llegado el listado (vacío), sí lo dice", dice_vacia(dlg), True)
     cerrar(dlg)
     segundo_plano.lanzar = segundo_plano.en_el_acto
+
+    # -----------------------------------------------------------------------
+    # 11c. Una carpeta de miles de entradas: la lista solo pinta las que se ven
+    # -----------------------------------------------------------------------
+    MUCHAS = 5000
+    grande = RcdFalso(respuestas(lista(*[item(f"f{n_:05d}.txt", tamano=n_) for n_ in range(MUCHAS)],
+                                        *[item(f"d{n_:03d}", True) for n_ in range(20)])))
+    errores.clear()
+    dlg = abrir(grande)
+    dlg.update()
+    c("5 000 entradas: la ventana abre, sin error de Tk", errores, [])
+    c("  y la lista tiene todas", len(nombres(dlg)), MUCHAS + 20)
+    c("  y el pie las cuenta", dlg.cuenta.cget("text"), f"{MUCHAS + 20} elementos")
+    c("  y la lista no pide un alto de miles de píxeles", dlg.lista.winfo_reqheight() < 2000, True)
+    c("  y la ventana tampoco", dlg.winfo_reqheight() < 3000, True)
+    c("  las carpetas van primero y se leen", (nombres(dlg)[0], texto(dlg, "d000")),
+      ("d000", "d000"))
+    c("  y la última fila se lee", (valores(dlg, "f04999.txt")[0], texto(dlg, "f04999.txt")),
+      ("4,9 KB", "f04999.txt"))
+    dlg.lista.see("f04999.txt")
+    dlg.update()
+    c("  se puede desplazar hasta la última fila y verla",
+      dlg.lista.bbox("f04999.txt") != "", True)
+    cerrar(dlg)
 
     # un cambio de remote sin rcd (rclone no arrancó) deja el desplegable en el de antes
     rcd.arrancar = no_arranca

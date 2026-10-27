@@ -446,27 +446,6 @@ textos = [vacia.marco.itemcget(i, "text") for i in vacia.marco.find_withtag("tar
           if vacia.marco.type(i) == "text"]
 c("una tabla sin filas dice lo que se le dio", (vacia.leer(), textos),
   ([], ["No hay ninguna pareja."]))
-
-
-def lo_que_dice(tabla) -> list[str]:
-    """Los textos que la tarjeta de la tabla dibuja (el de «vacía»)."""
-    return [tabla.marco.itemcget(i, "text") for i in tabla.marco.find_withtag("tarjeta")
-            if tabla.marco.type(i) == "text"]
-
-
-c("`vacio` se lee", vacia.vacio, "No hay ninguna pareja.")
-vacia.vacio = "Nada de nada."
-c("cambiar `vacio` sin filas lo repinta, con otro texto de la misma medida también",
-  (vacia.vacio, lo_que_dice(vacia)), ("Nada de nada.", ["Nada de nada."]))
-vacia.vacio = ""
-c("  y a «» lo quita", (vacia.vacio, lo_que_dice(vacia)), ("", []))
-vacia.vacio = "Otra vez."
-vacia.poner(FILAS)
-vacia.vacio = "Con filas no se toca."
-c("  con filas solo se guarda: no dibuja nada",
-  (vacia.vacio, lo_que_dice(vacia), vacia.leer() != []), ("Con filas no se toca.", [], True))
-vacia.poner([])
-c("  y se dice al quedarse sin ellas", lo_que_dice(vacia), ["Con filas no se toca."])
 vacia.marco.destroy()
 suelta = TablaLienzo(marco, (("", 0, False), ("Nombre", 0, False)))
 suelta.poner([FilaTabla("a", (CeldaIcono("ok", "bien"), "texto suelto"))])

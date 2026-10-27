@@ -1156,8 +1156,6 @@ class Tabla:
         vacio: Lo que se dice cuando no hay ninguna fila.
         alto_fila: El alto mínimo de cada fila, en medidas del diseño: 36 la
             de una lista, 30 la de una tabla larga que solo se lee.
-        al_activar: Lo que se llama, sin argumentos, al abrir la fila elegida:
-            con un doble clic sobre ella o con Intro. Solo cuenta con `al_elegir`.
 
     Attributes:
         marco: Lo que se coloca (`grid()`): el lienzo, que no tiene ningún
@@ -1171,26 +1169,16 @@ class Tabla:
     """
 
     def __init__(self, parent, columnas, al_elegir=None, vacio: str = "",
-                 alto_fila: int = 36, al_activar=None):
+                 alto_fila: int = 36):
         from .tk_tabla import TablaLienzo
-        self.alto_fila = alto_fila
+        self.vacio, self.alto_fila = vacio, alto_fila
         self.n = len(columnas)
         self.cabeceras = [titulo for titulo, _ancho, _estira in columnas]
         self._lienzo = TablaLienzo(parent, columnas, al_elegir=al_elegir, vacio=vacio,
-                                   alto_fila=alto_fila, rejilla=True, encima=False,
-                                   al_activar=al_activar)
+                                   alto_fila=alto_fila, rejilla=True, encima=False)
         self.marco = self._lienzo.marco
         self.filas: dict[str, list[str]] = {}
         self._lienzo.poner([])      # sin filas aún, ya pide lo que ocupa su cabecera
-
-    @property
-    def vacio(self) -> str:
-        """Lo que se dice cuando no hay ninguna fila (se puede cambiar; sin filas, se repinta)."""
-        return self._lienzo.vacio
-
-    @vacio.setter
-    def vacio(self, texto: str) -> None:
-        self._lienzo.vacio = texto
 
     @property
     def al_elegir(self):

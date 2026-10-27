@@ -4,7 +4,13 @@
 Solo dibuja. Qué se enseña y cómo se navega lo decide `ui/servidor.py`, que no
 importa Tk; el `rclone rcd` que contesta es `common/rcd.py`. Aquí se conecta
 una cosa con la otra: la barra (remote, ruta, «↑», «Releer»), la línea del
-indicador, la tabla y el pie.
+indicador, la lista y el pie.
+
+La lista es una `ttk.Treeview`, como la de «Carpetas del remoto»
+(`tk_pairs.explorador_remoto`): solo pinta las filas que se ven, así que una
+carpeta con miles de entradas cuesta lo mismo que una con diez. La tabla de un
+solo lienzo (`tk.Tabla`) pide su alto entero y, pasadas unas 850 filas, el
+servidor X mata el proceso con `BadAlloc`.
 
 La ventana se abre en el acto y lee después (regla #66 de `ui.md`). El `Popen`
 del `rcd` va en el hilo de Tk (`rcd.arrancar()`: en Linux el hijo muere cuando
@@ -25,9 +31,8 @@ from typing import NamedTuple
 from common import config_file, model, rcd
 from common.model import Config, ConfigError
 
-from . import remote_picker, segundo_plano, servidor, theme
-from .tk import (CeldaIcono, FilaTabla, Indicador, Sondeo, Tabla, centrar, cuerpo_visible,
-                 modal, mostrar)
+from . import icons, remote_picker, segundo_plano, servidor, theme
+from .tk import Indicador, Sondeo, centrar, cuerpo_visible, modal, mostrar
 
 COLUMNAS = [
     ("Nombre", 260, True),
@@ -35,7 +40,12 @@ COLUMNAS = [
     ("Modificado", 140, False),
     ("Permisos", 90, False),
 ]
-"""Las columnas de la tabla: título, ancho mínimo en medidas del diseño y si estira."""
+"""Las columnas de la lista: título, ancho en medidas del diseño y si estira.
+
+La primera es la del árbol (`#0`), la única de una `Treeview` que lleva icono.
+"""
+FILAS_VISIBLES = 12
+"""Cuántas filas enseña la lista sin desplazarse."""
 
 VACIA = "Esta carpeta está vacía."
 CONECTANDO = "Conectando con el servidor…"
@@ -98,7 +108,26 @@ def _leer(r: rcd.Rcd, p: servidor.Peticion, tipo: str,
     return Lectura(permisos, mi_uid, servidor.entradas_de(respuesta))
 
 
-def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list[FilaTabla]:
+class FilaLista(NamedTuple):
+    """Una fila de la lista, lista para insertar en la `Treeview`.
+
+    Args:
+        iid: El nombre de la entrada (único dentro de una carpeta).
+        texto: Lo que se lee en la columna del árbol: el nombre y, si la carpeta
+            es la de una pareja, su marca.
+        valores: Tamaño, fecha y permisos.
+        icono: `carpeta`, `file` o `candado`.
+        tono: `apagado` para lo que no se puede abrir; si no, `ok`.
+    """
+
+    iid: str
+    texto: str
+    valores: tuple[str, str, str]
+    icono: str
+    tono: str
+
+
+def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list[FilaLista]:
     """Devuelve las filas de lo que enseña `nav`: icono, nombre, tamaño, fecha y permisos.
 
     Una carpeta que es la de una pareja lleva su nombre; una en la que no se
@@ -107,7 +136,7 @@ def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list
     """
     filas = []
     for e in nav.entradas:
-        nombre, tono, icono = e.nombre, "", "file"
+        nombre, tono, icono = e.nombre, "ok", "file"
         if e.es_carpeta:
             icono = "carpeta"
             hija = nav.hijo(e.nombre)
@@ -116,11 +145,11 @@ def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list
                 nombre += f"{MARCA_PAREJA}{pareja}"
             if (nav.remote, hija) in nav.sin_acceso or servidor.sin_acceso_previo(e, mi_uid):
                 icono, tono = "candado", "apagado"
-        filas.append(FilaTabla(
-            e.nombre,
-            (CeldaIcono(icono, nombre), servidor.tamano_legible(e.tamano),
-             servidor.fecha_legible(e.fecha), servidor.texto_permisos(e.modo)),
-            tono))
+        filas.append(FilaLista(
+            e.nombre, nombre,
+            (servidor.tamano_legible(e.tamano), servidor.fecha_legible(e.fecha),
+             servidor.texto_permisos(e.modo)),
+            icono, tono))
     return filas
 
 
@@ -132,16 +161,6 @@ def _leer_conf() -> str:
         return ""
 
 
-def _decir_vacio(tabla: Tabla, texto: str) -> None:
-    """Cambia lo que dice la tabla cuando no tiene filas y la repinta.
-
-    La tabla nace callada: mientras no ha llegado el primer listado,
-    «Esta carpeta está vacía.» sobre una ventana que aún conecta, o que no ha
-    podido, mentiría.
-    """
-    tabla.vacio = texto
-
-
 def open_dialog(parent, config: Config) -> None:
     """Abre la ventana «Servidor»; no devuelve nada.
 
@@ -151,7 +170,7 @@ def open_dialog(parent, config: Config) -> None:
     Args:
         parent: La ventana de la que cuelga.
         config: El config de este dispositivo: de él salen las parejas que se
-            marcan en la tabla y el remote interno que no se ofrece.
+            marcan en la lista y el remote interno que no se ofrece.
     """
     from tkinter import ttk
 
@@ -198,9 +217,29 @@ def open_dialog(parent, config: Config) -> None:
     accion.grid_remove()
     dlg.indicador, dlg.sondeo = indicador, sondeo      # como en «Dispositivos»: los tests los miran
 
-    tabla = Tabla(marco, COLUMNAS, al_elegir=lambda: None, al_activar=lambda: entrar())
-    tabla.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
-    dlg.tabla, dlg.accion, dlg.elegido = tabla, accion, elegido
+    # La carpeta y el archivo llevan su icono en la columna del árbol (#0), la única
+    # de una `Treeview` que lo admite; el árbol no se despliega: se entra.
+    tarjeta = ttk.Frame(marco, style="Card.TFrame",
+                        padding=(theme.E2, theme.E2, theme.E1, theme.E1))
+    tarjeta.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
+    tarjeta.columnconfigure(0, weight=1)
+    lista = ttk.Treeview(tarjeta, columns=("tamano", "modificado", "permisos"),
+                         show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="browse")
+    for columna, (titulo, ancho, estira) in zip(("#0", "tamano", "modificado", "permisos"),
+                                                COLUMNAS):
+        lista.heading(columna, text=titulo, anchor="w")
+        lista.column(columna, width=icons.px(lista, ancho), stretch=estira, anchor="w")
+    lista.grid(row=0, column=0, sticky="nsew")
+    theme.marcar_lista(lista)
+    desplazar = ttk.Scrollbar(tarjeta, orient="vertical", command=lista.yview)
+    lista.configure(yscrollcommand=desplazar.set)
+    desplazar.grid(row=0, column=1, sticky="ns")
+    # «Vacía» se dice con una etiqueta encima de la lista sin filas, y solo cuando
+    # ha llegado un listado: una ventana que aún conecta no sabe si está vacía.
+    vacia = ttk.Label(tarjeta, text=VACIA, style="Pista.TLabel")
+    iconos = {nombre: icons.get(lista, nombre, 16, theme.TINTA3, theme.SUPERFICIE)
+              for nombre in ("carpeta", "file", "candado")}
+    dlg.lista, dlg.vacia, dlg.accion, dlg.elegido = lista, vacia, accion, elegido
     dlg.ruta, dlg.arriba = ruta, arriba
 
     pie = ttk.Frame(marco)
@@ -222,18 +261,36 @@ def open_dialog(parent, config: Config) -> None:
                                                   "Reintentar": reintentar}[boton])
             accion.grid()
 
-    def pintar_tabla() -> None:
-        """Repinta las filas con lo que enseña `nav`."""
+    def pintar_lista() -> None:
+        """Pone en la lista las filas de lo que enseña `nav`."""
         mi_uid = sondeos.get(nav.remote, (False, None))[1]
         estado["entradas"] = {e.nombre: e for e in nav.entradas}
-        tabla.poner(_filas(nav, config, mi_uid))
+        lista.delete(*lista.get_children())
+        for f in _filas(nav, config, mi_uid):
+            foto = iconos[f.icono]
+            lista.insert("", "end", iid=f.iid, text=f" {f.texto}", values=f.valores,
+                         tags=(f.tono,), **({"image": foto} if foto is not None else {}))
+        if estado["abierto"] and not nav.entradas:
+            vacia.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            vacia.place_forget()
+
+    def retocar() -> None:
+        """Cambia el icono y el tono de las filas que ya están, sin rehacer la lista.
+
+        Es lo que hace falta tras un permiso denegado: un candado nuevo, y que la
+        lista no vuelva arriba ni pierda la fila elegida.
+        """
+        mi_uid = sondeos.get(nav.remote, (False, None))[1]
+        for f in _filas(nav, config, mi_uid):
+            if lista.exists(f.iid):
+                foto = iconos[f.icono]
+                lista.item(f.iid, tags=(f.tono,), **({"image": foto} if foto is not None else {}))
 
     def pintar() -> None:
-        """Repinta todo con la carpeta que acaba de llegar: tabla, ruta, aviso de pareja y pie."""
-        if not estado["abierto"]:
-            estado["abierto"] = True
-            _decir_vacio(tabla, VACIA)
-        pintar_tabla()
+        """Repinta todo con la carpeta que acaba de llegar: lista, ruta, aviso de pareja y pie."""
+        estado["abierto"] = True
+        pintar_lista()
         ruta.configure(text=nav.ruta)
         elegido.set(nav.remote)
         pareja = servidor.dentro_de(config, nav.remote, nav.ruta)
@@ -242,7 +299,7 @@ def open_dialog(parent, config: Config) -> None:
         else:
             decir("", "Pista.")
         cuenta.configure(text=servidor.cuantos(len(nav.entradas)))
-        # La ventana nace con la tabla vacía: al llegar las filas crece (nunca mengua).
+        # La ventana nace con la lista vacía: al llegar el listado puede crecer (nunca mengua).
         if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
             centrar(dlg, parent)
 
@@ -303,7 +360,7 @@ def open_dialog(parent, config: Config) -> None:
         pintar()
 
     def fallo(p: servidor.Peticion, error: Exception) -> None:
-        """Dice por qué no llegó el listado `p`; la tabla se queda como estaba."""
+        """Dice por qué no llegó el listado `p`; la lista se queda como estaba."""
         frase = nav.fallo(p, error)
         if frase is None:
             return
@@ -322,7 +379,7 @@ def open_dialog(parent, config: Config) -> None:
             decir(frase, boton="Reintentar")
         else:
             decir(frase)
-        pintar_tabla()                      # un fallo de permiso deja un candado
+        retocar()                           # un fallo de permiso deja un candado
 
     def reconectar() -> None:
         """Relanza `rcd` y repite la última petición."""
@@ -337,11 +394,23 @@ def open_dialog(parent, config: Config) -> None:
             lanzar_peticion(estado["ultima"], esperar=True)
 
     # ------------------------------------------------------------- navegar
-    def entrar() -> None:
-        """Entra en la carpeta elegida (`al_activar`: doble clic o Intro); un archivo, nada."""
-        e = estado["entradas"].get(tabla.elegida)
+    def entrar(_evento=None) -> str:
+        """Entra en la carpeta elegida; un archivo, nada."""
+        elegida = lista.selection()
+        e = estado["entradas"].get(str(elegida[0])) if elegida else None
         if e is not None and e.es_carpeta:
             lanzar_peticion(("ruta", nav.hijo(e.nombre)))
+        return "break"
+
+    def doble_clic(evento) -> str | None:
+        """Entra en la fila sobre la que se hace doble clic; en la cabecera, nada."""
+        if lista.identify_region(evento.x, evento.y) not in ("tree", "cell"):
+            return None
+        fila = lista.identify_row(evento.y)
+        if not fila:
+            return None
+        lista.selection_set(fila)
+        return entrar()
 
     def subir(_evento=None) -> str:
         """Sube a la carpeta que contiene a la actual; la raíz es el techo."""
@@ -359,7 +428,10 @@ def open_dialog(parent, config: Config) -> None:
         if nuevo and nuevo != nav.remote:
             lanzar_peticion(("remote", nuevo))
 
-    tabla.marco.bind("<BackSpace>", subir)
+    lista.bind("<Double-Button-1>", doble_clic)
+    lista.bind("<Return>", entrar)
+    lista.bind("<KP_Enter>", entrar)
+    lista.bind("<BackSpace>", subir)
     elegido.bind("<<ComboboxSelected>>", cambiar_remote)
 
     # ------------------------------------------------------------- cerrar
