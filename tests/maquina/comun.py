@@ -295,6 +295,12 @@ def letra_libre() -> str:
                 and not _de_red(letra):
             _letras_usadas.add(letra)
             return letra
+    # Con todas gastadas por las pruebas anteriores de la ejecución (F34 es de las
+    # últimas), se vuelve a una que ya no existe: lleva un buen rato suelta.
+    for letra in "RSTUVWXYZQPON":
+        if not Path(f"{letra}:\\").exists() and not _de_red(letra):
+            _letras_usadas.add(letra)
+            return letra
     raise Saltada("no quedan letras de unidad libres")
 
 
