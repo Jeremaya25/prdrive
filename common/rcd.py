@@ -265,7 +265,7 @@ def arrancar() -> Rcd:
         El `Rcd`, apuntado en `store` para que `store.matar_hijos()` lo corte.
 
     Raises:
-        ConfigError: Si no hay rclone.
+        ConfigError: Si no hay rclone o el sistema no deja ejecutarlo.
     """
     binario = catalog._binary()
     puerto = puerto_libre()
@@ -276,6 +276,9 @@ def arrancar() -> Rcd:
     stderr = tempfile.TemporaryFile()
     try:
         proceso = lanzar(orden, entorno, stderr)
+    except OSError as e:
+        stderr.close()
+        raise ConfigError(f"No se puede ejecutar rclone: {e}") from e
     except BaseException:
         stderr.close()
         raise

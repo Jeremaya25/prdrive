@@ -149,6 +149,21 @@ with sandbox():
     c("y no lanza nada", len(rastro.lanzado), previo)
     catalog._binary = lambda: "/ruta/rclone"
 
+    # arrancar con un binario que existe pero no se puede ejecutar
+    def lanzar_sin_permiso(orden, entorno, stderr):
+        raise PermissionError(13, "Permission denied")
+    rcd.lanzar = lanzar_sin_permiso
+    antes = set(store._HIJOS)
+    try:
+        rcd.arrancar()
+        sin_permiso = None
+    except ConfigError as e:
+        sin_permiso = str(e)
+    c("si el sistema no deja ejecutar rclone, ConfigError con el motivo",
+      sin_permiso is not None and sin_permiso.startswith("No se puede ejecutar rclone:")
+      and "Permission denied" in sin_permiso, True)
+    c("y no queda nada apuntado", set(store._HIJOS), antes)
+
     # esperar: rc/noop falla dos veces y luego contesta
     rastro = Rastro()
     con_falsos(rastro)
@@ -343,8 +358,12 @@ class Manejador(BaseHTTPRequestHandler):
 servidor = HTTPServer(("127.0.0.1", 0), Manejador)
 hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
 hilo.start()
-proxys = {k: os.environ.get(k) for k in ("HTTP_PROXY", "http_proxy")}
+VARIABLES_PROXY = ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")
+proxys = {k: os.environ.get(k) for k in VARIABLES_PROXY}
+# NO_PROXY se vacía: si cubriera 127.0.0.1, el test pasaría aunque `peticion` usara el proxy.
 os.environ["HTTP_PROXY"] = os.environ["http_proxy"] = "http://127.0.0.1:9"
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
 try:
     real = peticion_real(f"http://127.0.0.1:{servidor.server_port}/rc/noop", b"{}",
                          {"Authorization": "Basic eDp5"}, 5)
