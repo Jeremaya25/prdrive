@@ -8,8 +8,14 @@ en la línea de órdenes), que su stderr no sea una tubería que nadie lee, que 
 puerto ocupado se distinga de cualquier otro fallo de arranque, que un error de
 rclone llegue con su mensaje, y que parar no deje el proceso vivo ni lance.
 
+Y que no pueda quedar huérfano con ficheros del dispositivo abiertos: el Job Object
+de Windows, `PDEATHSIG` de Linux y `state/rcd.json` con el pid y la hora de creación
+(nunca la contraseña), que el siguiente arranque usa para matar al que sobrevivió.
+
 `rcd.lanzar`, `rcd.peticion` y `rcd.puerto_libre` se sustituyen: ningún test
-arranca rclone. La única excepción es `peticion` contra un servidor HTTP de
+arranca rclone. Tampoco se mata nada de verdad: `store.matar_arbol`, `pid_alive` y
+`creado` se sustituyen. Lo propio de Windows se fuerza con `rcd.os` y un
+`atar_al_job` falso; la llamada real a esa función solo corre en Windows. La única excepción es `peticion` contra un servidor HTTP de
 mentira en el propio proceso, para comprobar que no pasa por el proxy del sistema.
 """
 
@@ -21,6 +27,7 @@ import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from types import SimpleNamespace
 
 from _harness import Checks, sandbox
 
@@ -33,9 +40,10 @@ c = Checks("rclone rcd vivo")
 class ProcesoFalso:
     """Un `Popen` de mentira: vive hasta que se le da un código de salida."""
 
-    def __init__(self) -> None:
+    def __init__(self, pid: int = 4_000_001) -> None:
         self.returncode = None
         self.matado = False
+        self.pid = pid
 
     def poll(self):
         return self.returncode
@@ -79,6 +87,14 @@ def con_falsos(rastro: Rastro) -> None:
 
 
 lanzar_real, peticion_real, puerto_real = rcd.lanzar, rcd.peticion, rcd.puerto_libre
+
+# Nada de lo de `store` que mira o mata procesos de verdad: lo que viva en el equipo no es de este test.
+matados: list[int] = []
+vivos: set[int] = set()
+horas: dict[int, float] = {}
+store.matar_arbol = matados.append
+store.pid_alive = lambda pid: pid in vivos
+store.creado = horas.get
 espera_quit = rcd.ESPERA_QUIT
 
 c("las esperas son las acordadas",
@@ -337,6 +353,229 @@ with sandbox():
     except Exception:
         lanzo = True
     c("parar es repetible", lanzo, False)
+
+    # --- los cinturones contra el huérfano ---
+    c("el fichero de estado cuelga de STATE_DIR (que los tests mueven)",
+      rcd.fichero_estado(), model.STATE_DIR / "rcd.json")
+
+    def escribir_estado(contenido) -> None:
+        rcd.fichero_estado().parent.mkdir(parents=True, exist_ok=True)
+        rcd.fichero_estado().write_text(
+            contenido if isinstance(contenido, str) else json.dumps(contenido), encoding="utf-8")
+
+    # huérfano vivo con la misma hora de creación: se mata y se borra el fichero
+    matados.clear()
+    vivos.add(4242)
+    horas[4242] = 1_000_000.0
+    escribir_estado({"pid": 4242, "creado": 1_000_000.4})
+    c("un rcd colgado de antes se mata", rcd.limpiar_huerfano(), 4242)
+    c("con matar_arbol", matados, [4242])
+    c("y se borra el fichero", rcd.fichero_estado().exists(), False)
+
+    # misma pid, otra hora de creación: la heredó otro proceso
+    matados.clear()
+    escribir_estado({"pid": 4242, "creado": 900_000.0})
+    c("si el pid lo heredó otro proceso (otra hora), no se mata", rcd.limpiar_huerfano(), None)
+    c("y no se llama a matar_arbol", matados, [])
+    c("pero el fichero se borra", rcd.fichero_estado().exists(), False)
+
+    # pid muerto
+    escribir_estado({"pid": 777, "creado": 1_000_000.0})
+    horas[777] = 1_000_000.0
+    c("un pid que ya no vive no se mata", (rcd.limpiar_huerfano(), matados), (None, []))
+    c("y el fichero se borra", rcd.fichero_estado().exists(), False)
+
+    # no se sabe cuándo se creó el que vive: no se arriesga
+    vivos.add(555)
+    escribir_estado({"pid": 555, "creado": 1_000_000.0})
+    c("si no se puede leer su hora de creación, no se mata", (rcd.limpiar_huerfano(), matados), (None, []))
+    escribir_estado({"pid": 4242, "creado": None})
+    c("ni si lo apuntado no trae hora", (rcd.limpiar_huerfano(), matados), (None, []))
+
+    # nunca a sí mismo
+    vivos.add(os.getpid())
+    horas[os.getpid()] = 1_000_000.0
+    escribir_estado({"pid": os.getpid(), "creado": 1_000_000.0})
+    c("nunca se mata a sí mismo", (rcd.limpiar_huerfano(), matados), (None, []))
+
+    # ilegible o ausente o con basura
+    for nombre, contenido in (("ilegible", "{no es json"), ("una lista", "[1, 2]"),
+                              ("con tipos raros", {"pid": "4242", "creado": "ayer"}),
+                              ("con un booleano por pid", {"pid": True, "creado": 1.0})):
+        escribir_estado(contenido)
+        try:
+            resultado = rcd.limpiar_huerfano()
+            lanzo = False
+        except Exception:
+            resultado, lanzo = "lanzó", True
+        c(f"un fichero {nombre}: None, sin lanzar", (resultado, lanzo, matados), (None, False, []))
+        c(f"  y se borra ({nombre})", rcd.fichero_estado().exists(), False)
+    c("sin fichero: None, sin lanzar", rcd.limpiar_huerfano(), None)
+
+    # si matar falla, tampoco lanza
+    def matar_roto(pid):
+        raise RuntimeError("no se deja")
+    escribir_estado({"pid": 4242, "creado": 1_000_000.0})
+    store.matar_arbol = matar_roto
+    try:
+        resultado = rcd.limpiar_huerfano()
+    except Exception:
+        resultado = "lanzó"
+    c("limpiar_huerfano no lanza aunque matar falle", resultado, None)
+    store.matar_arbol = matados.append
+    matados.clear()
+
+    # arrancar(): limpia antes de lanzar, y apunta {pid, creado} sin la contraseña
+    escribir_estado({"pid": 4242, "creado": 1_000_000.0})
+    rastro = Rastro()
+    visto = {}
+    horas[rastro.proceso.pid] = 2_000_000.5
+
+    def lanzar_mirando(orden, entorno, stderr):
+        visto["matados_al_lanzar"] = list(matados)
+        visto["hilo"] = threading.get_ident()
+        visto["fichero_al_lanzar"] = rcd.fichero_estado().exists()
+        return rastro.lanzar(orden, entorno, stderr)
+    con_falsos(rastro)
+    rcd.lanzar = lanzar_mirando
+    r = rcd.arrancar()
+    c("arrancar mata al huérfano antes de lanzar", visto["matados_al_lanzar"], [4242])
+    c("y el fichero viejo ya no está al lanzar", visto["fichero_al_lanzar"], False)
+    c("el Popen se hace en el hilo que llama a arrancar()", visto["hilo"], threading.get_ident())
+    estado = json.loads(rcd.fichero_estado().read_text(encoding="utf-8"))
+    c("rcd.json guarda el pid y la hora de creación",
+      estado, {"pid": rastro.proceso.pid, "creado": 2_000_000.5})
+    clave = rastro.lanzado[-1][1]["RCLONE_RC_PASS"]
+    usuario = rastro.lanzado[-1][1]["RCLONE_RC_USER"]
+    texto = rcd.fichero_estado().read_text(encoding="utf-8")
+    c("rcd.json no guarda la contraseña", clave in texto, False)
+    c("ni el usuario", usuario in texto, False)
+    c("sigue apuntado para matar_hijos()", r.proceso in store._HIJOS, True)
+
+    # y si ese rcd sobrevive, el siguiente arranque lo mata
+    matados.clear()
+    vivos.add(rastro.proceso.pid)
+    rastro2 = Rastro()
+    rastro2.proceso = ProcesoFalso(pid=4_000_002)
+    horas[4_000_002] = 3_000_000.0
+    con_falsos(rastro2)
+    rcd.arrancar()
+    c("un segundo arranque mata al primero si sobrevivió", matados, [rastro.proceso.pid])
+    c("y apunta al nuevo", json.loads(rcd.fichero_estado().read_text(encoding="utf-8"))["pid"], 4_000_002)
+    store.soltar_hijo(r.proceso)
+    store.soltar_hijo(rastro2.proceso)
+
+    # parar() borra rcd.json
+    matados.clear()
+    rastro = Rastro()
+    con_falsos(rastro)
+    r = rcd.arrancar()
+    c("hay rcd.json mientras vive", rcd.fichero_estado().exists(), True)
+    rastro.respuestas = [(200, "{}")]
+    rastro.proceso.returncode = 0
+    r.parar()
+    c("parar() borra rcd.json", rcd.fichero_estado().exists(), False)
+
+    # pero no el de otro rcd más reciente
+    rastro_a, rastro_b = Rastro(), Rastro()
+    rastro_b.proceso = ProcesoFalso(pid=4_000_003)
+    con_falsos(rastro_a)
+    ra = rcd.arrancar()
+    con_falsos(rastro_b)
+    rb = rcd.arrancar()
+    rastro_a.proceso.returncode = 0
+    ra.parar()
+    c("parar() no borra el apunte de otro rcd", rcd.fichero_estado().exists(), True)
+    rastro_b.proceso.returncode = 0
+    rb.parar()
+    c("y el último sí lo borra", rcd.fichero_estado().exists(), False)
+
+    # puerto_libre que falla: ConfigError, no OSError
+    def sin_puertos():
+        raise OSError(98, "sin puertos")
+    con_falsos(Rastro())
+    rcd.puerto_libre = sin_puertos
+    try:
+        rcd.arrancar()
+        sin_puerto = None
+    except ConfigError as e:
+        sin_puerto = str(e)
+    except OSError:
+        sin_puerto = "OSError"
+    c("si no hay puerto, ConfigError y no OSError", sin_puerto and sin_puerto.startswith("No se puede abrir"), True)
+
+    # POSIX: el hijo muere con el padre (preexec_fn)
+    previo_prctl = rcd._PRCTL
+    llamadas = []
+    rcd._PRCTL = lambda *a: llamadas.append(a) or 0
+    rcd._morir_con_el_padre()
+    c("_morir_con_el_padre pide PR_SET_PDEATHSIG con SIGKILL", llamadas, [(1, 9, 0, 0, 0)])
+    rcd._PRCTL = None
+    rcd._morir_con_el_padre()                      # sin prctl, no hace nada y no lanza
+    rcd._PRCTL = previo_prctl
+    opciones = rcd._opciones_popen(subprocess.DEVNULL)
+    if sys.platform.startswith("linux"):
+        c("en Linux, el hijo lleva preexec_fn=_morir_con_el_padre",
+          opciones.get("preexec_fn") is rcd._morir_con_el_padre, True)
+        c("y prctl está resuelto en el padre (global del módulo)", rcd._PRCTL is not None, True)
+        c("y sigue siendo jefe de su sesión (para matar_arbol)", opciones["start_new_session"], True)
+    else:
+        print("  (saltado) preexec_fn solo en Linux: no hay PDEATHSIG en este sistema")
+
+    # Windows, forzado: Job Object en vez de preexec_fn
+    os_real = rcd.os
+    rcd.os = SimpleNamespace(name="nt", environ=os.environ, path=os.path, getpid=os.getpid)
+    try:
+        opciones = rcd._opciones_popen(subprocess.DEVNULL)
+        c("en Windows no hay preexec_fn (no existe)", "preexec_fn" in opciones, False)
+        c("ni sesión propia, sí sin consola",
+          ("start_new_session" in opciones, opciones["creationflags"]), (False, model.CREATE_NO_WINDOW))
+        atados = []
+        atar_real = rcd.atar_al_job
+        rcd.atar_al_job = lambda p: atados.append(p) or True
+        rastro = Rastro()
+        con_falsos(rastro)
+        r = rcd.arrancar()
+        c("en Windows, arrancar() ata el proceso al job", atados, [rastro.proceso])
+        c("y apunta rcd.json igual", json.loads(rcd.fichero_estado().read_text(encoding="utf-8"))["pid"],
+          rastro.proceso.pid)
+        store.soltar_hijo(rastro.proceso)
+        rcd.atar_al_job = lambda p: atados.append(p) or False
+        rastro = Rastro()
+        con_falsos(rastro)
+        r = rcd.arrancar()
+        c("si atar_al_job devuelve False, arranca igual",
+          (len(atados), r.proceso in store._HIJOS, rcd.fichero_estado().exists()), (2, True, True))
+        store.soltar_hijo(rastro.proceso)
+        rcd.atar_al_job = atar_real
+    finally:
+        rcd.os = os_real
+    atados = []
+    rcd.atar_al_job = lambda p: atados.append(p) or True
+    con_falsos(Rastro())
+    rcd.arrancar()
+    c("en POSIX, arrancar() no toca el job", atados, [])
+    rcd.atar_al_job = atar_real
+    store.soltar_hijo(rastro.proceso)
+
+    # atar_al_job de verdad
+    if os.name == "nt":
+        dormilon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                    creationflags=model.CREATE_NO_WINDOW)
+        try:
+            c("atar_al_job mete un proceso real en un Job Object", rcd.atar_al_job(dormilon), True)
+            c("y guarda el handle del job", len(rcd._JOBS) >= 1, True)
+        finally:
+            dormilon.kill()
+            dormilon.wait()
+    else:
+        dormilon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            c("fuera de Windows, atar_al_job devuelve False sin lanzar", rcd.atar_al_job(dormilon), False)
+        finally:
+            dormilon.kill()
+            dormilon.wait()
+        print("  (saltado) la llamada real a los Job Objects solo corre en Windows")
 
 # la petición de verdad no pasa por el proxy del sistema
 class Manejador(BaseHTTPRequestHandler):

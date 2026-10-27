@@ -2,7 +2,7 @@
 
 Formerly none: a new area. Design: `docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`. The catalogue it browses: `catalogue.md`; the window pattern it follows: `ui.md`.
 
-This doc is a stub that grows with the feature; today it covers only `common/rcd.py`.
+This doc is a stub that grows with the feature; today it covers only `common/rcd.py` (the process and its anti-orphan belts).
 
 ## The resident `rclone rcd` (`common/rcd.py`)
 
@@ -14,3 +14,13 @@ The explorer talks to ONE `rclone rcd` over HTTP on `127.0.0.1` instead of payin
 - **`arrancar()` does not wait** and must be called on the Tk thread; `esperar()` polls `rc/noop` every 0.1 s (`ESPERA_ARRANQUE = 10 s`) and is what goes to a thread. A 401 or a refused connection both keep it waiting: only the process dying, or the deadline, ends it.
 - **`parar()` never raises**: `core/quit`, then `ESPERA_QUIT = 3 s` (measured against rclone v1.75.2: `core/quit` answers 200 and the process exits ≈1.5 s later), then `kill()`. The process is in `store._HIJOS` from `arrancar()` to `parar()`, so `store.matar_hijos()` also cuts it when the window closes or before the drive is ejected.
 - **Indirection points** (tests replace them, no test starts rclone): `rcd.lanzar`, `rcd.peticion`, `rcd.puerto_libre`. `lanzar` builds its `Popen` arguments with the pure `_opciones_popen()` (`cwd = model.APP_DIR`, `stdin`/`stdout` to `DEVNULL`, `CREATE_NO_WINDOW` on Windows, `start_new_session` on POSIX), which is what the tests assert.
+
+### Never an orphan holding the drive
+
+A surviving `rcd` keeps `rclone.conf` and the binary of the **device** open and blocks the eject, so three belts, from most to least immediate:
+
+1. **Orderly close**: `store.apuntar_hijo()`, cut by `store.matar_hijos()` (above).
+2. **The window dies abruptly**: Windows, `atar_al_job()` puts the child in a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (ctypes; the handle lives in `_JOBS` and is never closed by us, so the OS closes it when the window process dies; a `False` return means no belt, it still starts). Linux, `_opciones_popen()` adds `preexec_fn=_morir_con_el_padre` (`prctl(PR_SET_PDEATHSIG, SIGKILL)`); macOS has no such call, so no `preexec_fn`. The `prctl` pointer is resolved **in the parent** (`_resolver_prctl()`, module global `_PRCTL`) so the child between `fork` and `exec` only calls it. **`PDEATHSIG` fires when the *thread* that forked dies, not the process**: `arrancar()` must run on the Tk (main) thread (verified against rclone v1.75.2: from a thread that ends, the child dies at once; from the main thread it lives), and only `esperar()` goes to a worker.
+3. **One survives anyway**: `arrancar()` writes `state/rcd.json` (`fichero_estado()`, a function because tests move `STATE_DIR`) with `{"pid", "creado"}` (`store.creado()`), **never the password**. The next `arrancar()` calls `limpiar_huerfano()` first: it kills the tree (`store.matar_arbol()`, which needs the `start_new_session` of `_opciones_popen`) only if the pid is alive **and** its creation time matches within 1 s (otherwise another process inherited the number); an unknown creation time is not killed either. The file is always deleted; the function never raises. `parar()` deletes the file only if it still names its own pid. `--doctor` does not touch it.
+
+Order in `arrancar()`: `limpiar_huerfano()` → `lanzar()` → `atar_al_job()` (Windows) → write `rcd.json` → `store.apuntar_hijo()`. A failure of `puerto_libre()` is a `ConfigError`. The tests force Windows by replacing `rcd.os` and fake `atar_al_job`; the real Job Object call only runs on Windows (`(saltado)` elsewhere), and `PDEATHSIG` is covered by asserting `_opciones_popen()`, not by starting a process.
