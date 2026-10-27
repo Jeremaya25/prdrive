@@ -120,9 +120,9 @@ Tres comprobaciones con un pendrive y un Windows de verdad. No bloquean nada. La
 
 | Código | Dónde | Qué hacer | Qué se espera | Código a prueba |
 |---|---|---|---|---|
-| D1 | W | VeraCrypt **instalado**, abierto en la bandeja, y un pendrive de verdad con el contenedor montado: desenchufarlo sin expulsar. | Se apunta si VeraCrypt desmonta y si enseña el globo. No cambia el código: prdrive no deja VeraCrypt en segundo plano ni toca su configuración (`veracrypt.md`). | F34 (caso A) |
+| D1 | W | VeraCrypt **instalado**, abierto en la bandeja, y un pendrive de verdad con el contenedor montado: desenchufarlo sin expulsar. | Se apunta si VeraCrypt desmonta y si enseña el globo. No cambia el código: prdrive no deja VeraCrypt en segundo plano ni toca su configuración (`veracrypt.md`). | F34 (caso A) · nube: ok (F34) |
 | D2 | W | Con el VeraCrypt que viaja, tapar a propósito el aviso de UAC de «Abrir PRDRIVE» y de «Expulsar PRDRIVE» con otras ventanas. | A ≈1 minuto sale una sola vez «VeraCrypt sigue esperando una respuesta…» con dónde buscarlo; contestar después sigue funcionando (monta o desmonta). «Abrir» conserva sus 10 minutos y `:sin_respuesta`; «Expulsar» no se rinde. | `AVISO_PENDIENTE`, `:aviso_oculta` |
-| D3 | W | Con el agente en marcha: desenchufar sin expulsar y volver a enchufar. | Un solo aviso de fantasma, ninguna pasada, no pide la contraseña. Tras «Expulsar PRDRIVE» y «Abrir PRDRIVE» vuelve a la normalidad. | `Agente._fantasmas_extraibles()`, F34 (caso B) |
+| D3 | W | Con el agente en marcha: desenchufar sin expulsar y volver a enchufar. | Un solo aviso de fantasma, ninguna pasada, no pide la contraseña. Tras «Expulsar PRDRIVE» y «Abrir PRDRIVE» vuelve a la normalidad. | `Agente._fantasmas_extraibles()`, F34 (caso B) · nube: ok (F34) |
 
 ## Lo que este plan no cubre
 
