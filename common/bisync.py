@@ -58,11 +58,30 @@ def canonical_path(remote: str) -> str:
     return _NON_CANONICAL.sub("_", remote.strip("\\/"))
 
 
-def strip_hex_string(path: str) -> str:
-    """Quita el sufijo `{hexstring}` que rclone añade a la ruta.
+SUFIJO_ENTORNO = "{x}"
+"""Sufijo que se pone al nombre del remote del dispositivo al predecir la sesión.
 
-    rclone lo añade cuando la config del remote viene de flags, entorno o
-    connection string.
+El `combine` del dispositivo se define solo por el entorno
+(`Config.pen_environment()`: `RCLONE_CONFIG_<DISP>_TYPE`/`_UPSTREAMS`). rclone
+lee esas variables con `configmap.PriorityNormal` (`fs/configmap.go`,
+`ConfigMap()`), `Options.Overridden()` (`fs/registry.go`) las cuenta como
+config sobrescrita y `fs.NewFs()` (`fs/newfs.go`) le añade al nombre del `Fs`
+un sufijo `{hash}`: el extremo es `disp{hash}:ruta`, siempre. `SessionName`
+quita solo la primera `{…}` (`StripHexString`, cmd/bisync/bilib/canonical.go),
+que es ese sufijo, así que las llaves de la carpeta se quedan. El contenido da
+igual: `session_name()` lo quita entero, sea cual sea el hash.
+"""
+
+
+def strip_hex_string(path: str) -> str:
+    """Réplica de `StripHexString` (cmd/bisync/bilib/canonical.go): quita la primera `{…}`.
+
+    Va dirigida al sufijo `{hash}` que `fs.NewFs()` (fs/newfs.go) añade al
+    **nombre** del remote (`nombre{hash}:ruta`) cuando su config viene de flags
+    de backend, del entorno o de una connection string. Si el extremo no lleva
+    ese sufijo, se come la primera `{…}` de la ruta, como rclone.
+    `expected_prefix()` lo reproduce para el remote del dispositivo
+    (`SUFIJO_ENTORNO`).
     """
     opening, closing = path.find("{"), path.find("}")
     if opening >= 0 and closing > opening:
@@ -393,8 +412,14 @@ def expected_prefix(pair: Pair, tipos: dict[str, TipoRemote] | None = None) -> s
     """
     def render(kind: str) -> str:
         """Devuelve el extremo tal como lo escribe rclone al nombrar la sesión."""
+        if kind == "local" and pair.device_remote:
+            # El `combine` del entorno: rclone le pone `{hash}` al nombre
+            # (`SUFIJO_ENTORNO`). No se consulta `tipos`: el `TYPE` del entorno
+            # manda sobre una sección del mismo nombre en el `rclone.conf`.
+            extremo = f"{pair.device_remote}{SUFIJO_ENTORNO}:{pair.ruta_en_combine}"
+            return extremo if extremo.endswith("/") else extremo + "/"
         endpoint = pair.endpoint(kind)
-        if kind == "local" and not pair.device_remote:
+        if kind == "local":
             # El backend `local` sin nombre: su `Root()` también codifica los tramos
             # (`raiz_local()`). En Windows no se ha contrastado y va tal cual.
             return fs_path_local(endpoint if IS_WIN else raiz_local(endpoint))
@@ -417,7 +442,9 @@ def prefijo_comprobable(pair: Pair, tipos: dict[str, TipoRemote] | None = None) 
             `None` lo lee cada vez que hace falta.
     """
     for kind in (pair.mode.source, pair.mode.dest):
-        if kind == "local" and not pair.device_remote:
+        if kind == "local":
+            # Sin `device_remote` es el backend `local` sin nombre; con él, el
+            # `combine` del entorno (`expected_prefix()`). No hay alias que seguir.
             continue
         if resolver_extremo(pair.endpoint(kind), tipos) is None:
             return False
