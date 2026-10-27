@@ -619,7 +619,7 @@ def rellenar_y_pulsar(nombre: str, clave: str, boton: str = "Guardar"):
 
 
 tk_volumen.mostrar = mirar_etiquetas
-tk_volumen.open_dialog(tk_raiz)
+c("cerrarla sin guardar no dice que haya cambiado nada", tk_volumen.open_dialog(tk_raiz), False)
 c("la ventana dice que el nombre es también el del dispositivo, y cuál es ahora",
   any("«Dispositivos…»" in t and "«el pendrive azul»" in t for t in etiquetas), True)
 
@@ -633,17 +633,19 @@ c("con VeraCrypt dice que el pendrive conserva lo suyo, y que se ve al abrirla",
       and "abras" in t for t in etiquetas), True)
 
 tk_volumen.mostrar = rellenar_y_pulsar("Pendrive de Pere", "morado")
-tk_volumen.open_dialog(tk_raiz)
+guardado = tk_volumen.open_dialog(tk_raiz)
 c("«Guardar» guarda lo que dice el formulario", llamadas,
   [("PRDRIVE", "Pendrive de Pere", "morado", None)])
 c("y lo confirma", avisos, ["info"])
+c("  y dice que ha cambiado: la principal relee su título y su icono", guardado, True)
 
 llamadas.clear()
 avisos.clear()
 tk_volumen.mostrar = rellenar_y_pulsar("uno\tdos", "verde")
-tk_volumen.open_dialog(tk_raiz)
+guardado = tk_volumen.open_dialog(tk_raiz)
 c("un nombre que no vale ni llega a guardarse", llamadas, [])
 c("y se dice por qué", len(avisos) == 1 and "control" in avisos[0], True)
+c("  ni dice que haya cambiado", guardado, False)
 
 llamadas.clear()
 tk_volumen.mostrar = rellenar_y_pulsar("Pendrive de Pere", "verde", "Cancelar")

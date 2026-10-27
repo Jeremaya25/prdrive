@@ -17,6 +17,8 @@ Tk, y `Compartida` lo reparte. Lo que se comprueba:
   (`ui_prefs.json`, `ui.lock.json`, el buzón del servicio) no.
 - La lectura no deja nada a medias en `filters/`: lo regenera antes de tomar la
   huella.
+- La identidad (el nombre del dispositivo y el icono de su unidad, el título y
+  el icono de la ventana) sale de `state/fleet.json` y del `autorun.inf`.
 """
 
 import inspect
@@ -31,7 +33,8 @@ from pathlib import Path
 
 from _harness import REPO, Checks, mkcfg, sandbox, tmpdir
 
-from common import bisync, components, conflicts, fleet, model, results, revision, vestibulo
+from common import (autorun, bisync, components, conflicts, fleet, model, results, revision,
+                    vestibulo)
 from ui import cifrado, instantanea, watch
 
 c = Checks("la lectura de una sola vez de la ventana")
@@ -276,7 +279,7 @@ with sandbox():
     c("la lectura de referencia no tiene fallos", base.fallos, {})
     CAMPOS = ("estados", "notas", "hallazgos", "cuenta", "conflictos", "componentes",
               "componentes_texto", "componentes_actualizables", "fisica", "expulsion", "bloqueo",
-              "del_equipo", "vigilante", "llavero", "device_id")
+              "del_equipo", "vigilante", "llavero", "device_id", "identidad")
     casos = [
         ("estados", {"estados": {}}, [(instantanea, "estados_de", revienta)], {}),
         ("notas", {"notas": {}}, [], {"notas": revienta}),
@@ -293,6 +296,7 @@ with sandbox():
         ("llavero", {"llavero": None}, [], {"linea_llavero": revienta}),
         ("device_id", {"device_id": None, "fisica": None}, [(fleet, "device_id", revienta)], {}),
         ("fisica", {"fisica": None}, [(vestibulo, "raiz_fisica", revienta)], {}),
+        ("identidad", {"identidad": None}, [(instantanea, "identidad_de", revienta)], {}),
     ]
     for campo, defecto, cambios, lectores in casos:
         inst = lectura(*cambios, **lectores)
@@ -330,8 +334,8 @@ with sandbox():
       (vacia.estados, vacia.notas, vacia.hallazgos, vacia.cuenta, vacia.conflictos,
        vacia.componentes, vacia.componentes_texto, vacia.componentes_actualizables,
        vacia.fisica, vacia.expulsion, vacia.bloqueo, vacia.del_equipo, vacia.llavero,
-       vacia.device_id, vacia.fallos),
-      ({}, {}, (), 0, {}, (), None, False, None, None, None, False, None, None, {}))
+       vacia.device_id, vacia.identidad, vacia.fallos),
+      ({}, {}, (), 0, {}, (), None, False, None, None, None, False, None, None, None, {}))
     c("  y el vigilante no se sabe", vacia.vigilante, watch.Resumen("no_disponible"))
     c("  su firma es la de la config", vacia.firma, instantanea.firma(cfg))
     c("  no vale para nadie: no se leyó nada", vacia.vigente(cfg), False)
@@ -586,5 +590,43 @@ with sandbox():
     except ValueError:
         pass
     c("  quien se dio de baja durante el aviso no vuelve", orden, ["malo", "tres"])
+
+# 10. la identidad: el nombre del dispositivo y el icono de su unidad
+real_app = model.APP_DIR
+with sandbox() as root:
+    try:
+        # `sandbox()` no mueve `APP_DIR`, y el `icon=` cuenta solo dentro de él.
+        model.APP_DIR = root / ".prdrive"
+        model.APP_DIR.mkdir()
+        cfg = preparar(("notas",))
+
+        def poner(icono: str) -> None:
+            """Deja el `autorun.inf` de la raíz con ese `icon=`; vacío, sin fichero."""
+            autorun.escribir(root, autorun.con("", "", icono) if icono else "")
+
+        with parchado((fleet, "equipo_actual", lambda: "PORTATIL")):
+            c("sin nombre guardado, el de la flota por defecto; sin icono, ninguno",
+              instantanea.identidad_de(), instantanea.Identidad("PORTATIL", "", None))
+            fleet.guardar_nombre("Pendrive azul")
+            poner(".prdrive\\icono-verde.ico")
+            c("el nombre de `fleet.json` y la clave del `icon=`",
+              instantanea.identidad_de(), instantanea.Identidad("Pendrive azul", "verde", None))
+            poner(".prdrive\\icono-propio-0123abcd.ico")
+            c("uno propio que no está: la clave, sin fichero",
+              instantanea.identidad_de(), instantanea.Identidad("Pendrive azul", "propio", None))
+            ico = model.APP_DIR / "icono-propio-0123abcd.ico"
+            ico.write_bytes(b"\0\0\1\0")
+            c("uno propio que está: con su ruta", instantanea.identidad_de(),
+              instantanea.Identidad("Pendrive azul", "propio", ico))
+            poner("VeraCrypt\\VeraCrypt.exe")
+            c("un icon= que no es de prdrive no cuenta",
+              instantanea.identidad_de().icono, "")
+            poner(".prdrive\\icono-granate.ico")
+            inst = leer_aislado(cfg)
+        c("la lectura la trae", inst.identidad,
+          instantanea.Identidad("Pendrive azul", "granate", None))
+        c("  sin fallos", inst.fallos, {})
+    finally:
+        model.APP_DIR = real_app
 
 raise SystemExit(c.report())

@@ -860,6 +860,61 @@ with sandbox():
       (k["compartida"].actual is visto["inst"], k["vigilante"] == visto["inst"].vigilante),
       (True, True))
 
+# 6f2. el título y el icono son los del dispositivo, y «Nombre e icono» los relee
+with sandbox():
+    visto = {"iconos": []}
+    identidad = {"ahora": instantanea.Identidad("Pendrive azul", "verde", None)}
+    respuestas = [{"reparacion": True}, {"volumen": True}]
+    real_identidad, real_poner = instantanea.identidad_de, icons.poner_icono
+    real_doctor = tk_doctor.open_dialog
+
+    def poner_icono(ventana, campo=icons.CAMPO, fichero=None) -> None:
+        """Apunta qué icono se pone y lo pone."""
+        visto["iconos"].append((campo, fichero))
+        real_poner(ventana, campo, fichero)
+
+    def ajustes(parent, config, lanzar, **k):
+        """Hace de «Ajustes»: la segunda vez guarda otro nombre y otro icono."""
+        respuesta = respuestas.pop(0)
+        if "volumen" in respuesta:
+            identidad["ahora"] = instantanea.Identidad("Pendrive granate", "granate", None)
+        return respuesta
+
+    def leida(root) -> None:
+        """Deja llegar la lectura que se acaba de lanzar."""
+        hasta(root, lambda: root.instantanea_lista)
+
+    def titulos(root) -> None:
+        """Mira el título antes y después de la lectura, y tras volver de «Ajustes» dos veces."""
+        visto["antes"] = (root.title(), list(visto["iconos"]))
+        root.update_idletasks()
+        leida(root)
+        visto["leida"] = (root.title(), list(visto["iconos"]))
+        boton(root, "Ajustes…").invoke()
+        leida(root)
+        visto["misma"] = (root.title(), list(visto["iconos"]))
+        boton(root, "Ajustes…").invoke()
+        leida(root)
+        visto["otra"] = (root.title(), list(visto["iconos"]))
+
+    instantanea.identidad_de = lambda: identidad["ahora"]
+    icons.poner_icono, tk_doctor.open_dialog = poner_icono, ajustes
+    try:
+        abrir(TRES, titulos)
+    finally:
+        instantanea.identidad_de = real_identidad
+        icons.poner_icono, tk_doctor.open_dialog = real_poner, real_doctor
+    azul, verde, granate = icons.CAMPO, icons.CAMPOS["verde"], icons.CAMPOS["granate"]
+    c("antes de leer, la ventana es «prdrive» con la marca de siempre",
+      visto["antes"], ("prdrive", [(azul, None)]))
+    c("  al leer, «<dispositivo> · prdrive» y la marca en el color de su unidad",
+      visto["leida"], ("Pendrive azul · prdrive", [(azul, None), (verde, None)]))
+    c("  otra lectura con lo mismo no vuelve a poner nada",
+      visto["misma"], visto["leida"])
+    c("  guardar «Nombre e icono» en «Ajustes» relee y pone los nuevos",
+      visto["otra"], ("Pendrive granate · prdrive",
+                      [(azul, None), (verde, None), (granate, None)]))
+
 # 6g. lo pedido al agente se enseña hasta que una lectura lanzada después lo cuenta
 with sandbox():
     model.CONFIG_FILE.write_text(

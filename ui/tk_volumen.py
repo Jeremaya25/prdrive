@@ -44,14 +44,16 @@ LEYENDO = "Mirando cómo está la unidad…"
 """Lo que dice la línea de espera mientras se lee la unidad."""
 
 
-def open_dialog(parent) -> None:
-    """Abre la ventana; no devuelve nada.
+def open_dialog(parent) -> bool:
+    """Abre la ventana y dice si se ha guardado algo.
 
     Lo que cambia es un fichero de la raíz de la unidad y el nombre de este
-    dispositivo en `state/fleet.json`; nada de lo que enseña la ventana
-    principal depende de ellos.
+    dispositivo en `state/fleet.json`. Dentro de «Ajustes», guardar lo dice
+    igual (`panel.devolver(True)`) y la ventana principal relee para poner el
+    nombre y el icono nuevos en su título y su icono.
     """
-    dialogo(parent, "Nombre e icono de la unidad", construir, ensenar=mostrar)
+    return bool(dialogo(parent, "Nombre e icono de la unidad", construir,
+                        ensenar=mostrar, defecto=False))
 
 
 def construir(panel: Panel) -> None:
@@ -191,6 +193,7 @@ def construir(panel: Panel) -> None:
         if not ok:
             messagebox.showerror(TITLE, str(valor), parent=dlg)
             return
+        panel.devolver(True)      # la principal relee: su título y su icono son estos
         messagebox.showinfo(TITLE, volumen.mensaje_guardado(estado, texto, eleccion.get()), parent=dlg)
         panel.terminar("Guardado.")
 

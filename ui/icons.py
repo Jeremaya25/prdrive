@@ -1216,17 +1216,31 @@ def app_icon(widget, size: int = 64, campo: str = CAMPO, fondo: str | None = Non
         return None
 
 
-def poner_icono(ventana) -> None:
-    """Le pone la marca a una ventana.
+def poner_icono(ventana, campo: str = CAMPO, fichero=None) -> None:
+    """Le pone la marca a una ventana, en el color `campo` o con el `.ico` `fichero`.
 
     Con `default=True` la heredan también los diálogos que cuelguen de ella,
     así que basta llamarlo en las raíces. La barra de título del tema la pone
     `tk.ensenar()`.
+
+    Args:
+        campo: El color del campo de la marca (uno de `CAMPOS`): la ventana
+            principal lleva el de la unidad.
+        fichero: Un `.ico` de la unidad que no es nuestro. Solo Tk en Windows
+            sabe ponerlo (`wm iconbitmap`); donde no puede, va la marca.
     """
+    import sys
     import tkinter as tk
 
-    imgs = [i for i in (app_icon(ventana, 64), app_icon(ventana, 32),
-                        app_icon(ventana, 16)) if i is not None]
+    if fichero is not None and sys.platform == "win32":
+        try:
+            ventana.iconbitmap(str(fichero))
+            ventana.iconbitmap(default=str(fichero))
+            return
+        except tk.TclError:
+            pass
+    imgs = [i for i in (app_icon(ventana, 64, campo), app_icon(ventana, 32, campo),
+                        app_icon(ventana, 16, campo)) if i is not None]
     if not imgs:
         return
     try:
