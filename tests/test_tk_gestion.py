@@ -121,11 +121,6 @@ try:
         visto["motivo0"] = str(d.motivo.cget("text"))
         visto["estilo_motivo"] = str(d.motivo.cget("style"))
         visto["aceptar0"] = estado(d.aceptar)
-        d.deiconify()
-        d.update()
-        # `-lastfor`: dónde queda el foco del diálogo aunque el escritorio no se lo dé
-        visto["foco"] = str(d.tk.call("focus", "-lastfor", str(d)))
-        visto["entrada"] = str(d.entrada)
         escribir(d, "a/b")
         visto["motivo1"] = str(d.motivo.cget("text"))
         visto["aceptar1"] = estado(d.aceptar)
@@ -149,7 +144,6 @@ try:
       ("prdrive — Nueva carpeta", ["Aceptar", "Cancelar"]))
     c("  el fondo es el del tema", visto["fondo"], theme.PAPEL)
     c("  un solo campo `ttk.Entry`, vacío", (visto["campo"], visto["texto0"]), ("TEntry", ""))
-    c("  el foco inicial está en el campo", visto["foco"], visto["entrada"])
     c("  el motivo va en una etiqueta de pista", visto["estilo_motivo"], "Pista.TLabel")
     c("  sin escribir, no dice nada y «Aceptar» está apagado",
       (visto["motivo0"], visto["aceptar0"]), ("", "disabled"))
@@ -186,6 +180,20 @@ try:
         print("  (saltado) Escape: este escritorio no da el foco a una ventana nueva")
     else:
         c("Escape devuelve None", r, None)
+
+    # --- el foco al abrir. Va después de Escape, como en `test_tk_transferencia`: en
+    # Windows una aplicación que aún no ha tenido el foco del escritorio no apunta el de
+    # sus ventanas, y `tecla()` (con `focus_force`) es lo que se lo ha dado. Al abrirlo de
+    # verdad, la aplicación ya lo tiene: se ha pulsado un botón de su ventana.
+    def foco(d):
+        d.deiconify()
+        d.update()
+        # `-lastfor`: dónde queda el foco del diálogo aunque el escritorio no se lo dé
+        visto["foco"] = str(d.tk.call("focus", "-lastfor", str(d)))
+        visto["entrada"] = str(d.entrada)
+    conducir(foco)
+    tk_gestion.pedir_nombre(raiz, "Nueva carpeta", "", vale)
+    c("el foco inicial está en el campo", visto["foco"], visto["entrada"])
 
     # --- renombrar: el inicial cuenta
     def renombrar(d):
