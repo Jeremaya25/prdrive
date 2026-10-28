@@ -81,13 +81,19 @@ def tecla(dlg, nombre: str) -> None:
 
 
 def conducir(accion):
-    """Programa `accion(dlg)` para cuando el diálogo esté abierto y esperando."""
-    def lanzar():
-        dlg = next(w for w in raiz.winfo_children() if isinstance(w, tk.Toplevel))
+    """Sustituye `mostrar` por algo que enseña el diálogo y hace `accion` sobre él.
+
+    Como en `test_tk_transferencia`: con el `mostrar` de verdad y un `after()`, en
+    Windows el `update()` de `ensenar()` deja correr el temporizador antes del
+    `wait_window()`, y el diálogo ya está cerrado cuando se espera.
+    """
+    def falso(dlg, parent=None):
+        dlg.deiconify()
+        dlg.update()
         accion(dlg)
         if dlg.winfo_exists():
             dlg.destroy()
-    raiz.after(50, lanzar)
+    tk_gestion.mostrar = falso
 
 
 def vale(texto: str) -> str | None:
