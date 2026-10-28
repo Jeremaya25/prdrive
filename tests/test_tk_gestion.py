@@ -81,19 +81,19 @@ def tecla(dlg, nombre: str) -> None:
 
 
 def conducir(accion):
-    """Sustituye `mostrar` por algo que enseña el diálogo y hace `accion` sobre él.
+    """Hace `accion(dlg)` con el diálogo ya a la vista, en vez de esperar a que se cierre.
 
-    Como en `test_tk_transferencia`: con el `mostrar` de verdad y un `after()`, en
-    Windows el `update()` de `ensenar()` deja correr el temporizador antes del
-    `wait_window()`, y el diálogo ya está cerrado cuando se espera.
+    Corre el `mostrar()` de verdad (centrar, enseñar, captura) y sustituye solo su
+    `wait_window()`, como `test_tk_flags_guia`: así lo que se mira es lo que ve la
+    persona al abrirse, también el foco en Windows, y no hay carrera con un
+    temporizador (el `update()` de `ensenar()` lo dejaría correr antes de esperar).
     """
-    def falso(dlg, parent=None):
-        dlg.deiconify()
+    def esperar(dlg, *_a, **_k):
         dlg.update()
         accion(dlg)
         if dlg.winfo_exists():
             dlg.destroy()
-    tk_gestion.mostrar = falso
+    tk.Toplevel.wait_window = esperar
 
 
 def vale(texto: str) -> str | None:
