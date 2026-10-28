@@ -34,17 +34,11 @@ lo que ve la persona:
 
 from __future__ import annotations
 
-import faulthandler
 import sys
 import threading
 import time
 
 from _harness import Checks, mkcfg, sandbox, tmpdir
-
-# TEMPORAL: en Windows (CI) este test se ha colgado 600 s a veces (también en `main`, tras la
-# pieza 2) y `run_all.py` tira la salida de lo que mata por tiempo. Si se vuelve a colgar, que
-# diga en qué línea y acabe a los 300 s (en Windows tarda 10-16 s). Se quita al saber la causa.
-faulthandler.dump_traceback_later(300, exit=True)
 
 from common import config_file, model, rcd
 from common.model import ConfigError
@@ -52,6 +46,7 @@ from common.model import ConfigError
 c = Checks("«Servidor»: la ventana")
 
 try:
+    import _tkinter
     import tkinter as tk
     from tkinter import ttk
     raiz = tk.Tk()
@@ -65,6 +60,25 @@ from ui import icons, segundo_plano, servidor, theme, tk_servidor, tk_transferen
 errores: list[str] = []
 raiz.report_callback_exception = (
     lambda tipo, valor, _tb: errores.append(f"{tipo.__name__}: {valor}"))
+
+
+def pasar_eventos(tope: float = 0.1) -> None:
+    """Hace lo que `raiz.update()`, pero vuelve a los `tope` segundos aunque siga llegando trabajo.
+
+    `update()` no vuelve hasta que no queda nada pendiente. El seguimiento de un lote
+    se reprograma cada `INTERVALO_PROGRESO_MS`, que aquí es 5 ms: si cada vuelta (con
+    hilos de verdad, arrancar el hilo del sondeo y repintar el panel) dura más que eso,
+    siempre hay un temporizador vencido y `update()` no vuelve nunca. En el CI de Windows
+    pasaba en 13i, y el test moría a los 600 s. Aquí se atiende evento a evento
+    (`dooneevent`, como `tests/test_tk_pasada.py`) mirando el reloj entre uno y otro, y
+    al final se repinta lo pendiente (`update_idletasks()`, que no corre temporizadores).
+    """
+    fin = time.monotonic() + tope
+    while (time.monotonic() < fin
+           and raiz.tk.dooneevent(_tkinter.ALL_EVENTS | _tkinter.DONT_WAIT)):
+        pass
+    raiz.update_idletasks()
+
 
 LANZAR_DE_VERDAD = segundo_plano.lanzar
 segundo_plano.lanzar = segundo_plano.en_el_acto      # con hilos de verdad, solo el test 10
@@ -657,7 +671,7 @@ with sandbox():
     lento_.set()
     fin = time.monotonic() + 5
     while not dlg.cuenta.cget("text") and time.monotonic() < fin:
-        raiz.update()
+        pasar_eventos()
         time.sleep(0.01)
     c("llegado el listado (vacío), sí lo dice", dice_vacia(dlg), True)
     cerrar(dlg)
@@ -724,12 +738,12 @@ with sandbox():
     dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))     # la X de la ventana: cierra y destruye
     fin = time.monotonic() + 5
     while lento.paradas < 1 and time.monotonic() < fin:
-        raiz.update()
+        pasar_eventos()
         time.sleep(0.01)
     c("cerrar paró el rcd", lento.paradas, 1)
     suelto.set()
     for _ in range(30):                                # la respuesta tardía llega a nadie
-        raiz.update()
+        pasar_eventos()
         time.sleep(0.01)
     c("sigue siendo una sola parada tras destruirse la ventana (X y <Destroy>)", lento.paradas, 1)
     c("la ventana ya no existe", bool(dlg.winfo_exists()), False)
@@ -746,11 +760,11 @@ with sandbox():
     dlg.destroy()
     fin = time.monotonic() + 5
     while tardio.paradas < 1 and time.monotonic() < fin:
-        raiz.update()
+        pasar_eventos()
         time.sleep(0.01)
     espera_arranque.set()
     for _ in range(30):
-        raiz.update()
+        pasar_eventos()
         time.sleep(0.01)
     c("cerrar mientras arranca también para el rcd, una vez", tardio.paradas, 1)
     c("  y sin excepciones", errores, [])
@@ -814,7 +828,7 @@ with sandbox():
         """Deja correr el bucle de Tk hasta que se cumpla la condición."""
         fin = time.monotonic() + tope
         while not condicion() and time.monotonic() < fin:
-            raiz.update()
+            pasar_eventos()
             time.sleep(0.005)
         return bool(condicion())
 
@@ -1375,7 +1389,7 @@ with sandbox():
           (1, True, 0))
         if variante == "sigue sin contestar":
             for _ in range(40):                 # y se sigue intentando, sin acabar
-                raiz.update()
+                pasar_eventos()
                 time.sleep(0.005)
             c("  tras mucho tiempo sin respuesta el lote no se dio por acabado",
               (botones_de(dlg), len(copias(falso)), fallos_[0] > fallan), (("disabled",) * 3, 1, True))
@@ -1528,7 +1542,7 @@ with sandbox():
               (bool(dlg.winfo_exists()), falso.paradas, paradas_de_trabajo(falso)), (True, 0, 0))
             suelto_.set()
             for _ in range(20):
-                raiz.update()
+                pasar_eventos()
                 time.sleep(0.01)
             c("  y el lote sigue (el panel a la vista)", panel_a_la_vista(dlg), True)
             parado.set()
@@ -1545,7 +1559,7 @@ with sandbox():
             c("  y el rcd se paró una vez", falso.paradas, 1)
             suelto_.set()                  # llega tarde la respuesta del progreso en vuelo
             for _ in range(30):
-                raiz.update()
+                pasar_eventos()
                 time.sleep(0.01)
             c("  una respuesta tardía no pinta nada ni lanza excepciones de Tk", errores, [])
             c("  sigue siendo una sola parada", falso.paradas, 1)
