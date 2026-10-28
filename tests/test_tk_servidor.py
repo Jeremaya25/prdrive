@@ -34,11 +34,17 @@ lo que ve la persona:
 
 from __future__ import annotations
 
+import faulthandler
 import sys
 import threading
 import time
 
 from _harness import Checks, mkcfg, sandbox, tmpdir
+
+# TEMPORAL: en Windows (CI) este test se ha colgado 600 s a veces (también en `main`, tras la
+# pieza 2) y `run_all.py` tira la salida de lo que mata por tiempo. Si se vuelve a colgar, que
+# diga en qué línea y acabe a los 300 s (en Windows tarda 10-16 s). Se quita al saber la causa.
+faulthandler.dump_traceback_later(300, exit=True)
 
 from common import config_file, model, rcd
 from common.model import ConfigError
