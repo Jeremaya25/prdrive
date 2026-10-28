@@ -673,9 +673,29 @@ QUEDO = ("No se pudo renombrar «a»: se quedó como «a.prdrive-1».", "aviso",
 c("la segunda falla: se quedó con el temporal", res(rt, [OK, mal("boom")]), QUEDO)
 c("  cancelado entre las dos: lo mismo", res(rt, [OK], cancelado=True), QUEDO)
 c("  la segunda sin lanzar: lo mismo", res(rt, [OK]), QUEDO)
-c("  cancelado en la primera, que falló: no se pudo",
+c("  cancelado en la primera, que falló: no se pudo (un archivo: `movefile` no deja medias)",
   res(rt, [mal("context canceled")], cancelado=True)[0],
   "No se pudo renombrar «a»: rclone dice: context canceled")
+rc = Op(gestion.RENOMBRAR, "nas", "/datos", (E("fotos", True),), nombre="Fotos",
+        temporal="fotos.prdrive-1")
+c("una carpeta cuyo primer paso falla: puede que parte quedara en el temporal",
+  res(rc, [mal("boom")]),
+  ("No se pudo renombrar «fotos»: rclone dice: boom. Puede que parte haya quedado en "
+   "«fotos.prdrive-1».", "aviso", False))
+c("  sin dos puntos seguidos si la frase acaba en punto",
+  res(rc, [mal("permission denied")])[0],
+  "No se pudo renombrar «fotos»: No tienes permiso para renombrar en /datos. Puede que parte "
+  "haya quedado en «fotos.prdrive-1».")
+c("  cancelada a medias, lo mismo",
+  res(rc, [mal("context canceled")], cancelado=True)[0],
+  "No se pudo renombrar «fotos»: rclone dice: context canceled. Puede que parte haya quedado "
+  "en «fotos.prdrive-1».")
+c("  y con el primer paso bien y el segundo no, se quedó como el temporal",
+  res(rc, [OK, mal("boom")])[0],
+  "No se pudo renombrar «fotos»: se quedó como «fotos.prdrive-1».")
+c("una carpeta sin temporal que falla: el texto de siempre",
+  res(Op(gestion.RENOMBRAR, "nas", "/datos", (E("fotos", True),), nombre="otras"),
+      [mal("boom")])[0], "No se pudo renombrar «fotos»: rclone dice: boom")
 
 # --- ordenes_de: un nombre que no es de un elemento no sale nunca ----------------------
 for malo in ("", ".", "..", "a/b", "/"):

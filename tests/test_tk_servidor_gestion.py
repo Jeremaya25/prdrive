@@ -988,6 +988,24 @@ with sandbox():
         c(f"  y acaba diciendo {dicho!r}", bombear(lambda: visto() == dicho), True)
         F.cerrar(dlg)
 
+    # -- si el primer paso falla, el segundo no sale (sobre un servidor sin mayúsculas, el
+    #    nombre nuevo ES el original, que sigue ahí)
+    for fila, nuevo_, metodo, dicho in (
+            ("a.txt", "A.txt", "operations/movefile", "No se pudo renombrar «a.txt»: rclone dice: boom"),
+            ("fotos", "Fotos", "sync/move",
+             "No se pudo renombrar «fotos»: rclone dice: boom. Puede que parte haya quedado "
+             "en «fotos.prdrive-1».")):
+        dialogos(nombre=nuevo_)
+        falso = servidor_gestion(estados={1: [fallado("boom")]})
+        dlg = abrir(falso)
+        entrar_en(dlg, "datos")
+        elegir(dlg, fila)
+        pulsar(dlg, "<F2>")
+        c(f"[{fila} → {nuevo_}] el primer paso falla: el panel lo dice",
+          (bombear(lambda: frase_panel(dlg) == dicho), frase_panel(dlg)), (True, dicho))
+        c("  y solo se lanzó esa orden", [m for m, _p in falso.lanzadas], [metodo])
+        F.cerrar(dlg)
+
     # -- tras el «sí» se vuelve a mirar: un nombre que aparece mientras se confirma se rechaza
     NOTAS = {"v": []}
 

@@ -551,9 +551,12 @@ def resultado_de(op: Operacion, estados: list[dict], stats: dict,
         cancelado: Si el usuario canceló. En `BORRAR` y `MOVER` manda sobre lo demás; un
             renombrado o una carpeta nueva son una sola orden y valen por cómo acabó.
 
-    Un renombrado por un nombre temporal es un elemento de dos órdenes: si salió la primera
-    y no la segunda (falló, se canceló o no llegó a lanzarse) el elemento se quedó con el
-    nombre temporal, y eso es lo que se dice.
+    Un renombrado por un nombre temporal es un elemento de dos órdenes, y la segunda solo
+    sale si la primera fue bien (`Trabajo.parar_si_falla`): si salió la primera y no la
+    segunda (falló, se canceló o no llegó a lanzarse) el elemento se quedó con el nombre
+    temporal, y eso es lo que se dice. Si la primera no acabó bien y es una carpeta, su
+    `sync/move` pudo dejar parte en el temporal, y se dice también; un archivo no
+    (`movefile` lo mueve entero o no lo mueve).
 
     Returns:
         El texto, su tono (`"ok"` solo si todo fue bien) y `reintentar=False`.
@@ -593,6 +596,8 @@ def resultado_de(op: Operacion, estados: list[dict], stats: dict,
         texto = f"{_PARTICIPIO[op.tipo].capitalize()} {hechos} de {total}: «{nombre}» no se pudo: {frase}"
     else:
         texto = f"No se pudo {_VERBO[op.tipo]} «{nombre}»: {frase}"
+    if op.temporal is not None and op.elementos and op.elementos[0].es_carpeta:
+        texto = f"{texto.rstrip('.')}. Puede que parte haya quedado en «{op.temporal}»."
     return transferencia.Resultado(texto, "aviso", False)
 
 

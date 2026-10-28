@@ -7,7 +7,7 @@ comprueba es lo que ve la persona y lo que le llega a rclone:
 
 - tres lanzadores corren en orden (jobid 1, 2, 3), cada uno solo cuando el
   anterior dio `finished`, y `resultado` recibe los tres estados;
-- un estado fallido en medio no corta el siguiente;
+- un estado fallido en medio no corta el siguiente, salvo con `parar_si_falla`;
 - «Cancelar» durante la primera: un solo `job/stop` con su jobid, las demás
   órdenes sin lanzar y `resultado(..., cancelado=True)`; si lo que iba acabó bien
   y no quedó nada por hacer, no se dice «cancelado»;
@@ -227,6 +227,22 @@ c("se lanzan las tres aunque la segunda falle", (bombear(lambda: e.resultados !=
 c("  y los tres estados llegan a `resultado`, con el fallido en su sitio",
   [r.get("success") for r in e.resultados[0][0]], [True, False, True])
 e.cerrar()
+
+# con `parar_si_falla` (un renombrado en dos pasos) un estado fallido acaba el lote ahí
+e = Escena(RcdFalso({1: [FALLADO], 2: [ACABADO], 3: [ACABADO]}))
+t = e.empezar(parar_si_falla=True)
+c("con `parar_si_falla`, tras un fallo no se lanza la siguiente",
+  (bombear(lambda: e.resultados != []), e.lanzados), (True, [1]))
+c("  `resultado` recibe solo el fallido, sin cancelar",
+  ([r.get("success") for r in e.resultados[0][0]], e.resultados[0][2]), ([False], False))
+c("  y el trabajo se suelta", e.seg.activo, None)
+e.cerrar()
+e = Escena(RcdFalso({1: [ACABADO], 2: [ACABADO], 3: [ACABADO]}))
+e.empezar(parar_si_falla=True)
+c("  y si todo va bien, sigue hasta el final",
+  (bombear(lambda: e.resultados != []), e.lanzados), (True, [1, 2, 3]))
+e.cerrar()
+c("por defecto un trabajo no para si falla", e.trabajo().parar_si_falla, False)
 
 # --- 3. cancelar durante la primera ---------------------------------------------
 e = Escena(RcdFalso({1: [CORRIENDO], 2: [ACABADO], 3: [ACABADO]}))

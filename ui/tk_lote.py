@@ -5,7 +5,8 @@ Una transferencia es un lote de UNA orden (`sync/copy`); borrar, mover, renombra
 y crear carpetas son lotes de varias, que se lanzan de una en una. La máquina es
 la misma: lanza la primera, la sigue cada `intervalo_ms` con `job/status` y
 `core/stats`, apunta el estado con que acaba y lanza la siguiente; al acabar la
-última (o al cancelar) pide el resultado a quien la usa y lo enseña.
+última (o al cancelar, o tras un fallo con `parar_si_falla`) pide el resultado a
+quien la usa y lo enseña.
 
 Es pegamento cercano al dibujo: toca el `Panel`, el `after()` de la ventana y el
 `Sondeo` que se le dan, nunca `tkinter`. Todo lo que espera a la red va en
@@ -68,6 +69,9 @@ class Trabajo:
             acaba antes de verse no merece un panel.
         titulo_cierre: Título de la pregunta al cerrar la ventana con el trabajo en marcha.
         texto_cierre: Texto de esa pregunta.
+        parar_si_falla: Si es cierto, una orden que no acaba bien acaba el trabajo: no se
+            lanza ninguna más (un renombrado en dos pasos no da el segundo sin el primero).
+            Sin él, un fallo no corta las siguientes.
 
     Attributes:
         jobid: El de la última orden lanzada; `None` mientras no se lanzó ninguna.
@@ -93,6 +97,7 @@ class Trabajo:
     panel_tardio: bool = False
     titulo_cierre: str = TITULO_CIERRE
     texto_cierre: str = TEXTO_CIERRE
+    parar_si_falla: bool = False
     jobid: int | None = None
     indice: int = 0
     estados: list[dict] = field(default_factory=list)
@@ -275,9 +280,13 @@ class Seguimiento:
         self._esperar_y_pedir(t)
 
     def _orden_acabada(self, t: Trabajo, stats: dict, st: dict) -> None:
-        """Apunta cómo acabó la orden que iba y lanza la siguiente, o acaba el trabajo."""
+        """Apunta cómo acabó la orden que iba y lanza la siguiente, o acaba el trabajo.
+
+        No hay siguiente si se canceló, si era la última o si falló con `parar_si_falla`.
+        """
         t.estados.append(st)
-        if not t.cancelado and t.indice + 1 < len(t.lanzadores):
+        corta = t.parar_si_falla and not st.get("success")
+        if not t.cancelado and not corta and t.indice + 1 < len(t.lanzadores):
             t.indice += 1
             t.fallos = 0
             self._lanzar_orden(t)

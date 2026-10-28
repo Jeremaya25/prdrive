@@ -1014,9 +1014,11 @@ def open_dialog(parent, config: Config) -> None:
         """Lanza las órdenes de la operación una tras otra y las sigue.
 
         Las órdenes, el progreso, «Cancelando…», el resultado y lo que se hace al acabar
-        salen de `op` tal como llega aquí: un renombrado lleva ya su nombre temporal.
+        salen de `op` tal como llega aquí: un renombrado lleva ya su nombre temporal, y
+        entonces su segundo paso solo sale si el primero fue bien (`parar_si_falla`).
         """
         t.lanzadores = [partial(_lanzar_orden, o) for o in gestion.ordenes_de(op)]
+        t.parar_si_falla = op.temporal is not None
         t.progreso = partial(gestion.progreso_de, op)
         t.cancelando = partial(gestion.cancelando_de, op)
         t.resultado = partial(gestion.resultado_de, op)

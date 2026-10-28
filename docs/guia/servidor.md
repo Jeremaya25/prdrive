@@ -124,8 +124,9 @@ Todo se hace en la carpeta que estás viendo. Los botones se encienden según lo
   `fotos` cuentan como el mismo nombre, porque muchos servidores los tratan como uno). Cambiar solo
   las mayúsculas del propio nombre (`fotos` → `Fotos`) se hace en dos pasos, por un nombre de paso
   como `fotos.prdrive-1`: en un servidor que no distingue mayúsculas, hacerlo de un golpe podría
-  borrar el archivo. Si el segundo paso falla, el resultado te dice con qué nombre se quedó
-  («se quedó como «fotos.prdrive-1»»): renómbralo tú.
+  borrar el archivo. Si el primer paso falla, el segundo no se da; con una carpeta, el resultado
+  avisa de que puede que parte haya quedado en `fotos.prdrive-1`: míralo. Si falla el segundo, el
+  resultado te dice con qué nombre se quedó («se quedó como «fotos.prdrive-1»»): renómbralo tú.
 - **Mover**, con cortar y pegar: elige lo que quieras mover y pulsa **Cortar** (Ctrl+X). Encima de la
   lista aparece «3 elementos para mover desde /datos», con **Pegar aquí** y **Cancelar**. Entra en la
   carpeta de destino y pulsa **Pegar aquí** (Ctrl+V). Mientras no pegues, no se ha tocado nada.
