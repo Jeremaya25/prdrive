@@ -10,7 +10,9 @@ abierta: que cada momento nuevo tenga etiqueta (sin ella la comparación lo desc
 sin decirlo), que uno que solo existe en el PR se lea «nuevo» y no falle, y que las
 escrituras al marcar una pareja sean una cuenta con su techo. Fija también lo que añade
 la etapa 3: «Dispositivos», el editor de flags y el paso del asistente a «Dispositivo»
-(sus momentos, sus cuentas, sus techos y que el orquestador los exija).
+(sus momentos, sus cuentas, sus techos y que el orquestador los exija). Y cambiar de
+vista en «Parejas» (`vista-*`): sus momentos, que el orquestador los exija y que sus
+cuentas (`tema.vista`, `estilos.vista`) tengan techo 0.
 """
 
 import ast
@@ -149,7 +151,8 @@ c("una principal leída por encima de su techo falla y nombra la cuenta",
 MOMENTOS_NUEVOS = ("llega-instantanea", "marcar", "sincronizar-ventana", "volver-pasada",
                    "elegir-fila", "elegir-pareja", "reabrir-parejas", "pane-otra-vez",
                    "volver-ajustes", "open-dispositivos", "llega-flota", "elegir-dispositivo",
-                   "open-pareja", "open-flags", "paso-dispositivo")
+                   "open-pareja", "open-flags", "paso-dispositivo", "vista-catalogo",
+                   "vista-dispositivo", "vista-catalogo-otra-vez")
 c("todos los momentos nuevos tienen etiqueta (sin ella `comparar` los descarta)",
   [e for e in MOMENTOS_NUEVOS if e not in informe.ETIQUETAS], [])
 
@@ -228,6 +231,29 @@ c("cada flujo del plan tiene sus momentos esperados",
   sorted({f for f, _, _ in correr.PLAN} - set(correr.ESPERADOS)), [])
 c("  y todo momento esperado se compara (tiene etiqueta)",
   sorted({e for es in correr.ESPERADOS.values() for e in es} - set(informe.ETIQUETAS)), [])
+
+# --- cambiar de vista en «Parejas»
+VISTAS = ("vista-catalogo", "vista-dispositivo", "vista-catalogo-otra-vez")
+c("el orquestador exige los tres cambios de vista al flujo «parejas»",
+  [e for e in VISTAS if e in correr.ESPERADOS["parejas"]], list(VISTAS))
+orden_vistas = list(informe.ETIQUETAS)
+c("  y van en la tabla tras «elegir-pareja» y antes de «reabrir-parejas», en el orden en que se miden",
+  orden_vistas[orden_vistas.index("elegir-pareja") + 1:orden_vistas.index("reabrir-parejas")],
+  list(VISTAS))
+c("sus cuentas van a `tema.vista` y `estilos.vista`, las tres a la misma clave",
+  {k: v["valores"] for k, v in informe.cuentas(
+      [cuenta("pr", e, tema=0, estilos_tardios=0, widgets=40) for e in VISTAS], "pr").items()},
+  {"tema.vista": [0], "estilos.vista": [0]})
+c("  con techo 0 en el presupuesto de verdad",
+  {k: informe.techos(real, "windows-x64").get(k) for k in ("tema.vista", "estilos.vista")},
+  {"tema.vista": 0, "estilos.vista": 0})
+un_tema = veredicto([cuenta("base", "vista-catalogo", tema=0, estilos_tardios=0),
+                     cuenta("pr", "vista-catalogo", tema=1, estilos_tardios=0)], real)
+c("un <<ThemeChanged>> al pasar a «Catálogo» falla y nombra la cuenta",
+  (len(un_tema["fallos"]), any("tema.vista" in f for f in un_tema["fallos"])), (1, True))
+c("las metas de tiempo de cambiar de vista, en milisegundos",
+  {e: real["meta_ms"].get(e) for e in VISTAS},
+  {"vista-catalogo": 100, "vista-dispositivo": 50, "vista-catalogo-otra-vez": 50})
 
 # --- «Dispositivos», el editor de flags y el paso del asistente a «Dispositivo»
 orden_etiquetas = list(informe.ETIQUETAS)

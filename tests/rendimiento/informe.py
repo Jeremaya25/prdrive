@@ -43,6 +43,9 @@ ETIQUETAS = {
     "catalogo-llega": "Llega el catálogo a «Parejas»",
     "elegir-fila": "Elegir otra fila de «Parejas»",
     "elegir-pareja": "Elegir otra pareja de «Parejas»",
+    "vista-catalogo": "«Parejas»: pasar a «Catálogo» (la primera vez)",
+    "vista-dispositivo": "«Parejas»: volver a «Este dispositivo»",
+    "vista-catalogo-otra-vez": "«Parejas»: pasar a «Catálogo» otra vez",
     "reabrir-parejas": "Volver a abrir «Parejas»",
     "open-dispositivos": "Abrir «Dispositivos»",
     "llega-flota": "Llegan las notas de la flota a «Dispositivos»",
@@ -180,6 +183,11 @@ def cuentas(lineas: list[dict], arbol: str) -> dict[str, dict]:
         elif esc.startswith("pane-"):
             apuntar("tema.apartado", c.get("tema"), d)
             apuntar("estilos.apartado", c.get("estilos_tardios"), d)
+        elif esc.startswith("vista-"):
+            # Cambiar de vista en «Parejas»: un estilo nuevo o un <<ThemeChanged>> ahí
+            # repintaría la ventana entera, que es lo que se ve a trozos.
+            apuntar("tema.vista", c.get("tema"), d)
+            apuntar("estilos.vista", c.get("estilos_tardios"), d)
         elif esc == "llega-instantanea":
             # La principal con la lectura compartida ya aplicada: los widgets que pone la
             # lectura en la ventana (las parejas de la lista). Solo lo mide el flujo `principal`.
