@@ -58,6 +58,10 @@ Cada momento nuevo funciona igual en el árbol del PR y en el de la base (la 0.7
 solo el PR ofrece (`root.instantanea`, la lectura compartida de la principal) se usa si
 está y se salta si no, y un momento que solo mide el PR se lee «nuevo», nunca falla.
 
+En el flujo `parejas`, tras elegir filas, se cambia de vista tres veces (`vista-catalogo`,
+`vista-dispositivo`, `vista-catalogo-otra-vez`: `cambiar_vistas()`), cada una hasta que el
+`update()` deja la ventana quieta, con su segunda ronda de pintado.
+
 El flujo `flota` abre «Parejas» con el catálogo sin contestar y, desde ella, «Dispositivos» (con
 la flota sin llegar: `open-dispositivos`; luego llegando: `llega-flota` y `elegir-dispositivo`) y el
 editor de flags de la pareja elegida (`open-flags`), pasando antes por la ventana de esa pareja
@@ -734,6 +738,66 @@ def on_parejas(dlg, t, t_req):
             NOTES["arrival_error"] = repr(e)
     if not CAPTURA:
         elegir_filas(dlg)
+        cambiar_vistas(dlg)
+
+
+VISTAS = (("vista-catalogo", "Catálogo"), ("vista-dispositivo", "Este dispositivo"),
+          ("vista-catalogo-otra-vez", "Catálogo"))
+"""Los cambios de vista de «Parejas» que se miden, en orden: el momento y la opción que se pulsa."""
+
+
+def cambiar_vistas(dlg):
+    """Pasa «Parejas» a «Catálogo», vuelve a «Este dispositivo» y pasa otra vez, y apunta cada uno.
+
+    Es el repintado que se ve a trozos cuando el contenido se mueve: el aviso ámbar entra
+    encima de la franja `[defaults]` y empuja todo lo de debajo. La primera vez se construye
+    además lo del catálogo (`montar_catalogo()`); la segunda solo se enseña y se esconde.
+
+    Cada momento va desde el clic (`invoke()` de la opción: lo que hace un clic) hasta que
+    `update()` deja la ventana quieta. Eso incluye la segunda ronda de pintado: en Windows,
+    tras mover un widget, el sistema le pide pintarse otra vez (`WM_PAINT` -> `<Expose>`), y
+    cortar en el último `<Expose>` en vez de en el `update()` deja fuera la mitad del coste.
+    Lleva la traza de `_trazar()`: `fases` (`clic`, lo que tarda el `invoke()`; `pintar`, el
+    `update()` de después; y, dentro del clic, `refrescar` y el `crecer` del visor si el árbol
+    los tiene), `expose`/`configure` por clase y los widgets movidos (`geometria`).
+
+    Al acabar deja la pantalla en «Este dispositivo», sin medirlo. Un árbol sin esas opciones
+    lo apunta como error en `_notes`.
+    """
+    from tkinter import ttk
+
+    opciones = {}
+    for x in walk(dlg):
+        if isinstance(x, ttk.Radiobutton) and a_la_vista(x):
+            try:
+                opciones[str(x.cget("text"))] = x
+            except Exception:                            # noqa: BLE001
+                pass
+    if not all(texto in opciones for _m, texto in VISTAS):
+        NOTES["error"] = f"«Parejas» no tiene las opciones de vista: {sorted(opciones)}"
+        return
+    pantalla = getattr(dlg, "pantalla", None)
+    visor = getattr(dlg, "visor", None)
+    try:
+        for momento, texto in VISTAS:
+            dlg.update()
+            tema_nuevo(dlg)
+            traza = _trazar(dlg, [("refrescar", pantalla, "refrescar"),
+                                  ("crecer", visor, "crecer")])
+            with perfilado(momento):
+                t0 = time.perf_counter()
+                opciones[texto].invoke()
+                t_clic = time.perf_counter()
+                dlg.update()
+                t1 = time.perf_counter()
+            detalle = medir(dlg)
+            detalle.update(traza({"clic": ms(t0, t_clic), "pintar": ms(t_clic, t1)}))
+            record(momento, ms(t0, t1), **detalle)
+        opciones["Este dispositivo"].invoke()
+        dlg.update()
+    except Exception:                                    # noqa: BLE001
+        import traceback
+        NOTES["error"] = traceback.format_exc()
 
 
 def elegir_filas(dlg):

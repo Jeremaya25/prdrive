@@ -80,7 +80,8 @@ PLAN_CAPTURAS = (("parejas", 5, "1.0"), ("ajustes", 5, "1.0"), ("flota", 5, "1.0
                  ("parejas", 5, "2.0"), ("ajustes", 5, "2.0"))
 ESPERADOS = {
     "parejas": ("start-main", "apply-main", "open-parejas", "cold-parejas", "elegir-fila",
-                "elegir-pareja", "reabrir-parejas"),
+                "elegir-pareja", "vista-catalogo", "vista-dispositivo", "vista-catalogo-otra-vez",
+                "reabrir-parejas"),
     "ajustes": ("open-ajustes", "pane-reparacion", "pane-volumen", "pane-actualizaciones",
                 "pane-configuracion", "pane-otra-vez", "volver-ajustes"),
     "principal": ("marcar", "sincronizar-ventana", "volver-pasada"),
