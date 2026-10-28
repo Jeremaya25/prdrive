@@ -134,6 +134,9 @@ def pedir_nombre(parent, titulo: str, inicial: str, validar: Callable[[str], str
     entrada.focus_set()
     entrada.selection_range(0, _fin_de_seleccion(inicial, es_archivo))
     entrada.icursor("end")
+    # En Windows, al mapearse la ventana el foco se va a la propia ventana y se pierde
+    # el del campo: se vuelve a poner cuando ya está a la vista, para escribir sin clic.
+    dlg.after_idle(entrada.focus_set)
     mostrar(dlg, parent)
     return respuesta["v"]
 

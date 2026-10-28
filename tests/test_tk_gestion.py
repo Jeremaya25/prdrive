@@ -115,6 +115,9 @@ try:
         visto["motivo0"] = str(d.motivo.cget("text"))
         visto["estilo_motivo"] = str(d.motivo.cget("style"))
         visto["aceptar0"] = estado(d.aceptar)
+        d.deiconify()
+        d.update()
+        # `-lastfor`: dónde queda el foco del diálogo aunque el escritorio no se lo dé
         visto["foco"] = str(d.tk.call("focus", "-lastfor", str(d)))
         visto["entrada"] = str(d.entrada)
         escribir(d, "a/b")
