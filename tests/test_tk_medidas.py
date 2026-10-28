@@ -952,6 +952,43 @@ try:
                     abierta.destroy()
                 tk_servidor.elegir_destino = previo_destino
 
+                # «Servidor» con algo cortado: la línea del corte añade una fila; en otro
+                # servidor, con su motivo, es el texto más largo que puede llevar.
+                def con_corte(dlg):
+                    dlg.lista.selection_set(dlg.lista.get_children()[:3])
+                    dlg.update()
+                    dlg.barra.cortar.invoke()
+
+                def con_corte_en_otro(dlg):
+                    con_corte(dlg)
+                    dlg.elegido.set("otro")
+                    dlg.elegido.event_generate("<<ComboboxSelected>>")
+                    for _ in range(20):
+                        dlg.update()
+
+                for que, preparar in (("la línea del corte", con_corte),
+                                      ("la línea del corte en otro servidor",
+                                       con_corte_en_otro)):
+                    rcd.arrancar = RcdMedidas
+                    segundo_plano.lanzar = segundo_plano.en_el_acto
+                    config_file.load_raw = lambda path=None: {
+                        "defaults": {"remote": SERVIDOR_REMOTE}}
+                    antes = set(raiz.winfo_children())
+                    try:
+                        entra, corta = medir_dialogo(
+                            lambda: tk_servidor.open_dialog(raiz, config_servidor),
+                            ancho, alto, escala, modulo=tk_servidor, preparar=preparar)
+                    finally:
+                        rcd.arrancar, segundo_plano.lanzar, config_file.load_raw = previos_servidor
+                    abierta = [w for w in raiz.winfo_children() if w not in antes][0]
+                    c(f"{nombre}: el explorador con {que} cabe", entra, True)
+                    c(f"{nombre}: el explorador con {que} no queda recortado", corta, False)
+                    c(f"{nombre}: (y se ha medido con la línea puesta)",
+                      (bool(abierta.cortado.winfo_manager()),
+                       str(abierta.cortado.texto.cget("text")).endswith("mismo servidor.")),
+                      (True, que.endswith("otro servidor")))
+                    abierta.destroy()
+
                 # La guía de flags (#126): una tabla de un lienzo, tres filtros y un texto con
                 # barra. Su caso más alto es el de más filas (sin buscar nada), con la pareja
                 # de un espejo, y el de una búsqueda que deja pocas.
