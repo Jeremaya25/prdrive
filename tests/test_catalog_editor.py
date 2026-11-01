@@ -31,13 +31,13 @@ NUEVA = {"name": "fotos", "local": "sync-data/fotos", "remote_path": "/R/fotos",
          "mode": "up", "include": [], "exclude": []}
 
 
-def falso(source="remote", raw=None):
+def falso(source="remote", raw=None, con_local=()):
     """Devuelve un catálogo de mentira con esos datos."""
     datos = raw if raw is not None else CAT
     texto = config_file.dumps(datos)
     return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source=source,
                            stamp="2026-01-01 00:00:00",
-                           endpoint="nas:/prdrive-catalog/pairs.toml")
+                           endpoint="nas:/prdrive-catalog/pairs.toml", con_local=con_local)
 
 
 def rechaza(etiqueta, hacer, fragmento):
@@ -301,5 +301,43 @@ with sandbox():
     c("  salvo que consten los dos", ofrece(VIEJO_CFG), True)
     c("con un nombre propio, nunca", ofrece({"defaults": {"catalog_path": "/c/mio.toml"}}),
       False)
+
+# El catálogo ya no lleva la carpeta local (#196)
+SIN = catalog.sin_local(CAT)
+cat = falso(raw=SIN)
+plan = catalog_editor.plan_catalog_save(
+    cat, {"name": "nueva", "remote_path": "/n", "mode": "up"}, None)
+c("alta en el catálogo sin ruta local", plan.new_raw["pair"][-1],
+  {"name": "nueva", "remote_path": "/n", "mode": "up"})
+c("  y avisa de los dispositivos sin actualizar",
+  catalog_editor.AVISO_SIN_ACTUALIZAR in plan.warnings, True)
+c("  sin hablar de quitar local, que ya no hay",
+  catalog_editor.aviso_quita_local(0) in plan.warnings, False)
+plan = catalog_editor.plan_catalog_save(cat, {**SIN["pair"][1], "mode": "up"}, "notas")
+c("editar una pareja del catálogo no le pone local", "local" in plan.new_raw["pair"][1],
+  False)
+c("  ni avisa de nada de local", [w for w in plan.warnings if "carpeta local" in w], [])
+
+viejo = falso(con_local=("respaldo", "notas"))
+plan = catalog_editor.plan_catalog_save(viejo, {**SIN["pair"][1], "mode": "up"}, "notas")
+c("la primera subida que quita local lo avisa",
+  catalog_editor.aviso_quita_local(2) in plan.warnings, True)
+c("  y lo quita de todas las parejas", [p for p in plan.new_raw["pair"] if "local" in p], [])
+c("  sin contarlo como un cambio de la pareja",
+  "local" in " ".join(x for x in plan.consequences if x.startswith("Cambia")), False)
+c("borrar también lo avisa",
+  catalog_editor.aviso_quita_local(2) in catalog_editor.plan_catalog_remove(
+      viejo, "notas").warnings, True)
+c("y cambiar los [defaults] también",
+  catalog_editor.aviso_quita_local(2) in catalog_editor.plan_catalog_defaults(
+      viejo, {"remote": "otro"}).warnings, True)
+
+from ui import pair_editor  # noqa: E402
+sin_carpeta = {"name": "x", "remote_path": "/x", "mode": "up"}
+c("el validador del dispositivo sigue exigiendo la carpeta",
+  any("Falta la ruta local" in x for x in pair_editor.validate(LOCAL, sin_carpeta, None)),
+  True)
+c("  y el del catálogo no", pair_editor.validate(LOCAL, sin_carpeta, None, con_local=False),
+  [])
 
 sys.exit(c.report())

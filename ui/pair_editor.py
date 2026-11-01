@@ -271,8 +271,13 @@ def rows(config: Config,
 
 
 def validate(raw: Mapping[str, Any], edited: Mapping[str, Any],
-             original_name: str | None) -> list[str]:
-    """Devuelve los problemas que impiden guardar; vacía es «adelante»."""
+             original_name: str | None, con_local: bool = True) -> list[str]:
+    """Devuelve los problemas que impiden guardar; vacía es «adelante».
+
+    Args:
+        con_local: Si la pareja tiene que llevar carpeta local. Las del catálogo
+            no la llevan: la elige cada dispositivo al usarla (#196).
+    """
     problemas = []
     name = str(edited.get("name") or "").strip()
 
@@ -286,7 +291,7 @@ def validate(raw: Mapping[str, Any], edited: Mapping[str, Any],
     if name and name in otros:
         problemas.append(f"Ya hay otra pareja que se llama '{name}'.")
 
-    if not str(edited.get("local") or "").strip():
+    if con_local and not str(edited.get("local") or "").strip():
         problemas.append("Falta la ruta local (relativa a la raíz del dispositivo).")
     if not str(edited.get("remote_path") or "").strip():
         problemas.append("Falta la ruta en el remoto.")

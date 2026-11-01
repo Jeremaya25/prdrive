@@ -55,6 +55,24 @@ PIERDE_COMENTARIOS = ("El fichero se reescribe entero: se conserva la cabecera y
                       "copia a su lado (.bak).")
 """Lo que se dice siempre antes de reescribir el fichero del catálogo."""
 
+AVISO_SIN_ACTUALIZAR = ("Los dispositivos con una versión anterior de prdrive no podrán "
+                        "usar esta pareja hasta actualizarse: la carpeta la elige ahora "
+                        "cada dispositivo.")
+"""Lo que se avisa al dar de alta una pareja, que ya no lleva `local` (#196)."""
+
+
+def aviso_quita_local(n: int) -> str:
+    """Lo que se avisa en la subida que quita `local` de `n` parejas del catálogo.
+
+    Es la primera desde una versión anterior (`Catalog.con_local`): un
+    dispositivo sin actualizar sigue sincronizando, porque su `sync_config.toml`
+    está completo, pero ya no puede editar el catálogo ni usar parejas nuevas.
+    """
+    return (f"Esta subida quita la carpeta local de {n} pareja(s) del catálogo: ahora "
+            f"la elige cada dispositivo. Los que tengan una versión anterior de prdrive "
+            f"siguen sincronizando, pero no podrán editar el catálogo ni usar parejas "
+            f"nuevas hasta actualizarse.")
+
 LEYENDO_SIN_COPIA = ("Leyendo el catálogo del remoto. Este dispositivo no tiene copia "
                      "local, así que hasta que llegue solo se ven sus propias parejas.")
 """Lo que se dice mientras se lee el remoto sin copia local que enseñar."""
@@ -174,10 +192,15 @@ def _editable(cat: catalog.Catalog | None) -> catalog.Catalog:
 
 def _plan(cat: catalog.Catalog, nuevo_raw: dict,
           raw_local: Mapping[str, Any] | None) -> CatalogPlan:
-    """Devuelve un plan vacío sobre ese catálogo, con el alcance ya dicho."""
+    """Devuelve un plan vacío sobre ese catálogo, con el alcance ya dicho.
+
+    Y con el aviso de quitar `local`, si el catálogo leído aún lo traía.
+    """
     plan = CatalogPlan(new_raw=nuevo_raw, base_text=cat.text,
                        raw_local=dict(raw_local) if raw_local is not None else None)
     plan.consequences.append(ALCANCE)
+    if cat.con_local:
+        plan.warnings.append(aviso_quita_local(len(cat.con_local)))
     return plan
 
 
@@ -193,13 +216,16 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
             se puede editar.
     """
     cat = _editable(cat)
-    problemas = pair_editor.validate(cat.raw, edited, original_name)
+    problemas = pair_editor.validate(cat.raw, edited, original_name, con_local=False)
     if problemas:
         raise ConfigError("\n".join(problemas))
 
-    nuevo_raw = copy.deepcopy(dict(cat.raw))
+    nuevo_raw = catalog.sin_local(copy.deepcopy(dict(cat.raw)))
     nuevo_raw.setdefault("pair", [])
-    campos = pair_editor.clean_form(edited)
+    # La carpeta es de cada dispositivo (#196): aunque el formulario la trajera,
+    # no entra en el catálogo.
+    campos = {k: v for k, v in pair_editor.clean_form(edited).items()
+              if k not in catalog.DEL_DISPOSITIVO}
     plan = _plan(cat, nuevo_raw, raw_local)
 
     if original_name is None:
@@ -207,7 +233,8 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
         nuevo_raw["pair"].append(resultante)
         plan.consequences.insert(
             0, f"Se crea la pareja '{campos['name']}' en el catálogo. Todavía no la "
-               f"usa ningún dispositivo: cada uno tiene que elegirla.")
+               f"usa ningún dispositivo: cada uno tiene que elegirla, con su carpeta.")
+        plan.warnings.append(AVISO_SIN_ACTUALIZAR)
     else:
         i = pair_editor.pair_index(nuevo_raw, original_name)
         anterior = dict(nuevo_raw["pair"][i])
@@ -230,7 +257,7 @@ def plan_catalog_save(cat: catalog.Catalog | None, edited: Mapping[str, Any],
     if aviso:
         plan.warnings.append(aviso)
 
-    model.parse_config(nuevo_raw)          # red final, la misma que en el dispositivo
+    model.parse_config(nuevo_raw, catalogo=True)   # red final, la misma que al subirlo
     return plan
 
 
@@ -242,7 +269,7 @@ def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
     """
     cat = _editable(cat)
     i = pair_editor.pair_index(cat.raw, name)
-    nuevo_raw = copy.deepcopy(dict(cat.raw))
+    nuevo_raw = catalog.sin_local(copy.deepcopy(dict(cat.raw)))
     del nuevo_raw["pair"][i]
     if not nuevo_raw["pair"]:
         raise ConfigError("No se puede dejar el catálogo sin ninguna pareja.")
@@ -255,7 +282,7 @@ def plan_catalog_remove(cat: catalog.Catalog | None, name: str,
     plan.consequences.append(PIERDE_COMENTARIOS)
     plan.warnings.append("Los datos del remoto y de los dispositivos no se tocan.")
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, catalogo=True)
     return plan
 
 
@@ -263,7 +290,7 @@ def plan_catalog_defaults(cat: catalog.Catalog | None, edited: Mapping[str, Any]
                           raw_local: Mapping[str, Any] | None = None) -> CatalogPlan:
     """Devuelve el plan de cambiar los `[defaults]` del catálogo."""
     cat = _editable(cat)
-    nuevo_raw = copy.deepcopy(dict(cat.raw))
+    nuevo_raw = catalog.sin_local(copy.deepcopy(dict(cat.raw)))
     nuevo_raw["defaults"] = copy.deepcopy(dict(edited))
 
     difiere = catalog.diff_keys(cat.defaults, nuevo_raw["defaults"])
@@ -281,7 +308,7 @@ def plan_catalog_defaults(cat: catalog.Catalog | None, edited: Mapping[str, Any]
     plan.consequences.append(NO_APLICA_AQUI)
     plan.consequences.append(PIERDE_COMENTARIOS)
 
-    model.parse_config(nuevo_raw)
+    model.parse_config(nuevo_raw, catalogo=True)
     return plan
 
 
