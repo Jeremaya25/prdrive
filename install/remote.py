@@ -331,10 +331,11 @@ def parse_catalog(text: str, endpoint: str = "") -> Catalog:
     except tomllib.TOMLDecodeError as e:
         raise InstallError(f"El catálogo del remoto no es TOML válido: {e}") from e
     try:
-        model.parse_config(raw)
+        model.parse_config(raw, catalogo=True)
     except ConfigError as e:
         raise InstallError(f"El catálogo del remoto no es un config válido:\n\n{e}") from e
-    return Catalog(raw, config_file.header_of(text), endpoint)
+    # Sin carpeta local, como lo lee el dispositivo (#196): la elige el asistente.
+    return Catalog(catalog.sin_local(raw), config_file.header_of(text), endpoint)
 
 
 def pull_catalog(rclone: Rclone, catalog_path: str,

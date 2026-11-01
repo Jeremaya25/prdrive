@@ -204,6 +204,8 @@ class InstallState:
             ni repintar el panel, ni un hilo que acaba sin que nadie lo mire,
             ni volver a ese volumen la lanzan otra vez.
         selected: Parejas elegidas.
+        locales: La carpeta elegida para cada una (`{nombre: local}`): el
+            catálogo no la lleva, la pregunta el paso de las parejas (#196).
         deployed: Si el código ya está copiado.
         config_written: Si el config del dispositivo ya está escrito.
         initialized: Si ya se hizo el `--resync` inicial.
@@ -222,6 +224,7 @@ class InstallState:
     sondas: dict[Path, object] = field(default_factory=dict)
 
     selected: list[str] = field(default_factory=list)
+    locales: dict[str, str] = field(default_factory=dict)
     deployed: bool = False
     config_written: bool = False
     initialized: bool = False

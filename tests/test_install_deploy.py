@@ -53,6 +53,8 @@ mode = "up"
 """
 
 cat = remote.parse_catalog(CATALOGO)
+LOCALES = {"docs": "sync-data/docs", "upload": "sync-data/upload", "respaldo": "."}
+"""La carpeta elegida de cada pareja: el catálogo ya no la lleva (#196)."""
 
 
 def arbol_falso() -> Path:
@@ -743,16 +745,29 @@ c("las fuentes de ui/fuentes/ no cambian (cambiarlas exige antes resolver cómo 
 
 # carpetas locales
 c("las carpetas de las parejas elegidas",
-  [str(p) for p in deploy.local_dirs(cat, ["docs", "upload"])],
+  [str(p) for p in deploy.local_dirs(cat, ["docs", "upload"], LOCALES)],
   [str(Path("sync-data/docs")), str(Path("sync-data/upload"))])
 c("la raíz del dispositivo ('.') no es una carpeta que crear",
-  deploy.local_dirs(cat, ["respaldo"]), [])
+  deploy.local_dirs(cat, ["respaldo"], LOCALES), [])
+c("las carpetas salen de lo elegido, no del catálogo (#196)",
+  deploy.local_dirs(cat, ["docs"], {"docs": "Docs"}), [Path("Docs")])
+c("la carpeta que se sugiere es el nombre de la pareja",
+  deploy.carpeta_sugerida({"name": "fotos", "remote_path": "/f"}), "fotos")
+c("una carpeta vacía no vale", deploy.problema_carpeta(""), "Falta la carpeta.")
+c("  ni solo espacios", deploy.problema_carpeta("  "), "Falta la carpeta.")
+c("una que sale del dispositivo tampoco", deploy.problema_carpeta("../x") is not None, True)
+c("una corriente sí", deploy.problema_carpeta("Docs"), None)
+c("la raíz vale en una unidad", deploy.problema_carpeta("."), None)
+c("  y no en un equipo", deploy.problema_carpeta(".", equipo=True) is not None, True)
+c("el resumen enseña la carpeta elegida",
+  deploy.summary(cat, ["docs"], {"docs": "Docs"})[0][1].startswith("Docs  <->  "), True)
 
 dispositivo = tmpdir()
-creadas = deploy.make_local_dirs(dispositivo, cat, ["docs", "respaldo"])
+creadas = deploy.make_local_dirs(dispositivo, cat, ["docs", "respaldo"], LOCALES)
 c("se crean de verdad", (dispositivo / "sync-data" / "docs").is_dir(), True)
 c("y se dice cuáles", len(creadas), 1)
-c("llamarlo dos veces no repite", deploy.make_local_dirs(dispositivo, cat, ["docs"]), [])
+c("llamarlo dos veces no repite",
+  deploy.make_local_dirs(dispositivo, cat, ["docs"], LOCALES), [])
 
 # qué se inicializa y qué no
 todas = ["respaldo", "docs", "upload"]

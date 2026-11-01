@@ -253,7 +253,8 @@ CAT = remote.parse_catalog(
     '[[pair]]\nname = "todo"\nlocal = "."\nremote_path = "/t"\nmode = "up-mirror"\n\n'
     '[[pair]]\nname = "docs"\nlocal = "sync-data/docs"\nremote_path = "/d"\n')
 try:
-    deploy.write_device_config(nueva, CAT, ["todo", "docs"])
+    deploy.write_device_config(nueva, CAT, ["todo", "docs"],
+                               locales={"todo": ".", "docs": "sync-data/docs"})
     c("write_device_config en un equipo: la raíz entera no se escribe", "escrito", "error")
 except model.ConfigError:
     c("write_device_config en un equipo: la raíz entera no se escribe", True, True)
@@ -263,12 +264,13 @@ escrito_cfg = tomllib.loads(destino.read_text(encoding="utf-8"))
 c("  con su local cambiado, sí; lo demás, como en el catálogo",
   [(p["name"], p["local"], p["remote_path"]) for p in escrito_cfg["pair"]],
   [("todo", "copia", "/t"), ("docs", "sync-data/docs", "/d")])
-c("  y el catálogo no se toca", CAT.pair("todo")["local"], ".")
+c("  y el catálogo no lleva carpeta: la elige cada uno (#196)", "local" in CAT.pair("todo"),
+  False)
 c("local_dirs con los locales de aquí",
-  deploy.local_dirs(CAT, ["todo", "docs"], {"todo": "copia"}),
+  deploy.local_dirs(CAT, ["todo", "docs"], {"todo": "copia", "docs": "sync-data/docs"}),
   [Path("copia"), Path("sync-data/docs")])
 c("en una unidad, device_config sigue aceptando la raíz",
-  deploy.device_config(CAT, ["todo"])["pair"][0]["local"], ".")
+  deploy.device_config(CAT, ["todo"], locales={"todo": "."})["pair"][0]["local"], ".")
 
 # verificar: sin lanzadores ni Python que pedirle
 filas = {k.etiqueta: k for k in raiz_equipo.verificar(nueva, ["todo", "docs"])}
