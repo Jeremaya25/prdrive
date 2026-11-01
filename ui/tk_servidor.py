@@ -84,8 +84,8 @@ from common.model import Config, ConfigError
 
 from . import (gestion, icons, prefs, remote_picker, segundo_plano, servidor, theme,
                tk_direcciones, tk_gestion, tk_lote, tk_transferencia, transferencia)
-from .tk import (Indicador, Sondeo, avisar, cuerpo_visible, modal, mostrar, pantalla_util,
-                 preguntar)
+from . import tk as uitk
+from .tk import Indicador, Sondeo, avisar, cuerpo_visible, modal, mostrar, preguntar
 
 COLUMNAS = [
     ("Nombre", 120, True),
@@ -509,7 +509,7 @@ def _fijar_tamanos(dlg, lista) -> None:
     visor.base = (max(minimo[0], inicial[0]), max(minimo[1], inicial[1]))
     franjas = (visor.marco.winfo_reqwidth() - visor.lienzo.winfo_reqwidth(),
                visor.marco.winfo_reqheight() - visor.lienzo.winfo_reqheight())
-    util = pantalla_util(dlg)
+    util = uitk.pantalla_util(dlg)      # por el módulo: los tests la sustituyen ahí
     dlg.minsize(min(minimo[0] + franjas[0], util[0]), min(minimo[1] + franjas[1], util[1]))
 
 

@@ -164,6 +164,10 @@ try:
         barra.menu_recogidas()
     c("abrir los menús muchas veces deja uno vivo de cada (Windows tiene un tope de menús)",
       sum(1 for w in barra.lienzo.winfo_children() if w.winfo_class() == "Menu"), 2)
+    llamadas.clear()
+    barra.elegir_servidor("otro")
+    c("elegir_servidor() hace lo que su entrada del menú, sin crear ninguno",
+      (llamadas, len(menus)), ([("servidor", "otro")], len(menus)))
     barra.encender(atras=True, adelante=True, arriba=True, releer=True, servidor=False,
                    buscar=True)
     menus.clear()

@@ -206,6 +206,10 @@ class Direcciones:
         menu = self._menus[clase] = tk_gestion.menu_del_tema(self.lienzo)
         return menu
 
+    def elegir_servidor(self, nombre: str) -> None:
+        """Hace lo que elegir `nombre` en el menú de servidores, sin crear el menú."""
+        self._acciones["servidor"](nombre)
+
     def menu_servidores(self):
         """Devuelve el menú con todos los servidores; el que se ve, marcado."""
         import tkinter as tk
@@ -215,7 +219,7 @@ class Direcciones:
         self._var_servidor = tk.StringVar(self.lienzo, value=self.remote)
         for nombre in self._remotes:
             menu.add_radiobutton(label=nombre, value=nombre, variable=self._var_servidor,
-                                 command=lambda n=nombre: self._acciones["servidor"](n))
+                                 command=lambda n=nombre: self.elegir_servidor(n))
         return menu
 
     def menu_recogidas(self):

@@ -267,9 +267,14 @@ def recursos(donde: str) -> None:
     if sys.platform != "win32":
         return
     import ctypes
-    h = ctypes.windll.kernel32.GetCurrentProcess()
-    usuario = ctypes.windll.user32.GetGuiResources(h, 1)
-    gdi = ctypes.windll.user32.GetGuiResources(h, 0)
+    from ctypes import wintypes
+    k32, u32 = ctypes.WinDLL("kernel32"), ctypes.WinDLL("user32")
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    u32.GetGuiResources.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    u32.GetGuiResources.restype = wintypes.DWORD
+    h = k32.GetCurrentProcess()
+    usuario = u32.GetGuiResources(h, 1)
+    gdi = u32.GetGuiResources(h, 0)
     print(f"  (recursos) {donde}: USER={usuario} GDI={gdi} hijos_raiz={len(raiz.winfo_children())}"
           f" imagenes={len(raiz.tk.call('image', 'names'))}", flush=True)
 
@@ -978,9 +983,9 @@ try:
 
                 def con_corte_en_otro(dlg):
                     con_corte(dlg)
-                    menu = dlg.direcciones.menu_servidores()
-                    menu.invoke([menu.entrycget(i, "label")
-                                 for i in range(menu.index("end") + 1)].index("otro"))
+                    # Sin crear el menú: este test deja vivas cientos de ventanas y
+                    # Windows tiene un tope de menús por proceso.
+                    dlg.direcciones.elegir_servidor("otro")
                     for _ in range(20):
                         dlg.update()
 
