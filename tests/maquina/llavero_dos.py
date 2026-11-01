@@ -111,7 +111,8 @@ def montar(raiz: Path, remoto: Path, catalogo: dict, ruta_catalogo: str, cabecer
                                              catalog_path=ruta_catalogo))
     deploy.write_device_config(raiz, Catalog(raw=catalogo, head=cabecera,
                                              endpoint=f"nas:{ruta_catalogo}"),
-                               ["notas"], catalog_path=ruta_catalogo)
+                               ["notas"], catalog_path=ruta_catalogo,
+                               locales={"notas": "sync-data/notas"})   # el asistente la pregunta (#196)
     deploy.write_launchers(raiz)
     device.ensure_control_file(raiz)
     (raiz / "sync-data" / "notas").mkdir(parents=True, exist_ok=True)
@@ -127,7 +128,7 @@ def remoto_vacio() -> tuple[Path, dict, str, str]:
     (remoto / "notas").mkdir()
     ruta = f"{remoto.as_posix()}/prdrive-catalog/remote.toml"
     catalogo = {"defaults": {"remote": "nas", "catalog_path": ruta},
-                "pair": [{"name": "notas", "local": "sync-data/notas",
+                "pair": [{"name": "notas",
                           "remote_path": f"{remoto.as_posix()}/notas", "mode": "bisync"}]}
     cabecera = "# catálogo de prueba\n"
     (remoto / "prdrive-catalog" / "remote.toml").write_text(
