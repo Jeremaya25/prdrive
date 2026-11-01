@@ -751,6 +751,22 @@ c("la raíz del dispositivo ('.') no es una carpeta que crear",
   deploy.local_dirs(cat, ["respaldo"], LOCALES), [])
 c("la carpeta de un espejo de subida nunca se crea: vacía, vaciaría el remoto (#151)",
   deploy.local_dirs(cat, ["respaldo"], {"respaldo": "Copia"}), [])
+avisos_dir = tmpdir()
+(avisos_dir / "Llena").mkdir()
+(avisos_dir / "Llena" / "f.txt").write_text("x", encoding="utf-8")
+avisos = deploy.avisos_carpetas(avisos_dir, cat, ["docs", "respaldo"],
+                                {"docs": "Docs", "respaldo": "Copia"})
+c("el asistente avisa del espejo de subida sin carpeta (#196)",
+  any("'respaldo'" in a and "no existe" in a for a in avisos), True)
+c("  y de nada más", len(avisos), 1)
+avisos = deploy.avisos_carpetas(avisos_dir, cat, ["docs", "upload"],
+                                {"docs": "Docs", "upload": "docs/sub"})
+c("dos parejas una dentro de la otra se avisan una vez",
+  [a for a in avisos if "ya la usa docs" in a], avisos)
+c("  una sola", len(avisos), 1)
+c("carpetas sin riesgo no avisan de nada",
+  deploy.avisos_carpetas(avisos_dir, cat, ["docs", "upload", "respaldo"],
+                         {"docs": "Docs", "upload": "Subir", "respaldo": "Llena"}), [])
 c("las carpetas salen de lo elegido, no del catálogo (#196)",
   deploy.local_dirs(cat, ["docs"], {"docs": "Docs"}), [Path("Docs")])
 c("la carpeta que se sugiere es el nombre de la pareja",

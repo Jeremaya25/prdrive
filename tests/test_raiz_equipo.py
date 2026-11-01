@@ -208,6 +208,17 @@ info = raiz_equipo.revisar_local(casa, "\\Documentos\\Obsidian\\")
 c("revisar_local normaliza y resuelve", (info.local, info.ruta, info.error),
   ("Documentos/Obsidian", casa / "Documentos" / "Obsidian", None))
 c("  la raíz entera es un error", bool(raiz_equipo.revisar_local(casa, ".").error), True)
+(casa / "Con cosas").mkdir(exist_ok=True)
+(casa / "Con cosas" / "f.txt").write_text("x", encoding="utf-8")
+c("  una carpeta con cosas en bisync: la inicialización las junta",
+  any("las junta" in a for a in raiz_equipo.revisar_local(casa, "Con cosas").avisos), True)
+espejo = raiz_equipo.revisar_local(casa, "Con cosas", modo="down-mirror").avisos
+c("  en un espejo de bajada, no: dice que borrará de ella (#196)",
+  (any("las junta" in a for a in espejo), any("borrará de ella" in a for a in espejo)),
+  (False, True))
+c("  y en uno de subida sin carpeta, que la pasada abortará",
+  any("abortará" in a for a in raiz_equipo.revisar_local(casa, "Nueva",
+                                                         modo="up-mirror").avisos), True)
 c("  salir de la raíz también", bool(raiz_equipo.revisar_local(casa, "../x").error),
   True)
 c("  dentro de OneDrive, un aviso",

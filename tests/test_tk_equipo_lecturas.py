@@ -841,10 +841,10 @@ locales: list = []
 revisar_real = raiz_equipo.revisar_local
 
 
-def revisar_apuntado(raiz_, local):
+def revisar_apuntado(raiz_, local, modo="bisync"):
     """`raiz_equipo.revisar_local` de verdad, apuntando en qué hilo y qué ruta."""
     locales.append((threading.get_ident(), str(local)))
-    return revisar_real(raiz_, local)
+    return revisar_real(raiz_, local, modo)
 
 
 raiz_equipo.revisar_local = revisar_apuntado

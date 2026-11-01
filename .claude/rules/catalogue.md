@@ -1,6 +1,7 @@
 ---
 paths:
   - "common/catalog.py"
+  - "common/carpetas.py"
   - "install/remote.py"
   - "ui/catalog_editor.py"
   - "ui/pair_editor.py"

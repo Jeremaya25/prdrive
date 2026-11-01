@@ -46,7 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from common import components, config_file, fleet, model
+from common import carpetas, components, config_file, fleet, model
 from common.pins import PLATAFORMAS, Plataforma
 # Viven en `common/` porque el dispositivo también esconde cosas; se importan
 # aquí con su nombre para que `deploy.hide()` siga existiendo.
@@ -1075,6 +1075,23 @@ def problema_carpeta(local: str, equipo: bool = False) -> str | None:
     if not texto:
         return "Falta la carpeta."
     return model.problema_local(texto, equipo)
+
+
+def avisos_carpetas(device_root: Path | str, catalog: Catalog, selected: list[str],
+                    locales: Mapping[str, str]) -> list[str]:
+    """Devuelve lo que hay que avisar de las carpetas elegidas antes de escribir el config.
+
+    Lo mismo que avisa «Usar aquí» (`common/carpetas.py`): un espejo en una
+    carpeta que lo hace peligroso y dos parejas sobre los mismos ficheros. Cada
+    choque se dice una vez: cada pareja se compara solo con las de antes.
+    """
+    salida: list[str] = []
+    for i, nombre in enumerate(selected):
+        modo = (catalog.pair(nombre) or {}).get("mode", model.DEFAULT_MODE)
+        antes = {n: str(locales.get(n) or "") for n in selected[:i]}
+        salida += carpetas.avisos(nombre, modo, str(locales.get(nombre) or ""),
+                                  Path(device_root), antes)
+    return salida
 
 
 def device_config(catalog: Catalog, selected: list[str],

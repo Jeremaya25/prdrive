@@ -740,6 +740,13 @@ boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
 c("ni con una que sale del dispositivo", deploy.config_path(limpio).exists(), False)
 cajas_parejas["docs"].delete(0, "end")
 cajas_parejas["docs"].insert(0, "Mis docs")
+preguntas_carpetas: list[str] = []
+messagebox.askokcancel = lambda *a, **k: preguntas_carpetas.append(a[1]) or False
+boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("con un aviso de carpeta, pregunta antes de guardar (#196)",
+  any("'respaldo'" in p and "no existe" in p for p in preguntas_carpetas), True)
+c("  y si se dice que no, no escribe nada", deploy.config_path(limpio).exists(), False)
+messagebox.askokcancel = lambda *a, **k: True
 boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
 config = deploy.config_path(limpio)
 c("se escribe el sync_config.toml", config.is_file(), True)
@@ -1319,6 +1326,11 @@ c("  con la de la raíz elegida no se guarda",
   (False, True))
 escribir(por_valor["respaldo"], "copia")
 escribir(por_valor["docs"], "Documentos/docs")
+textos = [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)]
+c("  la nota del espejo de subida dice que su carpeta no existe y abortará (#196)",
+  any("abortará" in t for t in textos), True)
+preguntas_equipo: list[str] = []
+messagebox.askokcancel = lambda *a, **k: preguntas_equipo.append(a[1]) or True
 c("  la línea de debajo dice dónde cae la ruta escrita",
   str(RAIZ_EQUIPO / "Documentos" / "docs")
   in [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)], True)
@@ -1334,6 +1346,9 @@ c("  cambiar la ruta se escribe solo aquí",
   {"respaldo": "copia", "docs": "Documentos/docs"})
 c("  y queda apuntada para «Inicialización»", propia.state.locales,
   {"respaldo": "copia", "docs": "Documentos/docs"})
+c("  y antes de guardar ha preguntado por esa carpeta",
+  any("'respaldo'" in p and "no existe" in p for p in preguntas_equipo), True)
+messagebox.askokcancel = lambda *a, **k: True
 c("  y crea las carpetas donde se ha dicho, y publica la nota",
   ((RAIZ_EQUIPO / "Documentos" / "docs").is_dir(), publicadas), (True, [RAIZ_EQUIPO]))
 c("  y enciende Siguiente", str(propia.boton_siguiente.cget("state")), "normal")

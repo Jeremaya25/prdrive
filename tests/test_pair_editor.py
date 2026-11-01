@@ -16,7 +16,7 @@ from _harness import Checks, sandbox
 
 import tomllib
 
-from common import bisync, catalog, config_file, model
+from common import bisync, carpetas, catalog, config_file, model
 from common.model import ConfigError
 from ui import pair_editor
 
@@ -344,7 +344,8 @@ with sandbox():
       "ya la usa" in avisos(pair_editor.plan_enable(raw, cat, "fotos", "sync-data/otra")),
       False)
     c("  y la raíz entera contiene todas",
-      pair_editor.solapadas(raw, "."), ["notas", "subida"])
+      carpetas.solapadas({p["name"]: p["local"] for p in raw["pair"]}, "."),
+      ["notas", "subida"])
 
 with sandbox():
     raw = preparar()
@@ -366,8 +367,20 @@ with sandbox():
     cat = falso_catalogo(ESPEJOS)
     antes = pair_editor.plan_enable(raw, cat, "fotos", "Fotos").raw
     dar_baseline(antes, "fotos")
-    c("un baseline de la misma carpeta se reutiliza",
-      pair_editor.plan_enable(raw, cat, "fotos", "Fotos").shelve, [])
+    plan = pair_editor.plan_enable(raw, cat, "fotos", "Fotos")
+    c("un baseline de la misma carpeta se reutiliza", plan.shelve, [])
+    todo = " ".join(plan.consequences + plan.warnings)
+    c("  sin carpeta, no promete crearla: la pasada aborta",
+      ("se creará" in todo, "abortará" in todo), (False, True))
+    c("  ni promete un --resync que no va a haber", "pedirá un --resync" in todo, False)
+    (model.DEVICE_ROOT / "Fotos").mkdir()
+    todo = " ".join(pair_editor.plan_enable(raw, cat, "fotos", "Fotos").consequences)
+    c.contains("  con carpeta, dice que la reutiliza y que no hay --resync", todo,
+               "se reutiliza")
+    c.contains("  y que lo borrado desde entonces se borra en el otro lado", todo,
+               "se borrará en el otro")
+    c("  sin decir que no borra", ("pedirá un --resync" in todo, "no borra" in todo),
+      (False, False))
 
 with sandbox():
     raw = preparar()

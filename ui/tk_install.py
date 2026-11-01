@@ -1419,6 +1419,19 @@ def _paso_actualizar(cuerpo, wiz) -> None:
     boton.grid(row=fila, column=0, sticky="w", pady=(theme.E4, 0))
 
 
+def confirmar_carpetas(parent, avisos: list[str]) -> bool:
+    """Pregunta si se guardan las parejas con estas carpetas, que tienen avisos (#196).
+
+    Los avisos son los de `deploy.avisos_carpetas()`: un espejo en una carpeta
+    que lo hace peligroso, o dos parejas sobre los mismos ficheros. Lo usan los
+    dos asistentes, el de una unidad y el de «En este equipo».
+    """
+    from tkinter import messagebox
+    return bool(messagebox.askokcancel(
+        TITLE, "Antes de guardar, mira estas carpetas:\n\n" + "\n\n".join(avisos)
+        + "\n\n¿Guardar así?", parent=parent, icon="warning"))
+
+
 def _confirmar_retroceso(wiz, mia: str, puesta: str) -> bool:
     """Pregunta si se quiere dejar el dispositivo en una versión anterior."""
     from tkinter import messagebox
@@ -1871,6 +1884,9 @@ def _paso_parejas(cuerpo, wiz) -> None:
                             + "\n".join(f"{n}: {m}" for n, m in malas.items()), "peligro")
             return
         locales = {n: cajas[n].get().strip() for n in seleccion}
+        avisos = deploy.avisos_carpetas(wiz.device_root, wiz.catalog, seleccion, locales)
+        if avisos and not confirmar_carpetas(wiz.root, avisos):
+            return
         try:
             destino = deploy.write_device_config(
                 wiz.device_root, wiz.catalog, seleccion,
