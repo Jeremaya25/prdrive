@@ -79,7 +79,7 @@ def preparar() -> Path:
     agente.avisar =lambda t, x, u=False: AVISOS.append((t, x)) or True
     agente.diario = DIARIO.append
     agente.hay_pantalla = lambda: PANTALLA[0]
-    agente.abrir_contenedor = lambda raiz: ABIERTOS.append(Path(raiz)) or True
+    agente.abrir_contenedor = lambda raiz, nombre="": ABIERTOS.append(Path(raiz)) or True
     penwatch.candidate_roots = lambda cfg: list(RAICES)
     moderacion.energia = lambda: moderacion.Energia()
     moderacion.red_medida = lambda: False

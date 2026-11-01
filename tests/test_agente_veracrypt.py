@@ -21,6 +21,7 @@ Con un VeraCrypt de mentira: lo que se lanza se apunta (`_agente_falso.Proc`) y
 """
 
 import hashlib
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -34,6 +35,7 @@ from common import components, equipo, pins, store, vestibulo
 
 c = Checks("agente: la raíz cifrada de este equipo")
 
+ABRIR_CONTENEDOR = agente.abrir_contenedor     # la de verdad: preparar() la sustituye
 F.preparar()
 penwatch.candidate_roots = lambda cfg: ([Path(r) for r in cfg.get("extra_roots", [])]
                                         + list(F.RAICES))
@@ -297,6 +299,57 @@ equipo.guardar_ajustes(equipo.Ajustes().con_unidad(UNIDAD))
 (FISICA / vestibulo.MARCA).write_text(f"id={UID}\n", encoding="utf-8")
 c("raiz_fisica() encuentra la carpeta del contenedor", vestibulo.raiz_fisica(UID), FISICA)
 c("  que es una de las raíces extra", vestibulo.carpetas_de_contenedor(), [str(FISICA)])
+
+# La contraseña protegida de los keyloggers (#199): la pide la marca de la carpeta del
+# contenedor. Aquí no se puede cumplir (Linux en X11): se desbloquea igual, con la
+# orden de siempre, y se le dice a la persona por qué no va protegida.
+entorno_real = dict(os.environ)
+os.environ.pop("WAYLAND_DISPLAY", None)
+os.environ.pop("GDK_BACKEND", None)
+vestibulo.poner_escritorio_seguro(FISICA, True)
+F.AVISOS.clear()
+antes = len(veracrypts())
+equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
+F.vueltas(otro, 1)
+c("protegida y en X11: se desbloquea igual, con la orden de siempre",
+  (len(veracrypts()), veracrypts()[-1].args), (antes + 1, [VC, str(HC), str(PUNTO)]))
+c("  y avisa una vez, con el motivo",
+  [(t, "no es Wayland" in x) for t, x in F.AVISOS],
+  [("Mi portátil: contraseña sin protección", True)])
+os.environ["WAYLAND_DISPLAY"] = "wayland-0"
+F.AVISOS.clear()
+otro.desbloqueos.clear()
+equipo.pedir({"pide": equipo.PIDE_DESBLOQUEAR, "id": UID})
+F.vueltas(otro, 1)
+c("  en Wayland, nada que avisar", (len(veracrypts()), F.AVISOS), (antes + 2, []))
+vestibulo.poner_escritorio_seguro(FISICA, False)
+otro.desbloqueos.clear()
+os.environ.clear()
+os.environ.update(entorno_real)
+
+# Una unidad cerrada la abre penwatch, que le dice al agente con qué avisar.
+open_real = penwatch.open_container
+pedidos: list = []
+
+
+def open_falso(raiz, cwd=None, al_avisar=None):
+    """`penwatch.open_container` de mentira: lo lanza y no se puede proteger."""
+    pedidos.append((raiz, cwd))
+    al_avisar("la sesión no es Wayland")
+    return True
+
+
+penwatch.open_container = open_falso
+try:
+    F.AVISOS.clear()
+    c("una unidad: la abre penwatch, desde la carpeta del agente",
+      (ABRIR_CONTENEDOR(Path("/media/x"), nombre="Mi USB"), pedidos),
+      (True, [(Path("/media/x"), equipo.DIR)]))
+    c("  y el agente avisa con el motivo que le da",
+      F.AVISOS, [("Mi USB: contraseña sin protección",
+                  "VeraCrypt la pide en su ventana de siempre: la sesión no es Wayland.")])
+finally:
+    penwatch.open_container = open_real
 
 # las órdenes de Windows
 penwatch.IS_WIN, agente.IS_WIN = True, True
