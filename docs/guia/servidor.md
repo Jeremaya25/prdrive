@@ -3,7 +3,7 @@
 # Ver, bajar, subir y ordenar archivos del servidor
 
 «Servidor…», en la ventana de prdrive, te deja recorrer tu servidor carpeta a carpeta, como
-WinSCP: ves qué hay, cuánto ocupa cada archivo, cuándo se cambió por última vez y qué carpetas
+el Explorador de Windows: ves qué hay, cuánto ocupa cada archivo, cuándo se cambió por última vez y qué carpetas
 son de una pareja. Desde ahí también puedes **bajar** archivos y carpetas al equipo y **subir**
 archivos y carpetas del equipo al servidor, y **ordenarlo**: crear carpetas, cambiar nombres,
 mover cosas de carpeta y borrar, que solo tocan el servidor. En el servidor, lo único que
@@ -23,11 +23,25 @@ marcha, el botón está apagado.
 Al abrirlo, la ventana aparece enseguida con «Conectando con el servidor…» y, en cuanto contesta,
 enseña la carpeta de arriba del todo.
 
+La ventana **se puede agrandar y encoger** arrastrando un borde o una esquina: la lista se queda
+con el sitio que sobra. La próxima vez se abre al tamaño en que la dejaste. Para cerrarla, la **X**
+de la ventana.
+
 ## La ventana
 
-- **Arriba**, el desplegable elige el servidor. A su derecha va la **carpeta en la que estás**.
-  **↑** sube a la carpeta de encima (en la de arriba del todo no hace nada). **Releer** vuelve
-  a leer la carpeta, por si algo ha cambiado.
+- **Arriba, la barra de direcciones**, como la del Explorador:
+  - **←** y **→** van a la carpeta de antes y a la de después (también Alt+← y Alt+→).
+  - **↑** sube a la carpeta de encima (también Alt+↑ y Retroceso); en la de arriba del todo no
+    hace nada.
+  - **⟳** vuelve a leer la carpeta, por si algo ha cambiado (también **F5**).
+  - **La ruta**, como `nas › datos › fotos`: pulsa cualquier carpeta de ella para ir allí. Si no
+    cabe, las primeras se recogen en «…»; púlsalo para verlas.
+  - **El icono del servidor**, al principio de la ruta: púlsalo para elegir otro servidor, si el
+    dispositivo tiene varios.
+  - **Escribir la ruta**: pulsa en el hueco de la ruta (o Ctrl+L) y escribe, por ejemplo,
+    `/datos/fotos` o `datos\fotos`; Intro va allí, Escape lo deja como estaba. Siempre se cuenta
+    desde arriba del todo del servidor.
+  - **Buscar en…**, a la derecha (también Ctrl+F): ver «Buscar».
 - **La lista**, con las carpetas primero y luego los archivos:
   - **Nombre**: con su icono.
   - **Tamaño**: en B, KB, MB… Las carpetas no llevan tamaño («—»): el servidor no lo da sin
@@ -36,10 +50,12 @@ enseña la carpeta de arriba del todo.
   - **Permisos**: ver más abajo.
 - **Entrar** en una carpeta: doble clic en ella, o selecciónala y pulsa Intro. **Retroceso** sube.
 - Puedes elegir varias filas a la vez con Ctrl o Mayús.
-- **Encima de la lista**, los botones **Nueva carpeta…**, **Renombrar…**, **Cortar** y
-  **Borrar…** (ver «Ordenar el servidor»). Lo mismo sale con el botón derecho del ratón sobre la lista.
-- **Abajo**, cuántos elementos hay, y junto a **Cerrar**, los botones **Bajar…**,
-  **Subir archivos…** y **Subir carpeta…** (ver «Bajar y subir»).
+- **Encima de la lista**, solo dos botones: **Subir** (despliega **Archivos…** y **Carpeta…**) y
+  **Nueva carpeta…**.
+- **El botón derecho del ratón** sobre lo elegido: **Abrir** (una carpeta), **Bajar…**,
+  **Renombrar…**, **Cortar**, **Pegar aquí** y **Borrar…**. En el hueco de la lista, sin nada
+  debajo: **Nueva carpeta…**, **Pegar aquí**, **Subir archivos…**, **Subir carpeta…** y **Releer**.
+- **Abajo**, cuántos elementos hay.
 
 Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
@@ -54,17 +70,17 @@ Si la carpeta está vacía, la ventana lo dice: «Esta carpeta está vacía.»
 
 ## Bajar y subir
 
-- **Bajar…**: elige en la lista lo que quieres (una o varias filas, carpetas o archivos), pulsa
-  **Bajar…** y elige la carpeta del equipo donde guardarlo. Las carpetas se guardan con todo lo
-  que tienen dentro.
-- **Subir archivos…**: elige archivos de tu equipo. Se suben a la carpeta del servidor que estás
-  viendo.
-- **Subir carpeta…**: elige una carpeta de tu equipo. Se sube entera, con su nombre, a la carpeta
-  que estás viendo.
+- **Bajar…**: elige en la lista lo que quieres (una o varias filas, carpetas o archivos), pulsa el
+  botón derecho, **Bajar…**, y elige la carpeta del equipo donde guardarlo. Las carpetas se
+  guardan con todo lo que tienen dentro.
+- **Subir → Archivos…**: elige archivos de tu equipo. Se suben a la carpeta del servidor que
+  estás viendo.
+- **Subir → Carpeta…**: elige una carpeta de tu equipo. Se sube entera, con su nombre, a la
+  carpeta que estás viendo.
 
 Mientras se copia, un panel al pie de la lista muestra qué archivo va, cuántos llevas, la
 velocidad y cuánto falta. Puedes seguir mirando carpetas mientras tanto. Solo hay una copia a la
-vez: mientras dura, los tres botones (y los de ordenar) están apagados.
+vez: mientras dura, bajar, subir y ordenar están apagados.
 
 Si rclone tarda en contestar, la ventana dice «Sin respuesta de rclone…»: la copia puede seguir en
 marcha, así que los botones siguen apagados y prdrive vuelve a preguntar solo. Si rclone se ha
@@ -116,7 +132,8 @@ archivo. prdrive no lo borra solo: si lo ves en la lista, elígelo y bórralo co
 
 ## Ordenar el servidor
 
-Todo se hace en la carpeta que estás viendo. Los botones se encienden según lo que hayas elegido.
+Todo se hace en la carpeta que estás viendo: **Nueva carpeta…** está encima de la lista, y lo
+demás en el botón derecho (o con su tecla). Cada acción se puede o no según lo que hayas elegido.
 
 - **Nueva carpeta…** (Ctrl+Mayús+N): pide el nombre y crea la carpeta aquí. Al acabar, queda elegida.
 - **Renombrar…** (F2): con **una** fila elegida, pide el nombre nuevo. Un nombre no puede estar
@@ -172,6 +189,28 @@ conserva su copia: «Fotos» no borra.». Fuera de las carpetas de las parejas n
 Las parejas **de otros dispositivos** no se conocen: este dispositivo solo sabe de las suyas. Si
 tocas desde aquí la carpeta de una pareja de otro dispositivo, nadie te lo dirá.
 
+## Buscar
+
+Escribe en **Buscar en…** y prdrive busca **en la carpeta que estás viendo y en todas las que
+tiene dentro**: empieza en cuanto dejas de escribir, o al pulsar Intro.
+
+- Encuentra los nombres que **contienen** lo que escribes, sin mirar mayúsculas ni acentos
+  (`nandu` encuentra `Ñandú.jpg`). Con `*` o `?` es un patrón: `*.pdf` encuentra los PDF.
+- Los resultados salen **según aparecen**, con una columna más, **Carpeta**, que dice dónde está
+  cada uno. La línea de arriba cuenta cómo va («Buscando «x»… 230 carpetas · 14 encontrados») y
+  tiene **Detener**. Al acabar lo resume; si alguna carpeta no se pudo leer (sin permiso), lo dice
+  y sigue con las demás.
+- Cambiar lo que buscas **no vuelve a recorrer** el servidor: filtra lo ya leído. Intro sigue una
+  búsqueda que habías detenido; **F5** la vuelve a hacer desde cero.
+- **Doble clic** en una carpeta encontrada entra en ella; en un archivo, va a su carpeta y lo deja
+  elegido (lo mismo que **Abrir la ubicación**, con el botón derecho). Bajar, renombrar, cortar o
+  borrar se hacen desde su carpeta, no desde los resultados.
+- **←** desde ahí vuelve a los resultados. **Escape** (o borrar lo escrito) vuelve a la carpeta.
+- En un servidor muy grande, la búsqueda se para sola tras leer muchísimos elementos y lo dice:
+  busca desde una carpeta más concreta.
+
+Buscar solo lee: no cambia nada del servidor.
+
 ## La columna «Permisos» y el «—»
 
 Los permisos son los de Linux: tres cifras, como `755` (el dueño puede todo; los demás, leer y
@@ -189,7 +228,8 @@ pantalla.
 - **«No tienes permiso para ver esta carpeta.»**: sale el candado. Nada más.
 - **«No hay conexión con el servidor.»**: si pasa al abrir la ventana, aparece **Reintentar**. Si
   pasa estando dentro, vuelve a intentarlo con **Releer** cuando haya red.
-- **«Esa carpeta ya no existe en el servidor.»**: alguien la ha borrado o movido. Sube con ↑.
+- **«Esa carpeta ya no existe en el servidor.»**: alguien la ha borrado o movido (o la ruta
+  escrita no existe). Sube con ↑.
 - **«El servidor no ha contestado a tiempo.»**: el servidor tarda demasiado. Vuelve a intentarlo con
   **Releer**. Si pasa al mirar antes de un cambio (por ejemplo, contando una carpeta enorme antes
   de borrarla), no se ha hecho nada y el panel ofrece **Reintentar**.

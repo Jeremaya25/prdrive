@@ -1,7 +1,12 @@
 # «Servidor…» como el Explorador: barra de direcciones, botonera corta, búsqueda y tamaño libre — diseño
 
-Fecha: 01/11/2026. Estado: **aprobado** (diseño en el chat del issue #195); se construye en cuatro
-etapas en un solo PR. Parte de las piezas 1 a 3 del explorador, ya construidas
+Fecha: 01/11/2026. Estado: **construida** (código, pruebas automáticas y guía) en cuatro etapas en
+un solo PR; las pruebas en máquina real (filas R1 y R2 de
+`docs/superpowers/pruebas/2026-10-27-servidor-pendiente-en-real.md`) están por hacer. Diferencias
+con lo de aquí, decididas al construir: la columna «Carpeta» enseña la ruta absoluta de la carpeta
+(no relativa a la raíz de la búsqueda: sin ambigüedad); el selector de servidor es el primer tramo
+de las migas (icono y flecha) y no un botón aparte; y la tarjeta de la lista no propaga lo que pide
+la lista, para que una columna de más no ensanche la ventana (`servidor.md`). Parte de las piezas 1 a 3 del explorador, ya construidas
 (`docs/superpowers/specs/2026-10-27-explorador-servidor-design.md`,
 `…-servidor-transferencias-design.md`, `…-servidor-gestion-design.md`) y contadas en
 `docs/agents/reference/servidor.md`.
