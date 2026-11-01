@@ -227,18 +227,20 @@ def dumps(raw: Mapping[str, Any], head: str = "") -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def dumps_checked(raw: Mapping[str, Any], head: str = "") -> str:
+def dumps_checked(raw: Mapping[str, Any], head: str = "", catalogo: bool = False) -> str:
     """Devuelve el TOML generado, ya validado y releído.
 
     Es la parte de `save()` que no depende de escribir en disco: el catálogo
     del remoto pasa por aquí antes de subirse, y allí un fichero que no se
     relee igual es peor, porque gobierna borrados en TODOS los dispositivos.
+    Con `catalogo` se valida como catálogo, sin `local` en sus parejas
+    (`model.parse_config()`).
 
     Raises:
         ConfigError: Si el dict no tiene sentido como config, el texto no es
             TOML válido o no reproduce el dict pedido.
     """
-    model.parse_config(raw)  # ¿tiene sentido lo que se pide?
+    model.parse_config(raw, catalogo=catalogo)  # ¿tiene sentido lo que se pide?
 
     text = dumps(raw, head)
 

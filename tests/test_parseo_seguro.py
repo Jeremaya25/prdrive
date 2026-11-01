@@ -571,4 +571,23 @@ with sandbox() as dispositivo:
     finally:
         model.APP_DIR = app_de_verdad
 
+# El catálogo no lleva `local` (#196): se valida con una carpeta de muestra.
+sin_local = {"pair": [{"name": "a", "remote_path": "/a"}]}
+try:
+    model.parse_config(sin_local, catalogo=True)
+    c("el catálogo sin local se valida", True, True)
+except model.ConfigError as e:
+    c("el catálogo sin local se valida", str(e), "sin error")
+try:
+    model.parse_config(sin_local)
+    c("y sin catalogo sigue exigiéndolo", "no lanzó", "ConfigError")
+except model.ConfigError as e:
+    c.contains("y sin catalogo sigue exigiéndolo", str(e), "falta 'local'")
+try:
+    model.parse_config({"pair": [{"name": "a", "local": "../x", "remote_path": "/a"}]},
+                       catalogo=True)
+    c("un local raro del catálogo no cuenta", True, True)
+except model.ConfigError as e:
+    c("un local raro del catálogo no cuenta", str(e), "sin error")
+
 sys.exit(c.report())

@@ -131,4 +131,8 @@ c("header_of recorta en la primera línea que no es comentario",
 c("y devuelve vacío si no hay cabecera",
   config_file.header_of("[defaults]\nremote = \"x\"\n"), "")
 
+catalogo = {"pair": [{"name": "a", "remote_path": "/a", "mode": "up"}]}
+c("dumps_checked del catálogo admite parejas sin local",
+  tomllib.loads(config_file.dumps_checked(catalogo, catalogo=True)), catalogo)
+
 sys.exit(c.report())
