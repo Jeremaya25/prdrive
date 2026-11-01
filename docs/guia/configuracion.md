@@ -6,7 +6,8 @@ El fichero de configuración de la unidad, los flags de rclone, `device_remote`,
 
 `sync_config.toml` (dentro de `.prdrive/`) es el config de **ese** dispositivo. Se
 edita desde la ventana de parejas o a mano; el mismo esquema sirve para el
-`remote.toml` del catálogo (`pairs.toml` en un remoto de antes).
+`remote.toml` del catálogo (`pairs.toml` en un remoto de antes), salvo `local`:
+las parejas del catálogo no lo llevan, porque la carpeta la elige cada dispositivo.
 
 ```toml
 [defaults]
@@ -21,7 +22,7 @@ transfers = 4
 
 [[pair]]
 name = "docs"
-local = "sync-data/docs"             # relativa a la raíz del dispositivo
+local = "sync-data/docs"             # relativa a la raíz del dispositivo; no va en el catálogo
 remote_path = "/datos/docs"          # ruta dentro del remote
 mode = "bisync"
 
