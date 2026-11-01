@@ -1199,4 +1199,36 @@ try:
 finally:
     v.raiz_fisica, v.disperso, v.UMBRAL_LIBRE = real_raiz, real_disperso, real_umbral
 
+# 10. la casilla de «Ajustes → Configuración» (#199): qué enseña y qué escribe. Sin Tk.
+c("sin raíz física (no vive en un contenedor): no hay casilla",
+  cifrado.escritorio_seguro(None), None)
+c("  una raíz sin marca, tampoco", cifrado.escritorio_seguro(tmpdir()), None)
+unidad = tmpdir("prdrive-casilla-")
+(unidad / CONTAINER_NAME).write_bytes(b"x")
+vestibulo.escribir(unidad, ID)
+c("una unidad recién hecha: apagada, con su «Abrir PRDRIVE» al día",
+  cifrado.escritorio_seguro(unidad), cifrado.EscritorioSeguro(unidad, False, False))
+c("«Guardar» marcada la enciende en la marca",
+  (cifrado.guardar_escritorio_seguro(unidad, True), v.escritorio_seguro(unidad),
+   cifrado.escritorio_seguro(unidad).valor), (True, True, True))
+viejo = "\n".join(ln for ln in (unidad / v.ABRIR_BAT).read_text(encoding="utf-8").splitlines()
+                  if "proteccion" not in ln)
+(unidad / v.ABRIR_BAT).write_text(viejo, encoding="utf-8")
+c("un «Abrir PRDRIVE» de antes de la opción se nota", cifrado.escritorio_seguro(unidad),
+  cifrado.EscritorioSeguro(unidad, True, True))
+c.contains("  y la ayuda dice cómo ponerlo al día", cifrado.ayuda_escritorio_seguro(True),
+           "Añadir plataformas")
+c("  sin él, no lo dice", "Añadir plataformas" in cifrado.ayuda_escritorio_seguro(False),
+  False)
+for clave in ("administrador", "asistente", "Wayland", "ventanas detrás"):
+    c.contains(f"la ayuda dice lo que cubre y lo que no: «{clave}»",
+               cifrado.ayuda_escritorio_seguro(False), clave)
+carpeta = tmpdir("prdrive-casilla-equipo-")
+(carpeta / CONTAINER_NAME).write_bytes(b"x")
+(carpeta / v.MARCA).write_text(vestibulo.marca(ID), encoding="utf-8")
+c("la carpeta del contenedor de una raíz del equipo: sin .bat, nada que poner al día",
+  cifrado.escritorio_seguro(carpeta), cifrado.EscritorioSeguro(carpeta, False, False))
+c("si no se puede escribir, «Guardar» lo dice con False",
+  cifrado.guardar_escritorio_seguro(tmpdir() / "no-esta", True), False)
+
 raise SystemExit(c.report())

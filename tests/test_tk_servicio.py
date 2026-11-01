@@ -316,6 +316,28 @@ with sandbox():
     c("«Iniciar servicio» después sale con el intervalo guardado",
       (eleccion.pairs, eleccion.minutes), (("docs",), 20.0))
 
+# La casilla de los keyloggers (#199) llega a «Configuración» desde la lectura de la
+# ventana, que es quien lee la marca del dispositivo; el Tk no lee nada.
+with sandbox():
+    visto = {}
+    REAL_SEGURO = cifrado.escritorio_seguro
+    cifrado.escritorio_seguro = lambda fisica: cifrado.EscritorioSeguro(Path("X:/"), True,
+                                                                        False)
+
+    def mirar_casillas(dlg, parent=None) -> None:
+        """Hace de «Ajustes»: apunta las casillas de «Configuración» y cierra."""
+        visto["casillas"] = {t: w.instate(["selected"]) for t, w in casillas(dlg).items()}
+        dlg.destroy()
+
+    tk_doctor.mostrar = mirar_casillas
+    try:
+        ventana(UNA, lambda root: botones(root)["Ajustes…"].invoke())
+    finally:
+        tk_doctor.mostrar = REAL_DOCTOR_MOSTRAR
+        cifrado.escritorio_seguro = REAL_SEGURO
+    c("«Configuración» enseña la casilla de los keyloggers que trae la lectura (#199)",
+      visto.get("casillas"), {"Proteger la contraseña de VeraCrypt de los keyloggers": True})
+
 
 # la línea del arranque automático
 ESTADOS = (watch.Resumen("sin_instalar"), watch.Resumen("otro_dispositivo"),

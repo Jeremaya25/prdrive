@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 if TYPE_CHECKING:
     from common.model import Config
 
+    from .cifrado import EscritorioSeguro
     from .llavero_editor import Linea
     from .watch import Resumen
 
@@ -102,6 +103,8 @@ class Instantanea:
         device_id: El id del dispositivo, o `None` si no se pudo leer.
         identidad: Su nombre y su icono (`Identidad`), o `None` si no se
             pudieron leer: la ventana se queda con los que tenga.
+        escritorio_seguro: La casilla de la protección contra keyloggers
+            (`cifrado.EscritorioSeguro`), o `None` si no vive en un contenedor.
         fallos: Por campo que no se pudo leer, el `repr` del error.
         hecha: `time.time()` de cuando empezó la lectura.
         firma: De qué config es (`firma()`).
@@ -126,6 +129,7 @@ class Instantanea:
     remotes_servidor: tuple[str, ...] = ()
     device_id: str | None = None
     identidad: Identidad | None = None
+    escritorio_seguro: EscritorioSeguro | None = None
     fallos: Mapping[str, str] = field(default_factory=dict)
     hecha: float = field(default_factory=time.time)
     firma: tuple = ()
@@ -366,6 +370,10 @@ def leer(config: Config, *,
         from . import cifrado
         return cifrado.bloqueo()
 
+    def leer_escritorio_seguro() -> EscritorioSeguro | None:
+        from . import cifrado
+        return cifrado.escritorio_seguro(fisica)
+
     def leer_del_equipo() -> bool:
         from common import model
         return bool(model.es_equipo())
@@ -394,6 +402,7 @@ def leer(config: Config, *,
         "componentes", leer_componentes, ((), None, False))
     expulsion = intentar("expulsion", leer_expulsion, None)
     bloqueo = intentar("bloqueo", leer_bloqueo, None)
+    seguro = intentar("escritorio_seguro", leer_escritorio_seguro, None)
     del_equipo = intentar("del_equipo", leer_del_equipo, False)
     try:
         vigilante = leer_vigilante()
@@ -410,7 +419,7 @@ def leer(config: Config, *,
         componentes_actualizables=actualizables, fisica=fisica, expulsion=expulsion,
         bloqueo=bloqueo, del_equipo=del_equipo, vigilante=vigilante, llavero=llavero,
         remotes_servidor=remotes_servidor, device_id=device_id, identidad=identidad,
-        fallos=fallos, hecha=hecha, firma=sello, huella=huella)
+        escritorio_seguro=seguro, fallos=fallos, hecha=hecha, firma=sello, huella=huella)
 
 
 def vacia(config: Config) -> Instantanea:

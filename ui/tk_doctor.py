@@ -341,6 +341,15 @@ class VentanaAjustes:
             return None
         return inst
 
+    def escritorio_seguro(self):
+        """Devuelve la casilla de la protección contra keyloggers, o `None`.
+
+        Sale de la lectura compartida (`cifrado.escritorio_seguro()`, que lee el
+        dispositivo): sin ella, «Configuración» no la enseña.
+        """
+        inst = self.leida("escritorio_seguro")
+        return inst.escritorio_seguro if inst is not None else None
+
     def lista_de_componentes(self) -> list | None:
         """Devuelve los componentes anticuados, o `None` si todavía no se saben.
 
@@ -616,7 +625,8 @@ class VentanaAjustes:
                        tk_versions, tk_volumen)
         return {
             "volumen": tk_volumen.construir,
-            "configuracion": lambda p: tk_configuracion.construir(p, self.config),
+            "configuracion": lambda p: tk_configuracion.construir(
+                p, self.config, seguro=self.escritorio_seguro()),
             "llavero": lambda p: tk_llavero.construir_ajustes(p, self.raw_local),
             "versiones": lambda p: tk_versions.construir(p, self.config),
             "arranque": self.construir_arranque,

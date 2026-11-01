@@ -17,6 +17,11 @@ La raíz cifrada de un EQUIPO no tiene script: la abre y la cierra el agente
 residente. Ahí el botón es «Bloquear» y lo que hace es pedírselo al agente por
 el buzón de la raíz (`state/servicio.pide`) y cerrar la ventana: el agente
 espera a que se haya ido y desmonta, también sin `/silent`.
+
+También decide la casilla «Proteger la contraseña de VeraCrypt de los
+keyloggers» de «Ajustes → Configuración» (#199): una línea de la marca del
+vestíbulo, que la ventana lee en su lectura de fondo (`escritorio_seguro()`) y
+escribe al «Guardar» (`guardar_escritorio_seguro()`).
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 from common import vestibulo
 
@@ -127,3 +133,79 @@ def pedir_bloqueo(uid: str) -> bool:
         return False
     return equipo.pedir({"pide": equipo.PIDE_BLOQUEAR, "id": uid},
                         model.STATE_DIR / equipo.BUZON_SERVICIO)
+
+
+class EscritorioSeguro(NamedTuple):
+    """La casilla «Proteger la contraseña de VeraCrypt de los keyloggers» de este dispositivo.
+
+    Args:
+        fisica: Donde está la marca del vestíbulo: la raíz física de la unidad o
+            la carpeta del contenedor de la raíz del equipo. Ahí se escribe.
+        valor: Si la marca la pide (`vestibulo.escritorio_seguro()`).
+        bat_anterior: Si al lado hay un «Abrir PRDRIVE.bat» de antes de la opción,
+            que no la cumple (no lleva `vestibulo.ETIQUETA_PROTECCION_BAT`). Los
+            lanzadores llegan con «Añadir plataformas…», nunca al actualizar.
+    """
+    fisica: Path
+    valor: bool
+    bat_anterior: bool
+
+
+def escritorio_seguro(fisica: Path | None) -> EscritorioSeguro | None:
+    """Devuelve la casilla de la protección contra keyloggers, o `None` si no hay.
+
+    No la hay si el dispositivo no vive en un contenedor VeraCrypt (`fisica`
+    `None`) o si junto al contenedor no está la marca. Lee la marca y el «Abrir
+    PRDRIVE.bat» de la raíz física, así que va en la lectura de fondo de la
+    ventana (`instantanea.leer()`), nunca en el hilo de Tk. Es función de módulo
+    para que los tests la sustituyan.
+
+    Args:
+        fisica: La raíz física que la lectura ya ha buscado.
+    """
+    if fisica is None:
+        return None
+    try:
+        if not (fisica / vestibulo.MARCA).is_file():
+            return None
+    except OSError:
+        return None
+    try:
+        lineas = (fisica / vestibulo.ABRIR_BAT).read_text(
+            encoding="utf-8", errors="replace").splitlines()
+        anterior = vestibulo.ETIQUETA_PROTECCION_BAT not in (ln.strip() for ln in lineas)
+    except OSError:
+        anterior = False        # la carpeta de una raíz del equipo no tiene .bat
+    return EscritorioSeguro(fisica, vestibulo.escritorio_seguro(fisica), anterior)
+
+
+def guardar_escritorio_seguro(fisica: Path, valor: bool) -> bool:
+    """Enciende o apaga la protección contra keyloggers en la marca; `False` si no puede.
+
+    Es función de módulo para que los tests la sustituyan.
+    """
+    try:
+        vestibulo.poner_escritorio_seguro(fisica, valor)
+    except OSError:
+        return False
+    return True
+
+
+def ayuda_escritorio_seguro(bat_anterior: bool) -> str:
+    """Devuelve la frase de debajo de la casilla: qué cubre y qué no, en llano.
+
+    Args:
+        bat_anterior: Si el «Abrir PRDRIVE» de la unidad es de antes de la opción.
+    """
+    texto = ("En Windows, VeraCrypt te pide la contraseña en un escritorio aparte, donde "
+             "los demás programas de tu sesión no ven lo que tecleas; si al escribirla "
+             "ves tus ventanas detrás, Windows no lo ha permitido y no va protegida. En "
+             "Linux solo protege en una sesión Wayland. Frena a la mayoría de los "
+             "keyloggers, no a uno con permisos de administrador. Cubre la ventana de "
+             "VeraCrypt al abrir, no lo que escribes en el asistente ni en una "
+             "terminal. Si no se puede, se abre como siempre y se avisa. Lo guarda la "
+             "marca de fuera del contenedor, así que vale en cualquier equipo.")
+    if bat_anterior:
+        texto += (" El «Abrir PRDRIVE» de esta unidad es anterior y no lo cumple: "
+                  "ponlo al día con «Añadir plataformas…» del instalador.")
+    return texto
