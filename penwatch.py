@@ -104,6 +104,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Callable, NamedTuple
 from xml.sax.saxutils import escape as xml_escape
 
 APP_NAME = "prdrive"
@@ -135,6 +136,19 @@ las `TRAVELER_*`, `OPEN_SCRIPT` y `UDISKS_TCRYPT_CONF`.
 """
 VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
 """Marca oculta del vestíbulo, fuera del contenedor; lleva el mismo `id=`."""
+VESTIBULE_SECURE_KEY = "escritorio_seguro"
+"""Clave de la marca que pide la contraseña protegida de los keyloggers (#199).
+
+Encendida es la línea `escritorio_seguro=1`. Copia de
+`common/vestibulo.ESCRITORIO_SEGURO`, con su test.
+"""
+SECURE_DESKTOP_MIN = (1, 20)
+"""Primera versión de VeraCrypt con `/secureDesktop`.
+
+Está en `Mount/Mount.c` de `VeraCrypt_1.20` y no en el de la 1.19. Antes, una
+opción que no conoce, con más argumentos, es `AbortProcess
+("COMMAND_LINE_ERROR")`: no abriría nada.
+"""
 TRAVELER_DIR = "VeraCrypt"
 """Carpeta del VeraCrypt que viaja junto al contenedor."""
 TRAVELER_EXE = "VeraCrypt.exe"
@@ -516,12 +530,140 @@ def _con_escritorio() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+def vestibule_secure(container: Path) -> bool:
+    """Indica si la marca de al lado del contenedor pide la contraseña protegida.
+
+    La marca está siempre junto al `.hc`: en la raíz física de una unidad y en
+    la carpeta del contenedor de una raíz del equipo. No lanza: sin marca, o sin
+    poder leerla, no se pide.
+    """
+    try:
+        texto = (container.parent / VESTIBULE_MARKER).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in texto.splitlines():
+        clave, igual, valor = line.strip().partition("=")
+        if igual and clave.strip().lower() == VESTIBULE_SECURE_KEY and valor.strip() == "1":
+            return True
+    return False
+
+
+def veracrypt_version(exe: str) -> tuple[int, int] | None:
+    """Devuelve `(mayor, menor)` del recurso de versión de un ejecutable, o `None`.
+
+    Es `VS_FIXEDFILEINFO.dwFileVersionMS` (`GetFileVersionInfoW` y
+    `VerQueryValueW("\\")` de `version.dll`): `FILEVERSION 1,26,29,3` en la
+    1.26.29 (`Mount/Mount.rc`). Solo en Windows; fuera, o si no se puede leer,
+    `None`. Es función de módulo para que los tests la sustituyan.
+    """
+    if not IS_WIN:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ver = ctypes.WinDLL("version")  # type: ignore[attr-defined]
+        ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR,
+                                                ctypes.POINTER(wintypes.DWORD)]
+        ver.GetFileVersionInfoSizeW.restype = wintypes.DWORD
+        ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                            wintypes.DWORD, ctypes.c_void_p]
+        ver.GetFileVersionInfoW.restype = wintypes.BOOL
+        ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
+                                       ctypes.POINTER(ctypes.c_void_p),
+                                       ctypes.POINTER(wintypes.UINT)]
+        ver.VerQueryValueW.restype = wintypes.BOOL
+        tam = ver.GetFileVersionInfoSizeW(exe, None)
+        if not tam:
+            return None
+        datos = ctypes.create_string_buffer(tam)
+        bloque = ctypes.cast(datos, ctypes.c_void_p)
+        if not ver.GetFileVersionInfoW(exe, 0, tam, bloque):
+            return None
+        fijo, largo = ctypes.c_void_p(), wintypes.UINT()
+        if (not ver.VerQueryValueW(bloque, "\\", ctypes.byref(fijo), ctypes.byref(largo))
+                or not fijo.value or largo.value < 16):
+            return None
+        # dwSignature, dwStrucVersion, dwFileVersionMS, dwFileVersionLS…
+        campos = ctypes.cast(fijo, ctypes.POINTER(ctypes.c_uint32 * 4)).contents
+        if campos[0] != 0xFEEF04BD:
+            return None
+        return (campos[2] >> 16, campos[2] & 0xFFFF)
+    except (OSError, AttributeError, ValueError, TypeError):
+        return None
+
+
+class Proteccion(NamedTuple):
+    """Lo que pasa con la contraseña protegida de los keyloggers al abrir (#199).
+
+    Args:
+        pedida: Si la marca de al lado del contenedor la pide.
+        motivo: Vacío si se cumple (o no se pide); si no, por qué no, para
+            decírselo a la persona. Con motivo se abre igual, como siempre.
+    """
+    pedida: bool
+    motivo: str
+
+
+def proteccion(container: Path, exe: str) -> Proteccion:
+    """Decide si la contraseña de ese contenedor se pedirá protegida de los keyloggers.
+
+    En Windows es el escritorio seguro de VeraCrypt (`/secureDesktop`), que
+    aísla su diálogo del escritorio de la sesión: si el VeraCrypt no es de la
+    1.20 o posterior, o no se sabe, no se pasa. En Linux no hay interruptor: en
+    una sesión Wayland solo el compositor ve el teclado, y el VeraCrypt gráfico
+    (GTK del sistema, que prueba Wayland antes que X11, sin `GDK_BACKEND` que lo
+    fuerce) es un cliente nativo; en X11 cualquier programa lo lee. Ni en un
+    sistema ni en otro protege de un keylogger de administrador o de un driver.
+
+    Lo que VeraCrypt no dice: si `CreateDesktop()` falla, vuelve a su ventana
+    normal sin error ni código de salida (`SecureDesktopDialogBoxParam()`,
+    `Common/Dlgcode.c`), así que esto no lo puede saber.
+
+    Args:
+        container: El `.hc`; la marca está a su lado.
+        exe: El VeraCrypt que lo va a abrir (en Windows se mira su versión).
+    """
+    if not vestibule_secure(container):
+        return Proteccion(False, "")
+    if IS_WIN:
+        version = veracrypt_version(exe)
+        if version is None:
+            return Proteccion(True, "no he podido saber qué versión de VeraCrypt es, y "
+                                    "una anterior a la 1.20 no abriría con el "
+                                    "escritorio seguro")
+        if version < SECURE_DESKTOP_MIN:
+            return Proteccion(True, f"este VeraCrypt es la {version[0]}.{version[1]} y "
+                                    "el escritorio seguro llegó en la 1.20")
+        return Proteccion(True, "")
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return Proteccion(True, "la sesión no es Wayland, y en X11 cualquier programa "
+                                "puede leer el teclado")
+    gdk = os.environ.get("GDK_BACKEND", "").strip()
+    if gdk and not gdk.lower().startswith("wayland"):
+        return Proteccion(True, f"GDK_BACKEND={gdk} hace que VeraCrypt vaya por X11, "
+                                "donde cualquier programa puede leer el teclado")
+    return Proteccion(True, "")
+
+
+def _escritorio_seguro(container: Path, exe: str) -> list[str]:
+    """Devuelve `["/secureDesktop"]` si hay que pasárselo a ese VeraCrypt; si no, `[]`.
+
+    Nunca `/enableIME`: en la 1.26.29 su `case` no tiene `break` y cae en
+    `OptionDisableDeviceUpdate` (`Mount/Mount.c`).
+    """
+    p = proteccion(container, exe)
+    return ["/secureDesktop"] if IS_WIN and p.pedida and not p.motivo else []
+
+
 def veracrypt_command(root: Path | None, container: Path | None = None,
                       dest: str = "", respaldo: str | None = None) -> list[str] | None:
     """Devuelve la orden que abre el contenedor, o `None` si no hay con qué.
 
-    Sin contraseña: la pide VeraCrypt en su ventana. El VeraCrypt instalado va
-    antes que el que viaja en la unidad: con otra versión instalada, el que
+    Sin contraseña: la pide VeraCrypt en su ventana, en su escritorio seguro
+    si la marca de al lado lo pide y ese VeraCrypt puede (`proteccion()`). El
+    VeraCrypt instalado va antes que el que viaja en la unidad: con otra
+    versión instalada, el que
     viaja no puede cargar su driver (`ERR_DRIVER_VERSION`). Del que viaja, el
     portable de la arquitectura NATIVA del equipo (VeraCrypt escoge el driver
     por ella y un driver no se emula) y detrás el `VeraCrypt.exe` de un
@@ -548,7 +690,8 @@ def veracrypt_command(root: Path | None, container: Path | None = None,
             return None
         if IS_WIN:
             letra = ["/letter", dest.rstrip(":\\/")[:1].upper()] if dest else []
-            return [exe, "/volume", str(container), *letra,
+            return [exe, *_escritorio_seguro(container, exe),
+                    "/volume", str(container), *letra,
                     "/mountoption", "rm",
                     "/mountoption", f"label={APP_NAME.upper()}",
                     "/history", "n", "/cache", "n", "/quit"]
@@ -566,7 +709,8 @@ def veracrypt_command(root: Path | None, container: Path | None = None,
         for exe in candidates:
             try:
                 if exe.is_file():
-                    return [str(exe), "/volume", str(container),
+                    return [str(exe), *_escritorio_seguro(container, str(exe)),
+                            "/volume", str(container),
                             "/mountoption", "rm",
                             "/mountoption", f"label={APP_NAME.upper()}",
                             "/history", "n", "/cache", "n", "/quit"]
@@ -579,7 +723,8 @@ def veracrypt_command(root: Path | None, container: Path | None = None,
     return [exe, str(container)]
 
 
-def open_container(root: Path, cwd: Path | None = None) -> bool:
+def open_container(root: Path, cwd: Path | None = None,
+                   al_avisar: Callable[[str], None] | None = None) -> bool:
     """Le pide a VeraCrypt que abra el contenedor de `root`. No espera.
 
     Hace lo mismo que `Abrir PRDRIVE.bat` (`install/vestibulo.py`, con las
@@ -596,6 +741,9 @@ def open_container(root: Path, cwd: Path | None = None) -> bool:
         cwd: Carpeta de trabajo del proceso, en el equipo como en `launch()`:
             la del vigilante por defecto, o la de quien llama (el agente
             residente).
+        al_avisar: Se llama una vez con el motivo cuando la marca pide la
+            contraseña protegida y aquí no se puede (`proteccion()`): el agente
+            se lo dice a la persona. El vigilante solo lo apunta en el diario.
 
     Returns:
         `True` si lo ha lanzado.
@@ -621,6 +769,14 @@ def open_container(root: Path, cwd: Path | None = None) -> bool:
         log(f"no he podido lanzar VeraCrypt: {e}")
         return False
     log(f"abriendo el contenedor de {root} con {cmd[0]}; la contraseña la pide VeraCrypt")
+    motivo = proteccion(root / CONTAINER_FILE, cmd[0]).motivo
+    if motivo:
+        log(f"{root}: la contraseña no va protegida de los keyloggers: {motivo}")
+        if al_avisar is not None:
+            try:
+                al_avisar(motivo)
+            except Exception as e:                  # noqa: BLE001
+                log(f"no he podido avisar de que la contraseña no va protegida: {e}")
     return True
 
 
