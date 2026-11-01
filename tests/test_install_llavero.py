@@ -22,7 +22,7 @@ from pathlib import Path
 
 from _harness import Checks, tmpdir
 
-from common import components, config_file, kdbx, keepassxc, llavero, model, pins
+from common import catalog, components, config_file, kdbx, keepassxc, llavero, model, pins
 from install import InstallError, deploy, keepassxc_bin
 from install import llavero as llavero_install
 from install import remote
@@ -102,8 +102,10 @@ try:
       puestos, [(deploy.app_dir(raiz), "windows-x64")])
     tabla = {"base": "personal.kdbx", "fichero_llave": True, "nombre_llave": "personal.keyx"}
     c("sube el catálogo con [keychain]", tomllib.loads(rc.subido[-1]).get("keychain"), tabla)
-    c("  y nada más cambia en él", tomllib.loads(rc.subido[-1])["pair"],
-      tomllib.loads(CATALOGO)["pair"])
+    # La subida deja el catálogo sin `local`, como cualquier otra (#196).
+    c("  y nada más cambia en él, salvo que pierde la carpeta local",
+      tomllib.loads(rc.subido[-1])["pair"],
+      catalog.sin_local(tomllib.loads(CATALOGO))["pair"])
     c("la base, en el llavero del dispositivo",
       (raiz / model.LLAVERO_LOCAL / "personal.kdbx").read_bytes(), base_kdbx())
     c("  con su compañero fijo", (raiz / model.LLAVERO_LOCAL / llavero.LEEME).is_file(), True)

@@ -70,6 +70,28 @@ c("diff_keys ve altas, bajas y cambios",
   catalog.diff_keys({"a": 1, "b": 2}, {"a": 1, "b": 3, "c": 4}), ("b", "c"))
 c("y dice que no hay diferencia cuando no la hay",
   catalog.diff_keys({"a": 1}, {"a": 1}), ())
+c("diff_keys no cuenta la carpeta local, que es de cada dispositivo (#196)",
+  catalog.diff_keys({"local": "a", "mode": "up"}, {"mode": "up"}), ())
+c("  pero sí lo demás",
+  catalog.diff_keys({"local": "a", "mode": "up"}, {"mode": "bisync"}), ("mode",))
+
+# Un catálogo de antes trae `local` en sus parejas: se lee sin él (#196)
+with sandbox():
+    responder(ok())
+    cat = catalog.pull()
+    c("un catálogo antiguo se lee sin local",
+      [p for p in cat.raw["pair"] if "local" in p], [])
+    c("  y dice cuáles lo traían", cat.con_local, ("prdrive", "notas"))
+    c("  el texto sigue siendo el del remoto, contra el que se escribe", cat.text, TEXTO)
+    copia = catalog.cached()
+    c("la copia local también se lee sin local",
+      [p for p in copia.raw["pair"] if "local" in p], [])
+    c("  y dice cuáles lo traían", copia.con_local, ("prdrive", "notas"))
+    sin = catalog.sin_local(CAT)
+    c("sin_local no toca lo que le dan", "local" in CAT["pair"][0], True)
+    c("  y quita local de cada pareja, nada más",
+      sin["pair"][1], {"name": "notas", "remote_path": "/R/notas", "mode": "bisync"})
+    c("  un catálogo sin local no lo trae", catalog.con_local(sin), ())
 
 # leer deja copia, y la copia salva la pantalla sin red
 with sandbox():
@@ -253,6 +275,9 @@ with sandbox():
       ["prdrive", "notas", "fotos"])
     c("y la cabecera del catálogo sobrevive",
       catalog.cache_toml().read_text(encoding="utf-8").startswith(CABECERA.rstrip()), True)
+    c("push quita local al subir: el catálogo nuevo ya no lo lleva (#196)",
+      [p["name"] for p in subido["pair"] if "local" in p], [])
+    c("  y lo demás llega tal cual", subido, catalog.sin_local(nuevo))
 
 with sandbox():
     responder(ok("otra cosa distinta"))
