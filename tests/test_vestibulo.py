@@ -608,8 +608,11 @@ c("una marca con CRLF (editada a mano) también cuenta", v.escritorio_seguro(crl
 v.poner_escritorio_seguro(crlf, False)
 c("  y al apagarla conserva el id", (v.escritorio_seguro(crlf), v.leer_id(crlf)),
   (False, ID))
-(crlf / v.MARCA).write_text(f"id={ID}\nescritorio_seguro=sí\n", encoding="utf-8")
-c("solo «=1» la enciende", v.escritorio_seguro(crlf), False)
+# En otra carpeta: la de arriba ya está oculta, y Windows no deja reescribirla con
+# `write_text` (es lo que `poner_escritorio_seguro()` evita destapándola).
+otro_valor = tmpdir("prdrive-valor-")
+(otro_valor / v.MARCA).write_text(f"id={ID}\nescritorio_seguro=sí\n", encoding="utf-8")
+c("solo «=1» la enciende", v.escritorio_seguro(otro_valor), False)
 if not IS_WIN:
     c("los .sh se pueden ejecutar",
       os.access(fisica / v.ABRIR_SH, os.X_OK), True)
