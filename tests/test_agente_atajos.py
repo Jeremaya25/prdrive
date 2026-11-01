@@ -172,6 +172,9 @@ F.AVISOS.clear()
 pulsar(ag, atajos.CARPETA)
 c("abrir su carpeta: el explorador en su raíz, sin aviso", (EXPLORADAS[-1:], F.AVISOS),
   ([RA], []))
+while ag.pasada is not None:            # con una pasada suya en curso esperaría a que acabe
+    F.acabar(ag.pasada.proc)
+    F.vueltas(ag, 1)
 antes = len(F.LANZADOS)
 pulsar(ag, atajos.VENTANA)
 c("abrir su ventana: su runsync, sin aviso",

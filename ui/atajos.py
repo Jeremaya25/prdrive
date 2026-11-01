@@ -495,7 +495,9 @@ def pulsado(accion: str, resumen: Mapping[str, Any], usadas: Mapping[str, float]
     """Decide qué hace un atajo pulsado.
 
     Sincronizar y pausar no se ven, así que lo dice un aviso corto con el
-    nombre de la unidad. Abrir su carpeta o su ventana no avisa: se ve. Con
+    nombre de la unidad. Abrir su carpeta o su ventana no avisa: se ve (a
+    mitad de una pasada suya, la ventana espera a que acabe y lo avisa el
+    agente, `Agente._esperar_a_la_pasada()`). Con
     ella bloqueada se pide lo mismo y el agente la desbloquea antes: lo que se
     ve es la ventana que pide su contraseña. Sin ninguna unidad sobre la que
     actuar, o si la acción no se puede hacer, el aviso dice por qué y no se
@@ -558,6 +560,7 @@ def _llavero(resumen: Mapping[str, Any], usadas: Mapping[str, float],
     Es la petición de «Abrir llavero» de la bandeja (`PIDE_LLAVERO`) sobre la
     última usada de las que llevan llavero, sin aviso: se ve abrirse, y con las
     pasadas retenidas el agente trae lo último igual (`Agente._traer_al_abrir()`).
+    Con el llavero a mitad de una pasada, el agente avisa y lo abre al acabar.
     Lo que no se ve sí avisa: no hay ninguna con llavero, o se está
     actualizando o expulsando (el agente no la abre, y sin aviso el atajo
     parecería roto).
