@@ -28,6 +28,8 @@ HUECO_MIGA = 6
 """Relleno (px del diseño) a cada lado del texto de una miga: lo que se resalta."""
 MARGEN_MIGAS = 4
 """Margen (px del diseño) a la izquierda y a la derecha del lienzo."""
+MINIMO_PRIMERA = 48
+"""Ancho (px del diseño) que guarda la primera miga (el servidor) cuando hay que cortarla."""
 LADO_ICONO = 16
 """Lado (px del diseño) del icono del servidor."""
 LADO_FLECHA = 12
@@ -371,9 +373,19 @@ class Direcciones:
         self._recogidas = list(tramos[1:1 + k])
         self._vistas = (tramos[:1] + ([(PUNTOS, None)] if k else []) + tramos[1 + k:]
                         if tramos else [])
+        # Si ni recogiendo las de en medio cabe, se corta la primera (el servidor), que
+        # guarda `MINIMO_PRIMERA`: la carpeta en la que se está es lo que más importa.
+        primera = self._vistas[0][0] if self._vistas else ""
+        if len(self._vistas) > 1:
+            anchos_vistas = [letra.measure(r) + 2 * hueco + ancho_sep for r, _ in self._vistas]
+            anchos_vistas[-1] -= ancho_sep
+            exceso = sum(anchos_vistas) - disponible
+            if exceso > 0:
+                cabe = max(icons.px(lienzo, MINIMO_PRIMERA), anchos_vistas[0] - exceso)
+                primera = self._cortar(letra, primera, cabe - 2 * hueco - ancho_sep)
         for i, (rotulo, ruta) in enumerate(self._vistas):
             ultimo = i == len(self._vistas) - 1
-            texto = rotulo
+            texto = primera if i == 0 else rotulo
             if ultimo:
                 texto = self._cortar(letra, rotulo, max(0, ancho - margen - x - 2 * hueco))
             w = letra.measure(texto) + 2 * hueco

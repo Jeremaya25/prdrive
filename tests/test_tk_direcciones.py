@@ -130,6 +130,15 @@ try:
     llamadas.clear()
     menu.invoke(0)
     c("  y elegir una pide su ruta", llamadas, [("ir", "/una carpeta larga")])
+    largo = "un-servidor-con-un-nombre-larguisimo-que-no-cabe-en-la-barra-de-direcciones"
+    barra.poner(largo, "/datos/fotos", [largo])
+    pasar(ventana)
+    textos = [barra.lienzo.itemcget(i, "text") for i in barra.lienzo.find_all()
+              if barra.lienzo.type(i) == "text"]
+    c("con un servidor de nombre muy largo, la carpeta actual sigue a la vista, entera",
+      (textos[-1], barra.lienzo.bbox("all")[2] <= barra.lienzo.winfo_width()), ("fotos", True))
+    c("  y el nombre del servidor se corta con «…»", textos[0].endswith("…"), True)
+    barra.poner("nas", "/una carpeta larga/otra carpeta larga/la tercera/y la última", ["nas"])
     ventana.geometry("1400x80")
     pasar(ventana)
     c("al ensanchar, vuelven todas", [t for t, _r in barra.tramos()],

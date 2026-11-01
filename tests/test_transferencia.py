@@ -87,6 +87,13 @@ c("subir dentro de una bisync avisa",
 c("subir a una up-mirror bloquea",
   transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/copia", [E("a", False)])),
   BLOQUEO_COPIA)
+c("subir a una up-mirror escrita con otras mayúsculas también bloquea (un servidor que no las "
+  "distingue es la misma carpeta; la ruta escrita a mano puede venir así)",
+  transferencia.bloqueo("subir", transferencia.afectadas_subida(cfg, "nas", "/COPIA", [E("a", False)])),
+  BLOQUEO_COPIA)
+c("  y por encima, con un elemento en otras mayúsculas, también la alcanza",
+  [a.pareja for a in transferencia.afectadas_subida(cfg, "nas", "/DATOS", [E("NOTAS", True)])],
+  ["Notas"])
 c("subir por encima de una pareja la alcanza",
   [a.pareja for a in transferencia.afectadas_subida(cfg, "nas", "/datos", [E("notas", True)])], ["Notas"])
 c("subir un archivo con el nombre de la carpeta de una pareja también la alcanza",

@@ -497,6 +497,29 @@ with sandbox():
       dict(entradas(menu))["Renombrar…"], "disabled")
     F.cerrar(dlg)
 
+    # Una ruta escrita con «..» llega a la carpeta de verdad: la pareja se sigue reconociendo
+    dialogos()
+    falso = servidor_gestion()
+    dlg = abrir(falso)
+    entrar_en(dlg, "datos")
+    entrar_en(dlg, "notas")
+    d = dlg.direcciones
+    d.editar()
+    d.campo.delete(0, "end")
+    d.campo.insert(0, "/datos/notas/..")
+    d.campo.focus_force()
+    dlg.update()
+    d.campo.event_generate("<Return>")
+    dlg.update()
+    c("escribir «/datos/notas/..» va a /datos (la ruta escrita siempre es desde la raíz)",
+      d.ruta, "/datos")
+    c("  la carpeta de la pareja lleva su marca", "· pareja «Notas»" in str(dlg.lista.item("notas", "text")),
+      True)
+    elegir(dlg, "notas")
+    elegir_accion(dlg, "borrar")
+    c("  y borrarla sigue bloqueado", [t for t, _x in DIALOGOS["avisar"]], ["No se puede"])
+    F.cerrar(dlg)
+
     # Un bloqueo: la raíz de una pareja
     dialogos()
     falso = servidor_gestion()

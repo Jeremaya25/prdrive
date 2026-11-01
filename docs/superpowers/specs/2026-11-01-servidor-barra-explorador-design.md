@@ -233,7 +233,10 @@ servidor.
 
 ## Seguridad
 
-Nada nuevo escribe: la búsqueda solo lista. Siguen igual la lista blanca de órdenes
+Nada nuevo escribe: la búsqueda solo lista. La ruta escrita a mano resuelve `..` (sin pasar de
+la raíz) antes de pedir nada, para que los bloqueos de parejas y del catálogo, que comparan rutas,
+la reconozcan; y las subidas comparan las carpetas de las parejas sin mayúsculas, porque una ruta
+escrita puede llevar otras que el servidor no distingue. Siguen igual la lista blanca de órdenes
 (`rcd.ORDENES_PERMITIDAS`), las comprobaciones antes de lanzar, las confirmaciones (`EditPlan`) y
 «la última petición gana» (`Navegacion`), que se extiende a la búsqueda por su generación.
 

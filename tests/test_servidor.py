@@ -365,6 +365,13 @@ c("  y volver a él con su búsqueda es volver atrás", (h.actual, h.puede_adela
 h.apuntar_busqueda("")
 c("  vaciarla la quita del lugar", h.actual, L("nas", "/lejos"))
 
+h = servidor.Historial()
+h.llegar(L("nas", "/"), servidor.NUEVO)
+h.apuntar_busqueda("leeme")
+h.llegar(L("nas", "/"), servidor.NUEVO)
+c("la misma carpeta sin la búsqueda tras una con búsqueda es un paso nuevo: «Atrás» vuelve a ella",
+  (h.actual, h.puede_atras, h.anterior()), (L("nas", "/"), True, L("nas", "/", "leeme")))
+
 # --- ir a un lugar de otro remote, con su movimiento
 nav = servidor.Navegacion("nas")
 p = nav.ir("otro", "/x\\y/", servidor.ATRAS, "fotos")
@@ -396,6 +403,10 @@ c("  vacía o en blanco es la raíz", (servidor.ruta_escrita(""), servidor.ruta_
   ("/", "/"))
 c("  sin barra delante es desde la raíz, y las dobles cuentan como una",
   (servidor.ruta_escrita("a//b/"), servidor.ruta_escrita("/a//b/")), ("/a/b", "/a/b"))
+c("  «..» sube, sin pasar de la raíz: nunca llega a rclone ni a las comprobaciones de parejas",
+  (servidor.ruta_escrita(".."), servidor.ruta_escrita("/a/../b"), servidor.ruta_escrita("a/b/../../.."),
+   servidor.ruta_escrita("../datos/notas"), servidor.ruta_escrita("datos\\..\\x")),
+  ("/", "/b", "/", "/datos/notas", "/x"))
 
 # --- la búsqueda en subcarpetas: qué coincide
 co = servidor.coincide

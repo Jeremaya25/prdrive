@@ -1174,6 +1174,19 @@ with sandbox():
     c("  sin cambiar el tamaño de la ventana: le quita sitio a la lista",
       ((dlg.winfo_width(), dlg.winfo_height()), dlg.lista.winfo_height() < alto_lista),
       (tamano_antes, True))
+    geometria = dlg.geometry().split("+")[0]
+    dlg.geometry("%dx%d" % dlg.minsize())
+    for _ in range(3):
+        dlg.update()
+    visor = dlg.visor
+    vertical, horizontal = visor.barras()
+    c("  encogida al mínimo con el panel: nada queda recortado sin una barra que lo enseñe",
+      ((visor.interior.winfo_reqheight() <= visor.lienzo.winfo_height() or vertical),
+       (visor.interior.winfo_reqwidth() <= visor.lienzo.winfo_width() or horizontal)),
+      (True, True))
+    dlg.geometry(geometria)
+    for _ in range(3):
+        dlg.update()
     c("durante el lote los tres botones están apagados", botones_de(dlg),
       ("disabled", "disabled", "disabled"))
     elegir_varias(dlg, "datos")

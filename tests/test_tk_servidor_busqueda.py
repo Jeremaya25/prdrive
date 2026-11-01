@@ -172,7 +172,12 @@ with sandbox():
       ([], "place", "Nada coincide con «zzz»."))
 
     # una carpeta encontrada se abre con doble clic
-    buscar(dlg, "notas")
+    buscar(dlg, "notasx")
+    campo = dlg.direcciones.busqueda
+    campo.delete(len(campo.get()) - 1)                  # quitar la última letra, sin vaciarlo
+    tecla_en(campo, "<Return>")
+    c("con resultados otra vez, «Nada coincide» se va", (nombres(dlg), dlg.vacia.winfo_manager()),
+      (["/datos/notas"], ""))
     doble_clic(dlg, "/datos/notas")
     c("doble clic en una carpeta encontrada entra en ella y deja de buscar",
       (dlg.direcciones.ruta, nombres(dlg), dlg.direcciones.texto_busqueda.get(),
@@ -200,6 +205,24 @@ with sandbox():
     c("«Abrir la ubicación» hace lo mismo", (dlg.direcciones.ruta, list(dlg.lista.selection())),
       ("/datos", ["a.txt"]))
 
+    # la ubicación de un resultado de la misma carpeta desde la que se busca
+    dlg.direcciones.atras.invoke()
+    dlg.update()
+    buscar(dlg, "leeme")
+    dlg.lista.selection_set("/leeme.txt")
+    dlg.update()
+    dlg.acciones["ubicacion"]()
+    dlg.update()
+    c("«Abrir la ubicación» de un resultado de la propia carpeta deja «Atrás» encendido",
+      (dlg.direcciones.ruta, list(dlg.lista.selection()),
+       not dlg.direcciones.atras.instate(["disabled"])), ("/", ["leeme.txt"], True))
+    dlg.direcciones.atras.invoke()
+    dlg.update()
+    c("  y «Atrás» vuelve a sus resultados", (dlg.direcciones.texto_busqueda.get(), nombres(dlg)),
+      ("leeme", ["/leeme.txt"]))
+    dlg.direcciones.adelante.invoke()
+    dlg.update()
+
     # Escape vuelve a la carpeta sin pedirla
     dlg.direcciones.atras.invoke()
     dlg.update()
@@ -214,9 +237,9 @@ with sandbox():
     buscar(dlg, "a.txt")
     n = len(falso.listados())
     tecla_en(dlg.lista, "<F5>")
-    c("F5 con una búsqueda vuelve a recorrer las subcarpetas",
+    c("F5 con una búsqueda vuelve a recorrer todo, también la carpeta desde la que se busca",
       (sorted(remotes_listados(falso)[n:]), sorted(nombres(dlg))),
-      (["datos", "datos/notas", "privado"], ["/datos/a.txt", "/datos/notas/a.txt"]))
+      (["", "datos", "datos/notas", "privado"], ["/datos/a.txt", "/datos/notas/a.txt"]))
     F.cerrar(dlg)
 
     # -----------------------------------------------------------------------
@@ -274,6 +297,32 @@ with sandbox():
     buscar(dlg, "tarde")
     c("Intro lo reanuda y llega lo que faltaba",
       bombear(lambda: "/datos/tarde.txt" in nombres(dlg)), True)
+    F.cerrar(dlg)
+
+    # «Detener» con los cuatro huecos ocupados y luego Intro: lo que llega tarde se
+    # descarta, pero su hueco vuelve a quedar libre y la búsqueda sigue
+    soltar6 = threading.Event()
+
+    def lenta(i):
+        def contestar():
+            soltar6.wait(5)
+            return lista(item(f"zz{i}.txt"))
+        return contestar
+
+    falso = RcdFalso({("operations/fsinfo", None): F.FSINFO_NO,
+                      ("operations/list", ""): lista(*(item(f"c{i}", True) for i in range(6))),
+                      **{("operations/list", f"c{i}"): lenta(i) for i in range(6)}})
+    dlg = abrir(falso)
+    bombear(lambda: len(nombres(dlg)) == 6)
+    buscar(dlg, "zz")
+    bombear(lambda: len(falso.listados()) == 5)         # la raíz y cuatro en vuelo
+    dlg.accion.invoke()
+    dlg.update()
+    buscar(dlg, "zz")                                   # Intro: reanudar
+    soltar6.set()
+    c("tras «Detener» e Intro con los huecos ocupados, la búsqueda sigue hasta el final",
+      bombear(lambda: len(nombres(dlg)) == 6, 10), True)
+    c("  y acaba", bombear(lambda: frase(dlg).startswith("6 encontrados en 7 carpetas")), True)
     F.cerrar(dlg)
     segundo_plano.lanzar = segundo_plano.en_el_acto
 

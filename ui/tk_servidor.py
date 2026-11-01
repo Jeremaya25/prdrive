@@ -3,8 +3,8 @@
 
 Solo dibuja. Qué se enseña y cómo se navega lo decide `ui/servidor.py`, que no
 importa Tk; el `rclone rcd` que contesta es `common/rcd.py`. Aquí se conecta
-una cosa con la otra: la barra (remote, ruta, «↑», «Releer»), la línea del
-indicador, la lista y el pie.
+una cosa con la otra: la barra de direcciones, la línea del indicador, la
+botonera, la lista y el pie.
 
 La lista es una `ttk.Treeview`, como la de «Carpetas del remoto»
 (`tk_pairs.explorador_remoto`): solo pinta las filas que se ven, así que una
@@ -975,7 +975,7 @@ def open_dialog(parent, config: Config) -> None:
         """«Releer» y F5: con una búsqueda, la recorre otra vez; si no, relee la carpeta."""
         if estado["en_resultados"] and estado["texto"]:
             olvidar_busqueda()
-            buscar_ahora(estado["texto"], True)
+            buscar_ahora(estado["texto"], True, releer_raiz=True)
         else:
             repetir()
 
@@ -994,11 +994,13 @@ def open_dialog(parent, config: Config) -> None:
             dlg.after_cancel(estado["espera"])
             estado["espera"] = None
 
-    def buscar_ahora(texto: str, reanudar: bool = False) -> None:
+    def buscar_ahora(texto: str, reanudar: bool = False, releer_raiz: bool = False) -> None:
         """Busca `texto` desde la carpeta que se ve, en todas las de debajo.
 
         Si ya hay un recorrido de esta carpeta, se filtra lo leído sin volver al
         servidor y se sigue donde iba (con `reanudar`, también si se había detenido).
+        Un recorrido nuevo parte de lo que la lista ya sabe de la carpeta, salvo con
+        `releer_raiz` (F5), que la vuelve a pedir: puede haber cambiado.
         """
         cancelar_espera()
         texto = texto.strip()
@@ -1011,7 +1013,7 @@ def open_dialog(parent, config: Config) -> None:
         if b is None or (b.remote, b.raiz) != (nav.remote, nav.ruta):
             olvidar_busqueda()
             b = servidor.Busqueda(nav.remote, nav.ruta, sondeos.get(nav.remote, (False, None))[0],
-                                  nav.entradas)
+                                  None if releer_raiz else nav.entradas)
             estado["busqueda"] = b
         elif reanudar:
             b.reanudar()
@@ -1071,24 +1073,25 @@ def open_dialog(parent, config: Config) -> None:
         libres.append(s)
         if estado["cerrado"] or estado["busqueda"] is not b:
             return
+        # Una respuesta de antes de «Detener» no cuenta, pero su hueco vuelve a estar
+        # libre: tras reanudar puede ser el único que quede para seguir.
         if encargo.error is not None:
-            if not b.fallo(numero, carpeta):
-                return
-        elif not b.recibir(numero, carpeta, encargo.resultado):
-            return
-        elif estado["en_resultados"]:
+            b.fallo(numero, carpeta)
+        elif b.recibir(numero, carpeta, encargo.resultado) and estado["en_resultados"]:
             pintar_resultados(b.de_carpeta(estado["texto"], carpeta))
         seguir_buscando()
 
     def decir_busqueda() -> None:
         """La línea de la búsqueda: cómo va (con «Detener») o cómo acabó."""
         b, texto = estado["busqueda"], estado["texto"]
-        if b is None or not estado["en_resultados"] or estado["cerrado"]:
-            return
+        if b is None or not estado["en_resultados"] or estado["cerrado"] or sondeo.esperando:
+            return                          # una carpeta pedida tiene la línea («Leyendo…»)
         encontrados = len(estado["resultados"])
         if b.acabada or b.detenida:
             decir(b.texto_final(texto, encontrados), "Pista.")
-            if not encontrados:
+            if encontrados:
+                vacia.place_forget()
+            else:
                 vacia.configure(text=NADA.format(texto))
                 vacia.place(relx=0.5, rely=0.5, anchor="center")
             return

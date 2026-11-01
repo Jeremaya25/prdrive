@@ -362,7 +362,8 @@ class Historial:
             lugar: Lo que se ve ahora.
             movimiento: `RELEER` no mueve nada; `ATRAS` y `ADELANTE` mueven un paso si
                 `lugar` es el que toca (si no, cuentan como `NUEVO`); `NUEVO` lo pone
-                tras el actual y tira lo de delante, salvo que sea el mismo sitio.
+                tras el actual y tira lo de delante, salvo que sea el mismo sitio (y el
+                actual no guarde una búsqueda que `lugar` deja).
         """
         if movimiento == RELEER and self.actual is not None:
             return
@@ -374,7 +375,12 @@ class Historial:
             self._indice += 1
             self._lugares[self._indice] = lugar
             return
-        if _mismo_sitio(lugar, self.actual):
+        # La misma carpeta: se pone al día. Salvo que se llegue sin búsqueda a la carpeta
+        # desde la que se buscaba (la ubicación de un resultado suyo): eso es un paso
+        # nuevo, para que «Atrás» vuelva a los resultados.
+        dejar_resultados = (movimiento == NUEVO and self.actual is not None
+                            and self.actual.busqueda and not lugar.busqueda)
+        if _mismo_sitio(lugar, self.actual) and not dejar_resultados:
             self._lugares[self._indice] = lugar
             return
         del self._lugares[self._indice + 1:]
@@ -433,9 +439,19 @@ def ruta_escrita(texto: str) -> str:
     """Devuelve la carpeta que alguien ha escrito en la barra de direcciones.
 
     Siempre desde la raíz del servidor: `\\` vale como `/`, sobran las barras
-    dobles y la final, y en blanco es la raíz.
+    dobles y la final, y en blanco es la raíz. `..` sube una carpeta, como en el
+    Explorador, y nunca pasa de la raíz: una ruta con `..` dentro listaría la carpeta
+    de verdad (rclone y el servidor lo resuelven), pero no se parecería a la de
+    ninguna pareja ni a la del catálogo, y sus bloqueos no la reconocerían.
     """
-    return remote_picker.normalizar(texto)
+    partes: list[str] = []
+    for tramo in remote_picker.normalizar(texto).split("/"):
+        if tramo == "..":
+            if partes:
+                partes.pop()
+        elif tramo:
+            partes.append(tramo)
+    return RAIZ + "/".join(partes)
 
 
 LIMITE_ELEMENTOS = 100_000

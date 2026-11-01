@@ -38,10 +38,11 @@ de la ventana.
     cabe, las primeras se recogen en «…»; púlsalo para verlas.
   - **El icono del servidor**, al principio de la ruta: púlsalo para elegir otro servidor, si el
     dispositivo tiene varios.
-  - **Escribir la ruta**: pulsa en el hueco de la ruta (o Ctrl+L) y escribe, por ejemplo,
-    `/datos/fotos` o `datos\fotos`; Intro va allí, Escape lo deja como estaba. Siempre se cuenta
-    desde arriba del todo del servidor.
-  - **Buscar en…**, a la derecha (también Ctrl+F): ver «Buscar».
+  - **Escribir la ruta**: pulsa en el hueco de la ruta (o Ctrl+L, o Alt+D) y escribe, por
+    ejemplo, `/datos/fotos` o `datos\fotos`; Intro va allí, Escape lo deja como estaba. Siempre
+    se cuenta desde arriba del todo del servidor, y `..` sube una carpeta (`/datos/fotos/..` es
+    `/datos`).
+  - **Buscar en…**, a la derecha (también Ctrl+F o Ctrl+E): ver «Buscar».
 - **La lista**, con las carpetas primero y luego los archivos:
   - **Nombre**: con su icono.
   - **Tamaño**: en B, KB, MB… Las carpetas no llevan tamaño («—»): el servidor no lo da sin
@@ -201,7 +202,8 @@ tiene dentro**: empieza en cuanto dejas de escribir, o al pulsar Intro.
   tiene **Detener**. Al acabar lo resume; si alguna carpeta no se pudo leer (sin permiso), lo dice
   y sigue con las demás.
 - Cambiar lo que buscas **no vuelve a recorrer** el servidor: filtra lo ya leído. Intro sigue una
-  búsqueda que habías detenido; **F5** la vuelve a hacer desde cero.
+  búsqueda que habías detenido; **F5** la vuelve a hacer desde cero, también la carpeta desde la
+  que buscas.
 - **Doble clic** en una carpeta encontrada entra en ella; en un archivo, va a su carpeta y lo deja
   elegido (lo mismo que **Abrir la ubicación**, con el botón derecho). Bajar, renombrar, cortar o
   borrar se hacen desde su carpeta, no desde los resultados.
