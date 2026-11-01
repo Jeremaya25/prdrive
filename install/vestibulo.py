@@ -1130,8 +1130,15 @@ def leeme() -> str:
     )
 
 
-def marca(device_id: str) -> str:
-    """Devuelve el contenido de `.prdrive-vestibulo`."""
+def marca(device_id: str, escritorio_seguro: bool = False) -> str:
+    """Devuelve el contenido de `.prdrive-vestibulo`.
+
+    Args:
+        device_id: El id del dispositivo, el mismo que el de dentro.
+        escritorio_seguro: Si pide la contraseña protegida de los keyloggers
+            (`vestibulo.ESCRITORIO_SEGURO`, #199); quien reescribe la marca pasa
+            lo que tenía la de antes.
+    """
     return (
         f"# {v.ETIQUETA} — entrada de un dispositivo prdrive cifrado con VeraCrypt. "
         "NO LA BORRES.\n"
@@ -1140,13 +1147,15 @@ def marca(device_id: str) -> str:
         "# reconocerlo desde fuera, antes de abrirlo.\n"
         f"id={device_id}\n"
         f"contenedor={v.CONTENEDOR}\n"
+        + (f"{v.ESCRITORIO_SEGURO}=1\n" if escritorio_seguro else "")
     )
 
 
 def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
     """Deja el vestíbulo en la raíz física y devuelve lo escrito.
 
-    Sobrescribe lo que hubiera: es también la forma de ponerlo al día.
+    Sobrescribe lo que hubiera: es también la forma de ponerlo al día. La marca
+    conserva lo que pedía la de antes (`vestibulo.escritorio_seguro()`).
 
     Raises:
         InstallError: Si no hay id o no se puede escribir; sin esto el
@@ -1156,6 +1165,9 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         raise InstallError("Sin el id del dispositivo no se puede escribir su "
                            "entrada: nadie sabría reconocerlo desde fuera.")
     raiz = Path(raiz_fisica)
+    # La opción de la contraseña protegida vive en la marca: rehacer el vestíbulo
+    # no la apaga.
+    seguro = v.escritorio_seguro(raiz)
     ficheros = (
         (v.ABRIR_BAT, bat_abrir(device_id), "\r\n", "utf-8"),
         (v.EXPULSAR_BAT, bat_expulsar(device_id), "\r\n", "utf-8"),
@@ -1163,7 +1175,7 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         (v.EXPULSAR_SH, sh_expulsar(), "\n", "utf-8"),
         # Con BOM: el Bloc de notas de Windows antiguo no adivina UTF-8 sin él.
         (v.LEEME, leeme(), "\r\n", "utf-8-sig"),
-        (v.MARCA, marca(device_id), "\n", "utf-8"),
+        (v.MARCA, marca(device_id, seguro), "\n", "utf-8"),
     )
     from .deploy import hide, unhide
     # Al ponerlo al día la marca ya está oculta, y Windows no deja reescribir un

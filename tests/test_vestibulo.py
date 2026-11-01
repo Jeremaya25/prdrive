@@ -532,6 +532,40 @@ if IS_WIN:
 c.contains("y dice qué contenedor", (fisica / v.MARCA).read_text(encoding="utf-8"),
            f"contenedor={CONTAINER_NAME}")
 c("sin marca no hay id", v.leer_id(tmpdir()), None)
+
+# La protección contra keyloggers (#199) es una línea de la marca: la opción viaja
+# con la unidad y la cumple el .bat de un equipo sin prdrive. Apagada por defecto.
+c("la marca, sin pedir la protección", "escritorio_seguro" in vestibulo.marca(ID), False)
+c("y pidiéndola, con su línea", f"{v.ESCRITORIO_SEGURO}=1" in
+  vestibulo.marca(ID, True).splitlines(), True)
+c("recién escrita, apagada", v.escritorio_seguro(fisica), False)
+c("sin marca, apagada y sin protestar", v.escritorio_seguro(tmpdir()), False)
+antes = (fisica / v.MARCA).read_text(encoding="utf-8")
+v.poner_escritorio_seguro(fisica, True)
+c("encenderla la enciende", v.escritorio_seguro(fisica), True)
+c("  y la marca sigue siendo de esta unidad", v.leer_id(fisica), ID)
+v.poner_escritorio_seguro(fisica, True)
+c("  dos veces deja una sola línea",
+  (fisica / v.MARCA).read_text(encoding="utf-8").count(v.ESCRITORIO_SEGURO), 1)
+c("  sin temporal al lado", (fisica / (v.MARCA + ".tmp")).exists(), False)
+if IS_WIN:
+    atributos = ctypes.windll.kernel32.GetFileAttributesW(str(fisica / v.MARCA))
+    c("  y la marca sigue oculta", bool(atributos & 0x2), True)
+vestibulo.escribir(fisica, ID)
+c("rehacer el vestíbulo («Añadir plataformas…») no la apaga",
+  v.escritorio_seguro(fisica), True)
+v.poner_escritorio_seguro(fisica, False)
+c("apagarla la quita y deja el resto como estaba",
+  (v.escritorio_seguro(fisica), (fisica / v.MARCA).read_text(encoding="utf-8")),
+  (False, antes))
+crlf = tmpdir("prdrive-crlf-")
+(crlf / v.MARCA).write_bytes(f"id={ID}\r\nescritorio_seguro=1\r\n".encode())
+c("una marca con CRLF (editada a mano) también cuenta", v.escritorio_seguro(crlf), True)
+v.poner_escritorio_seguro(crlf, False)
+c("  y al apagarla conserva el id", (v.escritorio_seguro(crlf), v.leer_id(crlf)),
+  (False, ID))
+(crlf / v.MARCA).write_text(f"id={ID}\nescritorio_seguro=sí\n", encoding="utf-8")
+c("solo «=1» la enciende", v.escritorio_seguro(crlf), False)
 if not IS_WIN:
     c("los .sh se pueden ejecutar",
       os.access(fisica / v.ABRIR_SH, os.X_OK), True)

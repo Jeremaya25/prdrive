@@ -19,7 +19,10 @@ equipo:
 
 La marca lleva el MISMO id que `.prdrive/PRDRIVE` dentro del contenedor, y es
 lo que une las dos mitades: desde fuera se reconoce el dispositivo cerrado y
-desde dentro se encuentra su raíz física.
+desde dentro se encuentra su raíz física. Lleva además la única opción que tiene
+que valer ANTES de abrir el contenedor, en cualquier equipo:
+`escritorio_seguro=1`, que VeraCrypt pida la contraseña protegida de los
+keyloggers (#199; `escritorio_seguro()`, `poner_escritorio_seguro()`).
 
 Vive en `common/` y no en `install/` porque lo usa el dispositivo y `install/`
 no viaja a él. Quien ESCRIBE el vestíbulo es `install/vestibulo.py`; aquí están
@@ -140,6 +143,90 @@ def leer_id(raiz: Path | str) -> str | None:
         if linea.lower().startswith("id="):
             return linea[3:].strip() or None
     return None
+
+
+ESCRITORIO_SEGURO = "escritorio_seguro"
+"""Clave de la marca que pide la contraseña protegida de los keyloggers (#199).
+
+Encendida es la línea `escritorio_seguro=1`; sin ella, o con otro valor,
+apagada. En Windows, quien abre el contenedor le pasa `/secureDesktop` a
+VeraCrypt; en Linux se comprueba que la sesión sea Wayland. La leen
+`penwatch.proteccion()` (que la repite como `VESTIBULE_SECURE_KEY`, con su
+test), `Abrir PRDRIVE.bat` y `abrir-prdrive.sh`; la escribe «Ajustes →
+Configuración». Vive en la marca porque así viaja con la unidad: la cumple el
+`.bat` en un equipo sin prdrive, donde más probable es un keylogger.
+"""
+
+
+def _lineas_de_marca(raiz: Path | str) -> list[str]:
+    """Devuelve las líneas de la marca, sin el fin de línea; lanza `OSError`."""
+    return (Path(raiz) / MARCA).read_text(encoding="utf-8",
+                                          errors="replace").splitlines()
+
+
+def _es_escritorio_seguro(linea: str) -> bool | None:
+    """Dice si la línea es la clave encendida (True), apagada (False) u otra (None)."""
+    clave, igual, valor = linea.strip().partition("=")
+    if not igual or clave.strip().lower() != ESCRITORIO_SEGURO:
+        return None
+    return valor.strip() == "1"
+
+
+def escritorio_seguro(raiz: Path | str) -> bool:
+    """Indica si la marca de esa raíz pide la contraseña protegida de los keyloggers.
+
+    No lanza: sin marca, o sin poder leerla, está apagada.
+
+    Args:
+        raiz: Donde está la marca: la raíz física de una unidad o la carpeta del
+            contenedor de una raíz del equipo.
+    """
+    try:
+        lineas = _lineas_de_marca(raiz)
+    except OSError:
+        return False
+    return any(_es_escritorio_seguro(linea) for linea in lineas)
+
+
+def poner_escritorio_seguro(raiz: Path | str, valor: bool) -> None:
+    """Enciende o apaga en la marca la contraseña protegida de los keyloggers.
+
+    Conserva las demás líneas (el `id=`, sobre todo: sin él la unidad no se
+    reconoce cerrada) y deja una sola de la clave, o ninguna. Se escribe al
+    lado y se cambia de una vez, para que un tirón de la unidad no la deje a
+    medias; en Windows se destapa antes (no deja sustituir un fichero oculto
+    sin más) y se vuelve a ocultar.
+
+    Args:
+        raiz: Donde está la marca.
+        valor: Encendida o apagada.
+
+    Raises:
+        OSError: Si no hay marca o no se puede escribir.
+    """
+    from . import store
+    marca = Path(raiz) / MARCA
+    lineas = [linea for linea in _lineas_de_marca(raiz)
+              if _es_escritorio_seguro(linea) is None]
+    if valor:
+        lineas.append(f"{ESCRITORIO_SEGURO}=1")
+    tmp = marca.with_name(marca.name + ".tmp")
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    tmp.write_text("\n".join(lineas) + "\n", encoding="utf-8", newline="\n")
+    store.unhide(marca)
+    try:
+        os.replace(tmp, marca)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        store.hide(marca)
 
 
 BUSCAR = object()
