@@ -41,7 +41,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import APP_NAME, carpetas, equipo, fleet, model, pins
+from common import APP_NAME, equipo, fleet, model, pins
 from common import vestibulo as vest
 
 from . import InstallError, IS_WIN, crypto, deploy, device, pintar, platforms
@@ -308,6 +308,8 @@ def revisar_local(raiz: Path | str, local: str, modo: str = model.DEFAULT_MODE) 
     Args:
         modo: El de la pareja: decide lo que se dice de la carpeta.
     """
+    from common import carpetas      # como en `deploy.avisos_carpetas()`: no al arrancar
+
     normal = str(local).strip().replace("\\", "/").strip("/")
     problema = model.problema_local_equipo(normal or ".")
     if problema:

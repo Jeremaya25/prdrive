@@ -46,7 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from common import carpetas, components, config_file, fleet, model
+from common import components, config_file, fleet, model
 from common.pins import PLATAFORMAS, Plataforma
 # Viven en `common/` porque el dispositivo también esconde cosas; se importan
 # aquí con su nombre para que `deploy.hide()` siga existiendo.
@@ -1085,6 +1085,10 @@ def avisos_carpetas(device_root: Path | str, catalog: Catalog, selected: list[st
     carpeta que lo hace peligroso y dos parejas sobre los mismos ficheros. Cada
     choque se dice una vez: cada pareja se compara solo con las de antes.
     """
+    # Aquí y no arriba: solo hace falta al guardar las parejas, y el asistente
+    # no lo carga al arrancar (`modulos.wizard` de tests/rendimiento).
+    from common import carpetas
+
     salida: list[str] = []
     for i, nombre in enumerate(selected):
         modo = (catalog.pair(nombre) or {}).get("mode", model.DEFAULT_MODE)
