@@ -158,6 +158,15 @@ Configuración». Vive en la marca porque así viaja con la unidad: la cumple el
 """
 
 
+ETIQUETA_PROTECCION_BAT = ":proteccion"
+"""Etiqueta de la subrutina de `Abrir PRDRIVE.bat` que cumple `ESCRITORIO_SEGURO`.
+
+Un `.bat` sin ella es de antes de la opción y no la cumple: la ventana lo busca
+para decirlo (los lanzadores llegan con «Añadir plataformas…», nunca al
+actualizar). La escribe `install/vestibulo.py`.
+"""
+
+
 def _lineas_de_marca(raiz: Path | str) -> list[str]:
     """Devuelve las líneas de la marca, sin el fin de línea; lanza `OSError`."""
     return (Path(raiz) / MARCA).read_text(encoding="utf-8",
@@ -166,8 +175,9 @@ def _lineas_de_marca(raiz: Path | str) -> list[str]:
 
 def _es_escritorio_seguro(linea: str) -> bool | None:
     """Dice si la línea es la clave encendida (True), apagada (False) u otra (None)."""
-    clave, igual, valor = linea.strip().partition("=")
-    if not igual or clave.strip().lower() != ESCRITORIO_SEGURO:
+    # Como la leen `findstr /b` y `grep '^…'`: la clave tal cual, desde el principio.
+    clave, igual, valor = linea.rstrip().partition("=")
+    if not igual or clave != ESCRITORIO_SEGURO:
         return None
     return valor.strip() == "1"
 

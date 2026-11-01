@@ -543,8 +543,9 @@ def vestibule_secure(container: Path) -> bool:
     except OSError:
         return False
     for line in texto.splitlines():
-        clave, igual, valor = line.strip().partition("=")
-        if igual and clave.strip().lower() == VESTIBULE_SECURE_KEY and valor.strip() == "1":
+        # Como `findstr /b` en «Abrir PRDRIVE.bat»: la clave tal cual, desde el principio.
+        clave, igual, valor = line.rstrip().partition("=")
+        if igual and clave == VESTIBULE_SECURE_KEY and valor.strip() == "1":
             return True
     return False
 

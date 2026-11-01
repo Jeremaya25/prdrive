@@ -24,6 +24,7 @@ explica estaría dentro del contenedor. Lo que se comprueba:
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,6 +200,49 @@ c("  con el Python de CONSOLA del dispositivo, ARM64 antes que x64, como runsync
 c("  esperándolo, y devolviendo su código",
   (llave[-2], llave[-1]),
   ('"%PYL%" "%RAIZ%\\.prdrive\\runsync.py" --cerrar-llavero', "exit /b"))
+
+
+# La contraseña protegida de los keyloggers (#199): `:proteccion` mira la marca y la
+# versión del VeraCrypt elegido y deja `VC_SEGURO`, vacío salvo que se cumpla. Un
+# VeraCrypt anterior a la 1.20 no conoce `/secureDesktop` y no abriría nada.
+lineas = abrir.splitlines()
+prot = [ln for ln in bloque(abrir, "proteccion") if ln]
+orden = next(ln for ln in lineas if "/volume" in ln)
+c("abrir: la subrutina lleva la etiqueta que la ventana busca",
+  v.ETIQUETA_PROTECCION_BAT in lineas, True)
+c("abrir: la mira tras elegir VeraCrypt y antes de lanzarlo",
+  lineas.index("if not defined VC goto sin_veracrypt") < lineas.index("call :proteccion")
+  < lineas.index(orden), True)
+c("abrir: la orden lleva %VC_SEGURO% detrás del ejecutable",
+  '"%VC%" %VC_SEGURO% /volume' in orden, True)
+c("  que empieza vacío", prot[0], 'set "VC_SEGURO="')
+c("  y solo se mira si la marca lo pide",
+  f'findstr /b /l /c:"{v.ESCRITORIO_SEGURO}=1" "%~dp0{v.MARCA}" >nul 2>&1 || exit /b 0'
+  in prot, True)
+ps = next((ln for ln in prot if ln.startswith("powershell ")), "")
+c("  la versión la da PowerShell por el código de salida, la ruta por $env:VC "
+  "(una con paréntesis no rompe nada)", ("$env:VC" in ps, "%VC%" in ps, "exit " in ps),
+  (True, False, True))
+c("  /secureDesktop de la 1.20 en adelante, y no con el 9009 de «no hay PowerShell»",
+  'if %VC_VERSION% geq 1020 if %VC_VERSION% lss 9000 set "VC_SEGURO=/secureDesktop"'
+  in prot, True)
+c.contains("  si no, avisa: versión antigua", "\n".join(prot), "anterior a la 1.20")
+c.contains("  o desconocida", "\n".join(prot), "qué versión")
+c("  y vuelve sin parar nada", prot[-1], "exit /b 0")
+c("abrir: nunca /enableIME (en la 1.26.29 cae en /disableDeviceUpdate)",
+  "/enableIME" in abrir, False)
+c("abrir: con la protección, avisa de que la ventana sale en un escritorio aparte",
+  any(ln.startswith("if defined VC_SEGURO echo ") for ln in lineas), True)
+c("expulsar: no tiene nada que proteger", "VC_SEGURO" in expulsar, False)
+if IS_WIN:
+    prueba = tmpdir("prdrive-version-") / "version.bat"
+    prueba.write_text(f"@echo off\r\n{ps}\r\nexit /b %errorlevel%\r\n", encoding="utf-8")
+    res = subprocess.run(["cmd", "/d", "/c", str(prueba)], capture_output=True,
+                         env={**os.environ, "VC": sys.executable}, timeout=120)
+    c("Windows: la línea de PowerShell da mayor*1000+menor de un ejecutable (python.exe)",
+      res.returncode, sys.version_info.major * 1000 + sys.version_info.minor)
+else:
+    print("  (saltado) la línea de PowerShell del .bat solo se ejecuta en Windows")
 
 
 def precedida(texto, orden, antes):
@@ -936,6 +980,39 @@ desmontar "$1" >/dev/null
         correr(v.ABRIR_SH, con=("veracrypt", *TODAS), FALSO_UDISKS_RECONOCE="1")
         c(caso("con VeraCrypt y además udisks2 y cryptsetup, VeraCrypt (U10)"),
           (leer(), estado()), ([f"veracrypt {HC}", "runsync "], (None, [])))
+
+        # -- la contraseña protegida de los keyloggers (#199) ------------------
+        # No cambia la orden: en una sesión Wayland, la ventana de VeraCrypt ya va
+        # aislada; en X11, o por una terminal, se avisa y se abre igual.
+        v.poner_escritorio_seguro(fisica, True)
+        try:
+            limpiar()
+            res = correr(v.ABRIR_SH, WAYLAND_DISPLAY="wayland-0")
+            c(caso("protegida, en Wayland: nada que avisar, abre como siempre"),
+              (res.returncode, res.stderr, leer()), (0, "", [f"veracrypt {HC}", "runsync "]))
+            limpiar()
+            res = correr(v.ABRIR_SH)
+            c(caso("protegida, en X11: abre como siempre"), leer(),
+              [f"veracrypt {HC}", "runsync "])
+            c.contains(caso("  y avisa de que no es Wayland"), res.stderr, "no es Wayland")
+            for gdk, avisa in (("x11", True), ("wayland,x11", False)):
+                limpiar()
+                res = correr(v.ABRIR_SH, WAYLAND_DISPLAY="wayland-0", GDK_BACKEND=gdk)
+                leer()
+                c(caso(f"  con GDK_BACKEND={gdk}: {'avisa' if avisa else 'nada'}"),
+                  f"GDK_BACKEND={gdk}" in res.stderr, avisa)
+            limpiar()
+            res = correr(v.ABRIR_SH, display=False)
+            leer()
+            c.contains(caso("  VeraCrypt por la terminal: dice que eso no lo cubre"),
+                       res.stderr, "esta terminal")
+            limpiar()
+            res = correr(v.ABRIR_SH, con=TODAS)
+            c(caso("  por cryptsetup: abre igual"), res.returncode, 0)
+            c.contains(caso("  y dice que la terminal no la cubre"), res.stderr, "esta terminal")
+            leer()
+        finally:
+            v.poner_escritorio_seguro(fisica, False)
 
         # -- udisks2 -------------------------------------------------------------
         limpiar(tcrypt=True)
