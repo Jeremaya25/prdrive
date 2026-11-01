@@ -325,4 +325,76 @@ c("dentro_de da la pareja más honda, no la primera de la configuración",
   (servidor.dentro_de(cfg_hondo, "nas", "/datos/notas/2026"), servidor.dentro_de(cfg_hondo, "nas", "/otra")),
   ("Notas", "Todo"))
 
+# --- el historial: se apunta al llegar, nunca al pedir
+L = servidor.Lugar
+h = servidor.Historial()
+c("un historial nuevo no tiene lugar ni a dónde ir",
+  (h.actual, h.puede_atras, h.puede_adelante, h.anterior(), h.siguiente()),
+  (None, False, False, None, None))
+h.llegar(L("nas", "/"), servidor.NUEVO)
+h.llegar(L("nas", "/datos"), servidor.NUEVO)
+c("tras dos lugares se puede volver atrás, al primero",
+  (h.actual, h.puede_atras, h.anterior(), h.puede_adelante), (L("nas", "/datos"), True, L("nas", "/"), False))
+h.llegar(L("nas", "/"), servidor.ATRAS)
+c("volver atrás deja ir adelante", (h.actual, h.puede_atras, h.puede_adelante, h.siguiente()),
+  (L("nas", "/"), False, True, L("nas", "/datos")))
+h.llegar(L("nas", "/datos"), servidor.ADELANTE)
+c("  e ir adelante vuelve", (h.actual, h.puede_atras, h.puede_adelante),
+  (L("nas", "/datos"), True, False))
+h.llegar(L("nas", "/"), servidor.ATRAS)
+h.llegar(L("nas", "/otra"), servidor.NUEVO)
+c("un lugar nuevo tras volver atrás tira lo que había delante",
+  (h.actual, h.puede_adelante, h.anterior()), (L("nas", "/otra"), False, L("nas", "/")))
+h.llegar(L("nas", "/otra"), servidor.NUEVO)
+c("  llegar otra vez al mismo lugar no lo repite", h.anterior(), L("nas", "/"))
+h.llegar(L("nas", "/otra"), servidor.RELEER)
+c("  releer no mueve nada", (h.actual, h.anterior()), (L("nas", "/otra"), L("nas", "/")))
+h.llegar(L("otro", "/"), servidor.NUEVO)
+c("un lugar de otro remote cuenta como cualquiera", (h.actual, h.anterior()),
+  (L("otro", "/"), L("nas", "/otra")))
+h.llegar(L("nas", "/lejos"), servidor.ATRAS)
+c("un «atrás» que no llega al lugar de atrás se apunta como uno nuevo",
+  (h.actual, h.anterior(), h.puede_adelante), (L("nas", "/lejos"), L("otro", "/"), False))
+h.apuntar_busqueda("fotos")
+h.llegar(L("nas", "/lejos/dentro"), servidor.NUEVO)
+c("el texto de una búsqueda queda en el lugar desde el que se buscó",
+  h.anterior(), L("nas", "/lejos", "fotos"))
+h.llegar(L("nas", "/lejos", "fotos"), servidor.ATRAS)
+c("  y volver a él con su búsqueda es volver atrás", (h.actual, h.puede_adelante),
+  (L("nas", "/lejos", "fotos"), True))
+h.apuntar_busqueda("")
+c("  vaciarla la quita del lugar", h.actual, L("nas", "/lejos"))
+
+# --- ir a un lugar de otro remote, con su movimiento
+nav = servidor.Navegacion("nas")
+p = nav.ir("otro", "/x\\y/", servidor.ATRAS, "fotos")
+c("ir() pide ese remote y esa ruta, normalizada, con su movimiento y su búsqueda",
+  (p.remote, p.ruta, p.movimiento, p.busqueda), ("otro", "/x/y", servidor.ATRAS, "fotos"))
+c("  y al llegar cambia el remote", (nav.recibir(p, ()), nav.remote, nav.ruta), (True, "otro", "/x/y"))
+q = nav.pedir("/a")
+c("pedir() sigue en el remote que se ve y es un lugar nuevo", (q.remote, q.movimiento),
+  ("otro", servidor.NUEVO))
+c("  y se le puede decir que es releer", nav.pedir("/a", servidor.RELEER).movimiento, servidor.RELEER)
+
+# --- las migas
+c("las migas de una ruta: el remote (su raíz) y cada carpeta",
+  servidor.migas("nas", "/d/Carga Datos"),
+  (("nas", "/"), ("d", "/d"), ("Carga Datos", "/d/Carga Datos")))
+c("  en la raíz, solo el remote", servidor.migas("nas", "/"), (("nas", "/"),))
+c("cabe todo: no se recoge nada", servidor.recoger([40, 30, 30, 30], 200, 10), 0)
+c("no cabe: se recoge desde el principio; quedan el primero, «…» y lo último",
+  servidor.recoger([40, 30, 30, 30], 110, 10), 1)
+c("  con menos sitio, se recoge uno más", servidor.recoger([40, 30, 30, 30], 90, 10), 2)
+c("  sin sitio ni para eso, se recogen todos los de en medio",
+  servidor.recoger([40, 30, 30, 30], 20, 10), 2)
+c("  con dos tramos no hay nada en medio que recoger", servidor.recoger([400, 300], 20, 10), 0)
+
+# --- la ruta escrita
+c("la ruta escrita admite barras invertidas y una barra final",
+  servidor.ruta_escrita("d\\Carga\\"), "/d/Carga")
+c("  vacía o en blanco es la raíz", (servidor.ruta_escrita(""), servidor.ruta_escrita("  ")),
+  ("/", "/"))
+c("  sin barra delante es desde la raíz, y las dobles cuentan como una",
+  (servidor.ruta_escrita("a//b/"), servidor.ruta_escrita("/a//b/")), ("/a/b", "/a/b"))
+
 sys.exit(c.report())

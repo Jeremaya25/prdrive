@@ -2,8 +2,10 @@
 
 La ventana (`ui/tk_servidor.py`) solo dibuja. Aquí vive lo que se puede probar
 sin pantalla: cómo se lee una respuesta de `operations/list`, qué se pide a
-rclone, cómo se navega sin que una respuesta tardía pinte la carpeta equivocada,
-qué remotes se ofrecen, qué carpetas son de una pareja y cómo se dice un fallo.
+rclone, cómo se navega sin que una respuesta tardía pinte la carpeta equivocada
+(y el historial de atrás y adelante), las migas de la barra de direcciones y la
+ruta que se escribe en ella, qué remotes se ofrecen, qué carpetas son de una
+pareja y cómo se dice un fallo.
 """
 
 from __future__ import annotations
@@ -190,6 +192,10 @@ def params_listado(remote: str, ruta: str, permisos: bool) -> dict:
     return {"fs": f"{remote}:/", "remote": remote_picker.normalizar(ruta).lstrip("/"), "opt": opt}
 
 
+NUEVO, ATRAS, ADELANTE, RELEER = "nuevo", "atras", "adelante", "releer"
+"""Cómo mueve el historial un listado cuando llega (`Historial.llegar`)."""
+
+
 @dataclass(frozen=True)
 class Peticion:
     """Un listado pedido.
@@ -198,11 +204,16 @@ class Peticion:
         numero: Su orden entre las pedidas; solo vale la última.
         remote: El remote del listado.
         ruta: La carpeta, normalizada.
+        movimiento: Qué hace con el historial al llegar (`NUEVO`, `ATRAS`, `ADELANTE`,
+            `RELEER`).
+        busqueda: El texto de la búsqueda que se vuelve a poner al llegar, o `""`.
     """
 
     numero: int
     remote: str
     ruta: str
+    movimiento: str = NUEVO
+    busqueda: str = ""
 
 
 class Navegacion:
@@ -229,18 +240,28 @@ class Navegacion:
         self.sin_acceso: set[tuple[str, str]] = set()
         self._numero = 0
 
-    def _nueva(self, remote: str, ruta: str) -> Peticion:
+    def _nueva(self, remote: str, ruta: str, movimiento: str = NUEVO,
+               busqueda: str = "") -> Peticion:
         """Numera una petición nueva, que sustituye a cualquier otra en vuelo."""
         self._numero += 1
-        return Peticion(self._numero, remote, remote_picker.normalizar(ruta))
+        return Peticion(self._numero, remote, remote_picker.normalizar(ruta), movimiento,
+                        busqueda)
 
-    def pedir(self, ruta: str) -> Peticion:
+    def pedir(self, ruta: str, movimiento: str = NUEVO) -> Peticion:
         """Registra un listado de `ruta` en el remote que se está enseñando.
 
         Sustituye a la petición anterior, también a un `cambiar_remote()` en
         vuelo: la ruta sale de la tabla que se ve, así que va a su remote.
         """
-        return self._nueva(self.remote, ruta)
+        return self._nueva(self.remote, ruta, movimiento)
+
+    def ir(self, remote: str, ruta: str, movimiento: str, busqueda: str = "") -> Peticion:
+        """Pide un lugar con su remote dicho: el de un paso del historial.
+
+        `remote` y `ruta` van juntos y explícitos, así que no hay riesgo de mandar
+        una carpeta de una tabla al remote de otra.
+        """
+        return self._nueva(remote, ruta, movimiento, busqueda)
 
     def recibir(self, p: Peticion, entradas: tuple[Entrada, ...]) -> bool:
         """Acepta la respuesta de `p`; `False`, sin cambiar nada, si ya no es la última pedida."""
@@ -273,6 +294,144 @@ class Navegacion:
     def padre(self) -> str:
         """Devuelve la ruta de la carpeta que contiene a la actual (la raíz es el techo)."""
         return remote_picker.subir(self.ruta)
+
+
+@dataclass(frozen=True)
+class Lugar:
+    """Un paso del historial: una carpeta de un remote y, si se buscaba en ella, el texto.
+
+    Args:
+        remote: El remote.
+        ruta: La carpeta, normalizada.
+        busqueda: Lo que se buscaba desde ella al salir, o `""`.
+    """
+
+    remote: str
+    ruta: str
+    busqueda: str = ""
+
+
+def _mismo_sitio(a: Lugar | None, b: Lugar | None) -> bool:
+    """Si dos lugares son la misma carpeta del mismo remote (la búsqueda no cuenta)."""
+    return a is not None and b is not None and (a.remote, a.ruta) == (b.remote, b.ruta)
+
+
+class Historial:
+    """Atrás y adelante, como en el Explorador: los lugares a los que se ha llegado.
+
+    Un lugar se apunta cuando su listado LLEGA (`llegar`), nunca al pedirlo: una
+    carpeta que falla ni entra ni mueve nada. Ir a un lugar nuevo tras volver
+    atrás tira lo que había delante.
+
+    Attributes:
+        actual: El lugar que se ve, o `None` si aún no ha llegado ninguno.
+    """
+
+    def __init__(self) -> None:
+        self._lugares: list[Lugar] = []
+        self._indice = -1
+
+    @property
+    def actual(self) -> Lugar | None:
+        return self._lugares[self._indice] if self._indice >= 0 else None
+
+    @property
+    def puede_atras(self) -> bool:
+        return self._indice > 0
+
+    @property
+    def puede_adelante(self) -> bool:
+        return 0 <= self._indice < len(self._lugares) - 1
+
+    def anterior(self) -> Lugar | None:
+        """El lugar de atrás, sin moverse; `None` si no hay."""
+        return self._lugares[self._indice - 1] if self.puede_atras else None
+
+    def siguiente(self) -> Lugar | None:
+        """El lugar de delante, sin moverse; `None` si no hay."""
+        return self._lugares[self._indice + 1] if self.puede_adelante else None
+
+    def llegar(self, lugar: Lugar, movimiento: str) -> None:
+        """Apunta que ha llegado el listado de `lugar`.
+
+        Args:
+            lugar: Lo que se ve ahora.
+            movimiento: `RELEER` no mueve nada; `ATRAS` y `ADELANTE` mueven un paso si
+                `lugar` es el que toca (si no, cuentan como `NUEVO`); `NUEVO` lo pone
+                tras el actual y tira lo de delante, salvo que sea el mismo sitio.
+        """
+        if movimiento == RELEER and self.actual is not None:
+            return
+        if movimiento == ATRAS and _mismo_sitio(lugar, self.anterior()):
+            self._indice -= 1
+            self._lugares[self._indice] = lugar
+            return
+        if movimiento == ADELANTE and _mismo_sitio(lugar, self.siguiente()):
+            self._indice += 1
+            self._lugares[self._indice] = lugar
+            return
+        if _mismo_sitio(lugar, self.actual):
+            self._lugares[self._indice] = lugar
+            return
+        del self._lugares[self._indice + 1:]
+        self._lugares.append(lugar)
+        self._indice = len(self._lugares) - 1
+
+    def apuntar_busqueda(self, texto: str) -> None:
+        """Guarda en el lugar que se ve lo que se está buscando en él (`""` lo quita)."""
+        if self.actual is not None:
+            a = self.actual
+            self._lugares[self._indice] = Lugar(a.remote, a.ruta, texto)
+
+
+def migas(remote: str, ruta: str) -> tuple[tuple[str, str], ...]:
+    """Devuelve los tramos de la barra de direcciones, del remote a la carpeta.
+
+    Returns:
+        `(rótulo, ruta)` por tramo: el primero es el remote con su raíz; luego cada
+        carpeta con la ruta hasta ella.
+    """
+    tramos = [(remote, RAIZ)]
+    hasta = RAIZ
+    for nombre in remote_picker.normalizar(ruta).split("/")[1:]:
+        if nombre:
+            hasta = remote_picker.entrar(hasta, nombre)
+            tramos.append((nombre, hasta))
+    return tuple(tramos)
+
+
+def recoger(anchos, disponible: int, ancho_puntos: int) -> int:
+    """Cuántos tramos de en medio se recogen en «…» para que la barra quepa.
+
+    Se recogen desde el principio, después del primero (el servidor): se ve
+    siempre el último, y lo más cercano a él antes que lo lejano.
+
+    Args:
+        anchos: Lo que ocupa cada tramo, con su separador, en píxeles.
+        disponible: El ancho que hay.
+        ancho_puntos: Lo que ocupa el tramo «…».
+
+    Returns:
+        Cuántos tramos, contados desde el segundo, van a «…»; 0 si cabe todo. Nunca
+        recoge el primero ni el último.
+    """
+    anchos = list(anchos)
+    if sum(anchos) <= disponible or len(anchos) <= 2:
+        return 0
+    k = 1
+    while (k < len(anchos) - 2
+           and anchos[0] + ancho_puntos + sum(anchos[1 + k:]) > disponible):
+        k += 1
+    return k
+
+
+def ruta_escrita(texto: str) -> str:
+    """Devuelve la carpeta que alguien ha escrito en la barra de direcciones.
+
+    Siempre desde la raíz del servidor: `\\` vale como `/`, sobran las barras
+    dobles y la final, y en blanco es la raíz.
+    """
+    return remote_picker.normalizar(texto)
 
 
 def parejas_en(config: Config, remote: str) -> dict[str, str]:
