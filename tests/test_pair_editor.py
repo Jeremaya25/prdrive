@@ -269,31 +269,105 @@ CAT = {"defaults": {"remote": "nas"},
 def falso_catalogo(raw=None):
     """Devuelve un catálogo de mentira con esos datos."""
     texto = config_file.dumps(raw if raw is not None else CAT)
-    return catalog.Catalog(raw=tomllib.loads(texto), text=texto, source="remote",
-                           stamp="2026-01-01 00:00:00", endpoint="nas:/x/pairs.toml")
+    crudo = tomllib.loads(texto)
+    # Como lo lee `catalog.pull()`: sin la carpeta local, que es de cada dispositivo.
+    return catalog.Catalog(raw=catalog.sin_local(crudo), text=texto, source="remote",
+                           stamp="2026-01-01 00:00:00", endpoint="nas:/x/pairs.toml",
+                           con_local=catalog.con_local(crudo))
 
 
 with sandbox():
     raw = preparar()
     cat = falso_catalogo()
 
-    plan = pair_editor.plan_enable(raw, cat, "fotos")
-    c("usar una del catálogo la copia tal cual",
-      plan.raw["pair"][-1], catalog.find_pair(cat, "fotos"))
+    plan = pair_editor.plan_enable(raw, cat, "fotos", "Mis fotos")
+    c("usar una del catálogo pone la carpeta elegida (#196)",
+      plan.raw["pair"][-1], {**catalog.find_pair(cat, "fotos"), "local": "Mis fotos"})
+    c.contains("  y lo dice", " ".join(plan.consequences), "'Mis fotos'")
     plan.execute()
     c("y aparece en el config", model.load_config().names, ["notas", "subida", "fotos"])
+    c("  con esa carpeta",
+      next(p.local for p in model.load_config().pairs if p.name == "fotos"), "Mis fotos")
 
     raw = config_file.load_raw()
     try:
-        pair_editor.plan_enable(raw, cat, "fotos")
+        pair_editor.plan_enable(raw, cat, "fotos", "otra")
         c("no se puede usar dos veces la misma", "no lanzó", "ConfigError")
     except ConfigError as e:
         c("no se puede usar dos veces la misma", "ya está en este dispositivo" in str(e), True)
     try:
-        pair_editor.plan_enable(raw, cat, "inventada")
+        pair_editor.plan_enable(raw, cat, "inventada", "x")
         c("ni una que no está en el catálogo", "no lanzó", "ConfigError")
     except ConfigError as e:
         c("ni una que no está en el catálogo", "Créala primero" in str(e), True)
+
+# «Usar aquí» con la carpeta elegida: lo que avisa y lo que aparta (#196)
+ESPEJOS = {"defaults": {"remote": "nas"}, "pair": [
+    dict(BASE[0]), dict(BASE[1]),
+    {"name": "sube", "remote_path": "/R/sube", "mode": "up-mirror"},
+    {"name": "baja", "remote_path": "/R/baja", "mode": "down-mirror"},
+    {"name": "fotos", "remote_path": "/R/fotos", "mode": "bisync"}]}
+
+
+def avisos(plan):
+    """Junta los avisos de un plan en un solo texto."""
+    return " ".join(plan.warnings)
+
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo(ESPEJOS)
+    (model.DEVICE_ROOT / "vacia").mkdir()
+    (model.DEVICE_ROOT / "llena").mkdir()
+    (model.DEVICE_ROOT / "llena" / "f.txt").write_text("x", encoding="utf-8")
+
+    c.contains("up-mirror con la carpeta vacía avisa de que vaciaría el remoto",
+               avisos(pair_editor.plan_enable(raw, cat, "sube", "vacia")), "vaciaría el remoto")
+    c.contains("up-mirror sin carpeta avisa de que la pasada abortará",
+               avisos(pair_editor.plan_enable(raw, cat, "sube", "nueva")), "no existe")
+    c("  y no promete crearla", any("se creará" in x for x in pair_editor.plan_enable(
+        raw, cat, "sube", "nueva").consequences), False)
+    c("up-mirror con cosas no avisa de vaciar",
+      "vaciaría" in avisos(pair_editor.plan_enable(raw, cat, "sube", "llena")), False)
+    c.contains("down-mirror con cosas avisa de que borrará de ella",
+               avisos(pair_editor.plan_enable(raw, cat, "baja", "llena")), "borrará de ella")
+    c("down-mirror vacía no avisa de eso",
+      "borrará de ella" in avisos(pair_editor.plan_enable(raw, cat, "baja", "vacia")), False)
+
+    c.contains("otra pareja con la misma carpeta avisa y la nombra",
+               avisos(pair_editor.plan_enable(raw, cat, "fotos", "sync-data/notas/")),
+               "ya la usa notas")
+    c.contains("  y una dentro de la otra también, sin mirar mayúsculas ni barras",
+               avisos(pair_editor.plan_enable(raw, cat, "fotos", "SYNC-DATA\\Notas\\sub")),
+               "ya la usa notas")
+    c("  una carpeta al lado no",
+      "ya la usa" in avisos(pair_editor.plan_enable(raw, cat, "fotos", "sync-data/otra")),
+      False)
+    c("  y la raíz entera contiene todas",
+      pair_editor.solapadas(raw, "."), ["notas", "subida"])
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo(ESPEJOS)
+    viejo = model.STATE_DIR / "fotos"
+    viejo.mkdir(parents=True)
+    for sufijo in (bisync.PATH1_SUFFIX, bisync.PATH2_SUFFIX):
+        (viejo / f"viejo{sufijo}").write_text("x", encoding="utf-8")
+    plan = pair_editor.plan_enable(raw, cat, "fotos", "Fotos")
+    c("un baseline que quedó de otra carpeta se aparta", plan.shelve, ["fotos"])
+    c.contains("  y lo dice", " ".join(plan.consequences), "fotos.old-")
+    plan.execute()
+    c("  y tras ejecutar queda apartado, no renombrado",
+      [d.name.startswith("fotos.old-") for d in model.STATE_DIR.iterdir()
+       if d.name.startswith("fotos")], [True])
+
+with sandbox():
+    raw = preparar()
+    cat = falso_catalogo(ESPEJOS)
+    antes = pair_editor.plan_enable(raw, cat, "fotos", "Fotos").raw
+    dar_baseline(antes, "fotos")
+    c("un baseline de la misma carpeta se reutiliza",
+      pair_editor.plan_enable(raw, cat, "fotos", "Fotos").shelve, [])
 
 with sandbox():
     raw = preparar()
@@ -307,6 +381,11 @@ with sandbox():
     c("las que no se usan aquí salen sin marcar",
       (filas["fotos"].en_pen, filas["fotos"].origen),
       (False, pair_editor.ORIGEN_SIN_USAR))
+    c("  y sin carpeta: la elige cada dispositivo al usarla (#196)", filas["fotos"].local, "")
+    propia = {**raw, "pair": [{**BASE[0], "local": "Mis notas"}, dict(BASE[1])]}
+    c("una carpeta propia no marca la pareja como modificada aquí",
+      {f.name: f.origen for f in pair_editor.catalog_rows(
+          model.parse_config(propia), propia, cat)}["notas"], pair_editor.ORIGEN_CATALOGO)
 
     modificado = {**raw, "pair": [{**BASE[0], "remote_path": "/R/mio"}, dict(BASE[1])]}
     filas = {f.name: f for f in pair_editor.catalog_rows(
@@ -335,6 +414,14 @@ with sandbox():
 
     plan = pair_editor.plan_revert(raw, cat, "notas")
     c("volver al catálogo aparta el baseline (cambia el extremo)", plan.shelve, ["notas"])
+    c("  y conserva la carpeta de este dispositivo (#196)",
+      plan.raw["pair"][0]["local"], BASE[0]["local"])
+    propia = preparar(pairs=[{**BASE[0], "local": "Mis notas", "remote_path": "/R/mio"},
+                             dict(BASE[1])])
+    c("  aunque no sea la de nadie más",
+      pair_editor.plan_revert(propia, cat, "notas").raw["pair"][0],
+      {**catalog.find_pair(cat, "notas"), "local": "Mis notas"})
+    preparar(pairs=modificado["pair"])
     plan.execute()
     c("y la pareja vuelve a la del catálogo",
       next(p.remote_path for p in model.load_config().pairs if p.name == "notas"),
@@ -479,14 +566,15 @@ c("  y cualquier otro va entero, sin título",
 texto_cat = config_file.dumps({"defaults": {"remote": "nas"}, "pair": [
     {"name": "a", "local": "A", "remote_path": "/a", "mode": "up"},
     {"name": "b", "local": "B", "remote_path": "/b", "mode": "bisync"}]})
-cat_ab = catalog.Catalog(raw=tomllib.loads(texto_cat), text=texto_cat, source="remote",
-                         stamp="2026-01-01 00:00:00", endpoint="nas:/c/remote.toml")
+cat_ab = catalog.Catalog(raw=catalog.sin_local(tomllib.loads(texto_cat)), text=texto_cat,
+                         source="remote", stamp="2026-01-01 00:00:00",
+                         endpoint="nas:/c/remote.toml")
 solo = pair_editor.catalog_only_rows(
     {"pair": [{"name": "b", "local": "OTRA", "remote_path": "/b"},
               {"name": "solo-aqui", "local": "S", "remote_path": "/s"}]}, cat_ab)
-c("la vista del catálogo: sus parejas, en su orden y como las dice él",
+c("la vista del catálogo: sus parejas, en su orden y como las dice él, sin carpeta",
   [(f.name, f.mode, f.local, f.en_pen) for f in solo],
-  [("a", "up", "A", False), ("b", "bisync", "B", True)])
+  [("a", "up", "", False), ("b", "bisync", "", True)])
 
 # ---------------------------------------------------------------------------
 # Leer el config solo cuando cambia

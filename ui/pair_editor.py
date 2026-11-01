@@ -864,33 +864,146 @@ def plan_remove(raw: Mapping[str, Any], name: str, clean_state: bool = False) ->
     return plan
 
 
-def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) -> EditPlan:
-    """Devuelve el plan de empezar a usar aquí una pareja del catálogo."""
+def _tramos_carpeta(local: Any) -> tuple[str, ...]:
+    """Devuelve los tramos de una carpeta local, para compararla con otra.
+
+    Sin mayúsculas (Windows y exFAT no las distinguen), con `\\` como `/` y sin
+    tramos vacíos ni `.`: la raíz entera (`"."`) no tiene ninguno y así contiene
+    a todas.
+    """
+    texto = str(local).replace("\\", "/").strip()
+    return tuple(t.casefold() for t in texto.split("/") if t.strip() not in ("", "."))
+
+
+def solapadas(raw: Mapping[str, Any], local: str, salvo: str | None = None) -> list[str]:
+    """Devuelve las parejas de este dispositivo cuya carpeta choca con `local`.
+
+    Chocan la misma carpeta, una que la contiene y una que está dentro: dos
+    parejas sobre los mismos ficheros se pisan los borrados.
+
+    Args:
+        salvo: Una pareja que no cuenta (la que se está cambiando).
+    """
+    mia = _tramos_carpeta(local)
+    salida = []
+    for pareja in raw.get("pair") or []:
+        nombre = pareja.get("name")
+        if nombre == salvo or "local" not in pareja:
+            continue
+        otra = _tramos_carpeta(pareja["local"])
+        corto = min(len(mia), len(otra))
+        if mia[:corto] == otra[:corto]:
+            salida.append(nombre)
+    return salida
+
+
+def _tiene_cosas(carpeta: Path) -> bool | None:
+    """Dice si la carpeta tiene algo dentro; `None` si no existe o no se puede mirar."""
+    try:
+        return any(carpeta.iterdir()) if carpeta.is_dir() else None
+    except OSError:
+        return None
+
+
+def _avisos_de_carpeta(plan: EditPlan, raw: Mapping[str, Any], name: str, mode: str,
+                       local: str) -> None:
+    """Apunta lo que hay que saber de la carpeta elegida para un espejo o compartida.
+
+    Un espejo de subida vacía el remoto si su carpeta está vacía, y sin carpeta
+    la pasada aborta sin crearla (#151). Uno de bajada borra de la carpeta lo que
+    no esté en el remoto: el peligro es que tenga cosas.
+    """
+    carpeta = model.DEVICE_ROOT / model.normalizar_local(local)
+    cosas = _tiene_cosas(carpeta)
+    if mode == "up-mirror" and not carpeta.exists():
+        plan.warnings.append(
+            f"La carpeta '{local}' no existe y '{name}' es un espejo de subida: la pasada "
+            f"no la crea y abortará hasta que exista con lo que quieras subir.")
+    elif mode == "up-mirror" and cosas is False:
+        plan.warnings.append(
+            f"La carpeta '{local}' está vacía y '{name}' es un espejo de subida: la primera "
+            f"pasada vaciaría el remoto. Pon antes lo que quieras subir.")
+    elif mode == "down-mirror" and cosas:
+        plan.warnings.append(
+            f"La carpeta '{local}' tiene cosas y '{name}' es un espejo de bajada: la primera "
+            f"pasada borrará de ella lo que no esté en el remoto.")
+    otras = solapadas(raw, local, salvo=name)
+    if otras:
+        plan.warnings.append(
+            f"La carpeta '{local}' ya la usa {', '.join(otras)} (la misma, o una dentro de "
+            f"la otra): dos parejas sobre los mismos ficheros se pisan los borrados.")
+
+
+def _baseline_sobrante(plan: EditPlan, config: Config, name: str) -> None:
+    """Aparta el baseline que dejó esta pareja otra vez, si no es de la carpeta elegida.
+
+    Pasa con una pareja que se quitó sin limpiar su estado y se vuelve a usar:
+    su `state/<pareja>/` sigue ahí. Si su prefijo es el que espera la pareja con
+    la carpeta de ahora (la misma que antes), se reutiliza, como siempre. Si es
+    de otra carpeta (o el baseline está roto), reaprovecharlo haría que bisync
+    leyera como borrado lo que no estaba en la de antes: se aparta y la pareja
+    pide su `--resync`. Nunca se renombra.
+    """
+    pareja = next((p for p in config.pairs if p.name == name), None)
+    if pareja is None or not pareja.is_bisync or not (model.STATE_DIR / name).is_dir():
+        return
+    estado = bisync.pair_state(pareja)
+    if estado.status == "broken" or (estado.prefix
+                                     and estado.prefix != bisync.expected_prefix(pareja)):
+        plan.shelve = [name]
+        plan.consequences.append(
+            f"Quedó una referencia de otra vez en state/{name}/ que no es de esta carpeta: "
+            f"se apartará a state/{name}.old-<fecha>/ y la pareja pedirá un --resync. Es a "
+            f"propósito: reaprovecharla haría que bisync leyera como borrado lo que no "
+            f"estaba en la carpeta de antes.")
+
+
+def plan_enable(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str,
+                local: str) -> EditPlan:
+    """Devuelve el plan de empezar a usar aquí una pareja del catálogo, en esa carpeta.
+
+    La carpeta es de este dispositivo y el catálogo no la lleva (#196): `local`
+    es la elegida, ya relativa a la raíz (`ruta_local_relativa()`). La entrada
+    que se escribe es la del catálogo con ella, completa, como todas.
+
+    Raises:
+        ConfigError: Si el catálogo no tiene la pareja, ya está aquí, falta la
+            carpeta o el config resultante no vale.
+    """
     entrada = catalog.find_pair(cat, name)
     if entrada is None:
         raise ConfigError(f"El catálogo no tiene ninguna pareja llamada '{name}'. "
                           f"Créala primero ahí y luego elígela aquí.")
     if any(p.get("name") == name for p in raw.get("pair") or []):
         raise ConfigError(f"'{name}' ya está en este dispositivo.")
+    local = str(local or "").strip()
+    if not local:
+        raise ConfigError(f"Falta la carpeta de '{name}' en este dispositivo.")
 
+    resto = {k: v for k, v in copy.deepcopy(entrada).items()
+             if k not in ("name", *catalog.DEL_DISPOSITIVO)}
+    nueva = {"name": name, "local": local, **resto}
+    mode = _mode_of(nueva)
     nuevo_raw = copy.deepcopy(dict(raw))
-    nuevo_raw.setdefault("pair", []).append(copy.deepcopy(entrada))
+    nuevo_raw.setdefault("pair", []).append(nueva)
+    config = model.parse_config(nuevo_raw, equipo=model.es_equipo())
+
     plan = EditPlan(raw=nuevo_raw)
     plan.consequences.append(
-        f"Se empieza a usar '{name}' en este dispositivo, tal y como está en el catálogo.")
-    plan.consequences.append(
-        f"La ruta local '{entrada.get('local')}' se creará en la primera pasada si "
-        f"todavía no existe.")
-    if _mode_of(entrada) == "bisync":
+        f"Se empieza a usar '{name}' en este dispositivo, como está en el catálogo, con "
+        f"la carpeta '{local}'.")
+    if mode != "up-mirror" and not (model.DEVICE_ROOT / model.normalizar_local(local)).exists():
+        plan.consequences.append(f"La carpeta '{local}' se creará en la primera pasada.")
+    _baseline_sobrante(plan, config, name)
+    if mode == "bisync":
         plan.consequences.append(
             "Al ser bisync, la primera pasada pedirá un --resync para fijar la "
             "referencia (compara ambos lados; no borra por diferencias).")
 
-    aviso = mirror_warning(_mode_of(entrada))
+    aviso = mirror_warning(mode)
     if aviso:
         plan.warnings.append(aviso)
-
-    model.parse_config(nuevo_raw, equipo=model.es_equipo())
+    _avisos_de_carpeta(plan, raw, name, mode, local)
     return plan
 
 
@@ -933,14 +1046,19 @@ def plan_revert(raw: Mapping[str, Any], cat: catalog.Catalog | None, name: str) 
     if not difiere:
         raise ConfigError(f"'{name}' ya es exactamente la del catálogo.")
 
+    # La carpeta es de este dispositivo (#196): vuelve todo lo demás.
+    nueva = {k: v for k, v in copy.deepcopy(entrada).items()
+             if k not in catalog.DEL_DISPOSITIVO}
+    nueva.update({k: anterior[k] for k in catalog.DEL_DISPOSITIVO if k in anterior})
     nuevo_raw = copy.deepcopy(dict(raw))
-    nuevo_raw["pair"][i] = copy.deepcopy(entrada)
+    nuevo_raw["pair"][i] = nueva
     plan = EditPlan(raw=nuevo_raw)
     plan.consequences.append(
-        f"'{name}' vuelve a como está en el catálogo (cambia {', '.join(difiere)}).")
-    _analizar_pareja(plan, raw, name, anterior, entrada)
+        f"'{name}' vuelve a como está en el catálogo (cambia {', '.join(difiere)}); "
+        f"la carpeta sigue siendo la de aquí.")
+    _analizar_pareja(plan, raw, name, anterior, nueva)
 
-    aviso = mirror_warning(_mode_of(entrada))
+    aviso = mirror_warning(_mode_of(nueva))
     if aviso:
         plan.warnings.append(aviso)
 
@@ -1031,7 +1149,8 @@ class CatalogRow(NamedTuple):
     Args:
         name: La pareja.
         mode: Su modo.
-        local: El extremo local.
+        local: El extremo local; vacío si este dispositivo no la usa (la carpeta
+            la elige cada uno al usarla) y en la vista del catálogo.
         remote: El extremo remoto.
         estado: El estado del baseline.
         aviso: Lo que hay que mirar dos veces, si hay algo.
@@ -1050,17 +1169,17 @@ class CatalogRow(NamedTuple):
     difiere: tuple[str, ...]
 
 
-def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[str, str, str]:
-    """Devuelve el modo y los extremos de una pareja que este dispositivo NO tiene.
+def _display(entrada: Mapping[str, Any], defaults: Mapping[str, Any]) -> tuple[str, str]:
+    """Devuelve el modo y el extremo remoto de una pareja tal como la dice el catálogo.
 
     No pasa por `model.Pair` a propósito: sus rutas se resuelven contra el
-    dispositivo y aquí lo que se enseña es lo que dice el catálogo, no dónde
-    caería.
+    dispositivo y aquí lo que se enseña es lo que dice el catálogo. La carpeta
+    no la dice: la elige cada dispositivo al usarla (#196), así que la fila de
+    una pareja sin usar, y las de la vista del catálogo, la llevan vacía.
     """
     mode = entrada.get("mode", model.DEFAULT_MODE)
-    local = str(entrada.get("local", "?")).replace("\\", "/").strip("/") or "."
     remote = entrada.get("remote") or defaults.get("remote") or model.DEFAULT_REMOTE
-    return mode, local, f"{remote}:{entrada.get('remote_path', '?')}"
+    return mode, f"{remote}:{entrada.get('remote_path', '?')}"
 
 
 def catalog_rows(config: Config, raw: Mapping[str, Any], cat: catalog.Catalog | None,
@@ -1083,8 +1202,8 @@ def catalog_rows(config: Config, raw: Mapping[str, Any], cat: catalog.Catalog | 
     for name, entrada in del_cat.items():
         fila = filas.get(name)
         if fila is None:
-            mode, local, remote = _display(entrada, defaults_cat)
-            salida.append(CatalogRow(name, mode, local, remote, "—",
+            mode, remote = _display(entrada, defaults_cat)
+            salida.append(CatalogRow(name, mode, "", remote, "—",
                                      mirror_warning(mode), False, ORIGEN_SIN_USAR, ()))
             continue
         difiere = catalog.diff_keys(locales.get(name), entrada)
@@ -1111,8 +1230,8 @@ def catalog_only_rows(raw: Mapping[str, Any],
     defaults_cat = cat.defaults if cat is not None else {}
     salida: list[CatalogRow] = []
     for name, entrada in catalog.pairs_by_name(cat).items():
-        mode, local, remote = _display(entrada, defaults_cat)
-        salida.append(CatalogRow(name, mode, local, remote, "—", mirror_warning(mode),
+        mode, remote = _display(entrada, defaults_cat)
+        salida.append(CatalogRow(name, mode, "", remote, "—", mirror_warning(mode),
                                  name in usadas, ORIGEN_CATALOGO, ()))
     return salida
 
