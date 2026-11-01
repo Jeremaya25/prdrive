@@ -12,10 +12,13 @@ verdad y el diálogo se maneja con callbacks de `after()`, que corren dentro de 
   (sin recortar); Escape, «Cancelar» y la X devuelven `None`;
 - con `es_archivo`, la selección cubre el nombre hasta el último punto (salvo que
   el punto sea el primer carácter); sin él, todo el texto;
-- `Barra` lleva sus cuatro botones con su rótulo (`Quiet.TButton`), avisa de cada
-  pulsación a su acción y `encender()` los enciende y apaga;
-- `menu_contextual` es un `Menu` sin asa con sus cinco entradas, las apagadas por
-  su estado, y cada una llama a su acción;
+- `Barra` lleva solo «Subir» (con la flecha que despliega, a la derecha) y «Nueva
+  carpeta…» (`Quiet.TButton`), avisa de cada pulsación a su acción y `encender()`
+  los enciende y apaga;
+- `menu_subir` da «Archivos…» y «Carpeta…»;
+- `menu_contextual` es un `Menu` sin asa con las entradas del orden que se le da
+  (la fila, el hueco), sus separadores y sus atajos, las apagadas por su estado,
+  y cada una llama a su acción;
 - ningún valor de color ni distancia suelta en el módulo.
 """
 
@@ -239,50 +242,95 @@ try:
     c("  «carpeta» (sin punto) lo selecciona entero", seleccion("carpeta", True), (0, 7))
     c("  sin es_archivo, «foto.jpg» entero", seleccion("foto.jpg", False), (0, 8))
 
-    # --- la barra
+    # --- la barra: solo «Subir» y «Nueva carpeta…»
     llamadas: list[str] = []
-    acciones = {k: (lambda k=k: llamadas.append(k))
-                for k in ("nueva", "renombrar", "cortar", "borrar")}
-    barra = tk_gestion.Barra(raiz, acciones)
-    rotulos = {"nueva": "Nueva carpeta…", "renombrar": "Renombrar…", "cortar": "Cortar",
-               "borrar": "Borrar…"}
-    c("la barra tiene sus cuatro botones con su rótulo",
-      {k: str(getattr(barra, k).cget("text")) for k in rotulos}, rotulos)
+    barra = tk_gestion.Barra(raiz, {k: (lambda k=k: llamadas.append(k)) for k in ("subir", "nueva")})
+    c("la barra tiene dos botones, en este orden", tk_gestion.ORDEN_BARRA, ("subir", "nueva"))
+    rotulos = {"subir": "Subir", "nueva": "Nueva carpeta…"}
+    c("  con su rótulo", {k: str(getattr(barra, k).cget("text")) for k in rotulos}, rotulos)
     c("  con el estilo discreto",
       {str(getattr(barra, k).cget("style")) for k in rotulos}, {"Quiet.TButton"})
     c("  cuelgan del marco", {getattr(barra, k).master is barra.marco for k in rotulos}, {True})
-    barra.encender(True, False, True, False)
-    c("encender(True, False, True, False)",
-      {k: estado(getattr(barra, k)) for k in rotulos},
-      {"nueva": "normal", "renombrar": "disabled", "cortar": "normal", "borrar": "disabled"})
-    barra.encender(False, True, False, True)
-    c("encender(False, True, False, True)",
-      {k: estado(getattr(barra, k)) for k in rotulos},
-      {"nueva": "disabled", "renombrar": "normal", "cortar": "disabled", "borrar": "normal"})
-    barra.encender(True, True, True, True)
+    c("  y no hay más botones en ella",
+      sum(1 for w in barra.marco.winfo_children() if w.winfo_class() == "TButton"), 2)
+    if str(barra.subir.cget("image")):
+        c("«Subir» lleva la flecha que despliega a la derecha del texto",
+          str(barra.subir.cget("compound")), "right")
+    else:
+        print("  (saltado) la flecha de «Subir»: los iconos no se pintan aquí")
+    c("  nacen apagados", {k: estado(getattr(barra, k)) for k in rotulos},
+      {"subir": "disabled", "nueva": "disabled"})
+    barra.encender(True, False)
+    c("encender(True, False)", {k: estado(getattr(barra, k)) for k in rotulos},
+      {"subir": "normal", "nueva": "disabled"})
+    barra.encender(False, True)
+    c("encender(False, True)", {k: estado(getattr(barra, k)) for k in rotulos},
+      {"subir": "disabled", "nueva": "normal"})
+    barra.encender(True, True)
     for k in rotulos:
         getattr(barra, k).invoke()
-    c("cada botón llama a su acción", llamadas, ["nueva", "renombrar", "cortar", "borrar"])
+    c("cada botón llama a su acción", llamadas, ["subir", "nueva"])
 
-    # --- el menú contextual
+    def entradas_de(menu) -> list:
+        """Lo que enseña un menú: (rótulo, estado, atajo) por entrada y `None` por separador."""
+        ultimo = menu.index("end")
+        vistas = []
+        for i in range(ultimo + 1):
+            if menu.type(i) == "separator":
+                vistas.append(None)
+            elif menu.type(i) == "command":
+                vistas.append((menu.entrycget(i, "label"), str(menu.entrycget(i, "state")),
+                               str(menu.entrycget(i, "accelerator"))))
+        return vistas
+
+    def pulsar_encendidas(menu) -> None:
+        for i in range(menu.index("end") + 1):
+            if menu.type(i) == "command" and menu.entrycget(i, "state") == "normal":
+                menu.invoke(i)
+
+    # --- el menú de «Subir»
     llamadas.clear()
-    acciones_menu = {k: (lambda k=k: llamadas.append(k))
-                     for k in ("nueva", "renombrar", "cortar", "pegar", "borrar")}
-    estados = {"nueva": True, "renombrar": False, "cortar": True, "pegar": False,
+    menu = tk_gestion.menu_subir(raiz, {k: (lambda k=k: llamadas.append(k))
+                                        for k in ("archivos", "carpeta")},
+                                 {"archivos": True, "carpeta": False})
+    c("el menú de «Subir» es un `Menu` sin asa con «Archivos…» y «Carpeta…»",
+      (isinstance(menu, tk.Menu), str(menu.cget("tearoff")), entradas_de(menu)),
+      (True, "0", [("Archivos…", "normal", ""), ("Carpeta…", "disabled", "")]))
+    pulsar_encendidas(menu)
+    c("  la encendida llama a su acción", llamadas, ["archivos"])
+
+    # --- el menú contextual de una fila
+    llamadas.clear()
+    claves = ("abrir", "bajar", "renombrar", "cortar", "pegar", "borrar", "nueva", "archivos",
+              "carpeta", "releer")
+    acciones_menu = {k: (lambda k=k: llamadas.append(k)) for k in claves}
+    estados = {"abrir": True, "bajar": True, "renombrar": False, "cortar": True, "pegar": False,
                "borrar": True}
-    menu = tk_gestion.menu_contextual(raiz, acciones_menu, estados)
-    c("el menú es un `Menu` sin asa", (isinstance(menu, tk.Menu), str(menu.cget("tearoff"))),
-      (True, "0"))
-    ultimo = menu.index("end")
-    entradas = [(menu.entrycget(i, "label"), str(menu.entrycget(i, "state")))
-                for i in range(ultimo + 1) if menu.type(i) == "command"]
-    c("  entradas en orden, las de estado falso apagadas", entradas,
-      [("Nueva carpeta…", "normal"), ("Renombrar…", "disabled"), ("Cortar", "normal"),
-       ("Pegar aquí", "disabled"), ("Borrar…", "normal")])
-    for i in range(ultimo + 1):
-        if menu.type(i) == "command" and menu.entrycget(i, "state") == "normal":
-            menu.invoke(i)
-    c("  las encendidas llaman a su acción", llamadas, ["nueva", "cortar", "borrar"])
+    menu = tk_gestion.menu_contextual(raiz, tk_gestion.ORDEN_MENU_FILA, acciones_menu, estados)
+    c("el menú de una fila es un `Menu` sin asa", (isinstance(menu, tk.Menu),
+                                                   str(menu.cget("tearoff"))), (True, "0"))
+    c("  entradas en orden, con separadores y atajos, las de estado falso apagadas",
+      entradas_de(menu),
+      [("Abrir", "normal", ""), ("Bajar…", "normal", ""), None,
+       ("Renombrar…", "disabled", "F2"), ("Cortar", "normal", "Ctrl+X"),
+       ("Pegar aquí", "disabled", "Ctrl+V"), None, ("Borrar…", "normal", "Supr")])
+    pulsar_encendidas(menu)
+    c("  las encendidas llaman a su acción", llamadas, ["abrir", "bajar", "cortar", "borrar"])
+
+    # --- el del hueco (sin fila debajo)
+    llamadas.clear()
+    menu = tk_gestion.menu_contextual(
+        raiz, tk_gestion.ORDEN_MENU_HUECO, acciones_menu,
+        {"nueva": True, "pegar": False, "archivos": True, "carpeta": True, "releer": True})
+    c("el menú del hueco: nueva carpeta, pegar, subir y releer", entradas_de(menu),
+      [("Nueva carpeta…", "normal", "Ctrl+Mayús+N"), ("Pegar aquí", "disabled", "Ctrl+V"), None,
+       ("Subir archivos…", "normal", ""), ("Subir carpeta…", "normal", ""), None,
+       ("Releer", "normal", "F5")])
+    pulsar_encendidas(menu)
+    c("  las encendidas llaman a su acción", llamadas, ["nueva", "archivos", "carpeta", "releer"])
+    c("  sin estado, una entrada sale apagada",
+      entradas_de(tk_gestion.menu_contextual(raiz, ("abrir",), acciones_menu, {})),
+      [("Abrir", "disabled", "")])
 
     # --- nada de colores ni distancias sueltas
     fuente = Path(tk_gestion.__file__).read_text(encoding="utf-8")

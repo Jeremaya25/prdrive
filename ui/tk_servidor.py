@@ -22,8 +22,9 @@ muere el hilo que lo lanzó); lo que espera a la red (`esperar()`, el
 Cerrar la ventana para el `rcd` también en segundo plano, una sola vez, sin
 esperarlo.
 
-Bajar y subir (pieza 2): la lista admite varias filas y el pie lleva «Bajar…»,
-«Subir archivos…» y «Subir carpeta…». Un lote es UN `sync/copy` asíncrono del
+Bajar y subir (pieza 2): la lista admite varias filas; «Bajar…» va en el menú del
+botón derecho de una fila y «Subir» (archivos o carpeta) en la botonera. Un lote es
+UN `sync/copy` asíncrono del
 `rcd` (`common/rcd.py`); qué se copia, los avisos por pareja y los textos los
 decide `ui/transferencia.py` y el panel que lo enseña es `ui/tk_transferencia.py`.
 Aquí se encadena el flujo: elegir → avisar/bloquear → contar choques en segundo
@@ -34,9 +35,9 @@ la transferencia. Lanzar la copia, seguirla, cancelarla y cerrar con ella en
 marcha lo hace `ui/tk_lote.Seguimiento`; aquí solo se cuenta antes y se dice
 qué es un lote de copia. Copiar nunca borra.
 
-Gestionar (pieza 3): una barra entre la línea del indicador y la lista («Nueva
-carpeta…», «Renombrar…», «Cortar», «Borrar…»), las mismas acciones en el menú del
-botón derecho y con teclas. Cada acción es un `Trabajo` de órdenes de
+Gestionar (pieza 3): «Nueva carpeta…» en la botonera, entre la línea del indicador
+y la lista; «Renombrar…», «Cortar», «Pegar aquí» y «Borrar…» en el menú del botón
+derecho y con teclas. Cada acción es un `Trabajo` de órdenes de
 `rcd.lanzar_orden()` (una por elemento); qué se puede, qué se avisa y los textos
 los decide `ui/gestion.py`, y el diálogo del nombre y la barra son de
 `ui/tk_gestion.py`. El flujo: elegir → bloquear → mirar en segundo plano (los
@@ -477,11 +478,10 @@ def open_dialog(parent, config: Config) -> None:
     accion.grid_remove()
     dlg.indicador, dlg.sondeo = indicador, sondeo      # como en «Dispositivos»: los tests los miran
 
-    # La barra de gestión, entre la línea del indicador y la lista. Qué hace cada botón
-    # se resuelve al pulsar (las acciones se definen más abajo).
-    barra_gestion = tk_gestion.Barra(marco, {
-        "nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
-        "cortar": lambda: cortar_elegidos(), "borrar": lambda: borrar_elegidos()})
+    # La botonera, entre la línea del indicador y la lista: «Subir» y «Nueva carpeta…».
+    # Qué hace cada botón se resuelve al pulsar (las acciones se definen más abajo).
+    barra_gestion = tk_gestion.Barra(marco, {"subir": lambda: desplegar_subir(),
+                                             "nueva": lambda: nueva_carpeta()})
     barra_gestion.marco.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
     dlg.barra = barra_gestion
 
@@ -523,24 +523,13 @@ def open_dialog(parent, config: Config) -> None:
     panel.al_cancelar = lambda: seg.cancelar()
     panel.al_reintentar = lambda: reintentar_lote()
 
+    # El pie, como la barra de estado del Explorador: solo la cuenta. Cierra la X.
     pie = ttk.Frame(marco)
     pie.grid(row=6, column=0, sticky="ew", pady=(theme.E3, 0))
     pie.columnconfigure(0, weight=1)
     cuenta = ttk.Label(pie, text="", style="MonoPista.TLabel")
     cuenta.grid(row=0, column=0, sticky="w")
-    boton_bajar = ttk.Button(pie, text="Bajar…", state="disabled",
-                             command=lambda: bajar_elegidos())
-    boton_bajar.grid(row=0, column=1, padx=(theme.E3, 0))
-    boton_archivos = ttk.Button(pie, text="Subir archivos…", state="disabled",
-                                command=lambda: subir_archivos())
-    boton_archivos.grid(row=0, column=2, padx=(theme.E2, 0))
-    boton_carpeta = ttk.Button(pie, text="Subir carpeta…", state="disabled",
-                               command=lambda: subir_carpeta())
-    boton_carpeta.grid(row=0, column=3, padx=(theme.E2, 0))
-    ttk.Button(pie, text="Cerrar", command=lambda: cerrar_ventana()).grid(
-        row=0, column=4, padx=(theme.E4, 0))
     dlg.cuenta, dlg.panel, dlg.sondeo_lote = cuenta, panel, sondeo_lote
-    dlg.bajar, dlg.subir_archivos, dlg.subir_carpeta = boton_bajar, boton_archivos, boton_carpeta
 
     # ------------------------------------------------------------- lo que se ve
     def decir(texto: str, tono: str = "Peligro.", boton: str | None = None) -> None:
@@ -612,25 +601,27 @@ def open_dialog(parent, config: Config) -> None:
         """Si hay conexión con `rclone` y ningún lote ni cambio en marcha."""
         return estado["rcd"] is not None and seg.activo is None
 
-    def estados_gestion() -> dict[str, bool]:
-        """Qué acciones de gestión se pueden ahora.
-
-        «Nueva carpeta…» con la ventana libre, «Renombrar…» con exactamente una fila
-        elegida, «Cortar» y «Borrar…» con una o más.
-        """
-        filas = len(lista.selection())
-        ok = libre()
-        return {"nueva": ok, "renombrar": ok and filas == 1, "cortar": ok and filas >= 1,
-                "borrar": ok and filas >= 1}
-
     def puede_pegar() -> bool:
         """Si hay algo cortado, la ventana está libre y se ve el remote del que se cortó."""
         return (estado["corte"] is not None and libre()
                 and estado["corte"][0] == nav.remote)
 
     def estados_menu() -> dict[str, bool]:
-        """Qué entradas del menú y qué teclas valen ahora: las de la barra y «Pegar aquí»."""
-        return {**estados_gestion(), "pegar": puede_pegar()}
+        """Qué acciones valen ahora: las de la botonera, los menús y las teclas.
+
+        «Abrir» con una sola carpeta elegida y conexión (navegar no espera a un lote);
+        «Bajar…», «Cortar» y «Borrar…» con una o más filas y la ventana libre;
+        «Renombrar…» con exactamente una; subir y «Nueva carpeta…» con la ventana libre;
+        «Pegar aquí» con algo cortado en este remote; «Releer» con conexión.
+        """
+        filas = lista.selection()
+        ok = libre()
+        una = estado["entradas"].get(str(filas[0])) if len(filas) == 1 else None
+        conectado = estado["rcd"] is not None
+        return {"abrir": conectado and una is not None and una.es_carpeta,
+                "bajar": ok and bool(filas), "archivos": ok, "carpeta": ok, "nueva": ok,
+                "renombrar": ok and una is not None, "cortar": ok and bool(filas),
+                "borrar": ok and bool(filas), "pegar": puede_pegar(), "releer": conectado}
 
     def pintar_corte() -> None:
         """Enseña u oculta la línea de lo cortado y pone su texto y el estado de «Pegar aquí»."""
@@ -646,13 +637,9 @@ def open_dialog(parent, config: Config) -> None:
         corte.grid()
 
     def actualizar_botones() -> None:
-        """Enciende o apaga los botones de gestión, «Pegar aquí», «Bajar…» y las dos «Subir…» según la selección, el `rcd` y el lote."""
+        """Enciende o apaga la botonera y «Pegar aquí» según el `rcd` y el lote."""
         ok = libre()
-        hay = bool(lista.selection())
-        boton_bajar.configure(state="normal" if ok and hay else "disabled")
-        for b in (boton_archivos, boton_carpeta):
-            b.configure(state="normal" if ok else "disabled")
-        barra_gestion.encender(**estados_gestion())
+        barra_gestion.encender(subir=ok, nueva=ok)
         pintar_corte()
 
     # ------------------------------------------------------------- el rcd
@@ -1224,27 +1211,47 @@ def open_dialog(parent, config: Config) -> None:
         op = gestion.Operacion(gestion.MOVER, remote, carpeta, elementos, destino=nav.ruta)
         mirar_destino(nuevo_trabajo_gestion(op), op, None)
 
-    # -- teclas y botón derecho
-    acciones_gestion = {"nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
-                        "cortar": lambda: cortar_elegidos(), "pegar": lambda: pegar_aqui(),
-                        "borrar": lambda: borrar_elegidos()}
+    # -- la botonera, las teclas y el botón derecho
+    acciones = {"abrir": lambda: entrar(), "bajar": lambda: bajar_elegidos(),
+                "archivos": lambda: subir_archivos(), "carpeta": lambda: subir_carpeta(),
+                "nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
+                "cortar": lambda: cortar_elegidos(), "pegar": lambda: pegar_aqui(),
+                "borrar": lambda: borrar_elegidos(), "releer": lambda: repetir()}
+    dlg.acciones, dlg.estados_menu = acciones, estados_menu      # los tests las usan
 
     def con_tecla(clave: str):
         """Devuelve el manejador de una tecla: hace la acción solo si ahora se puede."""
         def al_pulsar(_evento=None) -> str:
             if estados_menu()[clave]:
-                acciones_gestion[clave]()
+                acciones[clave]()
             return "break"
         return al_pulsar
 
+    def desplegar_subir() -> None:
+        """«Subir»: enseña su menú («Archivos…», «Carpeta…») justo debajo del botón."""
+        boton = barra_gestion.subir
+        menu = tk_gestion.menu_subir(boton, acciones, estados_menu())
+        _mostrar_menu(menu, boton.winfo_rootx(), boton.winfo_rooty() + boton.winfo_height())
+
     def menu_derecho(evento) -> str:
-        """Botón derecho: elige la fila de debajo si no lo estaba y enseña el menú de gestión."""
+        """Botón derecho: sobre una fila, el menú de lo elegido; en el hueco, el de la carpeta.
+
+        Sobre una fila que no estaba elegida, la elige. En el hueco de la lista (sin fila
+        debajo) quita la selección, como el Explorador. En la cabecera, nada.
+        """
+        if lista.identify_region(evento.x, evento.y) in ("heading", "separator"):
+            return "break"
         fila = lista.identify_row(evento.y)
         lista.focus_set()
-        if fila and fila not in lista.selection():
-            lista.selection_set(fila)
-            lista.focus(fila)
-        menu = tk_gestion.menu_contextual(lista, acciones_gestion, estados_menu())
+        if fila:
+            if fila not in lista.selection():
+                lista.selection_set(fila)
+                lista.focus(fila)
+            orden = tk_gestion.ORDEN_MENU_FILA
+        else:
+            lista.selection_remove(*lista.selection())
+            orden = tk_gestion.ORDEN_MENU_HUECO
+        menu = tk_gestion.menu_contextual(lista, orden, acciones, estados_menu())
         _mostrar_menu(menu, evento.x_root, evento.y_root)
         return "break"
 
@@ -1253,6 +1260,7 @@ def open_dialog(parent, config: Config) -> None:
                              ("<Control-N>", "nueva")):
         lista.bind(secuencia, con_tecla(clave))
     lista.bind("<Button-3>", menu_derecho)
+    dlg.bind("<F5>", con_tecla("releer"))     # en toda la ventana: el foco puede no estar en la lista
 
     # ------------------------------------------------------------- cerrar
     def cerrar(evento=None) -> None:

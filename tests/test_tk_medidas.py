@@ -923,8 +923,8 @@ try:
 
                 def con_lote(dlg):
                     dlg.lista.selection_set(dlg.lista.get_children()[:3])
-                    dlg.update()                # el evento de la selección enciende «Bajar…»
-                    dlg.bajar.invoke()
+                    dlg.update()
+                    dlg.acciones["bajar"]()
 
                 for que, acaba_mal in (("el panel de un lote en marcha", False),
                                        ("el resultado de un lote que falla", True)):
@@ -957,7 +957,7 @@ try:
                 def con_corte(dlg):
                     dlg.lista.selection_set(dlg.lista.get_children()[:3])
                     dlg.update()
-                    dlg.barra.cortar.invoke()
+                    dlg.acciones["cortar"]()
 
                 def con_corte_en_otro(dlg):
                     con_corte(dlg)

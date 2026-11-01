@@ -22,7 +22,9 @@ lo que ve la persona:
   moría con `BadAlloc` pasadas ~850 filas);
 - cerrar la ventana con un listado en vuelo, con hilos de verdad: `parar()` una
   vez y ninguna excepción de Tk;
-- bajar y subir (pieza 2): los tres botones y cuándo se encienden, selección
+- la botonera corta («Subir» con su menú y «Nueva carpeta…»), el pie sin botones
+  ni «Cerrar», y F5 relee desde cualquier sitio de la ventana;
+- bajar y subir (pieza 2): las tres acciones y cuándo se pueden, selección
   múltiple, el bloqueo y el aviso por pareja, el aviso de choques con sus tres
   respuestas, el filtro escapado que llega a `sync/copy`, el panel con un
   progreso que avanza, el resultado, «Cancelar» (una sola vez), «Reintentar»,
@@ -55,7 +57,8 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import icons, segundo_plano, servidor, theme, tk_servidor, tk_transferencia  # noqa: E402
+from ui import (icons, segundo_plano, servidor, theme, tk_gestion, tk_servidor,  # noqa: E402
+                tk_transferencia)
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -270,6 +273,12 @@ def pulsar(dlg, secuencia: str) -> None:
     dlg.update()
 
 
+def elegir_accion(dlg, clave: str) -> None:
+    """Hace la acción `clave` como una entrada encendida de un menú: apagada, no hace nada."""
+    if dlg.estados_menu()[clave]:
+        dlg.acciones[clave]()
+
+
 TIEMPO = [0]
 
 
@@ -393,6 +402,66 @@ with sandbox():
       (falso.listados()[-1]["remote"], nombres(dlg), dlg.cuenta.cget("text")),
       ("datos", [], "0 elementos"))
     c("una carpeta vacía lo dice", dice_vacia(dlg), True)
+    cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 3b. La botonera corta, el pie sin botones, F5 y el menú de «Subir»
+    # -----------------------------------------------------------------------
+    falso = RcdFalso(respuestas())
+    dlg = abrir(falso)
+
+    def textos_de_botones(widget) -> list[str]:
+        """El texto de cada `ttk.Button` que cuelga de `widget`, en profundidad."""
+        textos = []
+        for h in widget.winfo_children():
+            if isinstance(h, ttk.Button):
+                textos.append(str(h.cget("text")))
+            textos += textos_de_botones(h)
+        return textos
+
+    c("el pie solo lleva la cuenta: ningún botón", textos_de_botones(dlg.cuenta.master), [])
+    c("no hay botón «Cerrar» (cierra la X de la ventana)",
+      "Cerrar" in textos_de_botones(dlg), False)
+    c("ni «Bajar…» ni las dos «Subir…» como botones",
+      {"Bajar…", "Subir archivos…", "Subir carpeta…"} & set(textos_de_botones(dlg)), set())
+    c("la botonera: «Subir» y «Nueva carpeta…», encendidas con rcd",
+      [(str(b.cget("text")), str(b.cget("state")) != "disabled")
+       for b in (dlg.barra.subir, dlg.barra.nueva)],
+      [("Subir", True), ("Nueva carpeta…", True)])
+    n = len(falso.listados())
+    pulsar(dlg, "<F5>")
+    c("F5 vuelve a leer la carpeta que se ve",
+      (len(falso.listados()), falso.listados()[-1]["remote"]), (n + 1, ""))
+    elegir_y_entrar(dlg, "datos")
+    n = len(falso.listados())
+    dlg.focus_force()
+    dlg.event_generate("<F5>")
+    dlg.update()
+    c("  también con el foco fuera de la lista",
+      (len(falso.listados()), falso.listados()[-1]["remote"]), (n + 1, "datos"))
+    menus: list = []
+    pedidos: list[str] = []
+    previos_3b = (tk_servidor._mostrar_menu, tk_servidor.elegir_archivos,
+                  tk_servidor.elegir_carpeta)
+    tk_servidor._mostrar_menu = lambda menu, x, y: menus.append((menu, x, y))
+    tk_servidor.elegir_archivos = lambda parent, inicial: (pedidos.append("archivos"), [])[1]
+    tk_servidor.elegir_carpeta = lambda parent, inicial: (pedidos.append("carpeta"), None)[1]
+    try:
+        dlg.barra.subir.invoke()
+        menu, x, y = menus[-1]
+        c("«Subir» despliega «Archivos…» y «Carpeta…», encendidas",
+          [(menu.entrycget(i, "label"), str(menu.entrycget(i, "state")))
+           for i in range(menu.index("end") + 1)],
+          [("Archivos…", "normal"), ("Carpeta…", "normal")])
+        b = dlg.barra.subir
+        c("  justo debajo del botón", (x, y),
+          (b.winfo_rootx(), b.winfo_rooty() + b.winfo_height()))
+        menu.invoke(0)
+        menu.invoke(1)
+        c("  cada entrada pide lo suyo al sistema", pedidos, ["archivos", "carpeta"])
+    finally:
+        (tk_servidor._mostrar_menu, tk_servidor.elegir_archivos,
+         tk_servidor.elegir_carpeta) = previos_3b
     cerrar(dlg)
 
     # -----------------------------------------------------------------------
@@ -836,7 +905,9 @@ with sandbox():
         return str(widget.cget("state"))
 
     def botones_de(dlg) -> tuple[str, str, str]:
-        return (estado_de(dlg.bajar), estado_de(dlg.subir_archivos), estado_de(dlg.subir_carpeta))
+        """Si «Bajar…», «Subir archivos…» y «Subir carpeta…» se pueden elegir ahora."""
+        e = dlg.estados_menu()
+        return tuple("normal" if e[k] else "disabled" for k in ("bajar", "archivos", "carpeta"))
 
     def elegir_varias(dlg, *iids) -> None:
         dlg.lista.selection_set(*iids)
@@ -908,9 +979,9 @@ with sandbox():
     dialogos()
     falso = servidor_lote(estados=(CORRIENDO,))
     dlg = abrir(falso)
-    c("los tres botones llevan su rótulo",
-      (str(dlg.bajar.cget("text")), str(dlg.subir_archivos.cget("text")),
-       str(dlg.subir_carpeta.cget("text"))), ("Bajar…", "Subir archivos…", "Subir carpeta…"))
+    c("«Bajar…» va en el menú de una fila, y subir en el de «Subir»",
+      ("bajar" in tk_gestion.ORDEN_MENU_FILA, list(tk_gestion.ROTULOS_SUBIR.values())),
+      (True, ["Archivos…", "Carpeta…"]))
     c("con rcd y sin selección: «Bajar…» apagado, las dos «Subir…» encendidas",
       botones_de(dlg), ("disabled", "normal", "normal"))
     elegir_varias(dlg, "datos")
@@ -929,14 +1000,14 @@ with sandbox():
     # a mitad de un lote, los tres apagados
     dialogos(destino=str(tmpdir()))
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("el panel sale y enseña el título", bombear(lambda: panel_a_la_vista(dlg)), True)
     c("durante el lote los tres botones están apagados", botones_de(dlg),
       ("disabled", "disabled", "disabled"))
     elegir_varias(dlg, "datos")
     c("  y elegir otra fila no enciende «Bajar…»", botones_de(dlg)[0], "disabled")
-    dlg.bajar.invoke()
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "bajar")
+    elegir_accion(dlg, "archivos")
     c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
       (1, []))
     cerrar(dlg)
@@ -970,7 +1041,7 @@ with sandbox():
     falso.respuestas[("operations/list", "datos")] = lambda: listado_normal
     dlg = abrir(falso)
     elegir_varias(dlg, "datos", "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("«Bajar…» empieza el diálogo en una carpeta del equipo",
       len(LLAMADAS_DIALOGOS["destino"]), 1)
     c("el aviso de choques salió una vez, con el plural y el destino",
@@ -997,7 +1068,7 @@ with sandbox():
       (bool(dlg.panel.titulo.winfo_manager()), bool(dlg.panel.reintentar.winfo_manager())),
       (False, False))
     c("  y los botones vuelven", botones_de(dlg)[0], "normal")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("  la última carpeta del equipo se recuerda: el segundo diálogo empieza en ella",
       LLAMADAS_DIALOGOS["destino"][-1], str(destino))
     c("  y el grupo del segundo lote es otro",
@@ -1010,7 +1081,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: frase_panel(dlg) != "")
     c("sin nada que choque no se pregunta y se copia sin IgnoreExisting",
       (LLAMADAS_DIALOGOS["choques"], "_config" in copias(falso)[0]), ([], False))
@@ -1026,7 +1097,7 @@ with sandbox():
         falso = servidor_lote()
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         bombear(lambda: frase_panel(dlg) != "" or not copia)
         c(f"un choque, respuesta {respuesta!r}: el texto va en singular",
           LLAMADAS_DIALOGOS["choques"],
@@ -1045,7 +1116,7 @@ with sandbox():
         falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),))
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c(f"el resultado con {respuesta!r} y 5 comprobados: la cuenta no sale de `checks`",
           bombear(lambda: frase_panel(dlg) == esperado), True)
         cerrar(dlg)
@@ -1053,7 +1124,7 @@ with sandbox():
     falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),), estados=(FALLADO,))
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: bool(dlg.panel.reintentar.winfo_manager()))
     falso.respuestas[("job/status", None)] = ACABADO
     dlg.panel.reintentar.invoke()
@@ -1072,7 +1143,7 @@ with sandbox():
         ("operations/list", "dir{1}"): lista()})
     dlg = abrir(falso)
     elegir_varias(dlg, "raro [1]*", "!x.txt", "a b?.txt", "dir{1}")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: frase_panel(dlg) != "")
     c("las reglas que llegan a sync/copy están escapadas y son solo lo elegido",
       sorted(copias(falso)[0]["_filter"]["IncludeRule"]),
@@ -1107,7 +1178,7 @@ with sandbox():
     elegir_y_entrar(dlg, "datos")
     elegir_y_entrar(dlg, "copia")
     c("estamos dentro de «Copia» (up-mirror)", dlg.ruta.cget("text"), "/datos/copia")
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("subir a una pareja up-mirror se bloquea con «No se puede»",
       LLAMADAS_DIALOGOS["avisar"],
       [("No se puede", "«Copia» deja el servidor igual que el dispositivo: lo que subas aquí lo "
@@ -1120,7 +1191,7 @@ with sandbox():
     dlg.arriba.invoke()
     elegir_y_entrar(dlg, "notas")
     c("estamos dentro de «Notas» (bisync)", dlg.ruta.cget("text"), "/datos/notas")
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("subir a una pareja bisync pregunta con el texto del modo",
       LLAMADAS_DIALOGOS["preguntar"],
       [("Carpeta de una pareja",
@@ -1129,7 +1200,7 @@ with sandbox():
     c("  «Cancelar» no copia nada y deja los botones", (copias(falso), botones_de(dlg)[1]),
       ([], "normal"))
     dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("  «Seguir» copia: «uno.txt» a la raíz absoluta de la carpeta",
       bombear(lambda: len(copias(falso)) == 1), True)
     cp = copias(falso)[0]
@@ -1144,7 +1215,7 @@ with sandbox():
       listados_vistos(falso)[-1]["remote"], "datos/notas")
     n_antes = len(listados_vistos(falso))
     dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     bombear(lambda: len(copias(falso)) == 2 and frase_panel(dlg) != "")
     bombear(lambda: len(listados_vistos(falso)) > n_antes)
     c("  tras cada subida a la carpeta que se ve hay un listado nuevo de ella",
@@ -1164,7 +1235,7 @@ with sandbox():
         falso.respuestas[("operations/list", "datos")] = lista(item(carpeta_, True))
         elegir_y_entrar(dlg, "datos")
         elegir_y_entrar(dlg, carpeta_)
-        dlg.subir_archivos.invoke()
+        elegir_accion(dlg, "archivos")
         c(f"subir a «{pareja}» avisa con el texto de su modo",
           [t[1] for t in LLAMADAS_DIALOGOS["preguntar"]], [texto_])
         cerrar(dlg)
@@ -1180,14 +1251,14 @@ with sandbox():
         {"Name": "a.jpg", "Path": "a.jpg", "IsDir": False, "Size": 1},
         {"Name": "b.jpg", "Path": "b.jpg", "IsDir": False, "Size": 1},
         {"Name": "sub", "Path": "sub", "IsDir": True, "Size": -1}]}
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     c("subir una carpeta pregunta por los choques: dos archivos coinciden (la subcarpeta no cuenta)",
       LLAMADAS_DIALOGOS["choques"], ["2 elementos ya existen en /. ¿Sobrescribirlos u omitirlos?"])
     c("  la recursión se pidió solo de «fotos» en el servidor",
       [p["remote"] for p in falso.listados() if p["opt"].get("recurse")], ["fotos"])
     c("  «Cancelar» no copia nada", copias(falso), [])
     dialogos(carpeta=str(origen / "fotos"), choques="omitir")
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     bombear(lambda: len(copias(falso)) == 1)
     cp = copias(falso)[0]
     c("  «Omitir» copia la carpeta entera con IgnoreExisting",
@@ -1198,7 +1269,7 @@ with sandbox():
     # raíz de una unidad
     dialogos(carpeta="/")
     n = len(copias(falso))
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     c("la raíz de una unidad no se sube: se dice", (len(copias(falso)), LLAMADAS_DIALOGOS["avisar"]),
       (n, [("No se puede", tk_servidor.SIN_RAIZ)]))
     cerrar(dlg)
@@ -1208,7 +1279,7 @@ with sandbox():
     falso = nuevo_rcd({("operations/stat", ""): {"item": None}})
     dlg = abrir(falso)
     falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("object not found", 404)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     bombear(lambda: len(copias(falso)) == 1)
     c("un archivo que no existe en el servidor (404) no choca y se copia",
       (LLAMADAS_DIALOGOS["choques"], len(copias(falso))), ([], 1))
@@ -1219,7 +1290,7 @@ with sandbox():
     falso = nuevo_rcd()
     falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("permission denied", 403)
     dlg = abrir(falso)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("un error al mirar el destino sale en el panel, sin copiar",
       (frase_panel(dlg), copias(falso), botones_de(dlg)[1]),
       ("No tienes permiso para escribir en /.", [], "normal"))
@@ -1236,13 +1307,13 @@ with sandbox():
     falso = servidor_lote()
     dlg = abrir(falso, config=CFG2)
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("bajar a la carpeta de una pareja down-mirror se bloquea",
       (LLAMADAS_DIALOGOS["avisar"], copias(falso)),
       ([("No se puede", "«Espejo» deja su carpeta igual que el servidor: lo que bajes aquí lo "
                         "borraría su próxima pasada. Bájalo fuera de ella.")], []))
     dialogos(destino=str(model.DEVICE_ROOT / "sync-data" / "notas"), preguntar=False)
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("  y a la de una bisync avisa antes de seguir",
       [t[:2] for t in LLAMADAS_DIALOGOS["preguntar"]],
       [("Carpeta de una pareja",
@@ -1265,7 +1336,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: str(dlg.panel.cuenta.cget("text")).startswith("3 de 8 archivos"))
     dlg.panel.cancelar.invoke()
     dlg.panel.cancelar.invoke()
@@ -1288,7 +1359,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("un trabajo que falla por permiso lo dice en llano",
       bombear(lambda: frase_panel(dlg) == f"No tienes permiso para escribir en {destino}."), True)
     c("  y ofrece «Reintentar»", bool(dlg.panel.reintentar.winfo_manager()), True)
@@ -1314,7 +1385,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: panel_a_la_vista(dlg))
     hay.set()
     c("una conexión perdida a mitad: el panel lo dice",
@@ -1339,7 +1410,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: panel_a_la_vista(dlg))
     hay.set()
     c("un ErrorRc del seguimiento con el proceso muerto también es conexión perdida",
@@ -1372,14 +1443,14 @@ with sandbox():
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
         falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c(f"[{variante}] el seguimiento falla varias veces y se dice en la ventana",
           bombear(lambda: frase(dlg) == tk_servidor.SIN_RESPUESTA), True)
         c("  el lote sigue: los tres botones apagados, el panel a la vista, sin «Reintentar»",
           (botones_de(dlg), panel_a_la_vista(dlg), bool(dlg.panel.reintentar.winfo_manager()),
            boton(dlg)), (("disabled", "disabled", "disabled"), True, False, ""))
-        dlg.bajar.invoke()
-        dlg.subir_archivos.invoke()
+        elegir_accion(dlg, "bajar")
+        elegir_accion(dlg, "archivos")
         c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
           (1, []))
         LLAMADAS_DIALOGOS["preguntar"].clear()
@@ -1424,7 +1495,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("«job not found» con el rcd vivo: el panel dice que no se sabe cómo acabó",
       bombear(lambda: frase_panel(dlg) == "No se sabe cómo acabó: revisa la carpeta."), True)
     c("  sin «Reintentar», los tres botones libres y la línea de aviso se quita",
@@ -1446,7 +1517,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("un solo fallo del seguimiento: el lote acaba bien, sin avisos ni segundo copy",
       (bombear(lambda: frase_panel(dlg) == "Copiados 0"), frase(dlg), len(copias(falso))),
       (True, "", 1))
@@ -1475,10 +1546,10 @@ with sandbox():
     for nombre_, boton_, ajustar in (
             ("bajar", "bajar", lambda: setattr(tk_servidor, "elegir_destino",
                                                 entrar_durante_el_dialogo(str(destino_)))),
-            ("subir archivos", "subir_archivos", lambda: setattr(
+            ("subir archivos", "archivos", lambda: setattr(
                 tk_servidor, "elegir_archivos",
                 entrar_durante_el_dialogo([str(origen_ / "sube.txt")]))),
-            ("subir carpeta", "subir_carpeta", lambda: setattr(
+            ("subir carpeta", "carpeta", lambda: setattr(
                 tk_servidor, "elegir_carpeta", entrar_durante_el_dialogo(str(origen_ / "carpeta"))))):
         dialogos()
         falso = servidor_lote(estados=(ACABADO,), estadisticas=(stats(1, 1, 5, 5),),
@@ -1487,7 +1558,7 @@ with sandbox():
         ventana["dlg"] = dlg
         ajustar()
         elegir_varias(dlg, "leeme.txt")
-        getattr(dlg, boton_).invoke()
+        elegir_accion(dlg, boton_)
         c(f"[{nombre_}] mientras el diálogo estaba abierto se entró en «datos»",
           bombear(lambda: len(copias(falso)) == 1) and str(dlg.ruta.cget("text")), "/datos")
         cp = copias(falso)[0]
@@ -1530,7 +1601,7 @@ with sandbox():
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
         falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c("el trabajo está en marcha y su progreso en vuelo", bombear(bloqueado.is_set), True)
         dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
         c("cerrar con un lote en marcha pregunta antes",
