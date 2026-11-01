@@ -243,7 +243,8 @@ def servidores(dlg) -> list[str]:
 def elegir_servidor(dlg, nombre: str) -> None:
     """Elige ese servidor en el menú del icono del servidor, como lo haría la persona."""
     menu = dlg.direcciones.menu_servidores()
-    menu.invoke(servidores(dlg).index(nombre))
+    rotulos = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+    menu.invoke(rotulos.index(nombre))
     dlg.update()
 
 

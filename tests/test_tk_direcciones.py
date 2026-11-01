@@ -150,6 +150,11 @@ try:
     llamadas.clear()
     menu.invoke(1)
     c("  y elegir otro avisa", llamadas, [("servidor", "otro")])
+    for _ in range(5):
+        barra.pulsar_servidor()
+        barra.menu_recogidas()
+    c("abrir los menús muchas veces deja uno vivo de cada (Windows tiene un tope de menús)",
+      sum(1 for w in barra.lienzo.winfo_children() if w.winfo_class() == "Menu"), 2)
     barra.encender(atras=True, adelante=True, arriba=True, releer=True, servidor=False,
                    buscar=True)
     menus.clear()

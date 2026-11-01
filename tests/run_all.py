@@ -66,6 +66,7 @@ GUI = {
     "test_tk_principal.py", "test_tk_principal_ancho.py", "test_tk_principal_vista.py",
     "test_tk_reparacion.py", "test_tk_salida.py", "test_tk_screens.py",
     "test_tk_segundo_plano.py", "test_tk_servicio.py", "test_tk_servidor.py", "test_tk_servidor_gestion.py",
+    "test_tk_direcciones.py", "test_tk_servidor_busqueda.py",
     "test_tk_tabla.py",
     "test_tk_transferencia.py",
     "test_tk_visor.py", "test_tk_vista.py", "test_ui.py", "test_unidad_nueva.py", "test_volumen.py",

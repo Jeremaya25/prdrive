@@ -283,7 +283,8 @@ def servidores(dlg) -> list[str]:
 def elegir_servidor(dlg, nombre: str) -> None:
     """Elige ese servidor en el menú del icono del servidor, como lo haría la persona."""
     menu = dlg.direcciones.menu_servidores()
-    menu.invoke(servidores(dlg).index(nombre))
+    rotulos = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+    menu.invoke(rotulos.index(nombre))
     dlg.update()
 
 
@@ -597,7 +598,8 @@ with sandbox():
     c("encogida al mínimo: el pie se ve, sin barras del recuadro y la lista más baja",
       (pie_dentro(dlg), dlg.visor.barras(), dlg.lista.winfo_height() < alto_lista),
       (True, (False, False), True))
-    dlg.geometry(f"{minimo[0] + 300}x{minimo[1] + 400}")
+    # Más grande, pero dentro de la pantalla: un tamaño que no cabe se recorta al reabrir.
+    dlg.geometry(f"{min(minimo[0] + 300, util[0])}x{min(minimo[1] + 400, util[1])}")
     for _ in range(3):
         dlg.update()
     c("estirada: la lista crece y el nombre se queda lo que sobra a lo ancho",

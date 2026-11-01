@@ -1629,10 +1629,26 @@ def open_dialog(parent, config: Config) -> None:
             return "break"
         return al_pulsar
 
+    def solo_este(menu):
+        """Destruye el menú que se enseñó antes y apunta este: uno vivo por ventana.
+
+        Windows tiene un tope de menús por proceso, y un menú que no se destruye vive
+        hasta que se cierra la ventana.
+        """
+        import tkinter as tk
+
+        viejo, estado["menu"] = estado.get("menu"), menu
+        if viejo is not None:
+            try:
+                viejo.destroy()
+            except tk.TclError:
+                pass                        # ya no estaba
+        return menu
+
     def desplegar_subir() -> None:
         """«Subir»: enseña su menú («Archivos…», «Carpeta…») justo debajo del botón."""
         boton = barra_gestion.subir
-        menu = tk_gestion.menu_subir(boton, acciones, estados_menu())
+        menu = solo_este(tk_gestion.menu_subir(boton, acciones, estados_menu()))
         _mostrar_menu(menu, boton.winfo_rootx(), boton.winfo_rooty() + boton.winfo_height())
 
     def menu_derecho(evento) -> str:
@@ -1654,7 +1670,7 @@ def open_dialog(parent, config: Config) -> None:
         else:
             lista.selection_remove(*lista.selection())
             orden = tk_gestion.ORDEN_MENU_HUECO
-        menu = tk_gestion.menu_contextual(lista, orden, acciones, estados_menu())
+        menu = solo_este(tk_gestion.menu_contextual(lista, orden, acciones, estados_menu()))
         _mostrar_menu(menu, evento.x_root, evento.y_root)
         return "break"
 

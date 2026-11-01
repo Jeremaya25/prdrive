@@ -86,6 +86,7 @@ class Direcciones:
         self._zonas: list[tuple[int, int, str, object]] = []
         self._resaltada: str | None = None
         self._var_servidor = None
+        self._menus: dict[str, object] = {}
 
         self.marco = ttk.Frame(padre)
         self.marco.columnconfigure(4, weight=1)
@@ -190,11 +191,24 @@ class Direcciones:
         self._mostrar_menu(self.menu_servidores(), self.lienzo.winfo_rootx() + x0,
                            self.lienzo.winfo_rooty() + self.lienzo.winfo_height())
 
+    def _nuevo_menu(self, clase: str):
+        """Un menú del tema; el anterior de su clase se destruye (Windows tiene un tope)."""
+        import tkinter as tk
+
+        viejo = self._menus.get(clase)
+        if viejo is not None:
+            try:
+                viejo.destroy()
+            except tk.TclError:
+                pass                            # ya no estaba
+        menu = self._menus[clase] = tk_gestion.menu_del_tema(self.lienzo)
+        return menu
+
     def menu_servidores(self):
         """Devuelve el menú con todos los servidores; el que se ve, marcado."""
         import tkinter as tk
 
-        menu = tk_gestion.menu_del_tema(self.lienzo)
+        menu = self._nuevo_menu("servidores")
         menu.configure(selectcolor=theme.TINTA)
         self._var_servidor = tk.StringVar(self.lienzo, value=self.remote)
         for nombre in self._remotes:
@@ -204,7 +218,7 @@ class Direcciones:
 
     def menu_recogidas(self):
         """Devuelve el menú con las migas recogidas en «…», de la raíz hacia dentro."""
-        menu = tk_gestion.menu_del_tema(self.lienzo)
+        menu = self._nuevo_menu("recogidas")
         for rotulo, ruta in self._recogidas:
             menu.add_command(label=rotulo, command=lambda r=ruta: self._acciones["ir"](r))
         return menu

@@ -211,6 +211,11 @@ with sandbox():
     dlg.update()
     c("  y sobre un archivo «Abrir» está apagado",
       dict(entradas(DIALOGOS["menus"][-1]))["Abrir"], "disabled")
+    for _ in range(5):
+        dlg.lista.event_generate("<Button-3>", x=x0 + 5, y=y0 + 3)
+        dlg.update()
+    c("varios clics derechos dejan un solo menú vivo (Windows tiene un tope de menús)",
+      sum(1 for w in dlg.lista.winfo_children() if w.winfo_class() == "Menu"), 1)
     c("en la cabecera no sale ningún menú", (
         dlg.lista.event_generate("<Button-3>", x=5, y=5), dlg.update(), len(DIALOGOS["menus"]))[2],
       len(DIALOGOS["menus"]))
