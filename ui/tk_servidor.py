@@ -27,6 +27,12 @@ nunca al pedirlo: una carpeta que falla no entra en él.
 Cerrar la ventana para el `rcd` también en segundo plano, una sola vez, sin
 esperarlo.
 
+La ventana se puede agrandar y encoger. El contenido pide su mínimo (la lista,
+`FILAS_MINIMAS` filas) y estira: abre con el tamaño que tenía al cerrarse la
+última vez (`state/ventana.json`) o, la primera, con `FILAS_VISIBLES` filas, y ya
+enseñada no cambia de tamaño sola: el panel de un lote o la línea de lo cortado le
+quitan sitio a la lista, como en el Explorador.
+
 Bajar y subir (pieza 2): la lista admite varias filas; «Bajar…» va en el menú del
 botón derecho de una fila y «Subir» (archivos o carpeta) en la botonera. Un lote es
 UN `sync/copy` asíncrono del
@@ -69,12 +75,13 @@ from typing import NamedTuple
 from common import config_file, model, rcd
 from common.model import Config, ConfigError
 
-from . import (gestion, icons, remote_picker, segundo_plano, servidor, theme, tk_direcciones,
-               tk_gestion, tk_lote, tk_transferencia, transferencia)
-from .tk import Indicador, Sondeo, avisar, centrar, cuerpo_visible, modal, mostrar, preguntar
+from . import (gestion, icons, prefs, remote_picker, segundo_plano, servidor, theme,
+               tk_direcciones, tk_gestion, tk_lote, tk_transferencia, transferencia)
+from .tk import (Indicador, Sondeo, avisar, cuerpo_visible, modal, mostrar, pantalla_util,
+                 preguntar)
 
 COLUMNAS = [
-    ("Nombre", 260, True),
+    ("Nombre", 220, True),
     ("Tamaño", 90, False),
     ("Modificado", 140, False),
     ("Permisos", 90, False),
@@ -84,7 +91,15 @@ COLUMNAS = [
 La primera es la del árbol (`#0`), la única de una `Treeview` que lleva icono.
 """
 FILAS_VISIBLES = 12
-"""Cuántas filas enseña la lista sin desplazarse."""
+"""Cuántas filas enseña la lista la primera vez que se abre la ventana."""
+FILAS_MINIMAS = 5
+"""Cuántas filas pide la lista: el mínimo; con la ventana más grande, estira."""
+ANCHO_INICIAL = 820
+"""Ancho (px del diseño) del recuadro la primera vez que se abre la ventana."""
+ANCHO_MINIMO = 640
+"""Ancho mínimo (px del diseño) del recuadro: caben la barra y las líneas que cortan."""
+ANCHO_INDICADOR = 440
+"""Ancho (px del diseño) donde corta la frase del indicador: cabe en `ANCHO_MINIMO`."""
 
 VACIA = "Esta carpeta está vacía."
 CONECTANDO = "Conectando con el servidor…"
@@ -412,6 +427,43 @@ def _resultado_de_mirar(estados: list[dict], _stats: dict, _cancelado: bool):
     return transferencia.Resultado(servidor.frase_error(error), "aviso", True)
 
 
+def _clave_tamano(dlg) -> str:
+    """La clave con la que se recuerda el tamaño: el sistema, el Tk y su escala."""
+    import tkinter as tk
+
+    return prefs.clave_ancho(str(tk.TkVersion), float(dlg.tk.call("tk", "scaling")))
+
+
+def _fijar_tamanos(dlg, lista) -> None:
+    """Pone a la ventana, aún sin enseñar, su tamaño de partida y su mínimo.
+
+    El contenido pide su mínimo (`FILAS_MINIMAS` filas y `ANCHO_MINIMO`). La
+    ventana abre con el tamaño recordado (`servidor_ancho`/`servidor_alto`) o,
+    sin él, con `ANCHO_INICIAL` y sitio para `FILAS_VISIBLES` filas: es lo que se
+    le da al `Visor` como tamaño de partida, y `encajar()` lo recorta a la
+    pantalla. El mínimo de la ventana es el del contenido más las franjas de
+    las barras del `Visor`, también recortado a la pantalla.
+    """
+    from tkinter import ttk
+
+    visor = dlg.visor
+    dlg.update_idletasks()
+    minimo = (max(visor.interior.winfo_reqwidth(), icons.px(dlg, ANCHO_MINIMO)),
+              visor.interior.winfo_reqheight())
+    fila = int(ttk.Style(lista).lookup("Treeview", "rowheight") or icons.px(dlg, 28))
+    clave = _clave_tamano(dlg)
+    recordado = (prefs.recordado("servidor_ancho", clave), prefs.recordado("servidor_alto", clave))
+    inicial = (max(minimo[0], icons.px(dlg, ANCHO_INICIAL)),
+               minimo[1] + (FILAS_VISIBLES - FILAS_MINIMAS) * fila)
+    if None not in recordado:
+        inicial = recordado
+    visor.base = (max(minimo[0], inicial[0]), max(minimo[1], inicial[1]))
+    franjas = (visor.marco.winfo_reqwidth() - visor.lienzo.winfo_reqwidth(),
+               visor.marco.winfo_reqheight() - visor.lienzo.winfo_reqheight())
+    util = pantalla_util(dlg)
+    dlg.minsize(min(minimo[0] + franjas[0], util[0]), min(minimo[1] + franjas[1], util[1]))
+
+
 def _mostrar_menu(menu, x: int, y: int) -> None:
     """Enseña el menú del botón derecho en esa posición de la pantalla.
 
@@ -454,8 +506,11 @@ def open_dialog(parent, config: Config) -> None:
                     "carpeta": os.path.expanduser("~")}
     sondeos: dict[str, tuple[bool, int | None]] = {}
 
-    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
+    dlg.resizable(True, True)       # antes de enseñarla: la barra de título oscura (`ui.md`)
+    marco = cuerpo_visible(dlg, redimensionable=True,
+                           padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
+    marco.rowconfigure(4, weight=1)     # la lista se queda lo que sobra
 
     # La barra de direcciones: qué hace cada cosa se resuelve al pulsar (abajo).
     direcciones = tk_direcciones.Direcciones(marco, {
@@ -471,7 +526,7 @@ def open_dialog(parent, config: Config) -> None:
     linea = ttk.Frame(marco)
     linea.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
     linea.columnconfigure(0, weight=1)
-    indicador = Indicador(linea, ancho=520)
+    indicador = Indicador(linea, ancho=ANCHO_INDICADOR)
     indicador.marco.grid(row=0, column=0, sticky="ew")
     accion = ttk.Button(linea, text="", style="Quiet.TButton")
     accion.grid(row=0, column=1, sticky="e", padx=(theme.E3, 0))
@@ -495,10 +550,11 @@ def open_dialog(parent, config: Config) -> None:
     # de una `Treeview` que lo admite; el árbol no se despliega: se entra.
     tarjeta = ttk.Frame(marco, style="Card.TFrame",
                         padding=(theme.E2, theme.E2, theme.E1, theme.E1))
-    tarjeta.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+    tarjeta.grid(row=4, column=0, sticky="nsew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
+    tarjeta.rowconfigure(0, weight=1)
     lista = ttk.Treeview(tarjeta, columns=("tamano", "modificado", "permisos"),
-                         show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="extended")
+                         show=("tree", "headings"), height=FILAS_MINIMAS, selectmode="extended")
     for columna, (titulo, ancho, estira) in zip(("#0", "tamano", "modificado", "permisos"),
                                                 COLUMNAS):
         lista.heading(columna, text=titulo, anchor="w")
@@ -584,16 +640,6 @@ def open_dialog(parent, config: Config) -> None:
             if tras[2]:
                 decir(tras[2], "Pista.")
             elegir_nombres(tras[3])
-        reajustar()
-
-    def reajustar() -> None:
-        """Agranda la ventana si lo que se ve ahora pide más (nunca mengua) y la recoloca.
-
-        La ventana nace con la lista vacía: al llegar el listado, o al salir el
-        panel de un lote, puede crecer.
-        """
-        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
-            centrar(dlg, parent)
 
     def libre() -> bool:
         """Si hay conexión con `rclone` y ningún lote ni cambio en marcha."""
@@ -835,9 +881,11 @@ def open_dialog(parent, config: Config) -> None:
 
     # ------------------------------------------------------------- bajar y subir
     def cambio_de_lote() -> None:
-        """Con el lote que cambia (o su panel): botones según el lote y ventana al tamaño del panel."""
+        """Con el lote que cambia (o su panel): los botones según el lote.
+
+        La ventana no cambia de tamaño: el panel le quita sitio a la lista.
+        """
         actualizar_botones()
-        reajustar()
 
     seg = tk_lote.Seguimiento(
         dlg, panel, sondeo_lote, decir=decir, intervalo_ms=lambda: INTERVALO_PROGRESO_MS,
@@ -1192,7 +1240,6 @@ def open_dialog(parent, config: Config) -> None:
         if op.tipo == gestion.MOVER and estado["corte"] != (op.remote, op.carpeta, op.elementos):
             seg.reintento = None
             panel.ocultar()
-            reajustar()
             return
         mirar_destino(nuevo_trabajo_gestion(op), op, actual)
 
@@ -1245,7 +1292,6 @@ def open_dialog(parent, config: Config) -> None:
             return
         estado["corte"] = (nav.remote, nav.ruta, elementos)
         actualizar_botones()
-        reajustar()
 
     def quitar_corte() -> None:
         """«Cancelar» de la línea: olvida lo cortado."""
@@ -1326,6 +1372,25 @@ def open_dialog(parent, config: Config) -> None:
         seg.parar()
         if estado["rcd"] is not None:
             segundo_plano.lanzar(partial(estado["rcd"].parar))
+        recordar_tamano()
+
+    def apuntar_tamano(evento) -> None:
+        """Guarda el tamaño del recuadro cada vez que cambia con la ventana a la vista.
+
+        Se guarda al cambiar y no al cerrar porque, al destruirse, sus hijos ya no
+        están. Una ventana que no llegó a enseñarse no tiene un tamaño que recordar.
+        """
+        if dlg.winfo_ismapped() and evento.width > 1 and evento.height > 1:
+            estado["tamano"] = (evento.width, evento.height)
+
+    def recordar_tamano() -> None:
+        """Recuerda en `state/ventana.json` el último tamaño del recuadro, si llegó a verse."""
+        if estado.get("tamano") is None:
+            return
+        ancho, alto = estado["tamano"]
+        clave = _clave_tamano(dlg)
+        prefs.recordar("servidor_ancho", clave, ancho)
+        prefs.recordar("servidor_alto", clave, alto)
 
     def cerrar_ventana() -> None:
         """Cierra; con un lote en marcha pregunta y, si se acepta, lo cancela antes.
@@ -1347,9 +1412,12 @@ def open_dialog(parent, config: Config) -> None:
         cierre_final()
 
     def cierre_final() -> None:
-        """Cierra la ventana: para el `rcd` y la destruye."""
+        """Cierra la ventana: apunta su tamaño, para el `rcd` y la destruye."""
         if estado["cerrado"]:
             return
+        lienzo = dlg.visor.lienzo
+        if dlg.winfo_ismapped() and lienzo.winfo_width() > 1:
+            estado["tamano"] = (lienzo.winfo_width(), lienzo.winfo_height())
         cerrar()
         dlg.destroy()
 
@@ -1357,6 +1425,8 @@ def open_dialog(parent, config: Config) -> None:
     dlg.bind("<Destroy>", cerrar, add="+")
 
     # ------------------------------------------------------------- abrir
+    _fijar_tamanos(dlg, lista)
+    dlg.visor.lienzo.bind("<Configure>", apuntar_tamano, add="+")
     if not remotes:
         decir(SIN_REMOTES, "Pista.")
         actualizar_botones()

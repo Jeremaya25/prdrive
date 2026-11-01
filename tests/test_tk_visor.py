@@ -586,5 +586,46 @@ c("al volver a desbordar, la misma barra se pone otra vez sin moverse nada",
   (visor.barras(), visor.horizontal is barra, mapa(top, visor, hoja)),
   ((False, True), True, reposo))
 top.destroy()
+
+# 12. Un Visor redimensionable sigue el tamaño real de la ventana: al encoger, el contenido
+#     (que pide su mínimo y estira) se ajusta en vez de quedar recortado sin barra; por
+#     debajo del mínimo salen las barras. El de siempre no cambia.
+for redimensionable in (True, False):
+    top = tk.Toplevel(raiz)
+    visor = con_visor(top, redimensionable=redimensionable)
+    visor.interior.columnconfigure(0, weight=1)
+    visor.interior.rowconfigure(0, weight=1)
+    hoja = tk.Frame(visor.interior, width=200, height=150, background=theme.PAPEL)
+    hoja.grid(row=0, column=0, sticky="nsew")
+    visor.base = (500, 400)
+    visor.encajar(top)
+    top.deiconify()
+    top.update()
+    top.update()
+    resto = (top.winfo_width() - visor.lienzo.winfo_width(),
+             top.winfo_height() - visor.lienzo.winfo_height())
+    c(f"[redimensionable={redimensionable}] abre al tamaño de partida",
+      (visor.lienzo.winfo_width(), visor.lienzo.winfo_height()), (500, 400))
+    top.geometry(f"{350 + resto[0]}x{300 + resto[1]}")
+    top.update()
+    top.update()
+    interior = (visor.interior.winfo_width(), visor.interior.winfo_height())
+    if redimensionable:
+        c("  al encoger por encima del mínimo, el contenido mide lo que la mirilla, sin barras",
+          (interior, visor.barras()), ((350, 300), (False, False)))
+        top.geometry(f"{150 + resto[0]}x{100 + resto[1]}")
+        top.update()
+        top.update()
+        c("  por debajo del mínimo, salen las dos barras", visor.barras(), (True, True))
+        top.geometry(f"{700 + resto[0]}x{600 + resto[1]}")
+        top.update()
+        top.update()
+        c("  al estirar, el contenido llena la mirilla y las barras se van",
+          ((visor.interior.winfo_width(), visor.interior.winfo_height()), visor.barras()),
+          ((700, 600), (False, False)))
+    else:
+        c("  el de siempre se queda con el mayor entre lo pedido y lo real (como antes)",
+          interior, (500, 400))
+    top.destroy()
 raiz.destroy()
 sys.exit(c.report())

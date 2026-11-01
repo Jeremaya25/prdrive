@@ -57,8 +57,9 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import (icons, segundo_plano, servidor, theme, tk_gestion, tk_servidor,  # noqa: E402
-                tk_transferencia)
+from ui import (icons, prefs, segundo_plano, servidor, theme, tk_gestion,  # noqa: E402
+                tk_servidor, tk_transferencia)
+from ui import tk as uitk  # noqa: E402
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -560,6 +561,70 @@ with sandbox():
         (tk_servidor._mostrar_menu, tk_servidor.elegir_archivos,
          tk_servidor.elegir_carpeta) = previos_3b
     cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 3c. Se puede agrandar y encoger, y recuerda el tamaño
+    # -----------------------------------------------------------------------
+    clave_tam = prefs.clave_ancho(str(tk.TkVersion), float(raiz.tk.call("tk", "scaling")))
+    prefs.ruta_ventana().unlink(missing_ok=True)
+    falso = RcdFalso(respuestas())
+    dlg = abrir(falso)
+    fila = int(ttk.Style(dlg).lookup("Treeview", "rowheight") or 0)
+    c("la ventana se puede agrandar y encoger", tuple(bool(x) for x in dlg.resizable()),
+      (True, True))
+    minimo = dlg.minsize()
+    util = uitk.pantalla_util(dlg)
+    c("  con un mínimo que cabe en la pantalla",
+      (minimo[0] > 1, minimo[1] > 1, minimo[0] <= util[0], minimo[1] <= util[1]),
+      (True, True, True, True))
+    c("abre con sitio para doce filas", dlg.lista.winfo_height() >= 12 * fila, True)
+    c("  y la lista pide solo cinco (lo demás es estirar)", int(dlg.lista.cget("height")), 5)
+
+    def pie_dentro(dlg_) -> bool:
+        """Si la cuenta del pie se ve entera dentro de la ventana."""
+        dlg_.update()
+        abajo = dlg_.cuenta.winfo_rooty() + dlg_.cuenta.winfo_height()
+        return dlg_.cuenta.winfo_ismapped() and abajo <= dlg_.winfo_rooty() + dlg_.winfo_height()
+
+    alto_lista = dlg.lista.winfo_height()
+    dlg.geometry(f"{minimo[0]}x{minimo[1]}")
+    for _ in range(3):
+        dlg.update()
+    c("encogida al mínimo: el pie se ve, sin barras del recuadro y la lista más baja",
+      (pie_dentro(dlg), dlg.visor.barras(), dlg.lista.winfo_height() < alto_lista),
+      (True, (False, False), True))
+    dlg.geometry(f"{minimo[0] + 300}x{minimo[1] + 400}")
+    for _ in range(3):
+        dlg.update()
+    c("estirada: la lista crece y el nombre se queda lo que sobra a lo ancho",
+      (dlg.lista.winfo_height() > alto_lista, pie_dentro(dlg),
+       int(dlg.lista.column("#0", "width")) > 300), (True, True, True))
+    tam = (dlg.visor.lienzo.winfo_width(), dlg.visor.lienzo.winfo_height())
+    cerrar(dlg)
+    c("al cerrar recuerda el tamaño de su recuadro",
+      (prefs.recordado("servidor_ancho", clave_tam), prefs.recordado("servidor_alto", clave_tam)),
+      tam)
+    dlg = abrir(RcdFalso(respuestas()))
+    c("  y la siguiente vez abre a ese tamaño",
+      (dlg.visor.lienzo.winfo_width(), dlg.visor.lienzo.winfo_height()), tam)
+    cerrar(dlg)
+    prefs.recordar("servidor_ancho", clave_tam, 10_000)
+    prefs.recordar("servidor_alto", clave_tam, 10_000)
+    dlg = abrir(RcdFalso(respuestas()))
+    dlg.update_idletasks()
+    c("un tamaño recordado mayor que la pantalla se recorta a ella",
+      (dlg.winfo_reqwidth() <= util[0], dlg.winfo_reqheight() <= util[1]), (True, True))
+    cerrar(dlg)
+    prefs.ruta_ventana().unlink(missing_ok=True)
+    ARRANQUES[:] = [RcdFalso(respuestas())]
+    ABIERTAS.clear()
+    previo = tk_servidor.mostrar
+    tk_servidor.mostrar = lambda dlg_, parent=None: (ABIERTAS.append(dlg_), dlg_.update())
+    tk_servidor.open_dialog(raiz, CFG)
+    tk_servidor.mostrar = previo
+    cerrar(ABIERTAS[0])
+    c("una ventana que no llegó a enseñarse no recuerda ningún tamaño",
+      prefs.recordado("servidor_ancho", clave_tam), None)
 
     # -----------------------------------------------------------------------
     # 4. Un permiso denegado deja la lista, lo dice y pone el candado
@@ -1094,8 +1159,15 @@ with sandbox():
     # a mitad de un lote, los tres apagados
     dialogos(destino=str(tmpdir()))
     elegir_varias(dlg, "leeme.txt")
+    dlg.update()
+    tamano_antes = (dlg.winfo_width(), dlg.winfo_height())
+    alto_lista = dlg.lista.winfo_height()
     elegir_accion(dlg, "bajar")
     c("el panel sale y enseña el título", bombear(lambda: panel_a_la_vista(dlg)), True)
+    dlg.update()
+    c("  sin cambiar el tamaño de la ventana: le quita sitio a la lista",
+      ((dlg.winfo_width(), dlg.winfo_height()), dlg.lista.winfo_height() < alto_lista),
+      (tamano_antes, True))
     c("durante el lote los tres botones están apagados", botones_de(dlg),
       ("disabled", "disabled", "disabled"))
     elegir_varias(dlg, "datos")

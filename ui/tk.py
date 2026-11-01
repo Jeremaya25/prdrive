@@ -335,24 +335,32 @@ class Visor:
     desde el principio (lo que miden los tests y `ver()`), pero solo se mapea
     cuando la mirilla se ve, como cualquier hijo de `grid` o `pack`.
 
+    Una ventana que la persona puede agrandar y encoger lleva un recuadro
+    `redimensionable`: con la ventana enseñada, lo que se ve es el tamaño real de
+    la mirilla, así que el contenido (que pide su mínimo y estira) se ajusta al
+    encoger en vez de quedar recortado; por debajo de su mínimo salen las barras.
+
     Args:
         padre: Donde se pone el recuadro.
         ancho: El ancho de partida y el mínimo, no un tope.
         alto: El alto de partida y el mínimo, no un tope: el recuadro nunca es
             más pequeño que eso y crece con el contenido hasta donde llegue la
             pantalla.
+        redimensionable: Si la ventana cambia de tamaño a mano (`resizable`).
 
     Attributes:
         horizontal: La barra horizontal, o `None` mientras el contenido no haya
             sido más ancho que la mirilla.
     """
 
-    def __init__(self, padre, ancho: int | None = None, alto: int | None = None):
+    def __init__(self, padre, ancho: int | None = None, alto: int | None = None,
+                 redimensionable: bool = False):
         """Crea el recuadro, su mirilla y la barra vertical, y engancha los eventos."""
         import tkinter as tk
         from tkinter import ttk
 
         self.base = (ancho, alto)
+        self.redimensionable = redimensionable
         self.marco = ttk.Frame(padre)
         self.lienzo = tk.Frame(self.marco, background=theme.PAPEL,
                                highlightthickness=0, borderwidth=0,
@@ -543,10 +551,16 @@ class Visor:
         return (self._desde[0], self._desde[1])
 
     def _hueco(self) -> tuple[int, int]:
-        """Devuelve lo que se ve del contenido: el tamaño pedido o el real, el mayor."""
+        """Devuelve lo que se ve del contenido: el tamaño pedido o el real, el mayor.
+
+        En un recuadro `redimensionable` ya colocado, el real: la persona puede
+        haber encogido la ventana por debajo de lo que pidió el recuadro.
+        """
         ancho, alto = self._medida()
-        return (max(ancho, self.lienzo.winfo_width()),
-                max(alto, self.lienzo.winfo_height()))
+        real = (self.lienzo.winfo_width(), self.lienzo.winfo_height())
+        if self.redimensionable and real[0] > 1 and real[1] > 1:
+            return real
+        return (max(ancho, real[0]), max(alto, real[1]))
 
     def _mover(self, eje: int, desde: float) -> None:
         """Desplaza el contenido a `desde` píxeles en ese eje y avisa a su barra.
@@ -651,7 +665,7 @@ class Visor:
         return "break"
 
 
-def cuerpo_visible(ventana, directo: bool = False, **opciones):
+def cuerpo_visible(ventana, directo: bool = False, redimensionable: bool = False, **opciones):
     """Devuelve el marco donde se dibuja una pantalla, ya dentro de un `Visor`.
 
     Sustituye al `ttk.Frame(ventana, padding=…)` + `.grid(sticky='nsew')` que
@@ -667,13 +681,15 @@ def cuerpo_visible(ventana, directo: bool = False, **opciones):
             se le dan pesos a sus columnas ni a sus filas, que son de quien
             dibuja (el marco de siempre sí estira su celda). Es un widget
             menos para las ventanas que tienen pocos.
+        redimensionable: Si la ventana cambia de tamaño a mano: el `Visor` sigue
+            su tamaño real (`Visor.redimensionable`).
         **opciones: Las del marco (`padding=…`).
 
     Returns:
         El marco, o el `interior` del `Visor` con `directo`.
     """
     from tkinter import ttk
-    visor = Visor(ventana)
+    visor = Visor(ventana, redimensionable=redimensionable)
     visor.marco.grid(row=0, column=0, sticky="nsew")
     ventana.columnconfigure(0, weight=1)
     ventana.rowconfigure(0, weight=1)

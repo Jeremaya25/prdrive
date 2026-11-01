@@ -905,6 +905,9 @@ try:
                 filas = abierta.lista.get_children()
                 c(f"{nombre}: el explorador del servidor cabe", entra, True)
                 c(f"{nombre}: el explorador del servidor no queda recortado", corta, False)
+                util_x, util_y = uitk.pantalla_util(abierta)
+                c(f"{nombre}: el mínimo del explorador del servidor (se puede encoger) cabe",
+                  (abierta.minsize()[0] <= util_x, abierta.minsize()[1] <= util_y), (True, True))
                 c(f"{nombre}: (y se ha medido con la lista llena, la marca, el candado y el aviso)",
                   (len(filas) > 12,
                    any("· pareja" in str(abierta.lista.item(i, "text")) for i in filas),
