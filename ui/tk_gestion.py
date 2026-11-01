@@ -219,8 +219,8 @@ def linea_corte(padre, al_pegar: Callable[[], None], al_cancelar: Callable[[], N
     return marco
 
 
-def _menu(padre):
-    """Un `tk.Menu` sin asa con los colores del tema."""
+def menu_del_tema(padre):
+    """Devuelve un `tk.Menu` vacío, sin asa, con los colores y la letra del tema."""
     import tkinter as tk
 
     return tk.Menu(padre, tearoff=0, background=theme.SUPERFICIE, foreground=theme.TINTA,
@@ -240,7 +240,7 @@ def menu_subir(padre, acciones: dict[str, Callable[[], None]],
     Returns:
         Un `tk.Menu` sin asa con «Archivos…» y «Carpeta…»; las de estado falso, apagadas.
     """
-    menu = _menu(padre)
+    menu = menu_del_tema(padre)
     for clave, rotulo in ROTULOS_SUBIR.items():
         menu.add_command(label=rotulo, command=lambda k=clave: acciones[k](),
                          state="normal" if estados.get(clave) else "disabled")
@@ -262,7 +262,7 @@ def menu_contextual(padre, orden, acciones: dict[str, Callable[[], None]],
         Un `tk.Menu` sin asa con esas entradas y la tecla de cada una (`ATAJOS`) a la
         derecha; las de estado falso, apagadas.
     """
-    menu = _menu(padre)
+    menu = menu_del_tema(padre)
     for clave in orden:
         if clave is None:
             menu.add_separator()

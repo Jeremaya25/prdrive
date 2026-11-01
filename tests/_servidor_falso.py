@@ -234,6 +234,19 @@ def pulsar(dlg, secuencia: str) -> None:
     dlg.update()
 
 
+def servidores(dlg) -> list[str]:
+    """Los servidores que ofrece el menú del icono del servidor, en su orden."""
+    menu = dlg.direcciones.menu_servidores()
+    return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+
+
+def elegir_servidor(dlg, nombre: str) -> None:
+    """Elige ese servidor en el menú del icono del servidor, como lo haría la persona."""
+    menu = dlg.direcciones.menu_servidores()
+    menu.invoke(servidores(dlg).index(nombre))
+    dlg.update()
+
+
 def elegir_accion(dlg, clave: str) -> None:
     """Hace la acción `clave` como una entrada encendida de un menú: apagada, no hace nada."""
     if dlg.estados_menu()[clave]:

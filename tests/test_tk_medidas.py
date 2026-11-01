@@ -961,8 +961,9 @@ try:
 
                 def con_corte_en_otro(dlg):
                     con_corte(dlg)
-                    dlg.elegido.set("otro")
-                    dlg.elegido.event_generate("<<ComboboxSelected>>")
+                    menu = dlg.direcciones.menu_servidores()
+                    menu.invoke([menu.entrycget(i, "label")
+                                 for i in range(menu.index("end") + 1)].index("otro"))
                     for _ in range(20):
                         dlg.update()
 

@@ -47,7 +47,7 @@ except Exception as e:                                   # sin entorno gráfico
 
 import _servidor_falso as F  # noqa: E402
 from _servidor_falso import (ACABADO, CORRIENDO, RcdGestion, bombear,  # noqa: E402
-                             elegir_accion, entradas, fallado, frase, frase_panel, hueco,
+                             elegir_accion, elegir_servidor, entradas, fallado, frase, frase_panel, hueco,
                              indice, item, lista, nombres, panel_a_la_vista, pulsar)
 
 from ui import segundo_plano, tk_gestion, tk_pairs, tk_servidor  # noqa: E402
@@ -627,13 +627,13 @@ with sandbox():
 
     def a(dlg, carpeta: str) -> None:
         """Va a esa carpeta del mismo remote: sube hasta la raíz y baja tramo a tramo."""
-        while str(dlg.ruta.cget("text")) != "/":
-            antes = str(dlg.ruta.cget("text"))
+        while dlg.direcciones.ruta != "/":
+            antes = dlg.direcciones.ruta
             pulsar(dlg, "<BackSpace>")
-            bombear(lambda: str(dlg.ruta.cget("text")) != antes)
+            bombear(lambda: dlg.direcciones.ruta != antes)
         for tramo in [t for t in carpeta.split("/") if t]:
             entrar_en(dlg, tramo)
-            bombear(lambda: str(dlg.ruta.cget("text")).endswith(tramo))
+            bombear(lambda: dlg.direcciones.ruta.endswith(tramo))
 
     # -- la línea del corte y el paso de una carpeta a otra
     dialogos()
@@ -723,16 +723,16 @@ with sandbox():
       ([("No se puede", "Ya están en esta carpeta.")], True, [], True))
     DIALOGOS["avisar"].clear()
     entrar_en(dlg, "fotos")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/fotos")
+    bombear(lambda: dlg.direcciones.ruta == "/datos/fotos")
     entrar_en(dlg, "sub")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/fotos/sub")
+    bombear(lambda: dlg.direcciones.ruta == "/datos/fotos/sub")
     dlg.cortado.pegar.invoke()
     c("pegar una carpeta dentro de sí misma se rechaza",
       (DIALOGOS["avisar"], linea(dlg)[0], falso.lanzadas),
       ([("No se puede", "No se puede mover una carpeta dentro de sí misma.")], True, []))
     DIALOGOS["avisar"].clear()
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     listas = listados_de(falso, "otra")
     dlg.cortado.pegar.invoke()
     c("un nombre ya ocupado en el destino (sin mayúsculas) se rechaza, con el primero y cuántos más",
@@ -756,7 +756,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     CONTENIDO_OTRA["v"].append(item("B.txt"))
     c("la pantalla no lo sabía", "B.txt" in nombres(dlg), False)
     dlg.cortado.pegar.invoke()
@@ -771,8 +771,7 @@ with sandbox():
     entrar_en(dlg, "datos")
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
-    dlg.elegido.set("otro")
-    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    elegir_servidor(dlg, "otro")
     bombear(lambda: linea(dlg)[1].endswith("servidor."))
     c("en otro remote la línea añade que solo se pega en el mismo servidor",
       linea(dlg), (True, "1 elemento para mover desde /datos · "
@@ -783,8 +782,7 @@ with sandbox():
     menu = DIALOGOS["menus"][-1]
     c("  Ctrl+V y el menú tampoco pegan", (falso.lanzadas, dict(entradas(menu))["Pegar aquí"]),
       ([], "disabled"))
-    dlg.elegido.set("nas")
-    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    elegir_servidor(dlg, "nas")
     bombear(lambda: linea(dlg)[1] == "1 elemento para mover desde /datos")
     c("  al volver al remote del corte se enciende", linea(dlg), (
         True, "1 elemento para mover desde /datos", True))
@@ -799,7 +797,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     dlg.lista.event_generate("<Button-3>", x=hueco(dlg)[0], y=hueco(dlg)[1])
     dlg.update()
     menu = DIALOGOS["menus"][-1]
@@ -822,7 +820,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     dlg.cortado.pegar.invoke()
     c("pegar dentro de una pareja up-mirror se bloquea con su texto, sin lanzar y con el corte",
       (DIALOGOS["avisar"], falso.lanzadas, CONFIRMAR["llamadas"], linea(dlg)[0]),
@@ -838,7 +836,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     entrar_en(dlg, "notas")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+    bombear(lambda: dlg.direcciones.ruta == "/datos/notas")
     dlg.cortado.pegar.invoke()
     c("pegar dentro de una pareja bisync enseña el plan con su aviso",
       CONFIRMAR["llamadas"],
@@ -866,7 +864,7 @@ with sandbox():
         elegir(dlg, "fotos", "a.txt")
         elegir_accion(dlg, "cortar")
         a(dlg, "otra")
-        bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+        bombear(lambda: dlg.direcciones.ruta == "/otra")
         dlg.cortado.pegar.invoke()
         c("durante el pegado el panel dice a dónde se mueve y «Pegar aquí» está apagado",
           (bombear(lambda: panel_a_la_vista(dlg)), str(dlg.panel.titulo.cget("text")),
@@ -887,7 +885,7 @@ with sandbox():
     elegir(dlg, "fotos", "a.txt")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     dlg.cortado.pegar.invoke()
     c("un fallo en el segundo movimiento se cuenta, sin «Reintentar»",
       (bombear(lambda: frase_panel(dlg) != ""), frase_panel(dlg),
@@ -905,7 +903,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     fallos = [rcd.ErrorRc("permission denied", 403)]
     falso.respuestas[("operations/list", "otra")] = (
         lambda: (_ for _ in ()).throw(fallos.pop()) if fallos else lista(*CONTENIDO_OTRA["v"]))
@@ -930,7 +928,7 @@ with sandbox():
         elegir(dlg, "b.txt")
         elegir_accion(dlg, "cortar")
         a(dlg, "otra")
-        bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+        bombear(lambda: dlg.direcciones.ruta == "/otra")
         fallos = [rcd.ErrorRc("permission denied", 403)]
         falso.respuestas[("operations/list", "otra")] = (
             lambda: (_ for _ in ()).throw(fallos.pop()) if fallos
@@ -982,7 +980,7 @@ with sandbox():
     elegir(dlg, "fotos")
     elegir_accion(dlg, "cortar")
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     dlg.cortado.pegar.invoke()
     bombear(lambda: panel_a_la_vista(dlg))
     dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
@@ -1060,7 +1058,7 @@ with sandbox():
         dlg = abrir(falso)
         entrar_en(dlg, "datos")
         entrar_en(dlg, "notas")
-        bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+        bombear(lambda: dlg.direcciones.ruta == "/datos/notas")
         if aparece:
             tk_pairs.confirmar_plan = confirmar_y_crear(aparece)
         antes = listados_de(falso, "datos/notas")
@@ -1091,7 +1089,7 @@ with sandbox():
     elegir(dlg, "b.txt")
     elegir_accion(dlg, "cortar")
     entrar_en(dlg, "notas")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/datos/notas")
+    bombear(lambda: dlg.direcciones.ruta == "/datos/notas")
     tk_pairs.confirmar_plan = confirmar_y_crear("B.TXT")
     dlg.cortado.pegar.invoke()
     bombear(lambda: bool(DIALOGOS["avisar"]))
@@ -1153,7 +1151,7 @@ with sandbox():
     c("renombrar a.txt (cortado con b.txt) lo saca del corte",
       bombear(lambda: linea(dlg)[1] == "1 elemento para mover desde /datos"), True)
     a(dlg, "otra")
-    bombear(lambda: str(dlg.ruta.cget("text")) == "/otra")
+    bombear(lambda: dlg.direcciones.ruta == "/otra")
     dlg.cortado.pegar.invoke()
     c("  y pegar mueve solo b.txt",
       (bombear(lambda: len(falso.lanzadas) == 2),

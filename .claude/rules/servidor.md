@@ -14,6 +14,8 @@ paths:
   - "tests/test_tk_lote.py"
   - "ui/tk_servidor.py"
   - "tests/test_tk_servidor.py"
+  - "ui/tk_direcciones.py"
+  - "tests/test_tk_direcciones.py"
   - "tests/test_tk_servidor_gestion.py"
   - "tests/_servidor_falso.py"
   - "ui/tk_transferencia.py"

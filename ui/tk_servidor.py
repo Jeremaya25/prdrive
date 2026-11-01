@@ -19,6 +19,11 @@ muere el hilo que lo lanzó); lo que espera a la red (`esperar()`, el
 `Sondeo` de la ventana. Cada petición nueva sustituye a la anterior: gana la
 última, y una respuesta tardía no pinta nada.
 
+Arriba va la barra de direcciones (`ui/tk_direcciones.py`): atrás, adelante,
+arriba, releer, las migas con el menú de servidores, la ruta escrita y la
+búsqueda. El historial (`servidor.Historial`) se apunta cuando un listado llega,
+nunca al pedirlo: una carpeta que falla no entra en él.
+
 Cerrar la ventana para el `rcd` también en segundo plano, una sola vez, sin
 esperarlo.
 
@@ -64,8 +69,8 @@ from typing import NamedTuple
 from common import config_file, model, rcd
 from common.model import Config, ConfigError
 
-from . import (gestion, icons, remote_picker, segundo_plano, servidor, theme, tk_gestion, tk_lote,
-               tk_transferencia, transferencia)
+from . import (gestion, icons, remote_picker, segundo_plano, servidor, theme, tk_direcciones,
+               tk_gestion, tk_lote, tk_transferencia, transferencia)
 from .tk import Indicador, Sondeo, avisar, centrar, cuerpo_visible, modal, mostrar, preguntar
 
 COLUMNAS = [
@@ -442,6 +447,7 @@ def open_dialog(parent, config: Config) -> None:
                                   config.device_remote)
     catalogo = model.carpeta_del_catalogo(raw.get("defaults") or {})
     nav = servidor.Navegacion(next(iter(remotes), ""))
+    historial = servidor.Historial()
     estado: dict = {"rcd": None, "ultima": ("ruta", servidor.RAIZ), "abierto": False,
                     "cerrado": False, "puerto_reintentado": False, "entradas": {},
                     "n_lote": 0, "tras": None, "corte": None,
@@ -451,22 +457,16 @@ def open_dialog(parent, config: Config) -> None:
     marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
 
-    barra = ttk.Frame(marco)
-    barra.grid(row=0, column=0, sticky="ew")
-    barra.columnconfigure(1, weight=1)
-    elegido = ttk.Combobox(barra, state="readonly", values=list(remotes),
-                           width=max([len(n) for n in remotes] + [8]) + 2)
-    elegido.grid(row=0, column=0, sticky="w")
-    ruta = ttk.Label(barra, style="MonoPista.TLabel", wraplength=theme.medida(420),
-                     justify="left")
-    ruta.grid(row=0, column=1, sticky="w", padx=(theme.E3, theme.E3))
-    arriba = ttk.Button(barra, text="↑", style="Quiet.TButton", command=lambda: subir())
-    theme.boton_icono(arriba, "arriba", theme.ACENTO, theme.PAPEL)
-    arriba.configure(compound="image")      # el texto queda como nombre; sin icono, se ve él
-    arriba.grid(row=0, column=2, sticky="e")
-    releer = ttk.Button(barra, text="Releer", style="Quiet.TButton", command=lambda: repetir())
-    theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)
-    releer.grid(row=0, column=3, sticky="e", padx=(theme.E2, 0))
+    # La barra de direcciones: qué hace cada cosa se resuelve al pulsar (abajo).
+    direcciones = tk_direcciones.Direcciones(marco, {
+        "atras": lambda: atras(), "adelante": lambda: adelante(), "arriba": lambda: subir(),
+        "releer": lambda: repetir(), "ir": lambda r: ir_a(r),
+        "servidor": lambda n: cambiar_remote(n), "escrita": lambda t: ir_a_escrita(t),
+        "buscar": lambda t: None, "buscar_ya": lambda t: None, "vaciar": lambda: None},
+        mostrar_menu=lambda menu, x, y: _mostrar_menu(menu, x, y))
+    direcciones.marco.grid(row=0, column=0, sticky="ew")
+    direcciones.poner(nav.remote, nav.ruta, list(remotes))
+    dlg.direcciones = direcciones
 
     linea = ttk.Frame(marco)
     linea.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
@@ -513,8 +513,7 @@ def open_dialog(parent, config: Config) -> None:
     vacia = ttk.Label(tarjeta, text=VACIA, style="Card.Pista.TLabel")
     iconos = {nombre: icons.get(lista, nombre, 16, theme.TINTA3, theme.SUPERFICIE)
               for nombre in ("carpeta", "file", "candado")}
-    dlg.lista, dlg.vacia, dlg.accion, dlg.elegido = lista, vacia, accion, elegido
-    dlg.ruta, dlg.arriba = ruta, arriba
+    dlg.lista, dlg.vacia, dlg.accion = lista, vacia, accion
 
     # El panel de un lote, entre la lista y el pie: sin lote no ocupa sitio.
     panel = tk_transferencia.Panel(marco)
@@ -573,8 +572,7 @@ def open_dialog(parent, config: Config) -> None:
         """Repinta todo con la carpeta que acaba de llegar: lista, ruta, aviso de pareja y pie."""
         estado["abierto"] = True
         pintar_lista()
-        ruta.configure(text=nav.ruta)
-        elegido.set(nav.remote)
+        direcciones.poner(nav.remote, nav.ruta, list(remotes))
         pareja = servidor.dentro_de(config, nav.remote, nav.ruta)
         if pareja:
             decir(f"Estás dentro de la pareja «{pareja}».", "Aviso.")
@@ -637,8 +635,17 @@ def open_dialog(parent, config: Config) -> None:
         corte.grid()
 
     def actualizar_botones() -> None:
-        """Enciende o apaga la botonera y «Pegar aquí» según el `rcd` y el lote."""
+        """Enciende o apaga la barra de direcciones, la botonera y «Pegar aquí».
+
+        Navegar solo pide conexión (no espera a un lote); subir y crear, la ventana libre.
+        """
         ok = libre()
+        conectado = estado["rcd"] is not None
+        direcciones.encender(
+            atras=conectado and historial.puede_atras,
+            adelante=conectado and historial.puede_adelante,
+            arriba=conectado and nav.ruta != servidor.RAIZ, releer=conectado,
+            servidor=conectado and bool(remotes), buscar=conectado)
         barra_gestion.encender(subir=ok, nueva=ok)
         pintar_corte()
 
@@ -664,22 +671,30 @@ def open_dialog(parent, config: Config) -> None:
         actualizar_botones()
         return True
 
-    def lanzar_peticion(pedida: tuple[str, str], esperar: bool | None = None) -> None:
-        """Pide una carpeta (`("ruta", r)`) o la raíz de otro remote (`("remote", nombre)`).
+    def lanzar_peticion(pedida: tuple, esperar: bool | None = None) -> None:
+        """Pide una carpeta, la raíz de otro remote o un lugar del historial.
 
         Args:
-            pedida: Qué se pide; se guarda para repetirla tras «Reconectar»/«Reintentar».
+            pedida: Qué se pide: `("ruta", r)` o `("ruta", r, movimiento)` en el remote
+                que se ve; `("remote", nombre)` para la raíz de otro; `("lugar", Lugar,
+                movimiento)` para un paso del historial. Se guarda para repetirla tras
+                «Reconectar»/«Reintentar».
             esperar: Si el hilo espera antes a que `rcd` conteste. Por defecto,
                 mientras la ventana no haya enseñado nada todavía.
         """
         if estado["cerrado"]:
             return
         if estado["rcd"] is None:
-            elegido.set(nav.remote)         # sin rcd no hay a quién pedir: no cambia nada
+            direcciones.poner(nav.remote, nav.ruta, list(remotes))  # sin rcd no cambia nada
             return
         estado["ultima"] = pedida
-        clase, valor = pedida
-        p = nav.pedir(valor) if clase == "ruta" else nav.cambiar_remote(valor)
+        clase, valor, *resto = pedida
+        if clase == "ruta":
+            p = nav.pedir(valor, *resto)
+        elif clase == "remote":
+            p = nav.cambiar_remote(valor)
+        else:
+            p = nav.ir(valor.remote, valor.ruta, resto[0], valor.busqueda)
         if estado["tras"] is not None and estado["tras"][:2] != (p.remote, p.ruta):
             estado["tras"] = None           # se navega a otra carpeta: lo de la anterior ya no vale
         esperar = (not estado["abierto"]) if esperar is None else esperar
@@ -699,6 +714,7 @@ def open_dialog(parent, config: Config) -> None:
         lectura = encargo.resultado
         if not nav.recibir(p, lectura.entradas):
             return
+        historial.llegar(servidor.Lugar(p.remote, p.ruta, p.busqueda), p.movimiento)
         sondeos[p.remote] = (lectura.permisos, lectura.mi_uid)
         pintar()
 
@@ -714,7 +730,9 @@ def open_dialog(parent, config: Config) -> None:
             if conectar(forzar=True):
                 lanzar_peticion(estado["ultima"], esperar=True)
             return
-        elegido.set(nav.remote)             # un cambio de remote que falla no cambia nada
+        # la barra vuelve a la carpeta que se ve: un cambio de remote o una ruta
+        # escrita que fallan no cambian nada
+        direcciones.poner(nav.remote, nav.ruta, list(remotes))
         if isinstance(error, rcd.RcdCaido):
             decir(frase, boton="Reconectar")
         elif isinstance(error, ConfigError):
@@ -763,21 +781,56 @@ def open_dialog(parent, config: Config) -> None:
         return "break"
 
     def repetir() -> None:
-        """Vuelve a leer la carpeta que se enseña."""
-        lanzar_peticion(("ruta", nav.ruta))
+        """Vuelve a leer la carpeta que se enseña (no mueve el historial)."""
+        lanzar_peticion(("ruta", nav.ruta, servidor.RELEER))
 
-    def cambiar_remote(_evento=None) -> None:
-        """Pasa a la raíz del remote elegido en el desplegable."""
-        nuevo = elegido.get()
+    def cambiar_remote(nuevo: str) -> None:
+        """Pasa a la raíz del remote elegido en el menú del servidor."""
         if nuevo and nuevo != nav.remote:
             lanzar_peticion(("remote", nuevo))
+
+    def ir_a(ruta_: str) -> None:
+        """Va a esa carpeta del remote que se ve (una miga)."""
+        lanzar_peticion(("ruta", ruta_))
+
+    def ir_a_escrita(texto: str) -> None:
+        """Va a la ruta que se escribió en la barra (siempre desde la raíz del servidor)."""
+        lanzar_peticion(("ruta", servidor.ruta_escrita(texto)))
+
+    def atras(_evento=None) -> str:
+        """Vuelve al lugar de antes del historial, si lo hay."""
+        lugar = historial.anterior()
+        if lugar is not None and estado["rcd"] is not None:
+            lanzar_peticion(("lugar", lugar, servidor.ATRAS))
+        return "break"
+
+    def adelante(_evento=None) -> str:
+        """Va al lugar de después del historial, si lo hay."""
+        lugar = historial.siguiente()
+        if lugar is not None and estado["rcd"] is not None:
+            lanzar_peticion(("lugar", lugar, servidor.ADELANTE))
+        return "break"
+
+    def escribir_ruta(_evento=None) -> str:
+        """Ctrl+L, Alt+D: la barra pasa a escribir la ruta."""
+        direcciones.editar()
+        return "break"
+
+    def ir_a_busqueda(_evento=None) -> str:
+        """Ctrl+F, Ctrl+E: el foco al campo de búsqueda."""
+        direcciones.enfocar_busqueda()
+        return "break"
 
     lista.bind("<<TreeviewSelect>>", lambda _e: actualizar_botones())
     lista.bind("<Double-Button-1>", doble_clic)
     lista.bind("<Return>", entrar)
     lista.bind("<KP_Enter>", entrar)
     lista.bind("<BackSpace>", subir)
-    elegido.bind("<<ComboboxSelected>>", cambiar_remote)
+    for secuencia, hacer in (("<Alt-Left>", atras), ("<Alt-Right>", adelante),
+                             ("<Alt-Up>", subir), ("<Control-l>", escribir_ruta),
+                             ("<Alt-d>", escribir_ruta), ("<Control-f>", ir_a_busqueda),
+                             ("<Control-e>", ir_a_busqueda)):
+        dlg.bind(secuencia, hacer)          # en toda la ventana, como en el Explorador
 
 
     # ------------------------------------------------------------- bajar y subir
@@ -1306,11 +1359,8 @@ def open_dialog(parent, config: Config) -> None:
     # ------------------------------------------------------------- abrir
     if not remotes:
         decir(SIN_REMOTES, "Pista.")
-        for control in (elegido, arriba, releer):
-            control.configure(state="disabled")
         actualizar_botones()
     else:
-        elegido.set(nav.remote)
         indicador.poner(CONECTANDO, True)
         if conectar():
             lanzar_peticion(("ruta", servidor.RAIZ), esperar=True)
