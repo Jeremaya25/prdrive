@@ -31,7 +31,7 @@ dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from common import model
 from common.model import Config
@@ -87,7 +87,8 @@ def _casilla(marco, fila: int, texto: str, valor: bool, ayuda: str):
     return marcada
 
 
-def construir(panel: Panel, config: Config, seguro: EscritorioSeguro | None = None) -> None:
+def construir(panel: Panel, config: Config, seguro: EscritorioSeguro | None = None,
+              al_guardar_seguro: Callable[[EscritorioSeguro], None] | None = None) -> None:
     """Dibuja «Configuración» en `panel`; devuelve `True` por él si guarda algo.
 
     Args:
@@ -95,6 +96,9 @@ def construir(panel: Panel, config: Config, seguro: EscritorioSeguro | None = No
         config: La configuración del dispositivo.
         seguro: La casilla de la protección contra keyloggers, o `None` para no
             enseñarla.
+        al_guardar_seguro: Se llama con la casilla tal como queda tras guardarla:
+            «Ajustes» la vuelve a dibujar enseguida, antes de que la lectura de
+            la ventana lo sepa.
     """
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -217,6 +221,8 @@ def construir(panel: Panel, config: Config, seguro: EscritorioSeguro | None = No
                                             f"del contenedor, en {seguro.fisica}.",
                                      parent=dlg)
                 return
+            if al_guardar_seguro is not None:
+                al_guardar_seguro(seguro._replace(valor=bool(protegida.get())))
             panel.devolver(True)
         panel.terminar("Guardado." if algo else "")
 

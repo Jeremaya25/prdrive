@@ -2678,8 +2678,10 @@ class VentanaPrincipal:
                 or hecho.get("componentes") == tk_update.CERRAR):
             self.cerrar()
             return
+        # «Configuración» puede haber cambiado la marca del vestíbulo (la casilla
+        # de los keyloggers), que la lectura no ve caducar: se vuelve a leer.
         releer = bool(hecho.get("reparacion") or hecho.get("componentes")
-                      or hecho.get("volumen"))
+                      or hecho.get("volumen") or hecho.get("configuracion"))
         llavero = hecho.get("llavero")
         if llavero is not None:
             from . import tk_llavero

@@ -245,6 +245,9 @@ class VentanaAjustes:
 
         self.raw = catalog_editor.raw_del_dispositivo(raw_local)
         self.resultados: dict = {}
+        # Lo que «Configuración» acaba de guardar de la protección contra
+        # keyloggers: la lectura compartida no lo sabe hasta la siguiente.
+        self.seguro_guardado = None
         self.clave: str | None = None
         self.nueva = nueva
         self.componentes: list | None = self.lista_de_componentes()
@@ -345,10 +348,18 @@ class VentanaAjustes:
         """Devuelve la casilla de la protección contra keyloggers, o `None`.
 
         Sale de la lectura compartida (`cifrado.escritorio_seguro()`, que lee el
-        dispositivo): sin ella, «Configuración» no la enseña.
+        dispositivo): sin ella, «Configuración» no la enseña. Si ya se ha
+        guardado en esta ventana, lo guardado: la lectura no lo sabe todavía, y
+        el apartado se vuelve a dibujar al guardar.
         """
+        if self.seguro_guardado is not None:
+            return self.seguro_guardado
         inst = self.leida("escritorio_seguro")
         return inst.escritorio_seguro if inst is not None else None
+
+    def guardado_seguro(self, seguro) -> None:
+        """Apunta lo que «Configuración» ha guardado de la protección contra keyloggers."""
+        self.seguro_guardado = seguro
 
     def lista_de_componentes(self) -> list | None:
         """Devuelve los componentes anticuados, o `None` si todavía no se saben.
@@ -626,7 +637,8 @@ class VentanaAjustes:
         return {
             "volumen": tk_volumen.construir,
             "configuracion": lambda p: tk_configuracion.construir(
-                p, self.config, seguro=self.escritorio_seguro()),
+                p, self.config, seguro=self.escritorio_seguro(),
+                al_guardar_seguro=self.guardado_seguro),
             "llavero": lambda p: tk_llavero.construir_ajustes(p, self.raw_local),
             "versiones": lambda p: tk_versions.construir(p, self.config),
             "arranque": self.construir_arranque,

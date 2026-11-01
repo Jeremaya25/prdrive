@@ -333,6 +333,7 @@ _PROTECCION_BAT = (
     f"{v.ETIQUETA_PROTECCION_BAT}\n"
     'set "VC_SEGURO="\n'
     f'findstr /b /l /c:"{v.ESCRITORIO_SEGURO}=1" "%~dp0{v.MARCA}" >nul 2>&1 || exit /b 0\n'
+    "echo Comprobando que este VeraCrypt tiene escritorio seguro...\n"
     'powershell -NoProfile -NonInteractive -Command "$v = Get-Item -LiteralPath $env:VC '
     '| ForEach-Object VersionInfo; exit $v.FileMajorPart * 1000 + $v.FileMinorPart" '
     ">nul 2>&1\n"
@@ -895,7 +896,7 @@ _PROTECCION_SH = (
     "        return 0\n"
     "    fi\n"
     '    case "${GDK_BACKEND:-wayland}" in\n'
-    "        wayland*) ;;\n"
+    "        wayland*|\\**) ;;\n"
     '        *)  echo "prdrive: GDK_BACKEND=$GDK_BACKEND hace que VeraCrypt vaya por X11, donde" >&2\n'
     '            echo "  cualquier programa puede leer el teclado: la contraseña no va" >&2\n'
     '            echo "  protegida contra keyloggers." >&2 ;;\n'
@@ -1242,7 +1243,8 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
     """Deja el vestíbulo en la raíz física y devuelve lo escrito.
 
     Sobrescribe lo que hubiera: es también la forma de ponerlo al día. La marca
-    conserva lo que pedía la de antes (`vestibulo.escritorio_seguro()`).
+    conserva lo que pedía la de antes (`vestibulo.escritorio_seguro()`) si es de
+    esta misma unidad.
 
     Raises:
         InstallError: Si no hay id o no se puede escribir; sin esto el
@@ -1253,8 +1255,9 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
                            "entrada: nadie sabría reconocerlo desde fuera.")
     raiz = Path(raiz_fisica)
     # La opción de la contraseña protegida vive en la marca: rehacer el vestíbulo
-    # no la apaga.
-    seguro = v.escritorio_seguro(raiz)
+    # de la misma unidad no la apaga; una unidad nueva sobre una marca vieja (otro
+    # id) empieza apagada, como cualquier otra.
+    seguro = v.escritorio_seguro(raiz) and v.leer_id(raiz) == device_id
     ficheros = (
         (v.ABRIR_BAT, bat_abrir(device_id), "\r\n", "utf-8"),
         (v.EXPULSAR_BAT, bat_expulsar(device_id), "\r\n", "utf-8"),

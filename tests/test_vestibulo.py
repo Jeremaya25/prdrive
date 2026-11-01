@@ -241,6 +241,40 @@ if IS_WIN:
                          env={**os.environ, "VC": sys.executable}, timeout=120)
     c("Windows: la línea de PowerShell da mayor*1000+menor de un ejecutable (python.exe)",
       res.returncode, sys.version_info.major * 1000 + sys.version_info.minor)
+
+    # Y la subrutina entera, tal cual sale del texto, junto a una marca OCULTA como
+    # la de verdad: sin la línea no hace nada; con ella y un ejecutable de la 1.20 o
+    # posterior (python.exe es la 3.x), /secureDesktop; con uno que no hay, el aviso.
+    from common import store
+    junto = prueba.parent
+    marca = junto / v.MARCA
+    sub = junto / "proteccion.bat"
+    sub.write_text("@echo off\r\ncall :proteccion\r\necho SEGURO=%VC_SEGURO%\r\n"
+                   "exit /b 0\r\n\r\n:proteccion\r\n" + "\r\n".join(prot) + "\r\n",
+                   encoding="utf-8")
+
+    def proteccion_da(texto_marca, exe):
+        """Devuelve la salida de `:proteccion` con esa marca y `VC=exe`."""
+        store.unhide(marca)
+        marca.write_text(texto_marca, encoding="utf-8", newline="\n")
+        store.hide(marca)
+        r = subprocess.run(["cmd", "/d", "/c", str(sub)], capture_output=True,
+                           env={**os.environ, "VC": exe}, timeout=120)
+        return (r.stdout + r.stderr).decode("utf-8", "replace")
+
+    salida = proteccion_da(f"id={ID}\n", sys.executable)
+    c("Windows: :proteccion sin la línea en la marca no pide nada ni avisa",
+      (salida.strip(), "versión" in salida), ("SEGURO=", False))
+    salida = proteccion_da(f"id={ID}\n{v.ESCRITORIO_SEGURO}=1\n", sys.executable)
+    c("  con ella (y la marca oculta) y un ejecutable de la 1.20 o posterior: /secureDesktop",
+      salida.strip().splitlines()[-1], "SEGURO=/secureDesktop")
+    salida = proteccion_da(f"id={ID}\n{v.ESCRITORIO_SEGURO}=1\n",
+                           str(junto / "no-esta.exe"))
+    c("  con un ejecutable cuya versión no se sabe: sin el interruptor",
+      salida.strip().splitlines()[-1], "SEGURO=")
+    # Por la parte sin acentos: cómo saca cmd los de después de `chcp` por una
+    # tubería no es lo que se prueba aquí.
+    c.contains("  y avisa de que no sabe la versión", salida, "de VeraCrypt es.")
 else:
     print("  (saltado) la línea de PowerShell del .bat solo se ejecuta en Windows")
 
@@ -613,6 +647,18 @@ c("  y al apagarla conserva el id", (v.escritorio_seguro(crlf), v.leer_id(crlf))
 otro_valor = tmpdir("prdrive-valor-")
 (otro_valor / v.MARCA).write_text(f"id={ID}\nescritorio_seguro=sí\n", encoding="utf-8")
 c("solo «=1» la enciende", v.escritorio_seguro(otro_valor), False)
+for linea, encendida in (("escritorio_seguro=0", False), (" escritorio_seguro=1", False),
+                         ("escritorio_seguro=10", True)):
+    (otro_valor / v.MARCA).write_text(f"id={ID}\n{linea}\n", encoding="utf-8")
+    c(f"  «{linea}»: como findstr /b y grep '^', {'encendida' if encendida else 'apagada'}",
+      v.escritorio_seguro(otro_valor), encendida)
+nueva_unidad = tmpdir("prdrive-otra-unidad-")
+(nueva_unidad / CONTAINER_NAME).write_bytes(b"x")
+vestibulo.escribir(nueva_unidad, "otra")
+v.poner_escritorio_seguro(nueva_unidad, True)
+vestibulo.escribir(nueva_unidad, ID)
+c("una unidad nueva sobre la marca de otra (otro id) empieza apagada",
+  (v.leer_id(nueva_unidad), v.escritorio_seguro(nueva_unidad)), (ID, False))
 if not IS_WIN:
     c("los .sh se pueden ejecutar",
       os.access(fisica / v.ABRIR_SH, os.X_OK), True)
@@ -998,7 +1044,7 @@ desmontar "$1" >/dev/null
             c(caso("protegida, en X11: abre como siempre"), leer(),
               [f"veracrypt {HC}", "runsync "])
             c.contains(caso("  y avisa de que no es Wayland"), res.stderr, "no es Wayland")
-            for gdk, avisa in (("x11", True), ("wayland,x11", False)):
+            for gdk, avisa in (("x11", True), ("wayland,x11", False), ("*", False)):
                 limpiar()
                 res = correr(v.ABRIR_SH, WAYLAND_DISPLAY="wayland-0", GDK_BACKEND=gdk)
                 leer()

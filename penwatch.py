@@ -139,8 +139,9 @@ VESTIBULE_MARKER = f".{APP_NAME}-vestibulo"
 VESTIBULE_SECURE_KEY = "escritorio_seguro"
 """Clave de la marca que pide la contraseña protegida de los keyloggers (#199).
 
-Encendida es la línea `escritorio_seguro=1`. Copia de
-`common/vestibulo.ESCRITORIO_SEGURO`, con su test.
+Encendida es una línea que empieza por `escritorio_seguro=1`, leída como en
+`Abrir PRDRIVE.bat` (`findstr /b`). Copia de `common/vestibulo.ESCRITORIO_SEGURO`,
+con su test.
 """
 SECURE_DESKTOP_MIN = (1, 20)
 """Primera versión de VeraCrypt con `/secureDesktop`.
@@ -543,9 +544,8 @@ def vestibule_secure(container: Path) -> bool:
     except OSError:
         return False
     for line in texto.splitlines():
-        # Como `findstr /b` en «Abrir PRDRIVE.bat»: la clave tal cual, desde el principio.
-        clave, igual, valor = line.rstrip().partition("=")
-        if igual and clave == VESTIBULE_SECURE_KEY and valor.strip() == "1":
+        # Como `findstr /b` en «Abrir PRDRIVE.bat»: desde el principio de la línea.
+        if line.startswith(f"{VESTIBULE_SECURE_KEY}=1"):
             return True
     return False
 
@@ -590,7 +590,8 @@ def veracrypt_version(exe: str) -> tuple[int, int] | None:
         if campos[0] != 0xFEEF04BD:
             return None
         return (campos[2] >> 16, campos[2] & 0xFFFF)
-    except (OSError, AttributeError, ValueError, TypeError):
+    except Exception:                                # noqa: BLE001
+        # `ctypes.ArgumentError` no es un OSError, y esto no puede impedir abrir.
         return None
 
 
@@ -640,8 +641,10 @@ def proteccion(container: Path, exe: str) -> Proteccion:
     if not os.environ.get("WAYLAND_DISPLAY"):
         return Proteccion(True, "la sesión no es Wayland, y en X11 cualquier programa "
                                 "puede leer el teclado")
+    # `*` es «el orden de siempre», que empieza por Wayland. GTK compara los
+    # nombres tal cual, como el `case` de `abrir-prdrive.sh`.
     gdk = os.environ.get("GDK_BACKEND", "").strip()
-    if gdk and not gdk.lower().startswith("wayland"):
+    if gdk and not gdk.startswith(("wayland", "*")):
         return Proteccion(True, f"GDK_BACKEND={gdk} hace que VeraCrypt vaya por X11, "
                                 "donde cualquier programa puede leer el teclado")
     return Proteccion(True, "")

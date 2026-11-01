@@ -148,8 +148,10 @@ def leer_id(raiz: Path | str) -> str | None:
 ESCRITORIO_SEGURO = "escritorio_seguro"
 """Clave de la marca que pide la contraseña protegida de los keyloggers (#199).
 
-Encendida es la línea `escritorio_seguro=1`; sin ella, o con otro valor,
-apagada. En Windows, quien abre el contenedor le pasa `/secureDesktop` a
+Encendida es una línea que empieza por `escritorio_seguro=1`; sin ella, o con
+otro valor, apagada. Los tres lectores la leen igual, desde el principio de la
+línea y sin mirar lo que siga al `1`: `findstr /b` en el `.bat`, `grep '^…'` en
+el `.sh` y los de Python. En Windows, quien abre el contenedor le pasa `/secureDesktop` a
 VeraCrypt; en Linux se comprueba que la sesión sea Wayland. La leen
 `penwatch.proteccion()` (que la repite como `VESTIBULE_SECURE_KEY`, con su
 test), `Abrir PRDRIVE.bat` y `abrir-prdrive.sh`; la escribe «Ajustes →
@@ -175,11 +177,11 @@ def _lineas_de_marca(raiz: Path | str) -> list[str]:
 
 def _es_escritorio_seguro(linea: str) -> bool | None:
     """Dice si la línea es la clave encendida (True), apagada (False) u otra (None)."""
-    # Como la leen `findstr /b` y `grep '^…'`: la clave tal cual, desde el principio.
-    clave, igual, valor = linea.rstrip().partition("=")
+    # Como la leen `findstr /b` y `grep '^…'`: desde el principio de la línea.
+    clave, igual, _valor = linea.partition("=")
     if not igual or clave != ESCRITORIO_SEGURO:
         return None
-    return valor.strip() == "1"
+    return linea.startswith(f"{ESCRITORIO_SEGURO}=1")
 
 
 def escritorio_seguro(raiz: Path | str) -> bool:
@@ -225,10 +227,13 @@ def poner_escritorio_seguro(raiz: Path | str, valor: bool) -> None:
         tmp.unlink()
     except FileNotFoundError:
         pass
-    tmp.write_text("\n".join(lineas) + "\n", encoding="utf-8", newline="\n")
     store.unhide(marca)
     try:
-        os.replace(tmp, marca)
+        tmp.write_text("\n".join(lineas) + "\n", encoding="utf-8", newline="\n")
+        # Si el vigilante o el agente la están leyendo justo entonces, Windows
+        # niega el reemplazo un instante: se le espera como a cualquier fichero
+        # de estado (`store.insistir()`).
+        store.insistir(lambda: os.replace(tmp, marca), marca)
     except OSError:
         try:
             tmp.unlink()

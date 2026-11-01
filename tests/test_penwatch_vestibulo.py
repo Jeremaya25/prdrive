@@ -348,8 +348,8 @@ try:
     version[0] = (1, 19)
     c("  sin mirar la versión: eso es de Windows", penwatch.proteccion(hc, "veracrypt"),
       penwatch.Proteccion(True, ""))
-    for gdk, avisa in (("x11", True), ("x11,wayland", True), ("wayland", False),
-                       ("wayland,x11", False)):
+    for gdk, avisa in (("x11", True), ("x11,wayland", True), ("Wayland", True),
+                       ("wayland", False), ("wayland,x11", False), ("*", False)):
         os.environ["GDK_BACKEND"] = gdk
         motivo = penwatch.proteccion(hc, "veracrypt").motivo
         c(f"  GDK_BACKEND={gdk}: {'avisa' if avisa else 'protegida'}",

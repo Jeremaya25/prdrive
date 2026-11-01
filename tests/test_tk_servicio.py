@@ -324,19 +324,37 @@ with sandbox():
     cifrado.escritorio_seguro = lambda fisica: cifrado.EscritorioSeguro(Path("X:/"), True,
                                                                         False)
 
+    REAL_GUARDAR = cifrado.guardar_escritorio_seguro
+    cifrado.guardar_escritorio_seguro = lambda fisica, valor: True
+    CASILLA = "Proteger la contraseña de VeraCrypt de los keyloggers"
+    lecturas_seguro: list = []
+    LEER_SEGURO = cifrado.escritorio_seguro
+    cifrado.escritorio_seguro = lambda fisica: lecturas_seguro.append(1) or LEER_SEGURO(fisica)
+
     def mirar_casillas(dlg, parent=None) -> None:
-        """Hace de «Ajustes»: apunta las casillas de «Configuración» y cierra."""
+        """Hace de «Ajustes»: apunta la casilla, la desmarca, guarda y la vuelve a mirar."""
         visto["casillas"] = {t: w.instate(["selected"]) for t, w in casillas(dlg).items()}
+        casillas(dlg)[CASILLA].invoke()
+        pulsar_en(dlg, "Guardar")
+        visto["tras guardar"] = {t: w.instate(["selected"])
+                                 for t, w in casillas(dlg).items()}
+        visto["lecturas antes"] = len(lecturas_seguro)
         dlg.destroy()
 
     tk_doctor.mostrar = mirar_casillas
     try:
-        ventana(UNA, lambda root: botones(root)["Ajustes…"].invoke())
+        ventana(UNA, lambda root: (botones(root)["Ajustes…"].invoke(),
+                                   visto.update(lecturas_despues=len(lecturas_seguro))))
     finally:
         tk_doctor.mostrar = REAL_DOCTOR_MOSTRAR
         cifrado.escritorio_seguro = REAL_SEGURO
+        cifrado.guardar_escritorio_seguro = REAL_GUARDAR
     c("«Configuración» enseña la casilla de los keyloggers que trae la lectura (#199)",
-      visto.get("casillas"), {"Proteger la contraseña de VeraCrypt de los keyloggers": True})
+      visto.get("casillas"), {CASILLA: True})
+    c("  y tras «Guardar» el apartado rehecho enseña lo guardado, no la lectura de antes",
+      visto.get("tras guardar"), {CASILLA: False})
+    c("  y al cerrar «Ajustes» la principal vuelve a leer el dispositivo",
+      visto.get("lecturas_despues", 0) > visto.get("lecturas antes", 0), True)
 
 
 # la línea del arranque automático

@@ -1,6 +1,6 @@
 # Proteger la contraseña de VeraCrypt de los keyloggers (#199)
 
-Fecha: 2026-11-01 · Estado: **aprobado** (decidido con la persona en la conversación
+Fecha: 2026-11-01 · Estado: **implementado** (PR #203) (decidido con la persona en la conversación
 del issue; plan en `docs/superpowers/plans/2026-11-01-escritorio-seguro.md`) · Área:
 `docs/agents/reference/veracrypt.md`, `vestibule.md`, `penwatch.md`, `agent.md`,
 `ui.md` · Sin probar en real: todo lo de la sección «Lo que queda para una máquina
@@ -86,8 +86,11 @@ udisks2 o cryptsetup; o VeraCrypt en modo texto).
 
 ### 1. La marca lleva la opción
 
-`.prdrive-vestibulo` gana una línea `escritorio_seguro=1`. Sin ella (o con cualquier
-otro valor), desactivada. Es la única fuente: nadie más la guarda.
+`.prdrive-vestibulo` gana una línea que empieza por `escritorio_seguro=1`. Sin ella
+(o con otro valor), desactivada. Es la única fuente: nadie más la guarda. Los tres
+lectores la leen igual, desde el principio de la línea y sin mirar lo que sigue al
+`1` (`findstr /b`, `grep '^…'` y `startswith`), para que no discrepen con una marca
+editada a mano.
 
 - `common/vestibulo.py`: `ESCRITORIO_SEGURO = "escritorio_seguro"`,
   `escritorio_seguro(raiz) -> bool` (lee; no lanza) y
@@ -95,9 +98,9 @@ otro valor), desactivada. Es la única fuente: nadie más la guarda.
   líneas, quitando la clave y añadiéndola si `valor`; atómica, destapando y volviendo
   a ocultar el fichero en Windows; lanza `OSError`).
 - `install/vestibulo.marca(device_id, escritorio_seguro=False)` la escribe;
-  `escribir()` y `raiz_equipo.marcar()` leen la de antes y la **conservan**: el paso
-  5, «Añadir plataformas…» y rehacer la marca de la raíz del equipo no apagan la
-  opción.
+  `escribir()` y `raiz_equipo.marcar()` leen la de antes y la **conservan** si es del
+  mismo id: el paso 5, «Añadir plataformas…» y rehacer la marca de la raíz del equipo
+  no apagan la opción, y un dispositivo nuevo sobre una marca vieja empieza apagado.
 - `penwatch.VESTIBULE_SECURE_KEY` es la copia de la clave (penwatch no importa nada
   del proyecto), con su test como las demás copias.
 
@@ -132,7 +135,7 @@ otro valor), desactivada. Es la única fuente: nadie más la guarda.
 No se añade nada a la orden de VeraCrypt. Con la marca pidiéndolo:
 
 - protección si `WAYLAND_DISPLAY` no está vacío y `GDK_BACKEND` está vacío o empieza
-  por `wayland`;
+  por `wayland` o por `*` (el orden de siempre de GTK, que empieza por Wayland);
 - si no, motivo: «la sesión no es Wayland» (X11) o «`GDK_BACKEND=…` hace que VeraCrypt
   vaya por X11».
 
@@ -160,7 +163,9 @@ ventana de VeraCrypt»).
   bat_anterior)` o `None`), y «Ajustes» se lo pasa a `tk_configuracion.construir()`.
   Sin lectura compartida, no hay casilla.
 - «Guardar» escribe la marca (`cifrado.guardar_escritorio_seguro()`), como ya escribe
-  el intervalo; si no puede, lo dice y no cierra.
+  el intervalo; si no puede, lo dice y no cierra. La lectura no ve caducar la marca,
+  así que «Ajustes» se queda con lo guardado para redibujar el apartado, y al cerrarse
+  la ventana principal vuelve a leer.
 - `bat_anterior`: el `Abrir PRDRIVE.bat` de al lado no lleva todavía la subrutina
   nueva (se busca su texto). Entonces la ayuda añade que en Windows, sin el agente,
   hace falta «Añadir plataformas…» para que la cumpla.
