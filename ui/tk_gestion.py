@@ -33,6 +33,8 @@ ORDEN_MENU_FILA = ("abrir", "bajar", None, "renombrar", "cortar", "pegar", None,
 """El menú del botón derecho sobre una fila, de arriba abajo; `None` es un separador."""
 ORDEN_MENU_HUECO = ("nueva", "pegar", None, "archivos", "carpeta", None, "releer")
 """El menú del botón derecho en el hueco de la lista, sin fila debajo."""
+ORDEN_MENU_RESULTADO = ("abrir", "ubicacion")
+"""El menú del botón derecho sobre un resultado de una búsqueda: abrirlo o ir a su carpeta."""
 
 
 def _fin_de_seleccion(inicial: str, es_archivo: bool) -> int:

@@ -4,14 +4,18 @@ La ventana (`ui/tk_servidor.py`) solo dibuja. Aquí vive lo que se puede probar
 sin pantalla: cómo se lee una respuesta de `operations/list`, qué se pide a
 rclone, cómo se navega sin que una respuesta tardía pinte la carpeta equivocada
 (y el historial de atrás y adelante), las migas de la barra de direcciones y la
-ruta que se escribe en ella, qué remotes se ofrecen, qué carpetas son de una
+ruta que se escribe en ella, el recorrido de una búsqueda en las subcarpetas,
+qué remotes se ofrecen, qué carpetas son de una
 pareja y cómo se dice un fallo.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
+import unicodedata
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -432,6 +436,176 @@ def ruta_escrita(texto: str) -> str:
     dobles y la final, y en blanco es la raíz.
     """
     return remote_picker.normalizar(texto)
+
+
+LIMITE_ELEMENTOS = 100_000
+"""Cuántos elementos lee una búsqueda como mucho antes de pararse (memoria y tiempo)."""
+
+
+def _plegar(texto: str) -> str:
+    """El texto sin mayúsculas ni acentos, para comparar como lo haría una persona."""
+    descompuesto = unicodedata.normalize("NFKD", str(texto).casefold())
+    return "".join(ch for ch in descompuesto if not unicodedata.combining(ch))
+
+
+def coincide(nombre: str, texto: str) -> bool:
+    """Si un nombre es de lo que se busca.
+
+    Sin mayúsculas ni acentos: el nombre contiene el texto. Con `*` o `?` el texto
+    es un patrón del nombre entero (`*.pdf`). Un texto en blanco no coincide con nada.
+    """
+    buscado = _plegar(texto.strip())
+    if not buscado:
+        return False
+    if "*" in buscado or "?" in buscado:
+        return fnmatch.fnmatchcase(_plegar(nombre), buscado)
+    return buscado in _plegar(nombre)
+
+
+@dataclass(frozen=True)
+class Resultado:
+    """Algo encontrado al buscar: la carpeta donde está y su entrada.
+
+    Args:
+        carpeta: La carpeta que lo contiene, absoluta en el remote.
+        entrada: Lo que dijo el listado de esa carpeta.
+    """
+
+    carpeta: str
+    entrada: Entrada
+
+    @property
+    def ruta(self) -> str:
+        """Su ruta absoluta en el remote."""
+        return remote_picker.entrar(self.carpeta, self.entrada.nombre)
+
+
+def _plural(n: int, uno: str, varios: str) -> str:
+    return f"{n} {uno if n == 1 else varios}"
+
+
+class Busqueda:
+    """El recorrido de una búsqueda: las carpetas de debajo de una, en anchura.
+
+    Solo apunta: qué carpetas faltan por leer, cuáles se han pedido y qué trajo cada
+    una. Quien la usa pide los listados (`siguientes`) y le da las respuestas
+    (`recibir`, `fallo`) con el `numero` que tenía al pedirlas: una respuesta de
+    antes de `detener()` no cuenta. Lo leído se guarda, así que cambiar el texto
+    buscado se resuelve sin volver al servidor (`resultados`).
+
+    Args:
+        remote: El remote donde se busca.
+        raiz: La carpeta desde la que se busca.
+        permisos: Si sus listados piden también los metadatos.
+        entradas_raiz: Lo que hay en la raíz, si ya se sabe (la lista que se ve):
+            entonces no se vuelve a pedir.
+
+    Attributes:
+        numero: La generación de las peticiones; `detener()` la cambia.
+        leidas: `{carpeta: entradas}` de lo leído, en el orden en que llegó.
+        en_vuelo: Las carpetas pedidas y aún sin respuesta.
+        fallidas: Cuántas carpetas no se pudieron leer.
+        elementos: Cuántos elementos se han leído.
+        parada: Si se paró por pasar de `LIMITE_ELEMENTOS`.
+        detenida: Si la paró la persona.
+    """
+
+    def __init__(self, remote: str, raiz: str, permisos: bool,
+                 entradas_raiz: tuple[Entrada, ...] | None = None) -> None:
+        self.remote = remote
+        self.raiz = remote_picker.normalizar(raiz)
+        self.permisos = permisos
+        self.numero = 0
+        self.pendientes: deque[str] = deque([self.raiz])
+        self.en_vuelo: set[str] = set()
+        self.leidas: dict[str, tuple[Entrada, ...]] = {}
+        self.fallidas = 0
+        self.elementos = 0
+        self.parada = False
+        self.detenida = False
+        if entradas_raiz is not None:
+            self.siguientes(1)
+            self.recibir(self.numero, self.raiz, entradas_raiz)
+
+    @property
+    def acabada(self) -> bool:
+        """Si ya no queda nada por leer ni por llegar, o se paró por el tope."""
+        return self.parada or (not self.pendientes and not self.en_vuelo)
+
+    @property
+    def carpetas(self) -> int:
+        """Cuántas carpetas se han leído."""
+        return len(self.leidas)
+
+    def siguientes(self, n: int) -> list[str]:
+        """Devuelve hasta `n` carpetas por pedir, y las apunta como pedidas."""
+        if self.parada or self.detenida:
+            return []
+        pedidas = []
+        while self.pendientes and len(pedidas) < n:
+            carpeta = self.pendientes.popleft()
+            self.en_vuelo.add(carpeta)
+            pedidas.append(carpeta)
+        return pedidas
+
+    def recibir(self, numero: int, carpeta: str, entradas: tuple[Entrada, ...]) -> bool:
+        """Apunta lo que trajo `carpeta`; `False`, sin cambiar nada, si no se esperaba."""
+        if numero != self.numero or carpeta not in self.en_vuelo:
+            return False
+        self.en_vuelo.discard(carpeta)
+        self.leidas[carpeta] = tuple(entradas)
+        self.elementos += len(entradas)
+        self.pendientes.extend(remote_picker.entrar(carpeta, e.nombre)
+                               for e in entradas if e.es_carpeta)
+        if self.elementos > LIMITE_ELEMENTOS:
+            self.parada = True
+        return True
+
+    def fallo(self, numero: int, carpeta: str) -> bool:
+        """Apunta que `carpeta` no se pudo leer y se sigue; `False` si no se esperaba."""
+        if numero != self.numero or carpeta not in self.en_vuelo:
+            return False
+        self.en_vuelo.discard(carpeta)
+        self.fallidas += 1
+        return True
+
+    def detener(self) -> None:
+        """Deja de pedir: lo que está en vuelo vuelve a faltar y su respuesta no contará."""
+        self.numero += 1
+        self.pendientes.extendleft(sorted(self.en_vuelo, reverse=True))
+        self.en_vuelo.clear()
+        self.detenida = True
+
+    def reanudar(self) -> None:
+        """Vuelve a pedir lo que falta (tras `detener()`)."""
+        self.detenida = False
+
+    def resultados(self, texto: str) -> list[Resultado]:
+        """Lo leído que coincide con `texto`, carpeta a carpeta en el orden en que llegó."""
+        return [Resultado(carpeta, e) for carpeta, entradas in self.leidas.items()
+                for e in entradas if coincide(e.nombre, texto)]
+
+    def de_carpeta(self, texto: str, carpeta: str) -> list[Resultado]:
+        """Lo de `carpeta` que coincide con `texto`: lo que se añade al llegar."""
+        return [Resultado(carpeta, e) for e in self.leidas.get(carpeta, ())
+                if coincide(e.nombre, texto)]
+
+    def texto_progreso(self, texto: str, encontrados: int) -> str:
+        """Lo que dice la ventana mientras se busca."""
+        return (f"Buscando «{texto}»… {_plural(self.carpetas, 'carpeta', 'carpetas')} · "
+                f"{_plural(encontrados, 'encontrado', 'encontrados')}")
+
+    def texto_final(self, texto: str, encontrados: int) -> str:
+        """Lo que dice la ventana cuando ya no se busca (acabada o detenida)."""
+        partes = [f"{_plural(encontrados, 'encontrado', 'encontrados')} en "
+                  f"{_plural(self.carpetas, 'carpeta', 'carpetas')}"]
+        if self.fallidas:
+            partes.append(f"{_plural(self.fallidas, 'carpeta', 'carpetas')} no se "
+                          + ("pudo leer" if self.fallidas == 1 else "pudieron leer"))
+        if self.parada:
+            partes.append("Búsqueda parada: demasiados elementos; busca desde una carpeta "
+                          "más concreta.")
+        return " · ".join(partes)
 
 
 def parejas_en(config: Config, remote: str) -> dict[str, str]:

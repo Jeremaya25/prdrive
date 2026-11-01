@@ -355,8 +355,12 @@ with sandbox():
               imagen(dlg, i)) for i in nombres(dlg)]
     c("cada fila dice su nombre en el árbol",
       [v[1].strip() for v in vista], ["datos", "privado", "leeme.txt"])
-    c("  y sus valores (tamaño, fecha, permisos)",
-      [(v[2][0], v[2][2]) for v in vista], [("—", "—"), ("—", "—"), ("2 KB", "—")])
+    c("  y sus valores (tamaño, fecha, permisos), leídos por su columna",
+      [(valores(dlg, i)[0], valores(dlg, i)[2]) for i in nombres(dlg)],
+      [("—", "—"), ("—", "—"), ("2 KB", "—")])
+    c("  la columna «Carpeta» (la de los resultados de una búsqueda) no se ve",
+      [str(x) for x in dlg.lista.tk.splitlist(dlg.lista.cget("displaycolumns"))],
+      ["tamano", "modificado", "permisos"])
     c("  y todas llevan una imagen", all(v[3] for v in vista), True)
     c("  y se ve la columna del árbol, con el nombre", sorted(str(x) for x in dlg.lista.cget("show")), ["headings", "tree"])
 

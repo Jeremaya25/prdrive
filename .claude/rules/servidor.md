@@ -17,6 +17,7 @@ paths:
   - "ui/tk_direcciones.py"
   - "tests/test_tk_direcciones.py"
   - "tests/test_tk_servidor_gestion.py"
+  - "tests/test_tk_servidor_busqueda.py"
   - "tests/_servidor_falso.py"
   - "ui/tk_transferencia.py"
   - "tests/test_tk_transferencia.py"

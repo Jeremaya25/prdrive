@@ -397,4 +397,64 @@ c("  vacía o en blanco es la raíz", (servidor.ruta_escrita(""), servidor.ruta_
 c("  sin barra delante es desde la raíz, y las dobles cuentan como una",
   (servidor.ruta_escrita("a//b/"), servidor.ruta_escrita("/a//b/")), ("/a/b", "/a/b"))
 
+# --- la búsqueda en subcarpetas: qué coincide
+co = servidor.coincide
+c("coincide sin mayúsculas ni acentos", (co("Foto Ñandú.JPG", "nandu"), co("Informe.pdf", "INFO")),
+  (True, True))
+c("  y no por cualquier cosa", co("Informe.pdf", "fotos"), False)
+c("con * o ? el texto es un patrón del nombre entero",
+  (co("viaje.jpg", "*.JPG"), co("viaje.jpg", "*.png"), co("abc", "a?c"), co("xabc", "a?c")),
+  (True, False, True, False))
+c("un texto vacío o en blanco no coincide con nada", (co("a", ""), co("a", "  ")), (False, False))
+
+
+def ent(nombre, carpeta=False):
+    return servidor.Entrada(nombre, carpeta, None if carpeta else 1, None)
+
+
+# --- el recorrido, carpeta a carpeta y en anchura
+b = servidor.Busqueda("nas", "/", False)
+c("una búsqueda nueva pide la raíz primero", (b.siguientes(4), b.acabada), (["/"], False))
+c("  y nada más mientras no llega", b.siguientes(4), [])
+n0 = b.numero
+c("recibir la raíz cuenta", b.recibir(n0, "/", (ent("a", True), ent("b", True), ent("x.txt"))), True)
+c("  y sus subcarpetas se piden después, en orden", b.siguientes(1), ["/a"])
+c("  de a una o de varias", b.siguientes(4), ["/b"])
+c("una carpeta no pedida no cuenta", b.recibir(n0, "/zz", (ent("q"),)), False)
+c("un fallo (sin permiso, ya no está) se cuenta y se sigue",
+  (b.fallo(n0, "/a"), b.fallidas, b.acabada), (True, 1, False))
+b.recibir(n0, "/b", (ent("c", True), ent("x de b.txt")))
+c("los resultados salen de todo lo leído, carpeta y entrada",
+  [(r.carpeta, r.entrada.nombre, r.ruta) for r in b.resultados("x")],
+  [("/", "x.txt", "/x.txt"), ("/b", "x de b.txt", "/b/x de b.txt")])
+c("  y los de una carpeta sola, para añadirlos según llegan",
+  [r.ruta for r in b.de_carpeta("x", "/b")], ["/b/x de b.txt"])
+c("lo que queda por leer sigue", b.siguientes(4), ["/b/c"])
+b.detener()
+c("detener: nada más que pedir y lo que estaba en vuelo ya no cuenta",
+  (b.detenida, b.siguientes(4), b.recibir(n0, "/b/c", ()), b.numero != n0), (True, [], False, True))
+c("  lo leído se queda", len(b.resultados("x")), 2)
+b.reanudar()
+c("reanudar vuelve a pedir lo que quedó a medias", (b.detenida, b.siguientes(4)), (False, ["/b/c"]))
+b.recibir(b.numero, "/b/c", ())
+c("sin nada pendiente ni en vuelo, acabada", (b.acabada, b.carpetas, b.elementos), (True, 3, 5))
+c("el progreso y el final, en llano",
+  (b.texto_progreso("x", 2), b.texto_final("x", 2)),
+  ("Buscando «x»… 3 carpetas · 2 encontrados",
+   "2 encontrados en 3 carpetas · 1 carpeta no se pudo leer"))
+c("  en singular",
+  (servidor.Busqueda("nas", "/", False).texto_final("x", 1)), "1 encontrado en 0 carpetas")
+c("la búsqueda puede nacer con la raíz ya leída (la de la lista)",
+  servidor.Busqueda("nas", "/d", False, (ent("k", True),)).siguientes(4), ["/d/k"])
+previo_limite = servidor.LIMITE_ELEMENTOS
+servidor.LIMITE_ELEMENTOS = 3
+b = servidor.Busqueda("nas", "/", False)
+b.siguientes(1)
+b.recibir(b.numero, "/", tuple(ent(f"d{i}", True) for i in range(4)))
+c("pasado el tope de elementos se para y lo dice",
+  (b.parada, b.acabada, b.siguientes(4), b.texto_final("d", 4)),
+  (True, True, [], "4 encontrados en 1 carpeta · Búsqueda parada: demasiados elementos; "
+                   "busca desde una carpeta más concreta."))
+servidor.LIMITE_ELEMENTOS = previo_limite
+
 sys.exit(c.report())
