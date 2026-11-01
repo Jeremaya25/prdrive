@@ -749,6 +749,8 @@ c("las carpetas de las parejas elegidas",
   [str(Path("sync-data/docs")), str(Path("sync-data/upload"))])
 c("la raíz del dispositivo ('.') no es una carpeta que crear",
   deploy.local_dirs(cat, ["respaldo"], LOCALES), [])
+c("la carpeta de un espejo de subida nunca se crea: vacía, vaciaría el remoto (#151)",
+  deploy.local_dirs(cat, ["respaldo"], {"respaldo": "Copia"}), [])
 c("las carpetas salen de lo elegido, no del catálogo (#196)",
   deploy.local_dirs(cat, ["docs"], {"docs": "Docs"}), [Path("Docs")])
 c("la carpeta que se sugiere es el nombre de la pareja",

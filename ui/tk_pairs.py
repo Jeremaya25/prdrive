@@ -96,6 +96,8 @@ ellos solo cuenta `actual`: lo escrito se guardaría encima de la pareja entera.
 """
 ALCANCE_PEN = "Lo que cambies se queda en este dispositivo: el catálogo no cambia."
 """Lo que dice la ventana de una pareja de este dispositivo, bajo su título."""
+SIN_CARPETA = "La eliges al usarla aquí."
+"""Lo que dice debajo de «Ruta local» una pareja que este dispositivo no usa (#196)."""
 ALCANCE_CATALOGO = ("Lo que cambies lo verán todos los dispositivos: cada uno tiene que "
                     "volver al catálogo para recibirlo.")
 """Lo que dice la ventana de una pareja del catálogo, bajo su título."""
@@ -167,7 +169,8 @@ class ListaParejas:
         return FilaTabla(fila.name, (
             CeldaCasilla(fila.en_pen),
             CeldaTexto(fila.name, "Fuerte."),
-            CeldaTexto(f"{fila.local} ↔ {fila.remote}", "Mono."),
+            # Sin carpeta (sin usar aquí, o la vista del catálogo), solo el remoto (#196).
+            CeldaTexto(f"{fila.local} ↔ {fila.remote}" if fila.local else fila.remote, "Mono."),
             CeldaChip(fila.mode, "Peligro." if espejo else "", ICONO_MODO.get(fila.mode)),
             CeldaChip(nota, tipo)), "" if tono == "ok" else tono)
 
@@ -248,11 +251,13 @@ class EditorPareja:
             lanzar la pasada. El bloque sale cuando la pareja cargada es bisync y
             se puede cambiar (`pair_editor.admite_resync()`), y lo que marca la
             casilla no es un campo de la pareja: no entra en `datos()`.
+        con_local: Si lleva «Ruta local». Una pareja del catálogo no la tiene:
+            la carpeta la elige cada dispositivo al usarla (#196).
     """
 
     def __init__(self, parent, dlg, sup: str = "", dos_columnas: bool = True,
                  plegable: bool = True, al_crecer=None, con_orden: bool = False,
-                 al_resincronizar=None):
+                 al_resincronizar=None, con_local: bool = True):
         import tkinter as tk
         from tkinter import ttk
         self.dlg, self.sup = dlg, sup
@@ -289,11 +294,13 @@ class EditorPareja:
         self.entradas: dict = {}
         self.pistas: dict = {}
         self.examinar: dict = {}
-        for i, (clave, titulo, mono, explorar, icono) in enumerate((
-                ("name", "Nombre", False, None, None),
-                ("local", "Ruta local", True, self.examinar_local, "carpeta"),
-                ("remote_path", "Ruta remota", True, self.examinar_remoto, "nas"),
-                ("remote", "Remoto", True, None, None))):
+        filas_campos = (
+            ("name", "Nombre", False, None, None),
+            ("local", "Ruta local", True, self.examinar_local, "carpeta"),
+            ("remote_path", "Ruta remota", True, self.examinar_remoto, "nas"),
+            ("remote", "Remoto", True, None, None))
+        for i, (clave, titulo, mono, explorar, icono) in enumerate(
+                f for f in filas_campos if con_local or f[0] != "local"):
             celda = ttk.Frame(izquierda, style=marco_sup)
             celda.grid(row=i, column=0, sticky="ew", pady=(theme.E4 if i else 0, 0))
             celda.columnconfigure(0, weight=1)
@@ -535,7 +542,8 @@ class EditorPareja:
             var.set(str(actual.get(clave, "") or ""))
             self.entradas[clave].configure(state="normal" if editable else "readonly")
         self._poner_pistas()
-        self.examinar["local"].configure(state="normal" if editable else "disabled")
+        if "local" in self.examinar:
+            self.examinar["local"].configure(state="normal" if editable else "disabled")
         self.poner_explorable(explorable)
         self.modo.set(actual.get("mode", model.DEFAULT_MODE))
         for boton in self.grupo_modo.botones:
@@ -593,8 +601,8 @@ class EditorPareja:
 
     def _pista(self, clave: str, ayuda: str) -> str:
         """Lo que va debajo de un campo: para qué es y lo que dice el catálogo."""
-        if self.catalogo is None:
-            return ayuda
+        if self.catalogo is None or clave in catalog.DEL_DISPOSITIVO:
+            return ayuda              # el catálogo no tiene carpeta con la que comparar
         suyo = self.catalogo.get(clave)
         difiere = str(self.actual.get(clave, "") or "") != str(suyo or "")
         return (f"{ayuda} {'✎ ' if difiere else ''}Catálogo: "
@@ -692,10 +700,8 @@ class EditorPareja:
         el escritorio, y mejor. Lo que sí es asunto nuestro es lo que se
         escribe después, que tiene que ser relativo a la raíz del dispositivo.
         """
-        from tkinter import filedialog, messagebox
-        elegida = filedialog.askdirectory(
-            parent=self.dlg, title="Carpeta del dispositivo",
-            initialdir=str(model.DEVICE_ROOT), mustexist=True)
+        from tkinter import messagebox
+        elegida = elegir_carpeta(self.dlg, "Carpeta del dispositivo")
         if not elegida:
             return
         try:
@@ -856,6 +862,7 @@ class VentanaPareja:
 
         self.editor = EditorPareja(
             marco, dlg, al_crecer=self.crecer, con_orden=not del_catalogo,
+            con_local=not del_catalogo,
             al_resincronizar=(self.resincronizar if not del_catalogo
                               and pantalla.lanzar is not None else None))
         self.editor.marco.grid(row=2, column=0, sticky="ew", pady=(theme.E4, 0))
@@ -901,15 +908,16 @@ class VentanaPareja:
             ayuda_modo = ("Cambiar el modo cambia la baseline: cada dispositivo la "
                           "aparta cuando vuelve al catálogo.")
             raw_de = pantalla.cat.raw if pantalla.cat else {}
-            ayudas = {"name": "Nombra también su carpeta en state/ de cada dispositivo.",
-                      "local": "Relativa a la raíz de cada dispositivo."}
+            ayudas = {"name": "Nombra también su carpeta en state/ de cada dispositivo."}
         else:
             local = next((p for p in pantalla.raw.get("pair") or []
                           if p.get("name") == self.nombre), None)
             editable = local is not None
             actual, comparar = (dict(local), del_cat) if editable else (dict(del_cat or {}),
                                                                          None)
-            ayuda_modo, raw_de, ayudas = "", pantalla.raw, None
+            # Sin usar, la carpeta está vacía: se elige al darle a «Usar aquí» (#196).
+            ayuda_modo, raw_de = "", pantalla.raw
+            ayudas = None if editable else {"local": SIN_CARPETA}
         return {"raw": raw_de, "actual": actual, "original": self.nombre,
                 "catalogo": comparar, "editable": editable, "explorable": lect.editable,
                 "ayuda_modo": ayuda_modo, "ayudas": ayudas}
@@ -1625,11 +1633,29 @@ class PantallaParejas:
     # Este dispositivo.
 
     def usar_aqui(self) -> None:
-        """Empieza a usar aquí la pareja elegida, que ya existe en el catálogo."""
+        """Empieza a usar aquí la pareja elegida, que ya existe en el catálogo.
+
+        Primero pregunta su carpeta en este dispositivo, con el diálogo de
+        carpetas del sistema: el catálogo no la lleva (#196). Cancelar no hace
+        nada, y una carpeta de fuera del dispositivo se rechaza
+        (`pair_editor.ruta_local_relativa()`) sin pedir plan. Con carpeta, el
+        plan y su confirmación son los de siempre.
+        """
+        from tkinter import messagebox
+
         fila = self.fila_elegida()
-        if fila is not None:
-            self.plan_de(pair_editor.plan_enable, self.raw, self.cat, fila.name,
-                         titulo=f"Usar '{fila.name}' en este dispositivo")
+        if fila is None:
+            return
+        elegida = elegir_carpeta(self.delante(), f"Carpeta de '{fila.name}' en este dispositivo")
+        if not elegida:
+            return
+        try:
+            local = pair_editor.ruta_local_relativa(elegida)
+        except ConfigError as e:
+            messagebox.showerror(TITLE, str(e), parent=self.delante())
+            return
+        self.plan_de(pair_editor.plan_enable, self.raw, self.cat, fila.name, local,
+                     titulo=f"Usar '{fila.name}' en este dispositivo")
 
     def quitar(self) -> None:
         """Quita de este dispositivo la pareja elegida, con o sin su estado."""
@@ -1990,7 +2016,8 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     """Abre el formulario de una pareja y devuelve sus campos, o `None` si se cancela.
 
     Es el alta de una pareja en el catálogo: los mismos campos que la ventana
-    de una pareja (`EditorPareja`), a una columna y con todo a la vista.
+    de una pareja (`EditorPareja`), a una columna y con todo a la vista, sin
+    «Ruta local», que la elige cada dispositivo al usarla (#196).
 
     Args:
         catalogo: La entrada del catálogo con la que comparar: junto a cada
@@ -2011,7 +2038,7 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
     resultado: dict = {"datos": None}
 
     fila = _cabecera_form(marco, titulo or "Pareja", marca, subtitulo, 0)
-    editor = EditorPareja(marco, dlg, dos_columnas=False, plegable=False)
+    editor = EditorPareja(marco, dlg, dos_columnas=False, plegable=False, con_local=False)
     editor.marco.grid(row=fila, column=0, columnspan=3, sticky="ew", pady=(theme.E4, 0))
     editor.cargar(raw, actual, original_name, catalogo=catalogo, explorable=explorable)
 
@@ -2033,6 +2060,23 @@ def formulario(parent, raw: dict, original_name: str | None, actual: dict,
 
     mostrar(dlg, parent)
     return resultado["datos"]
+
+
+def elegir_carpeta(parent, titulo: str) -> str:
+    """Deja elegir una carpeta del dispositivo con el diálogo de carpetas del sistema.
+
+    Empieza en su raíz y deja escribir una carpeta que aún no existe (en Linux
+    el diálogo de Tk no tiene «Nueva carpeta»; el de Windows, sí). Es una
+    función de módulo para que los tests la sustituyan: el diálogo de verdad
+    espera a una persona.
+
+    Returns:
+        La ruta elegida, o `""` si se cancela.
+    """
+    from tkinter import filedialog
+    elegida = filedialog.askdirectory(parent=parent, title=titulo,
+                                      initialdir=str(model.DEVICE_ROOT), mustexist=False)
+    return str(elegida) if elegida else ""
 
 
 def explorador_remoto(parent, remote: str, inicial: str = "") -> str | None:

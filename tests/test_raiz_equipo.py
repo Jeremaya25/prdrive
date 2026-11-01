@@ -266,9 +266,9 @@ c("  con su local cambiado, sí; lo demás, como en el catálogo",
   [("todo", "copia", "/t"), ("docs", "sync-data/docs", "/d")])
 c("  y el catálogo no lleva carpeta: la elige cada uno (#196)", "local" in CAT.pair("todo"),
   False)
-c("local_dirs con los locales de aquí",
+c("local_dirs con los locales de aquí, sin la del espejo de subida (#151)",
   deploy.local_dirs(CAT, ["todo", "docs"], {"todo": "copia", "docs": "sync-data/docs"}),
-  [Path("copia"), Path("sync-data/docs")])
+  [Path("sync-data/docs")])
 c("en una unidad, device_config sigue aceptando la raíz",
   deploy.device_config(CAT, ["todo"], locales={"todo": "."})["pair"][0]["local"], ".")
 

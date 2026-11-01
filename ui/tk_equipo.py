@@ -808,8 +808,10 @@ def paso_parejas(cuerpo, wiz) -> None:
         elegidas[nombre] = var
         ttk.Checkbutton(tabla, variable=var, text=f"{nombre}   [{modo}]").grid(
             row=fila, column=0, sticky="w", padx=(0, theme.E3))
+        # El catálogo no lleva carpeta (#196): se sugiere el nombre de la pareja.
         cajas[nombre] = tk.StringVar(
-            value=wiz.equipo_locales.get(nombre, str(pareja.get("local", ""))))
+            value=(wiz.equipo_locales[nombre] if nombre in wiz.equipo_locales
+                   else deploy.carpeta_sugerida(pareja)))
         caja = ttk.Entry(tabla, textvariable=cajas[nombre], style="Mono.TEntry",
                          width=30)
         caja.grid(row=fila, column=1, sticky="ew")
@@ -858,6 +860,7 @@ def paso_parejas(cuerpo, wiz) -> None:
             wiz.error(f"{type(e).__name__}: {e}")
             return
         wiz.state.selected = seleccion
+        wiz.state.locales = locales
         wiz.state.config_written = True
         # Un `rclone` de hasta 45 s contra el remoto: con su barra, y de mejor
         # esfuerzo (lo que no llegue se apunta al sincronizar).

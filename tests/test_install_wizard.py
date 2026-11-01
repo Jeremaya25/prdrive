@@ -19,6 +19,7 @@ ni VeraCrypt llegan a ejecutarse, porque lo que los lanzaría está sustituido.
 
 import struct
 import sys
+import tomllib
 from pathlib import Path
 
 from _harness import Checks, tmpdir
@@ -726,11 +727,31 @@ en_paso(wiz, PASO["Parejas y configuración"])
 c("sin config escrito no se sale del paso de parejas",
   str(wiz.boton_siguiente.cget("state")), "disabled")
 
+cajas_parejas = {e.get(): e for e in widgets(wiz.cuerpo, ttk.Entry)}
+c("cada pareja trae su carpeta, rellena con su nombre (#196)", sorted(cajas_parejas),
+  ["docs", "respaldo"])
+cajas_parejas["docs"].delete(0, "end")
+boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("con una caja vacía no se guarda", deploy.config_path(limpio).exists(), False)
+c("  y se dice de qué pareja",
+  any("carpeta de: docs" in w.cget("text") for w in widgets(wiz.cuerpo, ttk.Label)), True)
+cajas_parejas["docs"].insert(0, "../fuera")
+boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
+c("ni con una que sale del dispositivo", deploy.config_path(limpio).exists(), False)
+cajas_parejas["docs"].delete(0, "end")
+cajas_parejas["docs"].insert(0, "Mis docs")
 boton(wiz.cuerpo, "Guardar el config y crear las carpetas").invoke()
 config = deploy.config_path(limpio)
 c("se escribe el sync_config.toml", config.is_file(), True)
 c("con las parejas marcadas", sorted(wiz.state.selected), ["docs", "respaldo"])
-c("se crean sus carpetas locales", (limpio / "sync-data" / "docs").is_dir(), True)
+c("  y la carpeta elegida de cada una",
+  {p["name"]: p["local"] for p in tomllib.loads(config.read_text(encoding="utf-8"))["pair"]},
+  {"respaldo": "respaldo", "docs": "Mis docs"})
+c("  que queda apuntada para el paso «Inicialización»", wiz.state.locales,
+  {"respaldo": "respaldo", "docs": "Mis docs"})
+c("se crean sus carpetas locales", (limpio / "Mis docs").is_dir(), True)
+c("  salvo la de un espejo de subida, que vacía vaciaría el remoto (#151)",
+  (limpio / "respaldo").exists(), False)
 c("y ya se puede seguir", str(wiz.boton_siguiente.cget("state")), "normal")
 c.contains("la cabecera dice de qué catálogo sale",
            config.read_text(encoding="utf-8"), PERFIL.endpoint_catalog)
@@ -1282,20 +1303,22 @@ deploy.publish_fleet_note = lambda rc, raiz, endpoint, timeout=45.0: (
 propia.ir(+1)
 c("«Parejas»: Siguiente apagado hasta guardar",
   str(propia.boton_siguiente.cget("state")), "disabled")
-cajas = list(widgets(propia.cuerpo, ttk.Entry))
+por_valor = {w.get(): w for w in widgets(propia.cuerpo, ttk.Entry)}
+c("  cada caja sale con el nombre de su pareja: el catálogo no lleva carpeta (#196)",
+  sorted(por_valor), ["docs", "respaldo"])
 textos = [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)]
-c("  la pareja de la raíz entera se dice que no vale",
+c("  y dice dónde cae en este equipo", str(RAIZ_EQUIPO / "docs") in textos, True)
+escribir(por_valor["respaldo"], ".")
+textos = [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)]
+c("  la raíz entera se dice que no vale",
   any("es la raíz entera" in t for t in textos), True)
-c("  y la otra, dónde cae en este equipo",
-  str(RAIZ_EQUIPO / "sync-data" / "docs") in textos, True)
 boton(propia.cuerpo, "Guardar el config y crear las carpetas").invoke()
 c("  con la de la raíz elegida no se guarda",
   (propia.state.config_written, any("Arregla antes" in w.cget("text")
                                     for w in widgets(propia.cuerpo, ttk.Label))),
   (False, True))
-por_valor = {w.get(): w for w in cajas}
-escribir(por_valor["."], "copia")
-escribir(por_valor["sync-data/docs"], "Documentos/docs")
+escribir(por_valor["respaldo"], "copia")
+escribir(por_valor["docs"], "Documentos/docs")
 c("  la línea de debajo dice dónde cae la ruta escrita",
   str(RAIZ_EQUIPO / "Documentos" / "docs")
   in [w.cget("text") for w in widgets(propia.cuerpo, ttk.Label)], True)
@@ -1308,6 +1331,8 @@ escrito = tomllib.loads((RAIZ_EQUIPO / ".prdrive" / "sync_config.toml").read_tex
     encoding="utf-8"))
 c("  cambiar la ruta se escribe solo aquí",
   {p["name"]: p["local"] for p in escrito["pair"]},
+  {"respaldo": "copia", "docs": "Documentos/docs"})
+c("  y queda apuntada para «Inicialización»", propia.state.locales,
   {"respaldo": "copia", "docs": "Documentos/docs"})
 c("  y crea las carpetas donde se ha dicho, y publica la nota",
   ((RAIZ_EQUIPO / "Documentos" / "docs").is_dir(), publicadas), (True, [RAIZ_EQUIPO]))

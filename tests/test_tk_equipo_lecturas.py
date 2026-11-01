@@ -874,7 +874,7 @@ try:
     locales.clear()
     hilos = asistente_equipo(ruta=RAIZ_PAREJAS)
     parejas(hilos)
-    llegan = dar_vueltas(lambda: all(str(RAIZ_PAREJAS / "sync-data" / f"p{i}")
+    llegan = dar_vueltas(lambda: all(str(RAIZ_PAREJAS / f"p{i}")
                                      in textos(hilos.cuerpo) for i in range(5)))
     c("«Parejas»: la ruta de cada pareja llega sola", llegan, True)
     c("  y se ha examinado en otro hilo, no en el de Tk",
@@ -886,7 +886,7 @@ try:
         parejas(rapida)
         rapida.state.config_written = True
         rapida.revisar()
-        caja = caja_pareja(rapida, "sync-data/p1")
+        caja = caja_pareja(rapida, "p1")
         locales.clear()
         reloj.plazos.clear()
         caja.insert("end", "x")
@@ -901,8 +901,8 @@ try:
           ([True], {ESPERA_REAL}))
         reloj.disparar(ESPERA_REAL)
         c("al dejar de teclear, un examen de la ruta escrita",
-          [t for _, t in locales], ["sync-data/p1xyz"])
-        c("  y la línea dice dónde cae", str(RAIZ_PAREJAS / "sync-data" / "p1xyz")
+          [t for _, t in locales], ["p1xyz"])
+        c("  y la línea dice dónde cae", str(RAIZ_PAREJAS / "p1xyz")
           in textos(rapida.cuerpo), True)
 
     pendientes = Pendientes()
@@ -914,7 +914,7 @@ try:
         for encargo in pendientes.encargos:
             encargo.correr()
         reloj.disparar(uitk.SONDEO_MS)
-        caja = caja_pareja(lenta, "sync-data/p2")
+        caja = caja_pareja(lenta, "p2")
         teclear(caja, "uno")
         reloj.disparar(ESPERA_REAL)
         caja.insert("end", "-dos")

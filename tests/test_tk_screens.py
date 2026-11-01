@@ -224,7 +224,8 @@ subidos: list[dict] = []
 def falso_catalogo(raw=None):
     """Devuelve un catálogo de mentira, sin error."""
     texto = config_file.dumps(CAT)
-    return catalog.Catalog(raw=tomllib.loads(texto), text=texto,
+    # Como lo lee `catalog.pull()`: sin la carpeta local, que es de cada dispositivo.
+    return catalog.Catalog(raw=catalog.sin_local(tomllib.loads(texto)), text=texto,
                            source="remote", stamp="2026-01-01 00:00:00",
                            endpoint="nas:/prdrive-catalog/pairs.toml"), None
 
@@ -276,15 +277,93 @@ with sandbox():
     c("la ruta local sale como se escribe, no adonde cae",
       filas["notas"].local, "sync-data/notas")
 
-# 'Usar aquí' trae una pareja del catálogo a este dispositivo
+# 'Usar aquí' trae una pareja del catálogo a este dispositivo, en la carpeta elegida
+ELEGIR_CARPETA = tk_pairs.elegir_carpeta
+pedidas: list[tuple] = []
+
+
+def carpeta_elegida(ruta):
+    """Sustituye al diálogo de carpetas: apunta qué se pidió y contesta `ruta`."""
+    def _elegir(*a, **k):
+        """Contesta como si se hubiera elegido esa carpeta."""
+        pedidas.append((a, k))
+        return str(ruta)
+    return _elegir
+
+
 with sandbox():
     cfg = preparar()
+    tk_pairs.elegir_carpeta = carpeta_elegida(model.DEVICE_ROOT / "Mis fotos")
     tk.Toplevel.wait_window = elegir_y_pulsar("Usar aquí", "fotos")
     cambiado = tk_pairs.open_dialog(raiz, cfg)
+    c("usar aquí pide la carpeta de este dispositivo (#196)", len(pedidas), 1)
     c("usar aquí informa de que hubo cambios", cambiado, True)
     c("la pareja del catálogo está en el config", model.load_config().names,
       ["notas", "subida", "fotos"])
+    c("  con la carpeta elegida, relativa a la raíz",
+      next(p.local for p in model.load_config().pairs if p.name == "fotos"), "Mis fotos")
     c("y no se ha tocado el catálogo", subidos, [])
+
+with sandbox():
+    cfg = preparar()
+    antes = model.CONFIG_FILE.read_text(encoding="utf-8")
+    tk_pairs.elegir_carpeta = carpeta_elegida("")
+    tk.Toplevel.wait_window = elegir_y_pulsar("Usar aquí", "fotos")
+    c("cancelar el diálogo no activa nada", tk_pairs.open_dialog(raiz, cfg), False)
+    c("  ni toca sync_config.toml", model.CONFIG_FILE.read_text(encoding="utf-8"), antes)
+
+with sandbox():
+    import tempfile
+    cfg = preparar()
+    antes = model.CONFIG_FILE.read_text(encoding="utf-8")
+    errores.clear()
+    tk_pairs.elegir_carpeta = carpeta_elegida(tempfile.gettempdir())
+    tk.Toplevel.wait_window = elegir_y_pulsar("Usar aquí", "fotos")
+    c("una carpeta de fuera del dispositivo no activa nada",
+      tk_pairs.open_dialog(raiz, cfg), False)
+    c.contains("  y dice por qué", " ".join(errores), "no está dentro del dispositivo")
+    c("  sin tocar sync_config.toml", model.CONFIG_FILE.read_text(encoding="utf-8"), antes)
+tk_pairs.elegir_carpeta = ELEGIR_CARPETA
+
+# Una pareja sin usar no enseña carpeta, ni en la lista ni en el catálogo (#196)
+with sandbox():
+    cfg = preparar()
+    leido = {}
+
+    def leer_listas(self, *_a, **_k):
+        """Apunta lo que enseñan las filas de las dos listas y la ventana del catálogo."""
+        leido["dispositivo"] = {f[1]: f[2] for f in self.lista.leer()}
+        ver_catalogo(self)
+        leido["catalogo"] = {f[1]: f[2] for f in self.lista.leer()}
+
+        def mirar(ventana):
+            """Apunta si la ventana del catálogo tiene «Ruta local»."""
+            leido["campos"] = sorted(ventana.editor.entradas)
+        en_la_ventana(self, mirar, "notas")
+        ver_dispositivo(self)
+
+        def mirar_sin_usar(ventana):
+            """Apunta lo que dice la ventana de una pareja sin usar debajo de su carpeta."""
+            leido["pista"] = ventana.editor.pistas["local"].cget("text")
+        en_la_ventana(self, mirar_sin_usar, "fotos")
+
+        def mirar_usada(ventana):
+            """Apunta lo que dice la ventana de una pareja usada debajo de su carpeta."""
+            leido["pista_usada"] = ventana.editor.pistas["local"].cget("text")
+        en_la_ventana(self, mirar_usada, "notas")
+
+    tk.Toplevel.wait_window = leer_listas
+    tk_pairs.open_dialog(raiz, cfg)
+    c("la fila sin usar enseña solo el remoto", leido["dispositivo"]["fotos"], "nas:/R/fotos")
+    c("  y la usada, su carpeta y el remoto", leido["dispositivo"]["notas"],
+      "sync-data/notas ↔ nas:/R/notas")
+    c("la vista del catálogo enseña solo el remoto", leido["catalogo"]["notas"],
+      "nas:/R/notas")
+    c("la ventana del catálogo no tiene «Ruta local»", "local" in leido["campos"], False)
+    c.contains("la de una pareja sin usar dice que la carpeta se elige al usarla",
+               leido["pista"], "La eliges al usarla aquí.")
+    c("la de una usada no la compara con el catálogo", "Catálogo:" in leido["pista_usada"],
+      False)
 
 # Lo que se puede hacer depende de la pareja elegida
 with sandbox():
@@ -705,10 +784,10 @@ finally:
 
 
 def examinar_remoto_activo(explorable):
-    """El estado del botón «Examinar…» de la ruta remota del formulario.
+    """El estado de los botones «Examinar…» del formulario.
 
-    Hay dos con ese texto —la ruta local también tiene el suyo—, y el del disco
-    está siempre disponible: el que puede quedarse apagado es el segundo."""
+    Es el alta de una pareja en el catálogo, que no lleva «Ruta local» (#196):
+    solo queda el de la ruta remota, el que puede quedarse apagado."""
     estados = []
 
     def _wait(self, *_a, **_k):
@@ -726,9 +805,9 @@ def examinar_remoto_activo(explorable):
 
 
 c("con el catálogo recién leído se puede recorrer el remoto",
-  examinar_remoto_activo(True), ["normal", "normal"])
-c("desde la copia local, no; el disco de aquí sí",
-  sorted(examinar_remoto_activo(False)), ["disabled", "normal"])
+  examinar_remoto_activo(True), ["normal"])
+c("desde la copia local, no (y no hay carpeta local que examinar)",
+  examinar_remoto_activo(False), ["disabled"])
 
 
 # «Simular» lanza un dry-run, no una pasada

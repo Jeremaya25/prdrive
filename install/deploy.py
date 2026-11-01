@@ -1210,10 +1210,15 @@ def local_dirs(catalog: Catalog, selected: list[str],
 
     Son las elegidas en el asistente (`locales`, ver `device_config`): el
     catálogo no las lleva. Una pareja con `local = "."` no cuenta: es la raíz
-    del volumen, que ya existe; una sin carpeta, tampoco.
+    del volumen, que ya existe; una sin carpeta, tampoco. Ni la de un espejo de
+    subida (`Mode.borra_en_remoto`): creada vacía, su primera pasada vaciaría el
+    remoto, y sin ella la pasada aborta sin crearla (#151).
     """
     salida = []
     for nombre in selected:
+        modo = model.MODES.get((catalog.pair(nombre) or {}).get("mode", model.DEFAULT_MODE))
+        if modo is not None and modo.borra_en_remoto:
+            continue
         local = str((locales or {}).get(nombre) or "").strip()
         local = local.replace("\\", "/").strip("/")
         if local and local != ".":
