@@ -262,6 +262,18 @@ PANTALLA_REAL = uitk.pantalla_util
 ESCALA_REAL = float(raiz.tk.call("tk", "scaling"))
 
 
+def recursos(donde: str) -> None:
+    """TEMPORAL (CI de Windows, #201): cuántos objetos USER y GDI tiene el proceso, y ventanas vivas."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    h = ctypes.windll.kernel32.GetCurrentProcess()
+    usuario = ctypes.windll.user32.GetGuiResources(h, 1)
+    gdi = ctypes.windll.user32.GetGuiResources(h, 0)
+    print(f"  (recursos) {donde}: USER={usuario} GDI={gdi} hijos_raiz={len(raiz.winfo_children())}"
+          f" imagenes={len(raiz.tk.call('image', 'names'))}", flush=True)
+
+
 def pantalla(ancho, alto, escala):
     """Hace creer al código que la pantalla es esa, y con ese zoom."""
     uitk.pantalla_util = lambda win: (ancho, alto)
@@ -765,6 +777,7 @@ try:
     REAL_MOSTRAR, REAL_WAIT = tk_pairs.mostrar, tk.Toplevel.wait_window
     try:
         for nombre, ancho, alto, escala in PANTALLAS:
+            recursos(f"{nombre}: diálogos, al empezar")
             with sandbox():
                 model.CONFIG_FILE.write_text(config_file.dumps(BASE), encoding="utf-8")
                 cfg = model.parse_config(BASE)
@@ -890,6 +903,7 @@ try:
                 model.RCLONE_CONF.write_text(
                     f"[{SERVIDOR_REMOTE}]\ntype = sftp\nhost = h\n\n[otro]\ntype = webdav\n",
                     encoding="utf-8")
+                recursos(f"{nombre}: antes de «Servidor»")
                 previos_servidor = (rcd.arrancar, segundo_plano.lanzar, config_file.load_raw)
                 rcd.arrancar = RcdMedidas
                 segundo_plano.lanzar = segundo_plano.en_el_acto
@@ -970,6 +984,7 @@ try:
                     for _ in range(20):
                         dlg.update()
 
+                recursos(f"{nombre}: antes de la línea del corte")
                 for que, preparar in (("la línea del corte", con_corte),
                                       ("la línea del corte en otro servidor",
                                        con_corte_en_otro)):
