@@ -1206,6 +1206,21 @@ try:
                 c(f"{nombre}: «Configuración» de una unidad cifrada no queda recortada",
                   corta, False)
 
+                # ... y con todo a la vez: la de conectarla y la de los keyloggers
+                # (#199) con su ayuda más larga (un «Abrir PRDRIVE» de antes).
+                from ui import cifrado
+                seguro = cifrado.EscritorioSeguro(Path("X:/"), False, True)
+                watch.pedir_al_conectar = lambda: watch.AlConectar("bitlocker", True)
+                try:
+                    entra, corta = medir_dialogo(
+                        lambda: tk_configuracion.open_dialog(raiz, cfg, seguro=seguro),
+                        ancho, alto, escala, modulo=tk_configuracion)
+                finally:
+                    watch.pedir_al_conectar = previo_conectar
+                c(f"{nombre}: «Configuración» con la casilla de keyloggers cabe", entra, True)
+                c(f"{nombre}: «Configuración» con la casilla de keyloggers no queda recortada",
+                  corta, False)
+
                 # «Qué hace el agente»: los cuatro modos de una unidad, y el
                 # aviso de que el agente no está en marcha.
                 entra, corta = medir_dialogo(

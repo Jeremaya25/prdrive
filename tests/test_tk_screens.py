@@ -1223,6 +1223,84 @@ with sandbox():
     errores.clear()
 prefs.PREFS = REAL_PREFS
 
+# «Ajustes → Configuración» de un dispositivo en un contenedor VeraCrypt: «Proteger la
+# contraseña de VeraCrypt de los keyloggers», que se escribe en la marca de su vestíbulo
+# al «Guardar», y solo si ha cambiado (#199). La casilla viene de la lectura de la
+# ventana: aquí no se lee nada del dispositivo.
+from _harness import tmpdir  # noqa: E402
+
+from ui import cifrado  # noqa: E402
+
+CASILLA_SEGURO = "Proteger la contraseña de VeraCrypt de los keyloggers"
+guardado_seguro: list = []
+visto_seguro: dict = {}
+REAL_GUARDAR_SEGURO = cifrado.guardar_escritorio_seguro
+
+
+def seguro_y(boton, alternar: bool):
+    """Devuelve un `wait_window` que apunta la casilla de keyloggers, la alterna y pulsa."""
+    def _wait(self, *_a, **_k):
+        """Apunta la casilla y su ayuda, la alterna si se pide y pulsa el botón."""
+        pila, casillas, ayuda = [self], [], []
+        while pila:
+            w = pila.pop()
+            pila += list(w.winfo_children())
+            if isinstance(w, ttk.Checkbutton):
+                casillas.append((str(w.cget("text")), w))
+            elif isinstance(w, ttk.Label):
+                ayuda.append(str(w.cget("text")))
+        suyas = [w for texto, w in casillas if texto == CASILLA_SEGURO]
+        visto_seguro.update(casillas=len(suyas),
+                            marcada=bool(suyas and suyas[0].instate(["selected"])),
+                            ayuda=[t for t in ayuda if "administrador" in t])
+        if alternar and suyas:
+            suyas[0].invoke()
+        pulsar(boton)(self)
+        if self.winfo_exists():
+            pulsar("Cancelar")(self)
+    return _wait
+
+
+with sandbox():
+    cfg = preparar()
+    prefs.PREFS = model.STATE_DIR / "ui_prefs.json"
+    watch.pedir_al_conectar = lambda: None
+    cifrado.guardar_escritorio_seguro = (
+        lambda fisica, valor: guardado_seguro.append((fisica, valor)) or True)
+    try:
+        fis = tmpdir()
+        tk.Toplevel.wait_window = seguro_y("Cancelar", False)
+        tk_configuracion.open_dialog(raiz, cfg)
+        c("«Configuración» fuera de un contenedor: no hay casilla de keyloggers",
+          visto_seguro["casillas"], 0)
+        apagada = cifrado.EscritorioSeguro(fis, False, False)
+        c("  en uno: la casilla, desmarcada, con lo que cubre y lo que no",
+          (tk_configuracion.open_dialog(raiz, cfg, seguro=apagada), visto_seguro["casillas"],
+           visto_seguro["marcada"], len(visto_seguro["ayuda"])), (False, 1, False, 1))
+        tk.Toplevel.wait_window = seguro_y("Guardar", False)
+        c("  «Guardar» sin tocarla no escribe nada",
+          (tk_configuracion.open_dialog(raiz, cfg, seguro=apagada), guardado_seguro),
+          (False, []))
+        tk.Toplevel.wait_window = seguro_y("Guardar", True)
+        c("  marcada, «Guardar» la escribe en la marca de la raíz física",
+          (tk_configuracion.open_dialog(raiz, cfg, seguro=apagada), guardado_seguro),
+          (True, [(fis, True)]))
+        c("  y no escribe el intervalo, que no ha cambiado", prefs.PREFS.exists(), False)
+        guardado_seguro.clear()
+        encendida = cifrado.EscritorioSeguro(fis, True, True)
+        c("  encendida sale marcada, y desmarcarla la apaga",
+          (tk_configuracion.open_dialog(raiz, cfg, seguro=encendida), visto_seguro["marcada"],
+           guardado_seguro), (True, True, [(fis, False)]))
+        cifrado.guardar_escritorio_seguro = lambda fisica, valor: False
+        errores.clear()
+        c("  si no se puede escribir, se dice y no se cierra como guardado",
+          (tk_configuracion.open_dialog(raiz, cfg, seguro=apagada),
+           [e.startswith("No he podido") for e in errores]), (False, [True]))
+        errores.clear()
+    finally:
+        cifrado.guardar_escritorio_seguro = REAL_GUARDAR_SEGURO
+prefs.PREFS = REAL_PREFS
+
 # «Ajustes → Configuración»: las casillas de «Bloquearla …» que el agente dice poder
 # cumplir, una por evento de Windows, y una petición por casilla cambiada (#178).
 visto_solo: dict = {}

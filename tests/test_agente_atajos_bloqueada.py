@@ -215,12 +215,12 @@ pulsar(ag, atajos.CARPETA)
 c("  pasado un rato (se cerró sin abrirla), sí", F.ABIERTOS, [FIS, FIS])
 
 ag = cerrada(pedir_al_conectar=False)
-agente.abrir_contenedor = lambda raiz: False
+agente.abrir_contenedor = lambda raiz, nombre="": False
 F.AVISOS.clear()
 pulsar(ag, atajos.CARPETA)
 c("sin VeraCrypt con que abrirla: lo dice, y no queda nada pendiente",
   ([t for t, _x in F.AVISOS], ag.al_abrirse), (["Viaje: no puedo pedir su contraseña"], {}))
-agente.abrir_contenedor = lambda raiz: F.ABIERTOS.append(Path(raiz)) or True
+agente.abrir_contenedor = lambda raiz, nombre="": F.ABIERTOS.append(Path(raiz)) or True
 
 equipo.guardar_ajustes(equipo.Ajustes().con_unidad(
     equipo.Unidad(VU, equipo.NADA, "Viaje", codigo=agente.huella(DENTRO) or "")))

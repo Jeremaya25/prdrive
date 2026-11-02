@@ -707,16 +707,18 @@ def marcar(fisica: Path | str, ident: str) -> Path:
     """Escribe la marca de fuera, `.prdrive-vestibulo`, con el id de la raíz.
 
     Solo la marca: sin «Abrir/Expulsar PRDRIVE» ni guía, porque la raíz del
-    equipo la abre y la cierra el agente.
+    equipo la abre y la cierra el agente. Conserva lo que pedía la de antes
+    (`vest.escritorio_seguro()`, #199) si es de esta misma raíz.
 
     Raises:
         InstallError: Si no se puede escribir.
     """
     from . import vestibulo as escritor
     ruta = Path(fisica) / vest.MARCA
+    seguro = vest.escritorio_seguro(fisica) and vest.leer_id(fisica) == ident
     deploy.unhide(ruta)
     try:
-        ruta.write_text(escritor.marca(ident), encoding="utf-8", newline="\n")
+        ruta.write_text(escritor.marca(ident, seguro), encoding="utf-8", newline="\n")
     except OSError as e:
         raise InstallError(f"No he podido escribir {ruta}: {e}") from e
     deploy.hide(ruta)

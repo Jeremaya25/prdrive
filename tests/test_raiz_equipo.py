@@ -479,6 +479,14 @@ c("  una marca de otra raíz es roja",
   {k.etiqueta: k.ok for k in raiz_equipo.verificar(
       volumen, [], None, fisica / vest.CONTENEDOR)}["Marca de fuera"], False)
 raiz_equipo.marcar(fisica, ident_c)
+vest.poner_escritorio_seguro(fisica, True)
+raiz_equipo.marcar(fisica, ident_c)
+c("rehacer la marca de fuera conserva la protección contra keyloggers (#199)",
+  (vest.leer_id(fisica), vest.escritorio_seguro(fisica)), (ident_c, True))
+raiz_equipo.marcar(fisica, "e" * 32)
+c("  pero la marca de otra raíz (otro id) empieza apagada",
+  vest.escritorio_seguro(fisica), False)
+raiz_equipo.marcar(fisica, ident_c)
 c("restos: una raíz en claro en la carpeta se encuentra",
   raiz_equipo.restos(nueva)[0], ".prdrive/")
 # El aviso de esa raíz solo habla de la clave si hay un fichero de clave (K2,

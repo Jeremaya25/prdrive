@@ -182,6 +182,8 @@ with sandbox():
     c("`revisar` recibe la raíz ya buscada", vistos["revisar"], [{"fisica": fisica}])
     c("`pendientes` también", vistos["pendientes"], [{"fisica": fisica}])
     c("y `expulsion` también", vistos["expulsion"], [{"fisica": fisica}])
+    c("la raíz sin marca no tiene casilla de la protección contra keyloggers (#199)",
+      inst.escritorio_seguro, None)
     c("las notas y la línea del llavero se piden con la config", (vistos["notas"], vistos["linea"]),
       ([cfg], [cfg]))
     c("sin fallos, `fallos` va vacío", inst.fallos, {})
@@ -285,7 +287,7 @@ with sandbox():
     CAMPOS = ("estados", "notas", "hallazgos", "cuenta", "conflictos", "componentes",
               "componentes_texto", "componentes_actualizables", "fisica", "expulsion", "bloqueo",
               "del_equipo", "vigilante", "llavero", "remotes_servidor", "device_id",
-              "identidad")
+              "identidad", "escritorio_seguro")
     casos = [
         ("estados", {"estados": {}}, [(instantanea, "estados_de", revienta)], {}),
         ("notas", {"notas": {}}, [], {"notas": revienta}),
@@ -296,6 +298,8 @@ with sandbox():
          [(components, "pendientes", revienta)], {}),
         ("expulsion", {"expulsion": None}, [(cifrado, "expulsion", revienta)], {}),
         ("bloqueo", {"bloqueo": None}, [(cifrado, "bloqueo", revienta)], {}),
+        ("escritorio_seguro", {"escritorio_seguro": None},
+         [(cifrado, "escritorio_seguro", revienta)], {}),
         ("del_equipo", {"del_equipo": False}, [(model, "es_equipo", revienta)], {}),
         ("vigilante", {"vigilante": watch.Resumen("no_disponible")},
          [(watch, "resumen", revienta)], {}),

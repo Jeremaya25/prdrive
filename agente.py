@@ -430,12 +430,29 @@ def avisar(titulo: str, texto: str, urgente: bool = False) -> bool:
     return ok
 
 
-def abrir_contenedor(raiz: Path) -> bool:
+def sin_proteccion(nombre: str, motivo: str) -> None:
+    """Avisa de que la contraseña no irá protegida de los keyloggers, y por qué (#199).
+
+    Solo cuando la marca del contenedor lo pide y aquí no se puede
+    (`penwatch.proteccion()`): se abre igual, como siempre. Una vez por apertura,
+    que ya es una vez por conexión o por «Desbloquear».
+    """
+    avisar(f"{nombre}: contraseña sin protección" if nombre else "Contraseña sin protección",
+           f"VeraCrypt la pide en su ventana de siempre: {motivo}.")
+
+
+def abrir_contenedor(raiz: Path, nombre: str = "") -> bool:
     """Le pide a VeraCrypt que abra el contenedor de `raiz`.
 
-    Lo lanza desde la carpeta del agente (`penwatch.open_container`).
+    Lo lanza desde la carpeta del agente (`penwatch.open_container`). Si la marca
+    pide la contraseña protegida y aquí no se puede, lo dice (`sin_proteccion()`).
+
+    Args:
+        raiz: La raíz física de la unidad.
+        nombre: Cómo se llama la unidad, para el aviso.
     """
-    return penwatch.open_container(raiz, cwd=equipo.DIR)
+    return penwatch.open_container(raiz, cwd=equipo.DIR,
+                                   al_avisar=lambda motivo: sin_proteccion(nombre, motivo))
 
 
 def orden_explorar(ruta: Path) -> list[str] | None:
@@ -2666,7 +2683,7 @@ class Agente:
                        f"«Pedir la contraseña al conectarla» está apagado)")
                 continue
             diario(f"{nombre}: cifrada y cerrada en {raiz}")
-            if abrir_contenedor(raiz):
+            if abrir_contenedor(raiz, nombre=nombre):
                 self.vestibulos_pedidos[uid] = ahora
 
     def _cerrada_veracrypt(self, uid: str) -> Path | None:
@@ -2709,7 +2726,7 @@ class Agente:
         if ahora - self.vestibulos_pedidos.get(uid, -math.inf) < GRACIA_ABRIR:
             diario(f"{nombre}: VeraCrypt acaba de pedir su contraseña")
             return True
-        if not abrir_contenedor(raiz):
+        if not abrir_contenedor(raiz, nombre=nombre):
             diario(f"{nombre}: no hay VeraCrypt con el que abrir su contenedor en {raiz}")
             avisar(f"{nombre}: no puedo pedir su contraseña",
                    "Ábrela desde la propia unidad, con "
@@ -4351,6 +4368,9 @@ class Agente:
                                                  explorar=explorar)
         diario(f"{nombre}: desbloqueando" + (f" ({por})" if por else "")
                + f" en {unidad.ruta}; la contraseña la pide VeraCrypt")
+        motivo = penwatch.proteccion(Path(unidad.contenedor), cmd[0]).motivo
+        if motivo:
+            sin_proteccion(nombre, motivo)
         return True
 
     def _seguir_desbloqueos(self, ahora: float) -> None:

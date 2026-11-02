@@ -24,6 +24,7 @@ explica estaría dentro del contenedor. Lo que se comprueba:
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,6 +200,83 @@ c("  con el Python de CONSOLA del dispositivo, ARM64 antes que x64, como runsync
 c("  esperándolo, y devolviendo su código",
   (llave[-2], llave[-1]),
   ('"%PYL%" "%RAIZ%\\.prdrive\\runsync.py" --cerrar-llavero', "exit /b"))
+
+
+# La contraseña protegida de los keyloggers (#199): `:proteccion` mira la marca y la
+# versión del VeraCrypt elegido y deja `VC_SEGURO`, vacío salvo que se cumpla. Un
+# VeraCrypt anterior a la 1.20 no conoce `/secureDesktop` y no abriría nada.
+lineas = abrir.splitlines()
+prot = [ln for ln in bloque(abrir, "proteccion") if ln]
+orden = next(ln for ln in lineas if "/volume" in ln)
+c("abrir: la subrutina lleva la etiqueta que la ventana busca",
+  v.ETIQUETA_PROTECCION_BAT in lineas, True)
+c("abrir: la mira tras elegir VeraCrypt y antes de lanzarlo",
+  lineas.index("if not defined VC goto sin_veracrypt") < lineas.index("call :proteccion")
+  < lineas.index(orden), True)
+c("abrir: la orden lleva %VC_SEGURO% detrás del ejecutable",
+  '"%VC%" %VC_SEGURO% /volume' in orden, True)
+c("  que empieza vacío", prot[0], 'set "VC_SEGURO="')
+c("  y solo se mira si la marca lo pide",
+  f'findstr /b /l /c:"{v.ESCRITORIO_SEGURO}=1" "%~dp0{v.MARCA}" >nul 2>&1 || exit /b 0'
+  in prot, True)
+ps = next((ln for ln in prot if ln.startswith("powershell ")), "")
+c("  la versión la da PowerShell por el código de salida, la ruta por $env:VC "
+  "(una con paréntesis no rompe nada)", ("$env:VC" in ps, "%VC%" in ps, "exit " in ps),
+  (True, False, True))
+c("  /secureDesktop de la 1.20 en adelante, y no con el 9009 de «no hay PowerShell»",
+  'if %VC_VERSION% geq 1020 if %VC_VERSION% lss 9000 set "VC_SEGURO=/secureDesktop"'
+  in prot, True)
+c.contains("  si no, avisa: versión antigua", "\n".join(prot), "anterior a la 1.20")
+c.contains("  o desconocida", "\n".join(prot), "qué versión")
+c("  y vuelve sin parar nada", prot[-1], "exit /b 0")
+c("abrir: nunca /enableIME (en la 1.26.29 cae en /disableDeviceUpdate)",
+  "/enableIME" in abrir, False)
+c("abrir: con la protección, avisa de que la ventana sale en un escritorio aparte",
+  any(ln.startswith("if defined VC_SEGURO echo ") for ln in lineas), True)
+c("expulsar: no tiene nada que proteger", "VC_SEGURO" in expulsar, False)
+if IS_WIN:
+    prueba = tmpdir("prdrive-version-") / "version.bat"
+    prueba.write_text(f"@echo off\r\n{ps}\r\nexit /b %errorlevel%\r\n", encoding="utf-8")
+    res = subprocess.run(["cmd", "/d", "/c", str(prueba)], capture_output=True,
+                         env={**os.environ, "VC": sys.executable}, timeout=120)
+    c("Windows: la línea de PowerShell da mayor*1000+menor de un ejecutable (python.exe)",
+      res.returncode, sys.version_info.major * 1000 + sys.version_info.minor)
+
+    # Y la subrutina entera, tal cual sale del texto, junto a una marca OCULTA como
+    # la de verdad: sin la línea no hace nada; con ella y un ejecutable de la 1.20 o
+    # posterior (python.exe es la 3.x), /secureDesktop; con uno que no hay, el aviso.
+    from common import store
+    junto = prueba.parent
+    marca = junto / v.MARCA
+    sub = junto / "proteccion.bat"
+    sub.write_text("@echo off\r\ncall :proteccion\r\necho SEGURO=%VC_SEGURO%\r\n"
+                   "exit /b 0\r\n\r\n:proteccion\r\n" + "\r\n".join(prot) + "\r\n",
+                   encoding="utf-8")
+
+    def proteccion_da(texto_marca, exe):
+        """Devuelve la salida de `:proteccion` con esa marca y `VC=exe`."""
+        store.unhide(marca)
+        marca.write_text(texto_marca, encoding="utf-8", newline="\n")
+        store.hide(marca)
+        r = subprocess.run(["cmd", "/d", "/c", str(sub)], capture_output=True,
+                           env={**os.environ, "VC": exe}, timeout=120)
+        return (r.stdout + r.stderr).decode("utf-8", "replace")
+
+    salida = proteccion_da(f"id={ID}\n", sys.executable)
+    c("Windows: :proteccion sin la línea en la marca no pide nada ni avisa",
+      (salida.strip(), "versión" in salida), ("SEGURO=", False))
+    salida = proteccion_da(f"id={ID}\n{v.ESCRITORIO_SEGURO}=1\n", sys.executable)
+    c("  con ella (y la marca oculta) y un ejecutable de la 1.20 o posterior: /secureDesktop",
+      salida.strip().splitlines()[-1], "SEGURO=/secureDesktop")
+    salida = proteccion_da(f"id={ID}\n{v.ESCRITORIO_SEGURO}=1\n",
+                           str(junto / "no-esta.exe"))
+    c("  con un ejecutable cuya versión no se sabe: sin el interruptor",
+      salida.strip().splitlines()[-1], "SEGURO=")
+    # Por la parte sin acentos: cómo saca cmd los de después de `chcp` por una
+    # tubería no es lo que se prueba aquí.
+    c.contains("  y avisa de que no sabe la versión", salida, "de VeraCrypt es.")
+else:
+    print("  (saltado) la línea de PowerShell del .bat solo se ejecuta en Windows")
 
 
 def precedida(texto, orden, antes):
@@ -532,6 +610,55 @@ if IS_WIN:
 c.contains("y dice qué contenedor", (fisica / v.MARCA).read_text(encoding="utf-8"),
            f"contenedor={CONTAINER_NAME}")
 c("sin marca no hay id", v.leer_id(tmpdir()), None)
+
+# La protección contra keyloggers (#199) es una línea de la marca: la opción viaja
+# con la unidad y la cumple el .bat de un equipo sin prdrive. Apagada por defecto.
+c("la marca, sin pedir la protección", "escritorio_seguro" in vestibulo.marca(ID), False)
+c("y pidiéndola, con su línea", f"{v.ESCRITORIO_SEGURO}=1" in
+  vestibulo.marca(ID, True).splitlines(), True)
+c("recién escrita, apagada", v.escritorio_seguro(fisica), False)
+c("sin marca, apagada y sin protestar", v.escritorio_seguro(tmpdir()), False)
+antes = (fisica / v.MARCA).read_text(encoding="utf-8")
+v.poner_escritorio_seguro(fisica, True)
+c("encenderla la enciende", v.escritorio_seguro(fisica), True)
+c("  y la marca sigue siendo de esta unidad", v.leer_id(fisica), ID)
+v.poner_escritorio_seguro(fisica, True)
+c("  dos veces deja una sola línea",
+  (fisica / v.MARCA).read_text(encoding="utf-8").count(v.ESCRITORIO_SEGURO), 1)
+c("  sin temporal al lado", (fisica / (v.MARCA + ".tmp")).exists(), False)
+if IS_WIN:
+    atributos = ctypes.windll.kernel32.GetFileAttributesW(str(fisica / v.MARCA))
+    c("  y la marca sigue oculta", bool(atributos & 0x2), True)
+vestibulo.escribir(fisica, ID)
+c("rehacer el vestíbulo («Añadir plataformas…») no la apaga",
+  v.escritorio_seguro(fisica), True)
+v.poner_escritorio_seguro(fisica, False)
+c("apagarla la quita y deja el resto como estaba",
+  (v.escritorio_seguro(fisica), (fisica / v.MARCA).read_text(encoding="utf-8")),
+  (False, antes))
+crlf = tmpdir("prdrive-crlf-")
+(crlf / v.MARCA).write_bytes(f"id={ID}\r\nescritorio_seguro=1\r\n".encode())
+c("una marca con CRLF (editada a mano) también cuenta", v.escritorio_seguro(crlf), True)
+v.poner_escritorio_seguro(crlf, False)
+c("  y al apagarla conserva el id", (v.escritorio_seguro(crlf), v.leer_id(crlf)),
+  (False, ID))
+# En otra carpeta: la de arriba ya está oculta, y Windows no deja reescribirla con
+# `write_text` (es lo que `poner_escritorio_seguro()` evita destapándola).
+otro_valor = tmpdir("prdrive-valor-")
+(otro_valor / v.MARCA).write_text(f"id={ID}\nescritorio_seguro=sí\n", encoding="utf-8")
+c("solo «=1» la enciende", v.escritorio_seguro(otro_valor), False)
+for linea, encendida in (("escritorio_seguro=0", False), (" escritorio_seguro=1", False),
+                         ("escritorio_seguro=10", True)):
+    (otro_valor / v.MARCA).write_text(f"id={ID}\n{linea}\n", encoding="utf-8")
+    c(f"  «{linea}»: como findstr /b y grep '^', {'encendida' if encendida else 'apagada'}",
+      v.escritorio_seguro(otro_valor), encendida)
+nueva_unidad = tmpdir("prdrive-otra-unidad-")
+(nueva_unidad / CONTAINER_NAME).write_bytes(b"x")
+vestibulo.escribir(nueva_unidad, "otra")
+v.poner_escritorio_seguro(nueva_unidad, True)
+vestibulo.escribir(nueva_unidad, ID)
+c("una unidad nueva sobre la marca de otra (otro id) empieza apagada",
+  (v.leer_id(nueva_unidad), v.escritorio_seguro(nueva_unidad)), (ID, False))
 if not IS_WIN:
     c("los .sh se pueden ejecutar",
       os.access(fisica / v.ABRIR_SH, os.X_OK), True)
@@ -903,6 +1030,39 @@ desmontar "$1" >/dev/null
         c(caso("con VeraCrypt y además udisks2 y cryptsetup, VeraCrypt (U10)"),
           (leer(), estado()), ([f"veracrypt {HC}", "runsync "], (None, [])))
 
+        # -- la contraseña protegida de los keyloggers (#199) ------------------
+        # No cambia la orden: en una sesión Wayland, la ventana de VeraCrypt ya va
+        # aislada; en X11, o por una terminal, se avisa y se abre igual.
+        v.poner_escritorio_seguro(fisica, True)
+        try:
+            limpiar()
+            res = correr(v.ABRIR_SH, WAYLAND_DISPLAY="wayland-0")
+            c(caso("protegida, en Wayland: nada que avisar, abre como siempre"),
+              (res.returncode, res.stderr, leer()), (0, "", [f"veracrypt {HC}", "runsync "]))
+            limpiar()
+            res = correr(v.ABRIR_SH)
+            c(caso("protegida, en X11: abre como siempre"), leer(),
+              [f"veracrypt {HC}", "runsync "])
+            c.contains(caso("  y avisa de que no es Wayland"), res.stderr, "no es Wayland")
+            for gdk, avisa in (("x11", True), ("wayland,x11", False), ("*", False)):
+                limpiar()
+                res = correr(v.ABRIR_SH, WAYLAND_DISPLAY="wayland-0", GDK_BACKEND=gdk)
+                leer()
+                c(caso(f"  con GDK_BACKEND={gdk}: {'avisa' if avisa else 'nada'}"),
+                  f"GDK_BACKEND={gdk}" in res.stderr, avisa)
+            limpiar()
+            res = correr(v.ABRIR_SH, display=False)
+            leer()
+            c.contains(caso("  VeraCrypt por la terminal: dice que eso no lo cubre"),
+                       res.stderr, "esta terminal")
+            limpiar()
+            res = correr(v.ABRIR_SH, con=TODAS)
+            c(caso("  por cryptsetup: abre igual"), res.returncode, 0)
+            c.contains(caso("  y dice que la terminal no la cubre"), res.stderr, "esta terminal")
+            leer()
+        finally:
+            v.poner_escritorio_seguro(fisica, False)
+
         # -- udisks2 -------------------------------------------------------------
         limpiar(tcrypt=True)
         res = correr(v.ABRIR_SH, con=TODAS, FALSO_UDISKS_RECONOCE="1")
@@ -1087,5 +1247,37 @@ try:
       (v.sin_sitio_fuera(ID, v.BUSCAR), busquedas), (None, [ID]))
 finally:
     v.raiz_fisica, v.disperso, v.UMBRAL_LIBRE = real_raiz, real_disperso, real_umbral
+
+# 10. la casilla de «Ajustes → Configuración» (#199): qué enseña y qué escribe. Sin Tk.
+c("sin raíz física (no vive en un contenedor): no hay casilla",
+  cifrado.escritorio_seguro(None), None)
+c("  una raíz sin marca, tampoco", cifrado.escritorio_seguro(tmpdir()), None)
+unidad = tmpdir("prdrive-casilla-")
+(unidad / CONTAINER_NAME).write_bytes(b"x")
+vestibulo.escribir(unidad, ID)
+c("una unidad recién hecha: apagada, con su «Abrir PRDRIVE» al día",
+  cifrado.escritorio_seguro(unidad), cifrado.EscritorioSeguro(unidad, False, False))
+c("«Guardar» marcada la enciende en la marca",
+  (cifrado.guardar_escritorio_seguro(unidad, True), v.escritorio_seguro(unidad),
+   cifrado.escritorio_seguro(unidad).valor), (True, True, True))
+viejo = "\n".join(ln for ln in (unidad / v.ABRIR_BAT).read_text(encoding="utf-8").splitlines()
+                  if "proteccion" not in ln)
+(unidad / v.ABRIR_BAT).write_text(viejo, encoding="utf-8")
+c("un «Abrir PRDRIVE» de antes de la opción se nota", cifrado.escritorio_seguro(unidad),
+  cifrado.EscritorioSeguro(unidad, True, True))
+c.contains("  y la ayuda dice cómo ponerlo al día", cifrado.ayuda_escritorio_seguro(True),
+           "Añadir plataformas")
+c("  sin él, no lo dice", "Añadir plataformas" in cifrado.ayuda_escritorio_seguro(False),
+  False)
+for clave in ("administrador", "asistente", "Wayland", "ventanas detrás"):
+    c.contains(f"la ayuda dice lo que cubre y lo que no: «{clave}»",
+               cifrado.ayuda_escritorio_seguro(False), clave)
+carpeta = tmpdir("prdrive-casilla-equipo-")
+(carpeta / CONTAINER_NAME).write_bytes(b"x")
+(carpeta / v.MARCA).write_text(vestibulo.marca(ID), encoding="utf-8")
+c("la carpeta del contenedor de una raíz del equipo: sin .bat, nada que poner al día",
+  cifrado.escritorio_seguro(carpeta), cifrado.EscritorioSeguro(carpeta, False, False))
+c("si no se puede escribir, «Guardar» lo dice con False",
+  cifrado.guardar_escritorio_seguro(tmpdir() / "no-esta", True), False)
 
 raise SystemExit(c.report())

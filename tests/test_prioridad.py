@@ -31,14 +31,17 @@ def dormido() -> subprocess.Popen:
     return subprocess.Popen(DORMIR, creationflags=flags)
 
 
-def pid_muerto() -> int:
-    """Devuelve el pid de un proceso que ya ha acabado."""
-    p = subprocess.Popen([sys.executable, "-c", "pass"])
-    p.wait()
-    return p.pid
+PID_IMPOSIBLE = 2 ** 30
+"""Un pid que no puede tener ningún proceso, ni en Linux ni en Windows.
+
+En Linux `pid_max` no pasa de 2^22 (`PID_MAX_LIMIT`), y en Windows los pids
+salen de una tabla que no llega a tanto. No vale el de un proceso que acaba de
+terminar: Windows reutiliza los pids enseguida, y con otros tests lanzando
+procesos a la vez ese pid podía ser ya de otro (y `bajar()` decía que sí).
+"""
 
 
-c("un pid que no existe: no lanza y dice que no", prioridad.bajar(pid_muerto()), False)
+c("un pid que no existe: no lanza y dice que no", prioridad.bajar(PID_IMPOSIBLE), False)
 
 if os.name == "nt":
     import ctypes

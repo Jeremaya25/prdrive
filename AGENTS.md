@@ -88,7 +88,7 @@ On a provisioned device the code lives in `.prdrive/` at the volume root (hidden
 - `deploy.APP_SUBDIR`; `STRUCT_MARKER`/`CONTROL_FILE` (`.prdrive/PRDRIVE`) in `penwatch.py`, `install/device.py` and `fleet.control_file()`: three copies because `install/` does not travel to the device (`test_install_device`, `test_fleet`).
 - `RUNTIME_STAMP`/`RUNTIME_SUBDIR`; `penwatch.runtime_keys_for()` vs `install/platforms.candidates()` vs the fallback chain hard-coded in `runsync.bat` (`test_penwatch_runtime`).
 - `penwatch.UI_LOCK_REL`/`DAEMON_LOCK_REL`/`HOST` vs `model.ui_lock()`/`model.daemon_lock()` and `prefs.HOST` (`test_instancia_unica`). The two lock paths are functions in `model.py` because tests move `STATE_DIR` at runtime; `runsync` and `ui/repair.py` both go through them, so penwatch's copy is the only one.
-- `penwatch.CONTAINER_FILE`/`VESTIBULE_MARKER`/`OPEN_SCRIPT` and `TRAVELER_DIR`/`TRAVELER_EXE`/`TRAVELER_PORTABLE`/`TRAVELER_ARCHS` vs `common/vestibulo.py` (`TRAVELER*`), and `penwatch.UDISKS_TCRYPT_CONF` vs `install/vestibulo.TCRYPT_CONF` (`test_penwatch_vestibulo`). `install/` imports `common/vestibulo` directly, and `Abrir/Expulsar PRDRIVE.bat` are generated from the `TRAVELER*` names.
+- `penwatch.CONTAINER_FILE`/`VESTIBULE_MARKER`/`VESTIBULE_SECURE_KEY`/`OPEN_SCRIPT` and `TRAVELER_DIR`/`TRAVELER_EXE`/`TRAVELER_PORTABLE`/`TRAVELER_ARCHS` vs `common/vestibulo.py` (`TRAVELER*`), and `penwatch.UDISKS_TCRYPT_CONF` vs `install/vestibulo.TCRYPT_CONF` (`test_penwatch_vestibulo`). `install/` imports `common/vestibulo` directly, and `Abrir/Expulsar PRDRIVE.bat` are generated from the `TRAVELER*` names.
 
 ## Commands and verification
 

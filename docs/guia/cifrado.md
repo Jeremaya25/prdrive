@@ -120,6 +120,33 @@ unidad, el de la arquitectura del equipo: con otra versión instalada, el que
 viaja no puede cargar su driver. Un dispositivo VeraCrypt hecho con una versión
 anterior se los pone con **Añadir plataformas…**, sin reinstalar.
 
+**Proteger la contraseña de los keyloggers.** Con el contenedor abierto, en
+**Ajustes → Configuración**, la casilla **Proteger la contraseña de VeraCrypt de
+los keyloggers** (apagada de entrada). Lo que hace:
+
+- **En Windows**, VeraCrypt te pide la contraseña en un *escritorio aparte*: solo
+  ves su ventana, y los demás programas de tu sesión no ven lo que tecleas. Es el
+  «escritorio seguro» del propio VeraCrypt; prdrive se lo pide al abrirlo y no
+  toca su configuración. Necesita VeraCrypt 1.20 o posterior (el que viaja en la
+  unidad lo es).
+- **En Linux** no hay nada que pedir: en una sesión **Wayland** la ventana de
+  VeraCrypt ya va aislada del resto. En **X11** cualquier programa puede leer el
+  teclado, y ahí no hay forma de protegerla.
+
+Lo que **no** hace: frenar a un keylogger instalado con permisos de administrador
+o como driver; proteger la contraseña que escribes en el asistente al crear el
+contenedor, ni la que escribes en una terminal (Linux sin VeraCrypt). Y algo que
+VeraCrypt no avisa: si Windows no le deja crear ese escritorio, usa su ventana de
+siempre sin decir nada. **Si al escribir la contraseña ves tus ventanas detrás,
+no va protegida.**
+
+Cuando no se puede (un VeraCrypt anterior a la 1.20, una sesión X11), la unidad se
+abre como siempre y se avisa con el motivo: en la consola de **Abrir PRDRIVE**, en
+la terminal de `abrir-prdrive.sh` o con un aviso del agente. La opción la guarda
+la marca de fuera del contenedor, así que vale en cualquier equipo, también en uno
+sin prdrive. Un dispositivo hecho antes necesita **Añadir plataformas…** para que
+su **Abrir PRDRIVE** la cumpla; la casilla te lo dice.
+
 ## En Linux, sin VeraCrypt
 
 Un contenedor como los que crea prdrive (AES, SHA-512, PIM 0, sin volumen

@@ -329,6 +329,47 @@ de una instalación que dejaban versiones anteriores
 (`VeraCrypt\VeraCrypt.exe`).
 """
 
+_PROTECCION_BAT = (
+    f"{v.ETIQUETA_PROTECCION_BAT}\n"
+    'set "VC_SEGURO="\n'
+    f'findstr /b /l /c:"{v.ESCRITORIO_SEGURO}=1" "%~dp0{v.MARCA}" >nul 2>&1 || exit /b 0\n'
+    "echo Comprobando que este VeraCrypt tiene escritorio seguro...\n"
+    'powershell -NoProfile -NonInteractive -Command "$v = Get-Item -LiteralPath $env:VC '
+    '| ForEach-Object VersionInfo; exit $v.FileMajorPart * 1000 + $v.FileMinorPart" '
+    ">nul 2>&1\n"
+    'set "VC_VERSION=%errorlevel%"\n'
+    'if %VC_VERSION% geq 1020 if %VC_VERSION% lss 9000 set "VC_SEGURO=/secureDesktop"\n'
+    "if defined VC_SEGURO exit /b 0\n"
+    "chcp 65001 >nul\n"
+    "echo.\n"
+    "if %VC_VERSION% geq 1000 if %VC_VERSION% lss 1020 "
+    "echo   Este VeraCrypt es anterior a la 1.20 y no tiene escritorio seguro.\n"
+    "if %VC_VERSION% lss 1000 echo   No he podido saber qué versión de VeraCrypt es.\n"
+    "if %VC_VERSION% geq 9000 echo   No he podido saber qué versión de VeraCrypt es.\n"
+    "echo   La contraseña se pide en su ventana de siempre, sin la protección contra\n"
+    "echo   keyloggers que pide esta unidad.\n"
+    "echo.\n"
+    "exit /b 0\n"
+)
+"""Subrutina `:proteccion`: deja `VC_SEGURO=/secureDesktop` si hay que pasarlo (#199).
+
+Solo si la marca lleva `escritorio_seguro=1` y el VeraCrypt elegido (`VC`) es de
+la 1.20 o posterior: antes no conoce el interruptor y, con más argumentos, una
+opción desconocida es `AbortProcess ("COMMAND_LINE_ERROR")` (`Mount/Mount.c`):
+no abriría nada. La versión es la del recurso del ejecutable
+(`FileVersionInfo.FileMajorPart`/`FileMinorPart`, de `VS_FIXEDFILEINFO`), y
+PowerShell la devuelve como código de salida, `mayor*1000+menor`: así la línea
+no lleva ningún paréntesis (las reglas de estos `.bat`) y la ruta va por
+`$env:VC`, no dentro de la orden (una con «)» no rompe nada). 0 es «no se ha
+podido leer», 1 un error de PowerShell y 9009 que no hay PowerShell: por eso el
+tope de 9000. Si no se cumple, avisa y vuelve: se abre como siempre.
+
+Nunca `/enableIME`: en la 1.26.29 su `case` no tiene `break` y cae en
+`OptionDisableDeviceUpdate`. Si Windows no deja crear el escritorio seguro,
+VeraCrypt vuelve a su ventana normal sin decirlo (`SecureDesktopDialogBoxParam()`,
+`Common/Dlgcode.c`); desde aquí no se puede saber.
+"""
+
 _SIN_VERACRYPT_BAT = (
     ":sin_veracrypt\n"
     "chcp 65001 >nul\n"
@@ -363,6 +404,8 @@ def bat_abrir(device_id: str) -> str:
         "rem      instalado, el que viaja no puede cargar su driver). Del que viaja,\n"
         "rem      el de la arquitectura de este equipo (x64 o ARM64). La contrasena\n"
         "rem      la pide VeraCrypt en su ventana: nunca pasa por aqui.\n"
+        "rem      Si la marca de al lado lo pide y ese VeraCrypt es de la 1.20 o\n"
+        "rem      posterior, la pide en su escritorio seguro (/secureDesktop).\n"
         "rem   3. Busca la unidad por el id del dispositivo y lanza su runsync.bat.\n"
         "rem\n"
         "rem No se fia del codigo de salida: el VeraCrypt que viaja, sin permisos de\n"
@@ -388,6 +431,7 @@ def bat_abrir(device_id: str) -> str:
         'set "VIAJERO="\n'
         + _ELEGIR_BAT
         + _VC_ANTES_BAT +
+        "call :proteccion\n"
         f'set "ESPERA={ESPERA_INSTALADO}"\n'
         f'set "ESPERA_PENDIENTE={ESPERA_PENDIENTE}"\n'
         f'set "AVISO_PENDIENTE={AVISO_PENDIENTE}"\n'
@@ -395,7 +439,9 @@ def bat_abrir(device_id: str) -> str:
         f"echo Abriendo {v.ETIQUETA}: escribe la contrasena en la ventana de VeraCrypt.\n"
         "if defined VIAJERO if defined VC_ANTES "
         "echo Si la has cancelado, cierra esta ventana.\n"
-        f'start "" /wait "%VC%" /volume "%~dp0{v.CONTENEDOR}" /mountoption rm '
+        "if defined VC_SEGURO echo VeraCrypt la pide en un escritorio aparte, protegida "
+        "de los keyloggers: mientras la escribes no veras tus ventanas.\n"
+        f'start "" /wait "%VC%" %VC_SEGURO% /volume "%~dp0{v.CONTENEDOR}" /mountoption rm '
         f"/mountoption label={v.ETIQUETA} /history n /cache n /quit\n"
         'if errorlevel 1 if not defined VIAJERO set "ESPERA=1"\n'
         'set "INTENTOS=0"\n'
@@ -428,6 +474,8 @@ def bat_abrir(device_id: str) -> str:
         + _VC_PENDIENTE_BAT +
         "\n"
         + _AVISO_OCULTA_BAT +
+        "\n"
+        + _PROTECCION_BAT +
         "\n"
         + _SIN_VERACRYPT_BAT +
         "\n"
@@ -834,6 +882,39 @@ _SIN_TERMINAL_SH = (
 """Función `sin_terminal()` de los `.sh`: sin VeraCrypt hace falta una terminal."""
 
 
+_PROTECCION_SH = (
+    "proteccion() {\n"
+    f"    grep -q '^{v.ESCRITORIO_SEGURO}=1' \"$dir/{v.MARCA}\" 2>/dev/null || return 0\n"
+    '    if [ "$1" = terminal ]; then\n'
+    '        echo "prdrive: la contraseña se escribe en esta terminal, y la protección contra" >&2\n'
+    '        echo "  keyloggers que pide esta unidad solo cubre la ventana de VeraCrypt." >&2\n'
+    "        return 0\n"
+    "    fi\n"
+    '    if [ -z "$WAYLAND_DISPLAY" ]; then\n'
+    '        echo "prdrive: la sesión no es Wayland, y en X11 cualquier programa puede leer" >&2\n'
+    '        echo "  el teclado: la contraseña no va protegida contra keyloggers." >&2\n'
+    "        return 0\n"
+    "    fi\n"
+    '    case "${GDK_BACKEND:-wayland}" in\n'
+    "        wayland*|\\**) ;;\n"
+    '        *)  echo "prdrive: GDK_BACKEND=$GDK_BACKEND hace que VeraCrypt vaya por X11, donde" >&2\n'
+    '            echo "  cualquier programa puede leer el teclado: la contraseña no va" >&2\n'
+    '            echo "  protegida contra keyloggers." >&2 ;;\n'
+    "    esac\n"
+    "}\n"
+)
+"""Función `proteccion ventana|terminal` del `.sh`: avisa si no se cumple (#199).
+
+Solo si la marca lleva `escritorio_seguro=1`. En Linux no hay interruptor que
+pasar: en una sesión Wayland solo el compositor ve el teclado y la ventana de
+VeraCrypt (GTK del sistema, que prueba Wayland antes que X11) va aislada; en X11
+cualquier programa lo lee, y lo mismo con `GDK_BACKEND` forzando X11. Por una
+terminal (VeraCrypt en modo texto, udisks2, cryptsetup) la opción no cubre nada.
+Es lo mismo que decide `penwatch.proteccion()`; aquí solo se avisa, y se abre
+como siempre.
+"""
+
+
 def sh_abrir(device_id: str) -> str:
     """Devuelve `abrir-prdrive.sh`.
 
@@ -852,6 +933,8 @@ def sh_abrir(device_id: str) -> str:
         f"{PUNTO_CRYPTSETUP}/{mapeo(device_id)}.\n"
         "# Sin VeraCrypt hace falta una terminal: udisksctl y cryptsetup piden ahí la\n"
         "# contraseña. Nunca pasa por aquí: ni en una línea de órdenes ni por tubería.\n"
+        "# Si la marca pide protegerla de los keyloggers, avisa cuando no se puede: en\n"
+        "# X11, o por una terminal.\n"
         "#\n"
         "# Lo escribe el instalador de prdrive.\n"
         f'ID="{device_id}"\n'
@@ -872,12 +955,16 @@ def sh_abrir(device_id: str) -> str:
         "\n"
         + _SIN_TERMINAL_SH +
         "\n"
+        + _PROTECCION_SH +
+        "\n"
         'raiz="$(buscar)"\n'
         'if [ -z "$raiz" ]; then\n'
         "    if command -v veracrypt >/dev/null 2>&1; then\n"
         '        if [ -n "$DISPLAY$WAYLAND_DISPLAY" ]; then\n'
+        "            proteccion ventana\n"
         '            veracrypt "$contenedor"\n'
         "        else\n"
+        "            proteccion terminal\n"
         '            veracrypt --text "$contenedor"\n'
         "        fi\n"
         "    else\n"
@@ -896,6 +983,7 @@ def sh_abrir(device_id: str) -> str:
         '            sin_terminal "$via"\n'
         "            exit 1\n"
         "        fi\n"
+        "        proteccion terminal\n"
         "        r=2\n"
         '        if [ "$via" = udisks2 ]; then\n'
         "            abrir_udisks\n"
@@ -1130,8 +1218,15 @@ def leeme() -> str:
     )
 
 
-def marca(device_id: str) -> str:
-    """Devuelve el contenido de `.prdrive-vestibulo`."""
+def marca(device_id: str, escritorio_seguro: bool = False) -> str:
+    """Devuelve el contenido de `.prdrive-vestibulo`.
+
+    Args:
+        device_id: El id del dispositivo, el mismo que el de dentro.
+        escritorio_seguro: Si pide la contraseña protegida de los keyloggers
+            (`vestibulo.ESCRITORIO_SEGURO`, #199); quien reescribe la marca pasa
+            lo que tenía la de antes.
+    """
     return (
         f"# {v.ETIQUETA} — entrada de un dispositivo prdrive cifrado con VeraCrypt. "
         "NO LA BORRES.\n"
@@ -1140,13 +1235,16 @@ def marca(device_id: str) -> str:
         "# reconocerlo desde fuera, antes de abrirlo.\n"
         f"id={device_id}\n"
         f"contenedor={v.CONTENEDOR}\n"
+        + (f"{v.ESCRITORIO_SEGURO}=1\n" if escritorio_seguro else "")
     )
 
 
 def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
     """Deja el vestíbulo en la raíz física y devuelve lo escrito.
 
-    Sobrescribe lo que hubiera: es también la forma de ponerlo al día.
+    Sobrescribe lo que hubiera: es también la forma de ponerlo al día. La marca
+    conserva lo que pedía la de antes (`vestibulo.escritorio_seguro()`) si es de
+    esta misma unidad.
 
     Raises:
         InstallError: Si no hay id o no se puede escribir; sin esto el
@@ -1156,6 +1254,10 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         raise InstallError("Sin el id del dispositivo no se puede escribir su "
                            "entrada: nadie sabría reconocerlo desde fuera.")
     raiz = Path(raiz_fisica)
+    # La opción de la contraseña protegida vive en la marca: rehacer el vestíbulo
+    # de la misma unidad no la apaga; una unidad nueva sobre una marca vieja (otro
+    # id) empieza apagada, como cualquier otra.
+    seguro = v.escritorio_seguro(raiz) and v.leer_id(raiz) == device_id
     ficheros = (
         (v.ABRIR_BAT, bat_abrir(device_id), "\r\n", "utf-8"),
         (v.EXPULSAR_BAT, bat_expulsar(device_id), "\r\n", "utf-8"),
@@ -1163,7 +1265,7 @@ def escribir(raiz_fisica: Path | str, device_id: str) -> list[Path]:
         (v.EXPULSAR_SH, sh_expulsar(), "\n", "utf-8"),
         # Con BOM: el Bloc de notas de Windows antiguo no adivina UTF-8 sin él.
         (v.LEEME, leeme(), "\r\n", "utf-8-sig"),
-        (v.MARCA, marca(device_id), "\n", "utf-8"),
+        (v.MARCA, marca(device_id, seguro), "\n", "utf-8"),
     )
     from .deploy import hide, unhide
     # Al ponerlo al día la marca ya está oculta, y Windows no deja reescribir un

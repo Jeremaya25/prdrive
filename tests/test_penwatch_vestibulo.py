@@ -271,6 +271,130 @@ finally:
     os.environ.update(reales["environ"])
     raices.clear()
 
+# 3c. la contraseña protegida de los keyloggers (#199)
+#
+# La pide una línea de la marca, junto al contenedor. En Windows es
+# `/secureDesktop`, solo si el VeraCrypt elegido es de la 1.20 o posterior: antes
+# una opción que no conoce es `COMMAND_LINE_ERROR` y no abriría nada. En Linux la
+# orden no cambia y solo cuenta si la sesión es Wayland. La versión del ejecutable
+# se sustituye; lo que se lanza, también.
+c("la clave de penwatch es la de common", penwatch.VESTIBULE_SECURE_KEY,
+  vestibulo.ESCRITORIO_SEGURO)
+reales = {"IS_WIN": penwatch.IS_WIN, "environ": dict(os.environ),
+          "version": penwatch.veracrypt_version, "Popen": penwatch.subprocess.Popen,
+          "which": shutil.which}
+version = [(1, 26)]
+lanzado = []
+try:
+    penwatch.IS_WIN = True
+    penwatch.veracrypt_version = lambda exe: version[0]
+    seguro = vestibulo_en()
+    (seguro / "VeraCrypt").mkdir()
+    (seguro / "VeraCrypt" / "VeraCrypt.exe").write_bytes(b"MZ")
+    exe = str(seguro / "VeraCrypt" / "VeraCrypt.exe")
+    os.environ["ProgramFiles"] = str(tmpdir())
+    os.environ.pop("ProgramW6432", None)
+    hc = seguro / vestibulo.CONTENEDOR
+    sin = penwatch.veracrypt_command(seguro)
+    c("Windows, sin la línea: no se pide y la orden es la de siempre",
+      (penwatch.proteccion(hc, exe), "/secureDesktop" in sin),
+      (penwatch.Proteccion(False, ""), False))
+    vestibulo.poner_escritorio_seguro(seguro, True)
+    con = penwatch.veracrypt_command(seguro)
+    c("con ella y la 1.26: /secureDesktop detrás del ejecutable y nada más cambia",
+      (con[1], [con[0], *con[2:]]), ("/secureDesktop", sin))
+    c("  sin motivo que avisar", penwatch.proteccion(hc, exe), penwatch.Proteccion(True, ""))
+    c("  y nunca /enableIME (en la 1.26.29 cae en /disableDeviceUpdate)",
+      "/enableIME" in con, False)
+    version[0] = (1, 19)
+    p = penwatch.proteccion(hc, exe)
+    c("con la 1.19 (no lo conoce): pedida, pero la orden va sin el interruptor",
+      (p.pedida, "/secureDesktop" in penwatch.veracrypt_command(seguro)), (True, False))
+    c.contains("  y el motivo dice desde qué versión", p.motivo, "1.20")
+    version[0] = (2, 0)
+    c("una 2.0 también lo tiene", penwatch.proteccion(hc, exe), penwatch.Proteccion(True, ""))
+    version[0] = None
+    c.contains("sin poder leer la versión, tampoco, y lo dice",
+               penwatch.proteccion(hc, exe).motivo, "versión")
+    c("  ni la orden lo lleva", "/secureDesktop" in penwatch.veracrypt_command(seguro), False)
+    version[0] = (1, 26)
+
+    # La raíz cifrada del equipo lleva la misma marca junto a su .hc.
+    carpeta = tmpdir("prdrive-raiz-cifrada-")
+    raiz_hc = carpeta / vestibulo.CONTENEDOR
+    raiz_hc.write_bytes(b"x")
+    (carpeta / vestibulo.MARCA).write_text(escritor.marca(ID, True), encoding="utf-8")
+    orden = penwatch.veracrypt_command(None, raiz_hc, "P:", respaldo=exe)
+    c("la raíz del equipo: la marca de su carpeta pide lo mismo",
+      (orden[1], orden[orden.index("/volume") + 1]), ("/secureDesktop", str(raiz_hc)))
+    (carpeta / vestibulo.MARCA).write_text(escritor.marca(ID), encoding="utf-8")
+    c("  y sin la línea, la orden de siempre",
+      "/secureDesktop" in penwatch.veracrypt_command(None, raiz_hc, "P:", respaldo=exe),
+      False)
+    c("un contenedor sin marca al lado no la pide",
+      penwatch.proteccion(tmpdir() / vestibulo.CONTENEDOR, exe),
+      penwatch.Proteccion(False, ""))
+
+    # Linux: la orden no cambia; se mira la sesión.
+    penwatch.IS_WIN = False
+    os.environ["DISPLAY"] = ":99"
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    os.environ.pop("GDK_BACKEND", None)
+    c.contains("Linux en X11: avisa de que no es Wayland",
+               penwatch.proteccion(hc, "veracrypt").motivo, "Wayland")
+    os.environ["WAYLAND_DISPLAY"] = "wayland-0"
+    c("en Wayland, protegida", penwatch.proteccion(hc, "veracrypt"),
+      penwatch.Proteccion(True, ""))
+    version[0] = (1, 19)
+    c("  sin mirar la versión: eso es de Windows", penwatch.proteccion(hc, "veracrypt"),
+      penwatch.Proteccion(True, ""))
+    for gdk, avisa in (("x11", True), ("x11,wayland", True), ("Wayland", True),
+                       ("wayland", False), ("wayland,x11", False), ("*", False)):
+        os.environ["GDK_BACKEND"] = gdk
+        motivo = penwatch.proteccion(hc, "veracrypt").motivo
+        c(f"  GDK_BACKEND={gdk}: {'avisa' if avisa else 'protegida'}",
+          (bool(motivo), f"GDK_BACKEND={gdk}" in motivo), (avisa, avisa))
+    shutil.which = lambda nombre, mode=None, path=None: (
+        "/usr/bin/veracrypt" if nombre == "veracrypt" else None)
+    os.environ["GDK_BACKEND"] = "x11"
+    c("la orden de Linux es la de siempre, pedida o no",
+      penwatch.veracrypt_command(seguro), ["/usr/bin/veracrypt", str(hc)])
+
+    # Quien abre lo dice: el diario siempre y, si se le da, `al_avisar` (el agente).
+    penwatch.subprocess.Popen = lambda cmd, **kw: lanzado.append(cmd)
+    avisos: list[str] = []
+    penwatch.LOG_FILE.unlink(missing_ok=True)
+    c("con motivo, la abre igual", penwatch.open_container(seguro, al_avisar=avisos.append),
+      True)
+    c("  y avisa una vez, con el motivo",
+      (len(avisos), "GDK_BACKEND=x11" in "".join(avisos)), (1, True))
+    c.contains("  y lo apunta en el diario", diario(), "GDK_BACKEND=x11")
+    os.environ.pop("GDK_BACKEND")
+    avisos.clear()
+    penwatch.open_container(seguro, al_avisar=avisos.append)
+    c("sin motivo, nada que avisar", avisos, [])
+    c("  sin `al_avisar`, como siempre", penwatch.open_container(seguro), True)
+finally:
+    penwatch.IS_WIN = reales["IS_WIN"]
+    penwatch.veracrypt_version = reales["version"]
+    penwatch.subprocess.Popen = reales["Popen"]
+    shutil.which = reales["which"]
+    os.environ.clear()
+    os.environ.update(reales["environ"])
+
+# La versión se lee del recurso del ejecutable (VS_FIXEDFILEINFO): en Windows,
+# la de este mismo python.exe. Fuera de Windows no hay nada que leer.
+if os.name == "nt":
+    leida = penwatch.veracrypt_version(sys.executable)
+    c("Windows: lee la versión del recurso de un ejecutable (python.exe)",
+      leida is not None and leida[0] == sys.version_info.major, True)
+    c("  y de algo que no es un ejecutable, None",
+      penwatch.veracrypt_version(str(tmpdir() / "nada.exe")), None)
+else:
+    print("  (saltado) la versión de un .exe solo se lee en Windows")
+c("fuera de Windows, None", penwatch.veracrypt_version(sys.executable) is None,
+  os.name != "nt")
+
 # Abierto a mano por udisks2 o por cryptsetup, el vigilante lo encuentra y el
 # lanzamiento sigue como siempre: /run/media/$USER/… y /mnt/prdrive-<id> están
 # entre las raíces que mira, y cualquier montaje de /proc/self/mounts también.

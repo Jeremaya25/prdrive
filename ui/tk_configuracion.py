@@ -18,6 +18,11 @@ Solo dibuja. Tres cosas, y las dos últimas no siempre:
   apagar», solo las que el agente dice que puede cumplir en esta raíz cifrada
   (`watch.bloquear_solo`). También del agente: una petición por casilla
   cambiada (`watch.pedir_ajuste_unidad`).
+- «Proteger la contraseña de VeraCrypt de los keyloggers» (#199), solo si el
+  dispositivo vive en un contenedor VeraCrypt. No es del agente sino del
+  dispositivo: una línea de la marca de fuera del contenedor, que se escribe
+  aquí (`cifrado.guardar_escritorio_seguro`). Lo que enseña llega de la lectura
+  de la ventana (`seguro=`), que es quien lee el dispositivo.
 
 Nada se guarda hasta «Guardar», y lo que no ha cambiado no se escribe. Se
 dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
@@ -26,22 +31,29 @@ dibuja en `construir()`, que sirve igual para su diálogo y para el apartado de
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Callable
+
 from common import model
 from common.model import Config
 
-from . import prefs, theme, watch
+from . import cifrado, prefs, theme, watch
 from .tk import TITLE, Panel, cabecera, dialogo, mostrar, pie
 
+if TYPE_CHECKING:
+    from .cifrado import EscritorioSeguro
 
-def open_dialog(parent, config: Config) -> bool:
+
+def open_dialog(parent, config: Config, seguro: EscritorioSeguro | None = None) -> bool:
     """Abre «Configuración» y devuelve si se ha guardado algo.
 
     Args:
         parent: La ventana de la que cuelga.
         config: La configuración del dispositivo: de ella salen el intervalo
             actual y las parejas que `guardar_intervalo` conserva.
+        seguro: La casilla de la protección contra keyloggers, si el
+            dispositivo vive en un contenedor (`cifrado.escritorio_seguro()`).
     """
-    return dialogo(parent, "Configuración", lambda p: construir(p, config),
+    return dialogo(parent, "Configuración", lambda p: construir(p, config, seguro),
                    defecto=False, ensenar=mostrar)
 
 
@@ -75,8 +87,19 @@ def _casilla(marco, fila: int, texto: str, valor: bool, ayuda: str):
     return marcada
 
 
-def construir(panel: Panel, config: Config) -> None:
-    """Dibuja «Configuración» en `panel`; devuelve `True` por él si guarda algo."""
+def construir(panel: Panel, config: Config, seguro: EscritorioSeguro | None = None,
+              al_guardar_seguro: Callable[[EscritorioSeguro], None] | None = None) -> None:
+    """Dibuja «Configuración» en `panel`; devuelve `True` por él si guarda algo.
+
+    Args:
+        panel: Donde se dibuja.
+        config: La configuración del dispositivo.
+        seguro: La casilla de la protección contra keyloggers, o `None` para no
+            enseñarla.
+        al_guardar_seguro: Se llama con la casilla tal como queda tras guardarla:
+            «Ajustes» la vuelve a dibujar enseguida, antes de que la lectura de
+            la ventana lo sepa.
+    """
     import tkinter as tk
     from tkinter import messagebox, ttk
 
@@ -147,6 +170,13 @@ def construir(panel: Panel, config: Config) -> None:
             watch.ayuda_bloquear_solo() + f" Lo guarda el agente de este equipo, no {que}."
             if n == len(solos) - 1 else "")
         fila += 1
+    # La protección contra keyloggers: del dispositivo, no del agente (#199).
+    protegida = None
+    if seguro is not None:
+        protegida = _casilla(
+            marco, fila, "Proteger la contraseña de VeraCrypt de los keyloggers",
+            seguro.valor, cifrado.ayuda_escritorio_seguro(seguro.bat_anterior))
+        fila += 1
 
     def guardar() -> None:
         """Guarda lo que ha cambiado y cierra; si algo no se puede, lo dice y se queda."""
@@ -157,9 +187,10 @@ def construir(panel: Panel, config: Config) -> None:
             return
         cambia_conectar = conectada is not None and bool(conectada.get()) != conectar.valor
         cambian = {k: bool(v.get()) for k, v in bloquear.items() if bool(v.get()) != solos[k]}
+        cambia_seguro = protegida is not None and bool(protegida.get()) != seguro.valor
         algo = minutos != actual or (marcada is not None
                                      and bool(marcada.get()) != pedir) or cambia_conectar \
-            or bool(cambian)
+            or bool(cambian) or cambia_seguro
         if minutos != actual:
             if not prefs.guardar_intervalo(config, minutos):
                 messagebox.showerror(TITLE, f"No he podido guardar el intervalo en "
@@ -183,6 +214,15 @@ def construir(panel: Panel, config: Config) -> None:
                 messagebox.showerror(TITLE, "No he podido dejarle la petición al "
                                             "agente.", parent=dlg)
                 return
+            panel.devolver(True)
+        if cambia_seguro:
+            if not cifrado.guardar_escritorio_seguro(seguro.fisica, bool(protegida.get())):
+                messagebox.showerror(TITLE, "No he podido guardarlo en la marca de fuera "
+                                            f"del contenedor, en {seguro.fisica}.",
+                                     parent=dlg)
+                return
+            if al_guardar_seguro is not None:
+                al_guardar_seguro(seguro._replace(valor=bool(protegida.get())))
             panel.devolver(True)
         panel.terminar("Guardado." if algo else "")
 
