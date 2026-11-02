@@ -1419,6 +1419,19 @@ def _paso_actualizar(cuerpo, wiz) -> None:
     boton.grid(row=fila, column=0, sticky="w", pady=(theme.E4, 0))
 
 
+def confirmar_carpetas(parent, avisos: list[str]) -> bool:
+    """Pregunta si se guardan las parejas con estas carpetas, que tienen avisos (#196).
+
+    Los avisos son los de `deploy.avisos_carpetas()`: un espejo en una carpeta
+    que lo hace peligroso, o dos parejas sobre los mismos ficheros. Lo usan los
+    dos asistentes, el de una unidad y el de «En este equipo».
+    """
+    from tkinter import messagebox
+    return bool(messagebox.askokcancel(
+        TITLE, "Antes de guardar, mira estas carpetas:\n\n" + "\n\n".join(avisos)
+        + "\n\n¿Guardar así?", parent=parent, icon="warning"))
+
+
 def _confirmar_retroceso(wiz, mia: str, puesta: str) -> bool:
     """Pregunta si se quiere dejar el dispositivo en una versión anterior."""
     from tkinter import messagebox
@@ -1816,14 +1829,15 @@ def _paso_parejas(cuerpo, wiz) -> None:
     from .tk_pairs import ICONO_MODO
 
     cuerpo.columnconfigure(0, weight=1)
-    _texto(cuerpo, "Qué carpetas va a sincronizar ESTE dispositivo. El catálogo es "
-                   "global; el sync_config.toml que se escribe aquí es solo de este "
-                   "dispositivo.", 0)
+    _texto(cuerpo, "Qué carpetas va a sincronizar ESTE dispositivo, y en qué carpeta de "
+                   "él va cada una (relativa a su raíz). El catálogo es global; el "
+                   "sync_config.toml que se escribe aquí es solo de este dispositivo.", 0)
 
     marco = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E1))
     marco.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))
     marco.columnconfigure(2, weight=1)
     elegidas: dict[str, tk.BooleanVar] = {}
+    cajas: dict[str, tk.StringVar] = {}
     for i, pareja in enumerate(wiz.catalog.pairs):
         nombre = pareja.get("name", "")
         modo = pareja.get("mode", "bisync")
@@ -1831,33 +1845,54 @@ def _paso_parejas(cuerpo, wiz) -> None:
         var = tk.BooleanVar(value=nombre in wiz.state.selected or not wiz.state.selected)
         elegidas[nombre] = var
         if i:
-            separador_fila(marco, 2 * i - 1, 4)
+            separador_fila(marco, 2 * i - 1, 5)
         ttk.Checkbutton(marco, variable=var, text=nombre,
                         style="Card.Fuerte.TCheckbutton").grid(
             row=2 * i, column=0, sticky="w", pady=theme.E2)
         theme.chip(marco, modo, "Peligro." if espejo else "", ICONO_MODO.get(modo)).grid(
             row=2 * i, column=1, sticky="w", padx=(theme.E3, theme.E3))
-        ttk.Label(marco, style="Card.Mono.TLabel",
-                  text=f"{pareja.get('local', '?')}  ↔  {pareja.get('remote_path', '?')}"
-                  ).grid(row=2 * i, column=2, sticky="w")
+        # La carpeta de esta pareja en el dispositivo: el catálogo no la lleva
+        # (#196), así que se sugiere su nombre y se puede cambiar.
+        cajas[nombre] = tk.StringVar(
+            marco, value=(wiz.state.locales[nombre] if nombre in wiz.state.locales
+                          else deploy.carpeta_sugerida(pareja)))
+        ttk.Entry(marco, textvariable=cajas[nombre], style="Mono.TEntry", width=24).grid(
+            row=2 * i, column=2, sticky="ew")
+        ttk.Label(marco, style="Card.MonoPista.TLabel",
+                  text=f"↔  {pareja.get('remote_path', '?')}").grid(
+            row=2 * i, column=3, sticky="w", padx=(theme.E3, 0))
         if espejo:
             destino = "el remoto" if modo == "up-mirror" else "el dispositivo"
             ttk.Label(marco, style="Card.Peligro.TLabel", justify="left",
                       wraplength=theme.medida(260),
                       text=f"espejo: borra en {destino} lo que no esté en el origen"
-                      ).grid(row=2 * i, column=3, sticky="w", padx=(theme.E3, 0))
+                      ).grid(row=2 * i, column=4, sticky="w", padx=(theme.E3, 0))
 
     resultado = Resultado(cuerpo).grid(row=3, column=0, sticky="ew", pady=(theme.E3, 0))
 
     def guardar() -> None:
-        """Escribe el config con las parejas elegidas y crea sus carpetas."""
+        """Escribe el config con las parejas elegidas y crea sus carpetas.
+
+        Antes mira la carpeta de cada pareja marcada (`deploy.problema_carpeta()`)
+        y, si alguna falta o no vale, no escribe nada y dice cuáles.
+        """
         seleccion = [n for n, v in elegidas.items() if v.get()]
+        malas = {n: deploy.problema_carpeta(cajas[n].get()) for n in seleccion}
+        malas = {n: motivo for n, motivo in malas.items() if motivo}
+        if malas:
+            resultado.poner("Falta o no vale la carpeta de: " + ", ".join(malas) + "\n"
+                            + "\n".join(f"{n}: {m}" for n, m in malas.items()), "peligro")
+            return
+        locales = {n: cajas[n].get().strip() for n in seleccion}
+        avisos = deploy.avisos_carpetas(wiz.device_root, wiz.catalog, seleccion, locales)
+        if avisos and not confirmar_carpetas(wiz.root, avisos):
+            return
         try:
             destino = deploy.write_device_config(
                 wiz.device_root, wiz.catalog, seleccion,
                 endpoint=wiz.perfil.endpoint_catalog,
-                catalog_path=wiz.perfil.catalog_path)
-            creadas = deploy.make_local_dirs(wiz.device_root, wiz.catalog, seleccion)
+                catalog_path=wiz.perfil.catalog_path, locales=locales)
+            creadas = deploy.make_local_dirs(wiz.device_root, wiz.catalog, seleccion, locales)
         except InstallError as e:
             wiz.error(str(e))
             return
@@ -1865,6 +1900,7 @@ def _paso_parejas(cuerpo, wiz) -> None:
             wiz.error(f"{type(e).__name__}: {e}")
             return
         wiz.state.selected = seleccion
+        wiz.state.locales = locales
         wiz.state.config_written = True
         # Y queda apuntado en el registro de la flota, que es lo que permite ver
         # desde cualquier dispositivo cuántos hay y cómo están. Es escribir en
@@ -2074,7 +2110,7 @@ def _paso_inicializar(cuerpo, wiz) -> None:
                    "compara los dos lados y fija la referencia. No borra por "
                    "diferencias.", 0)
 
-    resumen = deploy.summary(wiz.catalog, wiz.state.selected)
+    resumen = deploy.summary(wiz.catalog, wiz.state.selected, wiz.state.locales)
     if resumen:
         tabla = ttk.Frame(cuerpo, style="Card.TFrame", padding=(theme.E4, theme.E1))
         tabla.grid(row=1, column=0, sticky="ew", pady=(theme.E4, 0))

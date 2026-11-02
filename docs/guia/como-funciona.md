@@ -26,7 +26,9 @@ Hay tres piezas, y entenderlas es entender el programa entero:
 
 **El catálogo** (`remote.toml`, en tu remoto) dice **qué parejas existen** y **cómo
 se conecta** un dispositivo. Es el mismo fichero para todos. El alta y la baja de
-una carpeta ocurren ahí primero.
+una carpeta ocurren ahí primero. De cada pareja dice solo el lado remoto: **en qué
+carpeta de cada dispositivo** va lo elige ese dispositivo al usarla (el instalador
+la pregunta, con el nombre de la pareja ya puesto, y «Usar aquí» también).
 
 En un remoto de antes el catálogo se llama `pairs.toml`, y sigue funcionando:
 prdrive busca primero `remote.toml` y, si no está, `pairs.toml`, en la misma

@@ -1053,6 +1053,51 @@ def write_device_remote(device_root: Path | str, profile: Profile) -> list[Path]
     return escrito
 
 
+def carpeta_sugerida(pareja: Mapping) -> str:
+    """Devuelve la carpeta con la que el asistente rellena la caja de una pareja.
+
+    Es su nombre: el catálogo ya no dice ninguna (#196), y el nombre de una
+    pareja ya es el de su carpeta en `state/`, así que vale como carpeta.
+    """
+    return str(pareja.get("name", ""))
+
+
+def problema_carpeta(local: str, equipo: bool = False) -> str | None:
+    """Dice por qué no vale la carpeta escrita en el asistente para una pareja.
+
+    Las reglas son las del modelo (`model.problema_local()`), las mismas que al
+    parsear el config que se va a escribir; aquí se dicen antes, por pareja.
+
+    Returns:
+        El motivo, o `None` si vale.
+    """
+    texto = str(local or "").strip()
+    if not texto:
+        return "Falta la carpeta."
+    return model.problema_local(texto, equipo)
+
+
+def avisos_carpetas(device_root: Path | str, catalog: Catalog, selected: list[str],
+                    locales: Mapping[str, str]) -> list[str]:
+    """Devuelve lo que hay que avisar de las carpetas elegidas antes de escribir el config.
+
+    Lo mismo que avisa «Usar aquí» (`common/carpetas.py`): un espejo en una
+    carpeta que lo hace peligroso y dos parejas sobre los mismos ficheros. Cada
+    choque se dice una vez: cada pareja se compara solo con las de antes.
+    """
+    # Aquí y no arriba: solo hace falta al guardar las parejas, y el asistente
+    # no lo carga al arrancar (`modulos.wizard` de tests/rendimiento).
+    from common import carpetas
+
+    salida: list[str] = []
+    for i, nombre in enumerate(selected):
+        modo = (catalog.pair(nombre) or {}).get("mode", model.DEFAULT_MODE)
+        antes = {n: str(locales.get(n) or "") for n in selected[:i]}
+        salida += carpetas.avisos(nombre, modo, str(locales.get(nombre) or ""),
+                                  Path(device_root), antes)
+    return salida
+
+
 def device_config(catalog: Catalog, selected: list[str],
                   catalog_path: str = "", locales: Mapping[str, str] | None = None,
                   equipo: bool = False) -> dict:
@@ -1068,15 +1113,15 @@ def device_config(catalog: Catalog, selected: list[str],
         catalog_path: Ruta del catálogo tecleada en el asistente; se escribe en
             los `[defaults]` para que el dispositivo instalado no vuelva a la
             de por defecto.
-        locales: `{nombre: local}` que cambia el `local` de alguna pareja solo
-            aquí: lo ofrece el paso «Parejas» de una raíz del equipo con la
-            carpeta personal, donde la ruta pensada para una unidad caería
-            suelta en `~`. La pareja queda como «modificada aquí».
+        locales: `{nombre: local}`, la carpeta de cada pareja elegida. El
+            catálogo no la lleva: la pregunta el paso de las parejas de los dos
+            asistentes (#196).
         equipo: Si la raíz es de un equipo; entonces valida con sus reglas
             (`model.problema_local_equipo`).
 
     Raises:
-        InstallError: Si falta una pareja del catálogo o no se eligió ninguna.
+        InstallError: Si falta una pareja del catálogo, no se eligió ninguna o
+            alguna elegida no tiene carpeta.
     """
     faltan = [n for n in selected if catalog.pair(n) is None]
     if faltan:
@@ -1086,6 +1131,9 @@ def device_config(catalog: Catalog, selected: list[str],
         raise InstallError(
             "Hay que elegir al menos una pareja: un sync_config.toml sin ninguna "
             "no lo acepta sync.py.")
+    sin_carpeta = [n for n in selected if not str((locales or {}).get(n) or "").strip()]
+    if sin_carpeta:
+        raise InstallError("Falta la carpeta de: " + ", ".join(sin_carpeta) + ".")
 
     raw: dict = {}
     if catalog.raw.get("defaults"):
@@ -1106,11 +1154,11 @@ def device_config(catalog: Catalog, selected: list[str],
         # para descargarlo: el dispositivo instalado volvía a la de por defecto
         # y la ventana de parejas buscaba el catálogo donde no estaba.
         raw.setdefault("defaults", {})["catalog_path"] = catalog_path
-    raw["pair"] = [dict(catalog.pair(n)) for n in selected]      # type: ignore[arg-type]
-    for pareja in raw["pair"]:
-        cambiado = (locales or {}).get(pareja.get("name", ""))
-        if cambiado is not None and cambiado != pareja.get("local"):
-            pareja["local"] = cambiado
+    raw["pair"] = []
+    for nombre in selected:
+        resto = {k: v for k, v in (catalog.pair(nombre) or {}).items()
+                 if k not in ("name", "local")}
+        raw["pair"].append({"name": nombre, "local": str(locales[nombre]).strip(), **resto})
     model.parse_config(raw, equipo=equipo)                       # red final
     return raw
 
@@ -1181,15 +1229,19 @@ def local_dirs(catalog: Catalog, selected: list[str],
                locales: Mapping[str, str] | None = None) -> list[Path]:
     """Devuelve las carpetas del dispositivo que necesitan las parejas elegidas.
 
-    Se tiene en cuenta el `local` cambiado aquí, si lo hay (ver
-    `device_config`). Una pareja con `local = "."` no cuenta: es la raíz del
-    volumen, que ya existe.
+    Son las elegidas en el asistente (`locales`, ver `device_config`): el
+    catálogo no las lleva. Una pareja con `local = "."` no cuenta: es la raíz
+    del volumen, que ya existe; una sin carpeta, tampoco. Ni la de un espejo de
+    subida (`Mode.borra_en_remoto`): creada vacía, su primera pasada vaciaría el
+    remoto, y sin ella la pasada aborta sin crearla (#151).
     """
     salida = []
     for nombre in selected:
-        pareja = catalog.pair(nombre) or {}
-        local = (locales or {}).get(nombre, pareja.get("local", ""))
-        local = str(local).replace("\\", "/").strip("/")
+        modo = model.MODES.get((catalog.pair(nombre) or {}).get("mode", model.DEFAULT_MODE))
+        if modo is not None and modo.borra_en_remoto:
+            continue
+        local = str((locales or {}).get(nombre) or "").strip()
+        local = local.replace("\\", "/").strip("/")
         if local and local != ".":
             salida.append(Path(local))
     return salida
@@ -1358,16 +1410,18 @@ def penwatch_install_command(device_root: Path | str, mode: str = "ui") -> list[
     return [*python, str(destino), "install", "--mode", mode]
 
 
-def summary(catalog: Catalog, selected: list[str]) -> list[tuple[str, str]]:
+def summary(catalog: Catalog, selected: list[str],
+            locales: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
     """Devuelve filas `(pareja, qué le va a pasar)`.
 
-    Para enseñar antes de tocar nada.
+    Para enseñar antes de tocar nada. La carpeta es la elegida (`locales`).
     """
     filas = []
     for nombre in selected:
         pareja: Mapping = catalog.pair(nombre) or {}
         modo = pareja.get("mode", model.DEFAULT_MODE)
-        destino = f"{pareja.get('local', '?')}  <->  {pareja.get('remote_path', '?')}"
+        local = (locales or {}).get(nombre) or "?"
+        destino = f"{local}  <->  {pareja.get('remote_path', '?')}"
         if modo == "bisync":
             nota = "se inicializará con --resync"
         elif modo in ("up-mirror", "down-mirror"):

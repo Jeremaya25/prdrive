@@ -5,8 +5,11 @@
 #   * `.prdrive/sync_config.toml` — el config de UN dispositivo: qué sincroniza
 #     él. Lo genera el instalador y lo mantiene la ventana de parejas.
 #   * `remote.toml` en tu remoto — el catálogo: qué parejas EXISTEN, para todos
-#     los dispositivos. Admite además la tabla [remote] de abajo. En un remoto
-#     de antes se llama `pairs.toml`: prdrive encuentra los dos, y «Ajustes» →
+#     los dispositivos. Admite además la tabla [remote] de abajo. Sus parejas NO
+#     llevan `local`: la carpeta la elige cada dispositivo al usarlas («Usar
+#     aquí», o el instalador), y un `local` que traiga un catálogo de antes se
+#     ignora y desaparece la próxima vez que se sube. En un remoto de antes se
+#     llama `pairs.toml`: prdrive encuentra los dos, y «Ajustes» →
 #     «Renombrar el catálogo…» lo pasa al nombre nuevo.
 #
 # Todo lo que hay aquí es un ejemplo: cambia el remote, las rutas y las parejas
@@ -130,7 +133,8 @@ interval_minutes = 30
 [[pair]]
 name = "docs"
 local = "sync-data/docs"      # relativa a la raíz del dispositivo: sin '..' ni 'C:',
-                              # y ni .prdrive (el programa) ni .keychain (el llavero)
+                              # y ni .prdrive (el programa) ni .keychain (el llavero).
+                              # SOLO en sync_config.toml: el catálogo no la lleva
 remote_path = "/datos/docs"   # ruta dentro del remote
 mode = "bisync"
 versions = true               # ver más abajo

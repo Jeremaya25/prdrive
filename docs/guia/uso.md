@@ -72,6 +72,19 @@ la cierras con cambios sin guardar se pregunta antes de perderlos. Una pareja
 que este dispositivo no usa se abre igual, pero no se deja cambiar: primero
 **Usar aquí**.
 
+**Usar aquí** te pregunta primero **en qué carpeta de este dispositivo** va la
+pareja, con el diálogo de carpetas del sistema: el catálogo no la dice, porque es
+cosa de cada dispositivo. Tiene que estar dentro del dispositivo; si cancelas, no
+cambia nada. Antes de confirmar se avisa si esa carpeta ya la usa otra pareja, o
+si es un espejo y la carpeta puede hacer daño: vacía en un espejo de subida (la
+primera pasada vaciaría el remoto) o con cosas en uno de bajada (borraría de ella
+lo que no esté en el remoto). La carpeta se cambia después desde la ventana de la
+pareja, como cualquier otro campo, y eso no la marca como «modificada aquí».
+
+Un dispositivo con una versión anterior de prdrive sigue sincronizando con un
+catálogo así, pero no puede editarlo ni usar parejas nuevas hasta que se
+actualiza (desde «Ajustes → Actualizaciones»).
+
 Cuatro cosas más:
 
 - **Simular.** Lanza un `--dry-run` de la pareja elegida en la ventana de salida:

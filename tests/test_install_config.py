@@ -60,6 +60,14 @@ mode = "up"
 """
 
 cat = remote.parse_catalog(CATALOGO)
+LOCALES = {"docs": "sync-data/docs", "prdrive": ".", "upload": "sync-data/upload"}
+"""La carpeta de cada pareja: ya no la dice el catálogo, la elige el asistente (#196)."""
+
+# Un catálogo de antes trae `local`: se lee sin él (#196)
+c("el instalador lee un catálogo antiguo sin local", [p for p in cat.pairs if "local" in p], [])
+SIN_LOCAL = "\n".join(x for x in CATALOGO.splitlines() if not x.startswith("local ="))
+c("y uno nuevo, sin local, se valida", remote.parse_catalog(SIN_LOCAL).names,
+  ["docs", "prdrive", "upload"])
 
 # lo que se ha leído
 c("las parejas del catálogo", cat.names, ["docs", "prdrive", "upload"])
@@ -83,7 +91,7 @@ except InstallError:
     c("un catálogo que no es TOML se rechaza", True, True)
 
 # el dict del dispositivo
-raw = deploy.device_config(cat, ["docs", "upload"])
+raw = deploy.device_config(cat, ["docs", "upload"], locales=LOCALES)
 c("solo las parejas elegidas", [p["name"] for p in raw["pair"]], ["docs", "upload"])
 c("los defaults viajan enteros", raw["defaults"]["flags"], {"transfers": 4, "checkers": 8})
 c("los defaults NO se duplican dentro de la pareja",
@@ -98,14 +106,14 @@ c("y el resto del [daemon] se respeta", raw["daemon"]["interval_minutes"], 15)
 
 sin_daemon = deploy.device_config(remote.parse_catalog(
     CATALOGO.replace('pairs = ["docs", "claves"]', 'pairs = ["claves"]')),
-    ["upload"])
+    ["upload"], locales=LOCALES)
 c("un [daemon] que se queda sin parejas válidas pierde la clave",
   "pairs" in sin_daemon.get("daemon", {}), False)
 
 # La ruta del catálogo se teclea en el instalador y tiene que quedar escrita: si
 # no, el dispositivo instalado vuelve a la de por defecto y busca el catálogo
 # donde no está.
-con_ruta = deploy.device_config(cat, ["docs"], "/otro-sitio/pairs.toml")
+con_ruta = deploy.device_config(cat, ["docs"], "/otro-sitio/pairs.toml", LOCALES)
 c("la ruta del catálogo se guarda en los defaults",
   con_ruta["defaults"]["catalog_path"], "/otro-sitio/pairs.toml")
 c("y sin ella los defaults no se inventan la clave",
@@ -126,8 +134,18 @@ c("así que su prefijo sale del remote y no del punto de montaje",
 # baselines de los dispositivos que ya lo usan.
 con_suyo = deploy.device_config(remote.parse_catalog(
     CATALOGO.replace('remote = "nas"', 'remote = "nas"\ndevice_remote = "pen"')),
-    ["docs"])
+    ["docs"], locales=LOCALES)
 c("y el del catálogo no se pisa", con_suyo["defaults"]["device_remote"], "pen")
+
+# la carpeta de cada pareja, la elegida (#196)
+c("cada pareja lleva la carpeta elegida",
+  deploy.device_config(cat, ["docs"], locales={"docs": "Docs"})["pair"][0]["local"], "Docs")
+try:
+    deploy.device_config(cat, ["docs", "upload"], locales={"docs": "Docs"})
+    c("sin carpeta se niega diciendo cuál", "no lanzó", "InstallError")
+except InstallError as e:
+    c.contains("sin carpeta se niega diciendo cuál", str(e), "upload")
+    c("  y no culpa a la que sí la tiene", "docs" in str(e).split(":")[-1], False)
 
 # lo que no se permite
 for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fantasma"])):
@@ -139,7 +157,8 @@ for etiqueta, seleccion in (("ninguna pareja", []), ("una que no existe", ["fant
 
 # el fichero escrito de verdad
 dispositivo = tmpdir() / "dispositivo"
-destino = deploy.write_device_config(dispositivo, cat, ["docs", "prdrive"])
+destino = deploy.write_device_config(dispositivo, cat, ["docs", "prdrive"],
+                                     locales=LOCALES)
 c("se escribe donde toca", destino, dispositivo / deploy.APP_SUBDIR / "sync_config.toml")
 
 texto = destino.read_text(encoding="utf-8")

@@ -132,6 +132,14 @@ class ConfigError(Exception):
 DEFAULT_REMOTE = "remote"
 DEFAULT_MODE = "bisync"
 
+LOCAL_DE_PLANTILLA = "carpeta"
+"""La carpeta con la que se valida una pareja del catálogo, que no lleva `local`.
+
+La carpeta la elige cada dispositivo al meter la pareja (#196), así que lo que
+dependa de ella (la raíz entera, lo que no cabe en un equipo) se comprueba
+entonces, al parsear su `sync_config.toml`. Aquí basta una carpeta corriente.
+"""
+
 DEFAULT_DEVICE_REMOTE = "disp"
 """Nombre del remote `combine` con el que el lado local deja de ser una ruta absoluta.
 
@@ -1953,7 +1961,21 @@ class Config:
         }
 
 
-def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
+def _con_local_de_plantilla(data: Mapping[str, Any]) -> dict:
+    """Devuelve el catálogo con `LOCAL_DE_PLANTILLA` como carpeta de cada pareja.
+
+    Lo que no es una lista de tablas se deja como está: lo rechaza quien toca.
+    """
+    salida = dict(data)
+    parejas = data.get("pair")
+    if isinstance(parejas, (list, tuple)):
+        salida["pair"] = [{**p, "local": LOCAL_DE_PLANTILLA} if isinstance(p, Mapping) else p
+                          for p in parejas]
+    return salida
+
+
+def parse_config(data: Mapping[str, Any], equipo: bool = False,
+                 catalogo: bool = False) -> Config:
     """Resuelve el config en bruto a un `Config`.
 
     Args:
@@ -1962,6 +1984,10 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             `local` tiene que ser una carpeta de dentro. No se deduce aquí
             porque el catálogo pasa por esta misma función y en él una pareja
             de la raíz entera es legítima para las unidades.
+        catalogo: Si es el catálogo del remoto, cuyas parejas no llevan
+            `local`: cada una se valida con `LOCAL_DE_PLANTILLA`, traiga el
+            que traiga. El `Config` que sale solo sirve para saber que el
+            catálogo vale: sus carpetas no son las de nadie.
 
     Cada pareja que sincroniza la raíz entera recibe `REGLA_SIN_PROGRAMA`
     delante de sus filtros. Con `[keychain]`, la pareja del llavero va la última
@@ -1975,6 +2001,8 @@ def parse_config(data: Mapping[str, Any], equipo: bool = False) -> Config:
             `[keychain]` no vale o choca con una pareja que se llama como la
             suya.
     """
+    if catalogo:
+        data = _con_local_de_plantilla(data)
     comprobar_seguridad(data, equipo)
     defaults = data.get("defaults", {})
     raw_pairs = data.get("pair", [])

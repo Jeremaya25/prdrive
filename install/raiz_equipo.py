@@ -295,14 +295,21 @@ class Local:
     avisos: tuple[str, ...] = ()
 
 
-def revisar_local(raiz: Path | str, local: str) -> Local:
+def revisar_local(raiz: Path | str, local: str, modo: str = model.DEFAULT_MODE) -> Local:
     """Devuelve dónde cae el `local` de una pareja en esta raíz y qué hay que decir.
 
     Lo que no vale lo decide `model.problema_local_equipo()`, el mismo que para
-    al parsear. Lo que se avisa: otro programa sincronizando lo mismo y una
-    carpeta que ya existe con cosas (el `--resync` las junta con lo del remoto,
-    que es lo que se quiere si ya estaban sincronizadas por otro camino).
+    al parsear. Lo que se avisa: otro programa sincronizando lo mismo, una
+    carpeta de bisync que ya existe con cosas (el `--resync` las junta con lo
+    del remoto, que es lo que se quiere si ya estaban sincronizadas por otro
+    camino) y lo que arriesga un espejo en ella (`carpetas.riesgo_espejo()`):
+    un espejo no se inicializa, y su primera pasada borra (#196).
+
+    Args:
+        modo: El de la pareja: decide lo que se dice de la carpeta.
     """
+    from common import carpetas      # como en `deploy.avisos_carpetas()`: no al arrancar
+
     normal = str(local).strip().replace("\\", "/").strip("/")
     problema = model.problema_local_equipo(normal or ".")
     if problema:
@@ -322,12 +329,12 @@ def revisar_local(raiz: Path | str, local: str) -> Local:
     cliente = otro_cliente(ruta)
     if cliente:
         avisos.append(f"ya la sincroniza {cliente}: se pisarían los borrados")
-    try:
-        if ruta.is_dir() and any(ruta.iterdir()):
-            avisos.append("ya existe y tiene cosas: la inicialización las junta con "
-                          "lo del remoto")
-    except OSError:
-        pass
+    if modo == "bisync" and carpetas.tiene_cosas(ruta):
+        avisos.append("ya existe y tiene cosas: la inicialización las junta con "
+                      "lo del remoto")
+    riesgo = carpetas.riesgo_espejo(modo, ruta)
+    if riesgo:
+        avisos.append(riesgo)
     return Local(normal, ruta, None, tuple(avisos))
 
 

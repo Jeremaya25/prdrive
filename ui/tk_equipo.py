@@ -735,9 +735,11 @@ def paso_parejas(cuerpo, wiz) -> None:
     """Pinta el paso de las parejas, con la ruta de cada una en ESTE equipo.
 
     Es como el paso «Parejas» de una unidad, más una cosa: la ruta resuelta de
-    cada pareja, que se puede cambiar solo en este equipo. Con la carpeta
-    personal, una ruta pensada para una unidad (`sync-data/…`) caería suelta en
-    `~`; y una carpeta que ya sincroniza otro programa se dice en ámbar.
+    cada pareja en este equipo. La carpeta la elige cada uno (el catálogo no la
+    lleva, #196): sale el nombre de la pareja y se cambia. Con la carpeta
+    personal ese nombre puede ser una carpeta que ya existe (`~/Documentos`), así
+    que lo que arriesga allí un espejo, y una carpeta que ya sincroniza otro
+    programa, se dicen en ámbar.
 
     Cada ruta se examina fuera del hilo de Tk (`lecturas_asistente.ExamenDiferido`), y teclear
     solo cambia la línea de debajo: «Siguiente» depende de haber guardado, y
@@ -752,8 +754,8 @@ def paso_parejas(cuerpo, wiz) -> None:
 
     donde = wiz.state.device_root
     _texto(cuerpo, (
-        "Qué carpetas sincroniza este equipo, y dónde cae cada una. La ruta se puede "
-        "cambiar aquí sin tocar el catálogo: la pareja queda como «modificada aquí»."
+        "Qué carpetas sincroniza este equipo, y dónde cae cada una. La carpeta es de "
+        "este equipo, no del catálogo: sale el nombre de la pareja, y se puede cambiar."
         ), 0)
 
     tabla = ttk.Frame(cuerpo)
@@ -762,9 +764,10 @@ def paso_parejas(cuerpo, wiz) -> None:
     elegidas: dict[str, tk.BooleanVar] = {}
     cajas: dict[str, tk.StringVar] = {}
     notas: dict[str, object] = {}
+    modos = {p.get("name", ""): p.get("mode", "bisync") for p in wiz.catalog.pairs}
 
-    def examinada(nombre: str, caja) -> lecturas_asistente.ExamenDiferido:
-        """Devuelve el examen diferido de la ruta de una pareja."""
+    def examinada(nombre: str, caja, modo: str) -> lecturas_asistente.ExamenDiferido:
+        """Devuelve el examen diferido de la ruta de una pareja, con lo que dice su modo."""
         ruta_lbl, nota_lbl = notas[nombre]
 
         def pendiente() -> None:
@@ -788,7 +791,7 @@ def paso_parejas(cuerpo, wiz) -> None:
             wiz.revisar()
 
         diferido = lecturas_asistente.ExamenDiferido(
-            caja, lambda: (caja.get(),), partial(raiz_equipo.revisar_local, donde),
+            caja, lambda: (caja.get(),), partial(raiz_equipo.revisar_local, donde, modo=modo),
             pendiente, llega, Sondeo(caja))
 
         def tecla(texto: str) -> None:
@@ -808,8 +811,10 @@ def paso_parejas(cuerpo, wiz) -> None:
         elegidas[nombre] = var
         ttk.Checkbutton(tabla, variable=var, text=f"{nombre}   [{modo}]").grid(
             row=fila, column=0, sticky="w", padx=(0, theme.E3))
+        # El catálogo no lleva carpeta (#196): se sugiere el nombre de la pareja.
         cajas[nombre] = tk.StringVar(
-            value=wiz.equipo_locales.get(nombre, str(pareja.get("local", ""))))
+            value=(wiz.equipo_locales[nombre] if nombre in wiz.equipo_locales
+                   else deploy.carpeta_sugerida(pareja)))
         caja = ttk.Entry(tabla, textvariable=cajas[nombre], style="Mono.TEntry",
                          width=30)
         caja.grid(row=fila, column=1, sticky="ew")
@@ -830,7 +835,7 @@ def paso_parejas(cuerpo, wiz) -> None:
                       text=f"espejo: borra en {destino}").grid(
                 row=fila + 1, column=0, sticky="nw")
         wiz.equipo_locales[nombre] = cajas[nombre].get()
-        examinada(nombre, caja).ya()
+        examinada(nombre, caja, modo).ya()
         fila += 2
 
     resultado = Resultado(cuerpo, ancho=ANCHO).grid(row=3, column=0, sticky="ew",
@@ -838,14 +843,19 @@ def paso_parejas(cuerpo, wiz) -> None:
 
     def guardar() -> None:
         """Escribe el config con las parejas elegidas y crea sus carpetas."""
+        from .tk_install import confirmar_carpetas
+
         seleccion = [n for n, v in elegidas.items() if v.get()]
         malas = [n for n in seleccion
-                 if raiz_equipo.revisar_local(donde, cajas[n].get()).error]
+                 if raiz_equipo.revisar_local(donde, cajas[n].get(), modos[n]).error]
         if malas:
             resultado.poner("Arregla antes la ruta de: " + ", ".join(malas), "peligro")
             return
-        locales = {n: raiz_equipo.revisar_local(donde, cajas[n].get()).local
+        locales = {n: raiz_equipo.revisar_local(donde, cajas[n].get(), modos[n]).local
                    for n in seleccion}
+        avisos = deploy.avisos_carpetas(donde, wiz.catalog, seleccion, locales)
+        if avisos and not confirmar_carpetas(wiz.root, avisos):
+            return
         try:
             destino = deploy.write_device_config(
                 donde, wiz.catalog, seleccion, endpoint=wiz.perfil.endpoint_catalog,
@@ -858,6 +868,7 @@ def paso_parejas(cuerpo, wiz) -> None:
             wiz.error(f"{type(e).__name__}: {e}")
             return
         wiz.state.selected = seleccion
+        wiz.state.locales = locales
         wiz.state.config_written = True
         # Un `rclone` de hasta 45 s contra el remoto: con su barra, y de mejor
         # esfuerzo (lo que no llegue se apunta al sincronizar).

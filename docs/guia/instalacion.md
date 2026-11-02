@@ -33,7 +33,7 @@ cumplirla.
 | 3 | **Conexión** | formulario de remoto nuevo, o importar uno de tu `rclone.conf`. Más la ruta del catálogo: la del fichero (`…/remote.toml`), no la de su carpeta |
 | 4 | **Comprobaciones** | consigue un rclone (lo busca, y si no lo descarga), conecta y lee el catálogo |
 | 5 | **Instalación** | completa o ligera, y para qué plataformas; copia el programa a `.prdrive/`, rclone y Python de cada plataforma, los lanzadores, el `rclone.conf` y la clave |
-| 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo, y apunta el dispositivo en el registro de la flota |
+| 6 | **Parejas** | cuáles de las del catálogo usa este dispositivo y en qué carpeta de él va cada una (sale el nombre de la pareja, y se cambia), y apunta el dispositivo en el registro de la flota |
 | 7 | **Inicialización** | el `--resync` que fija la referencia de las parejas bisync |
 | 8 | **Verificación** | que no falte nada de lo que hace falta para arrancar |
 

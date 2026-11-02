@@ -93,6 +93,39 @@ TIMEOUT = 90  # segundos; red de seguridad del subproceso, no el tiempo normal
 SIN_FECHA = "fecha desconocida"
 """El `stamp` de una copia local cuyos metadatos no dicen cuándo se leyó."""
 
+DEL_DISPOSITIVO = ("local",)
+"""Las claves de una pareja que son de cada dispositivo y no del catálogo (#196).
+
+El catálogo no las lleva (`sin_local()`) y `diff_keys()` no las compara: no
+puede haber diferencia en algo que el catálogo no tiene.
+"""
+
+
+def sin_local(raw: Mapping[str, Any]) -> dict:
+    """Devuelve una copia del catálogo sin la carpeta local de sus parejas.
+
+    La carpeta es de cada dispositivo, que la elige al meter la pareja (#196).
+    Se quita en la lectura (`_parse()`, `cached()` y el instalador) y al subir
+    (`push()`), y no en cada sitio que la usaría: son muchos, y basta con
+    olvidar uno para que vuelva. Un catálogo de antes se lee así sin error, y
+    su primera subida la borra. No toca lo que le dan.
+    """
+    salida = dict(raw)
+    parejas = raw.get("pair")
+    if isinstance(parejas, (list, tuple)):
+        salida["pair"] = [{k: v for k, v in p.items() if k not in DEL_DISPOSITIVO}
+                          if isinstance(p, Mapping) else p for p in parejas]
+    return salida
+
+
+def con_local(raw: Mapping[str, Any]) -> tuple[str, ...]:
+    """Devuelve los nombres de las parejas del catálogo que aún traen `local`."""
+    parejas = raw.get("pair")
+    if not isinstance(parejas, (list, tuple)):
+        return ()
+    return tuple(str(p.get("name")) for p in parejas
+                 if isinstance(p, Mapping) and "local" in p)
+
 
 def cache_toml() -> Path:
     """Devuelve la ruta de la última copia buena del catálogo (`state/catalog.toml`).
@@ -120,12 +153,15 @@ class Catalog(NamedTuple):
         stamp: Cuándo se leyó.
         endpoint: `remote:/ruta/al/remote.toml`: el fichero que se leyó de
             verdad, que con un remoto sin renombrar es su `pairs.toml`.
+        con_local: Las parejas cuyo texto aún traía `local` (`con_local()`):
+            `raw` ya no lo lleva, y la próxima subida lo quita del remoto.
     """
     raw: dict
     text: str
     source: str
     stamp: str
     endpoint: str
+    con_local: tuple[str, ...] = ()
 
     @property
     def editable(self) -> bool:
@@ -403,7 +439,10 @@ def run(args: list[str], apuntar: bool | None = None) -> subprocess.CompletedPro
 
 
 def _parse(text: str, where: str) -> dict:
-    """Parsea el TOML del catálogo.
+    """Parsea el TOML del catálogo, tal cual: con el `local` que traiga.
+
+    Quien construye el `Catalog` se lo quita (`sin_local()`) y apunta quién lo
+    traía (`con_local()`).
 
     Raises:
         ConfigError: Si no es TOML válido; `where` dice de qué catálogo.
@@ -636,8 +675,8 @@ def pull(raw_local: Mapping[str, Any] | None = None) -> Catalog:
     carpeta = explicar_carpeta(run, donde)
     if carpeta:
         raise ConfigError(carpeta)
-    cat = Catalog(raw=raw, text=texto, source="remote",
-                  stamp=store.stamp(), endpoint=donde)
+    cat = Catalog(raw=sin_local(raw), text=texto, source="remote",
+                  stamp=store.stamp(), endpoint=donde, con_local=con_local(raw))
     _write_cache(cat)
     if donde != candidatos(where)[0]:
         apuntar_duplicado(None)        # se ha leído pairs.toml porque no hay remote.toml
@@ -679,9 +718,10 @@ def cached() -> Catalog | None:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return None
-    return Catalog(raw=raw, text=text, source="cache",
+    return Catalog(raw=sin_local(raw), text=text, source="cache",
                    stamp=str(meta.get("pulled_at") or SIN_FECHA),
-                   endpoint=str(meta.get("endpoint") or endpoint()))
+                   endpoint=str(meta.get("endpoint") or endpoint()),
+                   con_local=con_local(raw))
 
 
 def load(raw_local: Mapping[str, Any] | None = None) -> tuple[Catalog | None, str | None]:
@@ -742,7 +782,10 @@ def push(new_raw: Mapping[str, Any], base_text: str,
     """
     rclone = ejecutar or run
     where = donde_pedido or endpoint(raw_local)
-    text = config_file.dumps_checked(new_raw, config_file.header_of(base_text))
+    # Toda subida deja el catálogo sin `local` (#196), venga de donde venga lo
+    # que se sube: el paso del llavero del instalador parte del texto a pelo.
+    text = config_file.dumps_checked(sin_local(new_raw), config_file.header_of(base_text),
+                                     catalogo=True)
 
     actual, donde = leer(rclone, where)
     if actual.returncode != 0:
@@ -787,7 +830,7 @@ def push(new_raw: Mapping[str, Any], base_text: str,
             f"«Reparación» explica qué hacer con el {FICHERO_ANTERIOR} que sobra.")
 
     if cachear:
-        _write_cache(Catalog(raw=dict(new_raw), text=text, source="remote",
+        _write_cache(Catalog(raw=sin_local(new_raw), text=text, source="remote",
                              stamp=store.stamp(), endpoint=donde))
     return hechos
 
@@ -989,7 +1032,9 @@ def find_pair(cat: Catalog | None, name: str) -> dict | None:
 def diff_keys(a: Mapping[str, Any] | None, b: Mapping[str, Any] | None) -> tuple[str, ...]:
     """Devuelve, ordenadas, las claves en que difieren dos parejas.
 
-    Vale también para dos `[defaults]`.
+    Vale también para dos `[defaults]`. Las claves de cada dispositivo
+    (`DEL_DISPOSITIVO`) no cuentan: el catálogo no las tiene.
     """
     uno, otro = dict(a or {}), dict(b or {})
-    return tuple(sorted(k for k in set(uno) | set(otro) if uno.get(k) != otro.get(k)))
+    return tuple(sorted(k for k in set(uno) | set(otro)
+                        if k not in DEL_DISPOSITIVO and uno.get(k) != otro.get(k)))
