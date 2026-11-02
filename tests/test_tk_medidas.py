@@ -905,6 +905,9 @@ try:
                 filas = abierta.lista.get_children()
                 c(f"{nombre}: el explorador del servidor cabe", entra, True)
                 c(f"{nombre}: el explorador del servidor no queda recortado", corta, False)
+                util_x, util_y = uitk.pantalla_util(abierta)
+                c(f"{nombre}: el mínimo del explorador del servidor (se puede encoger) cabe",
+                  (abierta.minsize()[0] <= util_x, abierta.minsize()[1] <= util_y), (True, True))
                 c(f"{nombre}: (y se ha medido con la lista llena, la marca, el candado y el aviso)",
                   (len(filas) > 12,
                    any("· pareja" in str(abierta.lista.item(i, "text")) for i in filas),
@@ -923,8 +926,8 @@ try:
 
                 def con_lote(dlg):
                     dlg.lista.selection_set(dlg.lista.get_children()[:3])
-                    dlg.update()                # el evento de la selección enciende «Bajar…»
-                    dlg.bajar.invoke()
+                    dlg.update()
+                    dlg.acciones["bajar"]()
 
                 for que, acaba_mal in (("el panel de un lote en marcha", False),
                                        ("el resultado de un lote que falla", True)):
@@ -957,12 +960,13 @@ try:
                 def con_corte(dlg):
                     dlg.lista.selection_set(dlg.lista.get_children()[:3])
                     dlg.update()
-                    dlg.barra.cortar.invoke()
+                    dlg.acciones["cortar"]()
 
                 def con_corte_en_otro(dlg):
                     con_corte(dlg)
-                    dlg.elegido.set("otro")
-                    dlg.elegido.event_generate("<<ComboboxSelected>>")
+                    # Sin crear el menú: este test deja vivas cientos de ventanas y
+                    # Windows tiene un tope de menús por proceso.
+                    dlg.direcciones.elegir_servidor("otro")
                     for _ in range(20):
                         dlg.update()
 

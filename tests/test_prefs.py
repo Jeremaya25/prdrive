@@ -538,4 +538,24 @@ with sandbox():
        lanza(lambda: prefs.recordar("alto", clave, 5)),
        prefs.ruta_ventana().exists()), (True, True, False))
 
+# El tamaño de «Servidor…» (su recuadro, ancho y alto): dos campos más del mismo fichero,
+# con la misma clave y la misma regla que los de la principal.
+with sandbox():
+    ruta = model.STATE_DIR / "ventana.json"
+    clave = prefs.clave_ancho("9.0", 4 / 3)
+    c("sin fichero no hay tamaño de «Servidor» recordado",
+      (prefs.recordado("servidor_ancho", clave), prefs.recordado("servidor_alto", clave)),
+      (None, None))
+    prefs.recordar("ancho", clave, 587)
+    c("recordar el tamaño de «Servidor» lo escribe y se lee",
+      (prefs.recordar("servidor_ancho", clave, 900), prefs.recordar("servidor_alto", clave, 640),
+       prefs.recordado("servidor_ancho", clave), prefs.recordado("servidor_alto", clave)),
+      (True, True, 900, 640))
+    c("  sin tocar lo de la principal", prefs.recordado("ancho", clave), 587)
+    for contenido in ('{"servidor_ancho": {"%s": "900"}}' % clave,
+                      '{"servidor_ancho": {"%s": true}}' % clave,
+                      '{"servidor_ancho": {"%s": 0}}' % clave):
+        ruta.write_text(contenido, encoding="utf-8")
+        c(f"  {contenido!r} no es un ancho", prefs.recordado("servidor_ancho", clave), None)
+
 sys.exit(c.report())

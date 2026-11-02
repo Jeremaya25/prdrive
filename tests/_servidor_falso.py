@@ -234,6 +234,44 @@ def pulsar(dlg, secuencia: str) -> None:
     dlg.update()
 
 
+def servidores(dlg) -> list[str]:
+    """Los servidores que ofrece el menú del icono del servidor, en su orden."""
+    menu = dlg.direcciones.menu_servidores()
+    return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+
+
+def elegir_servidor(dlg, nombre: str) -> None:
+    """Elige ese servidor en el menú del icono del servidor, como lo haría la persona."""
+    menu = dlg.direcciones.menu_servidores()
+    rotulos = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+    menu.invoke(rotulos.index(nombre))
+    dlg.update()
+
+
+def elegir_accion(dlg, clave: str) -> None:
+    """Hace la acción `clave` como una entrada encendida de un menú: apagada, no hace nada."""
+    if dlg.estados_menu()[clave]:
+        dlg.acciones[clave]()
+
+
+def entradas(menu) -> list[tuple[str, str]]:
+    """`(rótulo, estado)` de cada entrada de un menú, sin los separadores."""
+    return [(menu.entrycget(i, "label"), str(menu.entrycget(i, "state")))
+            for i in range(menu.index("end") + 1) if menu.type(i) == "command"]
+
+
+def indice(menu, rotulo: str) -> int:
+    """La posición en el menú de la entrada con ese rótulo."""
+    return next(i for i in range(menu.index("end") + 1)
+                if menu.type(i) == "command" and menu.entrycget(i, "label") == rotulo)
+
+
+def hueco(dlg) -> tuple[int, int]:
+    """Un punto de la lista sin fila debajo: abajo del todo (la carpeta no la llena)."""
+    dlg.update()
+    return 5, dlg.lista.winfo_height() - 3
+
+
 def bombear(condicion, tope: float = 5.0) -> bool:
     """Deja correr el bucle de Tk hasta que se cumpla la condición."""
     raiz = _ESCENA["raiz"]

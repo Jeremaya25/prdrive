@@ -1,4 +1,4 @@
-"""«Servidor…»: el diálogo de nombre, la barra de gestión y el menú contextual; solo dibujan.
+"""«Servidor…»: el diálogo de nombre, la botonera y los menús; solo dibujan.
 
 Qué nombre vale lo decide quien llama con `validar` (`ui/gestion.py`); qué se
 puede hacer con lo elegido, también: esta capa pone los textos y los botones y
@@ -17,13 +17,24 @@ ANCHO_MOTIVO = 420
 """Ancho (px del diseño) donde se corta el motivo bajo el campo."""
 ANCHO_CAMPO = 40
 """Ancho (en caracteres) del campo del nombre."""
-ROTULOS = {"nueva": "Nueva carpeta…", "renombrar": "Renombrar…", "cortar": "Cortar",
-           "pegar": "Pegar aquí", "borrar": "Borrar…"}
-"""El rótulo de cada acción, en la barra y en el menú."""
-ORDEN_BARRA = ("nueva", "renombrar", "cortar", "borrar")
-"""Las acciones de la barra, de izquierda a derecha («Pegar aquí» sale en la línea del corte)."""
-ORDEN_MENU = ("nueva", "renombrar", "cortar", "pegar", "borrar")
-"""Las entradas del menú contextual, de arriba abajo."""
+ROTULOS = {"subir": "Subir", "nueva": "Nueva carpeta…", "abrir": "Abrir", "bajar": "Bajar…",
+           "renombrar": "Renombrar…", "cortar": "Cortar", "pegar": "Pegar aquí",
+           "borrar": "Borrar…", "archivos": "Subir archivos…", "carpeta": "Subir carpeta…",
+           "releer": "Releer", "ubicacion": "Abrir la ubicación"}
+"""El rótulo de cada acción, en la botonera y en los menús del botón derecho."""
+ROTULOS_SUBIR = {"archivos": "Archivos…", "carpeta": "Carpeta…"}
+"""Las dos entradas del menú de «Subir»: el botón ya dice qué se hace."""
+ATAJOS = {"nueva": "Ctrl+Mayús+N", "renombrar": "F2", "cortar": "Ctrl+X", "pegar": "Ctrl+V",
+          "borrar": "Supr", "releer": "F5"}
+"""La tecla de cada acción, tal como se enseña en los menús (las ata la ventana)."""
+ORDEN_BARRA = ("subir", "nueva")
+"""Los botones de la botonera, de izquierda a derecha; lo demás va en el botón derecho."""
+ORDEN_MENU_FILA = ("abrir", "bajar", None, "renombrar", "cortar", "pegar", None, "borrar")
+"""El menú del botón derecho sobre una fila, de arriba abajo; `None` es un separador."""
+ORDEN_MENU_HUECO = ("nueva", "pegar", None, "archivos", "carpeta", None, "releer")
+"""El menú del botón derecho en el hueco de la lista, sin fila debajo."""
+ORDEN_MENU_RESULTADO = ("abrir", "ubicacion")
+"""El menú del botón derecho sobre un resultado de una búsqueda: abrirlo o ir a su carpeta."""
 
 
 def _fin_de_seleccion(inicial: str, es_archivo: bool) -> int:
@@ -142,19 +153,20 @@ def pedir_nombre(parent, titulo: str, inicial: str, validar: Callable[[str], str
 
 
 class Barra:
-    """La barra de gestión del explorador: «Nueva carpeta…», «Renombrar…», «Cortar» y «Borrar…».
+    """La botonera del explorador: «Subir» (despliega «Archivos…» y «Carpeta…») y «Nueva carpeta…».
 
     `marco` lo coloca con `grid` quien la usa. Los botones nacen apagados:
-    `encender()` los enciende según lo que se pueda hacer con lo elegido.
+    `encender()` los enciende según lo que se pueda hacer ahora. «Subir» lleva a la
+    derecha del texto la flecha que dice que despliega; el menú lo enseña la ventana
+    (`menu_subir`), que es quien sabe dónde.
 
     Args:
         padre: El contenedor del que cuelga `marco`.
-        acciones: Qué hace cada botón, por `"nueva"`, `"renombrar"`, `"cortar"` y
-            `"borrar"`; se consulta al pulsar.
+        acciones: Qué hace cada botón, por `"subir"` y `"nueva"`; se consulta al pulsar.
 
     Attributes:
         marco: El marco con los botones.
-        nueva, renombrar, cortar, borrar: Los botones.
+        subir, nueva: Los botones.
     """
 
     def __init__(self, padre, acciones: dict[str, Callable[[], None]]) -> None:
@@ -167,10 +179,13 @@ class Barra:
             boton.grid(row=0, column=columna, padx=(0 if columna == 0 else theme.E2, 0))
             boton.state(["disabled"])
             setattr(self, clave, boton)
+        theme.boton_icono(self.subir, "abajo")
+        if str(self.subir.cget("image")):
+            self.subir.configure(compound="right")      # la flecha va tras el texto
 
-    def encender(self, nueva: bool, renombrar: bool, cortar: bool, borrar: bool) -> None:
+    def encender(self, subir: bool, nueva: bool) -> None:
         """Enciende los botones que se dicen y apaga los demás."""
-        for clave, encendido in zip(ORDEN_BARRA, (nueva, renombrar, cortar, borrar)):
+        for clave, encendido in zip(ORDEN_BARRA, (subir, nueva)):
             getattr(self, clave).state(["!disabled" if encendido else "disabled"])
 
 
@@ -206,25 +221,55 @@ def linea_corte(padre, al_pegar: Callable[[], None], al_cancelar: Callable[[], N
     return marco
 
 
-def menu_contextual(padre, acciones: dict[str, Callable[[], None]],
-                    estados: dict[str, bool]) -> "tk.Menu":
-    """Devuelve el menú del botón derecho, listo para que la ventana lo enseñe.
+def menu_del_tema(padre):
+    """Devuelve un `tk.Menu` vacío, sin asa, con los colores y la letra del tema."""
+    import tkinter as tk
+
+    return tk.Menu(padre, tearoff=0, background=theme.SUPERFICIE, foreground=theme.TINTA,
+                   activebackground=theme.ACENTO_SUAVE, activeforeground=theme.TINTA,
+                   disabledforeground=theme.APAGADO, font=theme.fuente(), borderwidth=0)
+
+
+def menu_subir(padre, acciones: dict[str, Callable[[], None]],
+               estados: dict[str, bool]) -> "tk.Menu":
+    """Devuelve el menú de «Subir», listo para que la ventana lo enseñe bajo el botón.
 
     Args:
         padre: El widget del que cuelga.
-        acciones: Qué hace cada entrada, por `"nueva"`, `"renombrar"`, `"cortar"`,
-            `"pegar"` y `"borrar"`; se consulta al elegirla.
+        acciones: Qué hace cada entrada, por `"archivos"` y `"carpeta"`.
         estados: Si cada entrada está encendida, por las mismas claves.
 
     Returns:
-        Un `tk.Menu` sin asa con las cinco entradas; las de estado falso, apagadas.
+        Un `tk.Menu` sin asa con «Archivos…» y «Carpeta…»; las de estado falso, apagadas.
     """
-    import tkinter as tk
+    menu = menu_del_tema(padre)
+    for clave, rotulo in ROTULOS_SUBIR.items():
+        menu.add_command(label=rotulo, command=lambda k=clave: acciones[k](),
+                         state="normal" if estados.get(clave) else "disabled")
+    return menu
 
-    menu = tk.Menu(padre, tearoff=0, background=theme.SUPERFICIE, foreground=theme.TINTA,
-                   activebackground=theme.ACENTO_SUAVE, activeforeground=theme.TINTA,
-                   disabledforeground=theme.APAGADO, font=theme.fuente(), borderwidth=0)
-    for clave in ORDEN_MENU:
+
+def menu_contextual(padre, orden, acciones: dict[str, Callable[[], None]],
+                    estados: dict[str, bool]) -> "tk.Menu":
+    """Devuelve un menú del botón derecho, listo para que la ventana lo enseñe.
+
+    Args:
+        padre: El widget del que cuelga.
+        orden: Las entradas de arriba abajo (`ORDEN_MENU_FILA`, `ORDEN_MENU_HUECO`…);
+            `None` es un separador.
+        acciones: Qué hace cada entrada, por su clave; se consulta al elegirla.
+        estados: Si cada entrada está encendida; una clave que no está, apagada.
+
+    Returns:
+        Un `tk.Menu` sin asa con esas entradas y la tecla de cada una (`ATAJOS`) a la
+        derecha; las de estado falso, apagadas.
+    """
+    menu = menu_del_tema(padre)
+    for clave in orden:
+        if clave is None:
+            menu.add_separator()
+            continue
         menu.add_command(label=ROTULOS[clave], command=lambda k=clave: acciones[k](),
+                         accelerator=ATAJOS.get(clave, ""),
                          state="normal" if estados.get(clave) else "disabled")
     return menu

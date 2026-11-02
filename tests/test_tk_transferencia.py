@@ -32,7 +32,7 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import tk_transferencia  # noqa: E402
+from ui import theme, tk_transferencia  # noqa: E402
 from ui.transferencia import Progreso, Resultado  # noqa: E402
 
 errores: list[str] = []
@@ -76,6 +76,10 @@ try:
     marco = ttk.Frame(raiz)
     panel = tk_transferencia.Panel(marco)
     panel.marco.grid(row=0, column=0)
+    c("los textos del panel cortan a un ancho fijo: uno largo no ensancha la ventana",
+      {str(w.cget("wraplength")) for w in (panel.titulo, panel.archivo, panel.cuenta,
+                                           panel.ritmo)},
+      {str(theme.medida(tk_transferencia.ANCHO_RESULTADO))})
     c("el panel nace sin nada a la vista",
       [visible(w) for w in (panel.titulo, panel.barra, panel.cancelar, panel.resultado,
                             panel.reintentar)], [False] * 5)

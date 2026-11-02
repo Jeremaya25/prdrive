@@ -65,7 +65,7 @@ No es `ui_prefs.json` a propósito: el agente del equipo vigila la fecha de ese
 fichero y recarga su servicio con cualquier cambio (`agente.py`,
 `_cargar_servicio`), y el tamaño de una ventana no le dice nada al servicio.
 """
-CAMPOS_VENTANA = {"ancho": 1, "arriba": 0, "abajo": 0}
+CAMPOS_VENTANA = {"ancho": 1, "arriba": 0, "abajo": 0, "servidor_ancho": 1, "servidor_alto": 1}
 """Los campos de `ventana.json` y el menor valor que admite cada uno.
 
 `0` es un alto válido: la última vez no había nada encima ni debajo de la lista.
@@ -372,6 +372,9 @@ def recordado(campo: str, clave: str) -> int | None:
       la pausa), con su margen. La ventana lo reserva para que el pie no baje, ni
       la ventana crezca, al llegar la lectura. `0` es un valor, igual que en
       `"arriba"`.
+    - `"servidor_ancho"` y `"servidor_alto"`: el tamaño del recuadro de «Servidor…»
+      (el `Visor`, sin sus barras) cuando se cerró; la ventana abre a ese tamaño,
+      recortado a la pantalla.
 
     Nunca lanza por el fichero: uno que falta, está a medias o no dice un píxel
     válido para esa clave es `None`.

@@ -3,8 +3,8 @@
 
 Solo dibuja. Qué se enseña y cómo se navega lo decide `ui/servidor.py`, que no
 importa Tk; el `rclone rcd` que contesta es `common/rcd.py`. Aquí se conecta
-una cosa con la otra: la barra (remote, ruta, «↑», «Releer»), la línea del
-indicador, la lista y el pie.
+una cosa con la otra: la barra de direcciones, la línea del indicador, la
+botonera, la lista y el pie.
 
 La lista es una `ttk.Treeview`, como la de «Carpetas del remoto»
 (`tk_pairs.explorador_remoto`): solo pinta las filas que se ven, así que una
@@ -19,11 +19,30 @@ muere el hilo que lo lanzó); lo que espera a la red (`esperar()`, el
 `Sondeo` de la ventana. Cada petición nueva sustituye a la anterior: gana la
 última, y una respuesta tardía no pinta nada.
 
+Arriba va la barra de direcciones (`ui/tk_direcciones.py`): atrás, adelante,
+arriba, releer, las migas con el menú de servidores, la ruta escrita y la
+búsqueda. El historial (`servidor.Historial`) se apunta cuando un listado llega,
+nunca al pedirlo: una carpeta que falla no entra en él.
+
+Buscar recorre las carpetas de debajo de la que se ve, `CONCURRENCIA_BUSQUEDA`
+listados a la vez (`servidor.Busqueda` lleva la cuenta; cada listado, su
+`Sondeo`), y la lista pasa a resultados según llegan, con la columna «Carpeta».
+Lo leído se guarda: afinar el texto, o volver a los resultados con «Atrás», no
+vuelve al servidor. En los resultados solo se abre o se va a la ubicación; lo
+demás se hace en su carpeta.
+
 Cerrar la ventana para el `rcd` también en segundo plano, una sola vez, sin
 esperarlo.
 
-Bajar y subir (pieza 2): la lista admite varias filas y el pie lleva «Bajar…»,
-«Subir archivos…» y «Subir carpeta…». Un lote es UN `sync/copy` asíncrono del
+La ventana se puede agrandar y encoger. El contenido pide su mínimo (la lista,
+`FILAS_MINIMAS` filas) y estira: abre con el tamaño que tenía al cerrarse la
+última vez (`state/ventana.json`) o, la primera, con `FILAS_VISIBLES` filas, y ya
+enseñada no cambia de tamaño sola: el panel de un lote o la línea de lo cortado le
+quitan sitio a la lista, como en el Explorador.
+
+Bajar y subir (pieza 2): la lista admite varias filas; «Bajar…» va en el menú del
+botón derecho de una fila y «Subir» (archivos o carpeta) en la botonera. Un lote es
+UN `sync/copy` asíncrono del
 `rcd` (`common/rcd.py`); qué se copia, los avisos por pareja y los textos los
 decide `ui/transferencia.py` y el panel que lo enseña es `ui/tk_transferencia.py`.
 Aquí se encadena el flujo: elegir → avisar/bloquear → contar choques en segundo
@@ -34,9 +53,9 @@ la transferencia. Lanzar la copia, seguirla, cancelarla y cerrar con ella en
 marcha lo hace `ui/tk_lote.Seguimiento`; aquí solo se cuenta antes y se dice
 qué es un lote de copia. Copiar nunca borra.
 
-Gestionar (pieza 3): una barra entre la línea del indicador y la lista («Nueva
-carpeta…», «Renombrar…», «Cortar», «Borrar…»), las mismas acciones en el menú del
-botón derecho y con teclas. Cada acción es un `Trabajo` de órdenes de
+Gestionar (pieza 3): «Nueva carpeta…» en la botonera, entre la línea del indicador
+y la lista; «Renombrar…», «Cortar», «Pegar aquí» y «Borrar…» en el menú del botón
+derecho y con teclas. Cada acción es un `Trabajo` de órdenes de
 `rcd.lanzar_orden()` (una por elemento); qué se puede, qué se avisa y los textos
 los decide `ui/gestion.py`, y el diálogo del nombre y la barra son de
 `ui/tk_gestion.py`. El flujo: elegir → bloquear → mirar en segundo plano (los
@@ -63,24 +82,45 @@ from typing import NamedTuple
 from common import config_file, model, rcd
 from common.model import Config, ConfigError
 
-from . import (gestion, icons, remote_picker, segundo_plano, servidor, theme, tk_gestion, tk_lote,
-               tk_transferencia, transferencia)
-from .tk import Indicador, Sondeo, avisar, centrar, cuerpo_visible, modal, mostrar, preguntar
+from . import (gestion, icons, prefs, remote_picker, segundo_plano, servidor, theme,
+               tk_direcciones, tk_gestion, tk_lote, tk_transferencia, transferencia)
+from . import tk as uitk
+from .tk import Indicador, Sondeo, avisar, cuerpo_visible, modal, mostrar, preguntar
 
 COLUMNAS = [
-    ("Nombre", 260, True),
+    ("Nombre", 120, True),
     ("Tamaño", 90, False),
     ("Modificado", 140, False),
     ("Permisos", 90, False),
 ]
 """Las columnas de la lista: título, ancho en medidas del diseño y si estira.
 
-La primera es la del árbol (`#0`), la única de una `Treeview` que lleva icono.
+La primera es la del árbol (`#0`), la única de una `Treeview` que lleva icono. Los
+anchos son mínimos: lo que piden todas, también con `COLUMNA_CARPETA`, cabe en
+`ANCHO_MINIMO`, porque la ventana no crece sola; el nombre se queda lo que sobra.
 """
+COLUMNA_CARPETA = ("Carpeta", 120, True)
+"""La columna de los resultados de una búsqueda: dónde está cada uno (oculta si no se busca)."""
 FILAS_VISIBLES = 12
-"""Cuántas filas enseña la lista sin desplazarse."""
+"""Cuántas filas enseña la lista la primera vez que se abre la ventana."""
+FILAS_MINIMAS = 5
+"""Cuántas filas pide la lista: el mínimo; con la ventana más grande, estira."""
+ANCHO_INICIAL = 820
+"""Ancho (px del diseño) del recuadro la primera vez que se abre la ventana."""
+ANCHO_MINIMO = 640
+"""Ancho mínimo (px del diseño) del recuadro: caben la barra y las líneas que cortan."""
+ANCHO_INDICADOR = 440
+"""Ancho (px del diseño) donde corta la frase del indicador: cabe en `ANCHO_MINIMO`."""
 
 VACIA = "Esta carpeta está vacía."
+NADA = "Nada coincide con «{}»."
+"""Lo que dice la lista cuando una búsqueda acaba sin resultados; `{}` es el texto."""
+ESPERA_BUSQUEDA_MS = 400
+"""Milisegundos sin teclear tras los que se busca lo escrito (Intro busca en el acto)."""
+CONCURRENCIA_BUSQUEDA = 4
+"""Cuántos listados pide a la vez una búsqueda: como mucho, tantas conexiones SSH."""
+_CON_CARPETA = ("carpeta", "tamano", "modificado", "permisos")
+_SIN_CARPETA = ("tamano", "modificado", "permisos")
 CONECTANDO = "Conectando con el servidor…"
 SIN_REMOTES = "Este dispositivo no tiene conexión con ningún servidor."
 INTERVALO_PROGRESO_MS = 500
@@ -179,30 +219,52 @@ class FilaLista(NamedTuple):
     tono: str
 
 
-def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list[FilaLista]:
-    """Devuelve las filas de lo que enseña `nav`: icono, nombre, tamaño, fecha y permisos.
+def _fila(e: servidor.Entrada, ruta: str, remote: str, iid: str, config: Config,
+          sin_acceso: set[tuple[str, str]], mi_uid: int | None) -> FilaLista:
+    """Devuelve la fila de una entrada: icono, nombre, tamaño, fecha y permisos.
 
     Una carpeta que es la de una pareja lleva su nombre; una en la que no se
     puede entrar (ya falló, o sus permisos lo dicen con seguridad) lleva
     candado y va apagada.
+
+    Args:
+        e: La entrada.
+        ruta: Su ruta absoluta en el remote.
+        remote: Su remote.
+        iid: Cómo se llama su fila en la lista.
+        config: El config, por las parejas.
+        sin_acceso: Los `(remote, ruta)` en los que entrar ya falló por permiso.
+        mi_uid: El uid del usuario en el servidor, o `None`.
     """
-    filas = []
-    for e in nav.entradas:
-        nombre, tono, icono = e.nombre, "ok", "file"
-        if e.es_carpeta:
-            icono = "carpeta"
-            hija = nav.hijo(e.nombre)
-            pareja = servidor.marca(config, nav.remote, hija)
-            if pareja:
-                nombre += MARCA_PAREJA.format(pareja)
-            if (nav.remote, hija) in nav.sin_acceso or servidor.sin_acceso_previo(e, mi_uid):
-                icono, tono = "candado", "apagado"
-        filas.append(FilaLista(
-            e.nombre, nombre,
-            (servidor.tamano_legible(e.tamano), servidor.fecha_legible(e.fecha),
-             servidor.texto_permisos(e.modo)),
-            icono, tono))
-    return filas
+    nombre, tono, icono = e.nombre, "ok", "file"
+    if e.es_carpeta:
+        icono = "carpeta"
+        pareja = servidor.marca(config, remote, ruta)
+        if pareja:
+            nombre += MARCA_PAREJA.format(pareja)
+        if (remote, ruta) in sin_acceso or servidor.sin_acceso_previo(e, mi_uid):
+            icono, tono = "candado", "apagado"
+    return FilaLista(iid, nombre,
+                     (servidor.tamano_legible(e.tamano), servidor.fecha_legible(e.fecha),
+                      servidor.texto_permisos(e.modo)),
+                     icono, tono)
+
+
+def _filas(nav: servidor.Navegacion, config: Config, mi_uid: int | None) -> list[FilaLista]:
+    """Devuelve las filas de lo que enseña `nav` (la iid de cada una es su nombre)."""
+    return [_fila(e, nav.hijo(e.nombre), nav.remote, e.nombre, config, nav.sin_acceso, mi_uid)
+            for e in nav.entradas]
+
+
+def _listar(r: rcd.Rcd, remote: str, carpeta: str, permisos: bool) -> tuple[servidor.Entrada, ...]:
+    """Lista una carpeta para una búsqueda; corre en un hilo.
+
+    Raises:
+        rcd.ErrorRc: Si rclone contesta con un error (sin permiso, ya no está…).
+        rcd.RcdCaido: Si no se puede hablar con `rcd`.
+    """
+    return servidor.entradas_de(
+        r.llamar("operations/list", servidor.params_listado(remote, carpeta, permisos)))
 
 
 def _leer_conf() -> str:
@@ -406,6 +468,51 @@ def _resultado_de_mirar(estados: list[dict], _stats: dict, _cancelado: bool):
     return transferencia.Resultado(servidor.frase_error(error), "aviso", True)
 
 
+def _clave_tamano(dlg) -> str:
+    """La clave con la que se recuerda el tamaño: el sistema, el Tk y su escala."""
+    import tkinter as tk
+
+    return prefs.clave_ancho(str(tk.TkVersion), float(dlg.tk.call("tk", "scaling")))
+
+
+def _fijar_tamanos(dlg, lista) -> None:
+    """Pone a la ventana, aún sin enseñar, su tamaño de partida y su mínimo.
+
+    El contenido pide su mínimo (`FILAS_MINIMAS` filas y `ANCHO_MINIMO`). La
+    ventana abre con el tamaño recordado (`servidor_ancho`/`servidor_alto`) o,
+    sin él, con `ANCHO_INICIAL` y sitio para `FILAS_VISIBLES` filas: es lo que se
+    le da al `Visor` como tamaño de partida, y `encajar()` lo recorta a la
+    pantalla. El mínimo de la ventana es el del contenido más las franjas de
+    las barras del `Visor`, también recortado a la pantalla.
+    """
+    from tkinter import ttk
+
+    visor = dlg.visor
+    dlg.update_idletasks()
+    # La tarjeta de la lista pide lo que pide ahora (cinco filas y las columnas a su
+    # mínimo) y no lo que pida la lista después: una `Treeview` pide el ancho con el que
+    # se configuraron sus columnas, y una columna de más (la de los resultados) o un
+    # reparto ensancharían la ventana. Dentro, las columnas se ajustan a lo que haya.
+    tarjeta = lista.master
+    tarjeta.configure(width=tarjeta.winfo_reqwidth(), height=tarjeta.winfo_reqheight())
+    tarjeta.grid_propagate(False)
+    dlg.update_idletasks()
+    minimo = (max(visor.interior.winfo_reqwidth(), icons.px(dlg, ANCHO_MINIMO)),
+              visor.interior.winfo_reqheight())
+    fila = int(ttk.Style(lista).lookup("Treeview", "rowheight") or icons.px(dlg, 28))
+    clave = _clave_tamano(dlg)
+    recordado = (prefs.recordado("servidor_ancho", clave), prefs.recordado("servidor_alto", clave))
+    inicial = (max(minimo[0], icons.px(dlg, ANCHO_INICIAL)),
+               minimo[1] + (FILAS_VISIBLES - FILAS_MINIMAS) * fila)
+    if None not in recordado:
+        inicial = recordado
+    visor.base = (max(minimo[0], inicial[0]), max(minimo[1], inicial[1]))
+    franjas = (visor.marco.winfo_reqwidth() - visor.lienzo.winfo_reqwidth(),
+               visor.marco.winfo_reqheight() - visor.lienzo.winfo_reqheight())
+    util = uitk.pantalla_util(dlg)      # por el módulo: los tests la sustituyen ahí
+    dlg.minsize(min(minimo[0] + franjas[0], util[0]), min(minimo[1] + franjas[1], util[1]))
+
+
 def _mostrar_menu(menu, x: int, y: int) -> None:
     """Enseña el menú del botón derecho en esa posición de la pantalla.
 
@@ -441,47 +548,49 @@ def open_dialog(parent, config: Config) -> None:
                                   config.device_remote)
     catalogo = model.carpeta_del_catalogo(raw.get("defaults") or {})
     nav = servidor.Navegacion(next(iter(remotes), ""))
+    historial = servidor.Historial()
     estado: dict = {"rcd": None, "ultima": ("ruta", servidor.RAIZ), "abierto": False,
                     "cerrado": False, "puerto_reintentado": False, "entradas": {},
                     "n_lote": 0, "tras": None, "corte": None,
-                    "carpeta": os.path.expanduser("~")}
+                    "carpeta": os.path.expanduser("~"),
+                    "busqueda": None, "texto": "", "resultados": {}, "en_resultados": False,
+                    "espera": None, "siguiendo": False, "otra_vez": False}
     sondeos: dict[str, tuple[bool, int | None]] = {}
+    # Un `Sondeo` espera un encargo cada vez: uno por listado en vuelo de una búsqueda.
+    libres = [Sondeo(dlg) for _ in range(CONCURRENCIA_BUSQUEDA)]
 
-    marco = cuerpo_visible(dlg, padding=(theme.E5, theme.E4, theme.E5, theme.E4))
+    dlg.resizable(True, True)       # antes de enseñarla: la barra de título oscura (`ui.md`)
+    marco = cuerpo_visible(dlg, redimensionable=True,
+                           padding=(theme.E5, theme.E4, theme.E5, theme.E4))
     marco.columnconfigure(0, weight=1)
+    marco.rowconfigure(4, weight=1)     # la lista se queda lo que sobra
 
-    barra = ttk.Frame(marco)
-    barra.grid(row=0, column=0, sticky="ew")
-    barra.columnconfigure(1, weight=1)
-    elegido = ttk.Combobox(barra, state="readonly", values=list(remotes),
-                           width=max([len(n) for n in remotes] + [8]) + 2)
-    elegido.grid(row=0, column=0, sticky="w")
-    ruta = ttk.Label(barra, style="MonoPista.TLabel", wraplength=theme.medida(420),
-                     justify="left")
-    ruta.grid(row=0, column=1, sticky="w", padx=(theme.E3, theme.E3))
-    arriba = ttk.Button(barra, text="↑", style="Quiet.TButton", command=lambda: subir())
-    theme.boton_icono(arriba, "arriba", theme.ACENTO, theme.PAPEL)
-    arriba.configure(compound="image")      # el texto queda como nombre; sin icono, se ve él
-    arriba.grid(row=0, column=2, sticky="e")
-    releer = ttk.Button(barra, text="Releer", style="Quiet.TButton", command=lambda: repetir())
-    theme.boton_icono(releer, "reload", theme.ACENTO, theme.PAPEL)
-    releer.grid(row=0, column=3, sticky="e", padx=(theme.E2, 0))
+    # La barra de direcciones: qué hace cada cosa se resuelve al pulsar (abajo).
+    direcciones = tk_direcciones.Direcciones(marco, {
+        "atras": lambda: atras(), "adelante": lambda: adelante(), "arriba": lambda: subir(),
+        "releer": lambda: releer(), "ir": lambda r: ir_a(r),
+        "servidor": lambda n: cambiar_remote(n), "escrita": lambda t: ir_a_escrita(t),
+        "buscar": lambda t: al_escribir(t), "buscar_ya": lambda t: buscar_ahora(t, True),
+        "vaciar": lambda: vaciar_busqueda()},
+        mostrar_menu=lambda menu, x, y: _mostrar_menu(menu, x, y))
+    direcciones.marco.grid(row=0, column=0, sticky="ew")
+    direcciones.poner(nav.remote, nav.ruta, list(remotes))
+    dlg.direcciones = direcciones
 
     linea = ttk.Frame(marco)
     linea.grid(row=1, column=0, sticky="ew", pady=(theme.E3, 0))
     linea.columnconfigure(0, weight=1)
-    indicador = Indicador(linea, ancho=520)
+    indicador = Indicador(linea, ancho=ANCHO_INDICADOR)
     indicador.marco.grid(row=0, column=0, sticky="ew")
     accion = ttk.Button(linea, text="", style="Quiet.TButton")
     accion.grid(row=0, column=1, sticky="e", padx=(theme.E3, 0))
     accion.grid_remove()
     dlg.indicador, dlg.sondeo = indicador, sondeo      # como en «Dispositivos»: los tests los miran
 
-    # La barra de gestión, entre la línea del indicador y la lista. Qué hace cada botón
-    # se resuelve al pulsar (las acciones se definen más abajo).
-    barra_gestion = tk_gestion.Barra(marco, {
-        "nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
-        "cortar": lambda: cortar_elegidos(), "borrar": lambda: borrar_elegidos()})
+    # La botonera, entre la línea del indicador y la lista: «Subir» y «Nueva carpeta…».
+    # Qué hace cada botón se resuelve al pulsar (las acciones se definen más abajo).
+    barra_gestion = tk_gestion.Barra(marco, {"subir": lambda: desplegar_subir(),
+                                             "nueva": lambda: nueva_carpeta()})
     barra_gestion.marco.grid(row=2, column=0, sticky="w", pady=(theme.E3, 0))
     dlg.barra = barra_gestion
 
@@ -495,14 +604,18 @@ def open_dialog(parent, config: Config) -> None:
     # de una `Treeview` que lo admite; el árbol no se despliega: se entra.
     tarjeta = ttk.Frame(marco, style="Card.TFrame",
                         padding=(theme.E2, theme.E2, theme.E1, theme.E1))
-    tarjeta.grid(row=4, column=0, sticky="ew", pady=(theme.E4, 0))
+    tarjeta.grid(row=4, column=0, sticky="nsew", pady=(theme.E4, 0))
     tarjeta.columnconfigure(0, weight=1)
-    lista = ttk.Treeview(tarjeta, columns=("tamano", "modificado", "permisos"),
-                         show=("tree", "headings"), height=FILAS_VISIBLES, selectmode="extended")
+    tarjeta.rowconfigure(0, weight=1)
+    lista = ttk.Treeview(tarjeta, columns=_CON_CARPETA, displaycolumns=_SIN_CARPETA,
+                         show=("tree", "headings"), height=FILAS_MINIMAS, selectmode="extended")
     for columna, (titulo, ancho, estira) in zip(("#0", "tamano", "modificado", "permisos"),
                                                 COLUMNAS):
         lista.heading(columna, text=titulo, anchor="w")
         lista.column(columna, width=icons.px(lista, ancho), stretch=estira, anchor="w")
+    titulo, ancho, estira = COLUMNA_CARPETA
+    lista.heading("carpeta", text=titulo, anchor="w")
+    lista.column("carpeta", width=icons.px(lista, ancho), stretch=estira, anchor="w")
     lista.grid(row=0, column=0, sticky="nsew")
     theme.marcar_lista(lista)
     desplazar = ttk.Scrollbar(tarjeta, orient="vertical", command=lista.yview)
@@ -513,8 +626,7 @@ def open_dialog(parent, config: Config) -> None:
     vacia = ttk.Label(tarjeta, text=VACIA, style="Card.Pista.TLabel")
     iconos = {nombre: icons.get(lista, nombre, 16, theme.TINTA3, theme.SUPERFICIE)
               for nombre in ("carpeta", "file", "candado")}
-    dlg.lista, dlg.vacia, dlg.accion, dlg.elegido = lista, vacia, accion, elegido
-    dlg.ruta, dlg.arriba = ruta, arriba
+    dlg.lista, dlg.vacia, dlg.accion = lista, vacia, accion
 
     # El panel de un lote, entre la lista y el pie: sin lote no ocupa sitio.
     panel = tk_transferencia.Panel(marco)
@@ -523,24 +635,13 @@ def open_dialog(parent, config: Config) -> None:
     panel.al_cancelar = lambda: seg.cancelar()
     panel.al_reintentar = lambda: reintentar_lote()
 
+    # El pie, como la barra de estado del Explorador: solo la cuenta. Cierra la X.
     pie = ttk.Frame(marco)
     pie.grid(row=6, column=0, sticky="ew", pady=(theme.E3, 0))
     pie.columnconfigure(0, weight=1)
     cuenta = ttk.Label(pie, text="", style="MonoPista.TLabel")
     cuenta.grid(row=0, column=0, sticky="w")
-    boton_bajar = ttk.Button(pie, text="Bajar…", state="disabled",
-                             command=lambda: bajar_elegidos())
-    boton_bajar.grid(row=0, column=1, padx=(theme.E3, 0))
-    boton_archivos = ttk.Button(pie, text="Subir archivos…", state="disabled",
-                                command=lambda: subir_archivos())
-    boton_archivos.grid(row=0, column=2, padx=(theme.E2, 0))
-    boton_carpeta = ttk.Button(pie, text="Subir carpeta…", state="disabled",
-                               command=lambda: subir_carpeta())
-    boton_carpeta.grid(row=0, column=3, padx=(theme.E2, 0))
-    ttk.Button(pie, text="Cerrar", command=lambda: cerrar_ventana()).grid(
-        row=0, column=4, padx=(theme.E4, 0))
     dlg.cuenta, dlg.panel, dlg.sondeo_lote = cuenta, panel, sondeo_lote
-    dlg.bajar, dlg.subir_archivos, dlg.subir_carpeta = boton_bajar, boton_archivos, boton_carpeta
 
     # ------------------------------------------------------------- lo que se ve
     def decir(texto: str, tono: str = "Peligro.", boton: str | None = None) -> None:
@@ -550,23 +651,55 @@ def open_dialog(parent, config: Config) -> None:
             accion.grid_remove()
         else:
             accion.configure(text=boton, command={"Reconectar": reconectar,
-                                                  "Reintentar": reintentar}[boton])
+                                                  "Reintentar": reintentar,
+                                                  "Detener": detener_busqueda}[boton])
             accion.grid()
 
     def pintar_lista() -> None:
         """Pone en la lista las filas de lo que enseña `nav`."""
         mi_uid = sondeos.get(nav.remote, (False, None))[1]
         estado["entradas"] = {e.nombre: e for e in nav.entradas}
+        if estado["en_resultados"]:
+            estado["en_resultados"] = False
+            columnas(_SIN_CARPETA)
         lista.delete(*lista.get_children())
         for f in _filas(nav, config, mi_uid):
-            foto = iconos[f.icono]
-            lista.insert("", "end", iid=f.iid, text=f" {f.texto}", values=f.valores,
-                         tags=(f.tono,), **({"image": foto} if foto is not None else {}))
+            insertar(f, "")
         if estado["abierto"] and not nav.entradas:
+            vacia.configure(text=VACIA)
             vacia.place(relx=0.5, rely=0.5, anchor="center")
         else:
             vacia.place_forget()
         actualizar_botones()
+
+    def columnas(vistas: tuple[str, ...]) -> None:
+        """Enseña esas columnas y reparte entre las que estiran el ancho que ocupaban todas.
+
+        Una `Treeview` guarda como ancho de cada columna el que le dio al estirar, y lo
+        pide; y solo reparte lo que cambia al redimensionarse, no el hueco que queda.
+        Así que las que estiran vuelven a su mínimo y se llevan, a partes iguales, lo que
+        sobra del ancho que ya ocupaban las de antes: la lista no pide más que la ventana
+        y no queda hueco a la derecha.
+        """
+        antes = ("#0", *(str(c) for c in lista.tk.splitlist(lista.cget("displaycolumns"))))
+        ocupado = sum(int(lista.column(c, "width")) for c in antes)
+        lista.configure(displaycolumns=vistas)
+        ahora = ("#0", *vistas)
+        minimos = {"#0": COLUMNAS[0][1], "carpeta": COLUMNA_CARPETA[1]}
+        estiran = [c for c in ahora if c in minimos]
+        for c in estiran:
+            lista.column(c, width=icons.px(lista, minimos[c]))
+        sobra = ocupado - sum(int(lista.column(c, "width")) for c in ahora)
+        if sobra > 0:
+            for i, c in enumerate(estiran):
+                parte = sobra // len(estiran) + (sobra % len(estiran) if i == 0 else 0)
+                lista.column(c, width=int(lista.column(c, "width")) + parte)
+
+    def insertar(f: FilaLista, carpeta: str) -> None:
+        """Pone una fila al final de la lista; `carpeta` es su columna «Carpeta»."""
+        foto = iconos[f.icono]
+        lista.insert("", "end", iid=f.iid, text=f" {f.texto}", values=(carpeta, *f.valores),
+                     tags=(f.tono,), **({"image": foto} if foto is not None else {}))
 
     def retocar() -> None:
         """Cambia el icono y el tono de las filas que ya están, sin rehacer la lista.
@@ -581,47 +714,33 @@ def open_dialog(parent, config: Config) -> None:
                 lista.item(f.iid, tags=(f.tono,), **({"image": foto} if foto is not None else {}))
 
     def pintar() -> None:
-        """Repinta todo con la carpeta que acaba de llegar: lista, ruta, aviso de pareja y pie."""
+        """Repinta todo con la carpeta que acaba de llegar: lista, ruta, aviso de pareja y pie.
+
+        Llegar una carpeta acaba la búsqueda que hubiera: el campo se vacía.
+        """
         estado["abierto"] = True
+        salir_de_busqueda(repintar=False)
         pintar_lista()
-        ruta.configure(text=nav.ruta)
-        elegido.set(nav.remote)
+        direcciones.poner(nav.remote, nav.ruta, list(remotes))
+        decir_lugar()
+        tras, estado["tras"] = estado["tras"], None
+        if tras is not None and tras[:2] == (nav.remote, nav.ruta):
+            if tras[2]:
+                decir(tras[2], "Pista.")
+            elegir_nombres(tras[3])
+
+    def decir_lugar() -> None:
+        """La línea y el pie de la carpeta que se ve: el aviso si es de una pareja y la cuenta."""
         pareja = servidor.dentro_de(config, nav.remote, nav.ruta)
         if pareja:
             decir(f"Estás dentro de la pareja «{pareja}».", "Aviso.")
         else:
             decir("", "Pista.")
         cuenta.configure(text=servidor.cuantos(len(nav.entradas)))
-        tras, estado["tras"] = estado["tras"], None
-        if tras is not None and tras[:2] == (nav.remote, nav.ruta):
-            if tras[2]:
-                decir(tras[2], "Pista.")
-            elegir_nombres(tras[3])
-        reajustar()
-
-    def reajustar() -> None:
-        """Agranda la ventana si lo que se ve ahora pide más (nunca mengua) y la recoloca.
-
-        La ventana nace con la lista vacía: al llegar el listado, o al salir el
-        panel de un lote, puede crecer.
-        """
-        if dlg.winfo_ismapped() and dlg.visor.crecer(dlg):
-            centrar(dlg, parent)
 
     def libre() -> bool:
         """Si hay conexión con `rclone` y ningún lote ni cambio en marcha."""
         return estado["rcd"] is not None and seg.activo is None
-
-    def estados_gestion() -> dict[str, bool]:
-        """Qué acciones de gestión se pueden ahora.
-
-        «Nueva carpeta…» con la ventana libre, «Renombrar…» con exactamente una fila
-        elegida, «Cortar» y «Borrar…» con una o más.
-        """
-        filas = len(lista.selection())
-        ok = libre()
-        return {"nueva": ok, "renombrar": ok and filas == 1, "cortar": ok and filas >= 1,
-                "borrar": ok and filas >= 1}
 
     def puede_pegar() -> bool:
         """Si hay algo cortado, la ventana está libre y se ve el remote del que se cortó."""
@@ -629,8 +748,31 @@ def open_dialog(parent, config: Config) -> None:
                 and estado["corte"][0] == nav.remote)
 
     def estados_menu() -> dict[str, bool]:
-        """Qué entradas del menú y qué teclas valen ahora: las de la barra y «Pegar aquí»."""
-        return {**estados_gestion(), "pegar": puede_pegar()}
+        """Qué acciones valen ahora: las de la botonera, los menús y las teclas.
+
+        «Abrir» con una sola carpeta elegida y conexión (navegar no espera a un lote);
+        «Bajar…», «Cortar» y «Borrar…» con una o más filas y la ventana libre;
+        «Renombrar…» con exactamente una; subir y «Nueva carpeta…» con la ventana libre;
+        «Pegar aquí» con algo cortado en este remote; «Releer» con conexión. En los
+        resultados de una búsqueda, de lo elegido solo «Abrir» (una carpeta) y «Abrir la
+        ubicación» (uno): lo demás se hace en su carpeta; la botonera sigue siendo la de
+        la carpeta desde la que se busca.
+        """
+        filas = lista.selection()
+        ok = libre()
+        conectado = estado["rcd"] is not None
+        if estado["en_resultados"]:
+            r = estado["resultados"].get(str(filas[0])) if len(filas) == 1 else None
+            return {"abrir": conectado and r is not None and r.entrada.es_carpeta,
+                    "ubicacion": conectado and r is not None, "bajar": False,
+                    "archivos": ok, "carpeta": ok, "nueva": ok, "renombrar": False,
+                    "cortar": False, "borrar": False, "pegar": puede_pegar(),
+                    "releer": conectado}
+        una = estado["entradas"].get(str(filas[0])) if len(filas) == 1 else None
+        return {"abrir": conectado and una is not None and una.es_carpeta, "ubicacion": False,
+                "bajar": ok and bool(filas), "archivos": ok, "carpeta": ok, "nueva": ok,
+                "renombrar": ok and una is not None, "cortar": ok and bool(filas),
+                "borrar": ok and bool(filas), "pegar": puede_pegar(), "releer": conectado}
 
     def pintar_corte() -> None:
         """Enseña u oculta la línea de lo cortado y pone su texto y el estado de «Pegar aquí»."""
@@ -646,13 +788,18 @@ def open_dialog(parent, config: Config) -> None:
         corte.grid()
 
     def actualizar_botones() -> None:
-        """Enciende o apaga los botones de gestión, «Pegar aquí», «Bajar…» y las dos «Subir…» según la selección, el `rcd` y el lote."""
+        """Enciende o apaga la barra de direcciones, la botonera y «Pegar aquí».
+
+        Navegar solo pide conexión (no espera a un lote); subir y crear, la ventana libre.
+        """
         ok = libre()
-        hay = bool(lista.selection())
-        boton_bajar.configure(state="normal" if ok and hay else "disabled")
-        for b in (boton_archivos, boton_carpeta):
-            b.configure(state="normal" if ok else "disabled")
-        barra_gestion.encender(**estados_gestion())
+        conectado = estado["rcd"] is not None
+        direcciones.encender(
+            atras=conectado and historial.puede_atras,
+            adelante=conectado and historial.puede_adelante,
+            arriba=conectado and nav.ruta != servidor.RAIZ, releer=conectado,
+            servidor=conectado and bool(remotes), buscar=conectado)
+        barra_gestion.encender(subir=ok, nueva=ok)
         pintar_corte()
 
     # ------------------------------------------------------------- el rcd
@@ -677,22 +824,35 @@ def open_dialog(parent, config: Config) -> None:
         actualizar_botones()
         return True
 
-    def lanzar_peticion(pedida: tuple[str, str], esperar: bool | None = None) -> None:
-        """Pide una carpeta (`("ruta", r)`) o la raíz de otro remote (`("remote", nombre)`).
+    def lanzar_peticion(pedida: tuple, esperar: bool | None = None) -> None:
+        """Pide una carpeta, la raíz de otro remote o un lugar del historial.
 
         Args:
-            pedida: Qué se pide; se guarda para repetirla tras «Reconectar»/«Reintentar».
+            pedida: Qué se pide: `("ruta", r)` o `("ruta", r, movimiento)` en el remote
+                que se ve; `("remote", nombre)` para la raíz de otro; `("lugar", Lugar,
+                movimiento)` para un paso del historial. Se guarda para repetirla tras
+                «Reconectar»/«Reintentar».
             esperar: Si el hilo espera antes a que `rcd` conteste. Por defecto,
                 mientras la ventana no haya enseñado nada todavía.
         """
         if estado["cerrado"]:
             return
         if estado["rcd"] is None:
-            elegido.set(nav.remote)         # sin rcd no hay a quién pedir: no cambia nada
+            direcciones.poner(nav.remote, nav.ruta, list(remotes))  # sin rcd no cambia nada
             return
         estado["ultima"] = pedida
-        clase, valor = pedida
-        p = nav.pedir(valor) if clase == "ruta" else nav.cambiar_remote(valor)
+        clase, valor, *resto = pedida
+        if clase == "ruta":
+            p = nav.pedir(valor, *resto)
+        elif clase == "remote":
+            p = nav.cambiar_remote(valor)
+        else:
+            p = nav.ir(valor.remote, valor.ruta, resto[0], valor.busqueda)
+        if p.movimiento != servidor.RELEER and estado["texto"]:
+            # Se sale de una búsqueda: el lugar la guarda para volver a ella con «Atrás», y
+            # se deja de recorrer. Los resultados se ven hasta que llegue la carpeta.
+            historial.apuntar_busqueda(estado["texto"])
+            detener_busqueda()
         if estado["tras"] is not None and estado["tras"][:2] != (p.remote, p.ruta):
             estado["tras"] = None           # se navega a otra carpeta: lo de la anterior ya no vale
         esperar = (not estado["abierto"]) if esperar is None else esperar
@@ -712,8 +872,13 @@ def open_dialog(parent, config: Config) -> None:
         lectura = encargo.resultado
         if not nav.recibir(p, lectura.entradas):
             return
+        historial.llegar(servidor.Lugar(p.remote, p.ruta, p.busqueda), p.movimiento)
         sondeos[p.remote] = (lectura.permisos, lectura.mi_uid)
         pintar()
+        if p.busqueda:
+            # se vuelve a un lugar desde el que se buscaba: a sus resultados
+            direcciones.poner_busqueda(p.busqueda)
+            buscar_ahora(p.busqueda, True)
 
     def fallo(p: servidor.Peticion, error: Exception) -> None:
         """Dice por qué no llegó el listado `p`; la lista se queda como estaba."""
@@ -727,7 +892,9 @@ def open_dialog(parent, config: Config) -> None:
             if conectar(forzar=True):
                 lanzar_peticion(estado["ultima"], esperar=True)
             return
-        elegido.set(nav.remote)             # un cambio de remote que falla no cambia nada
+        # la barra vuelve a la carpeta que se ve: un cambio de remote o una ruta
+        # escrita que fallan no cambian nada
+        direcciones.poner(nav.remote, nav.ruta, list(remotes))
         if isinstance(error, rcd.RcdCaido):
             decir(frase, boton="Reconectar")
         elif isinstance(error, ConfigError):
@@ -739,8 +906,9 @@ def open_dialog(parent, config: Config) -> None:
         retocar()                           # un fallo de permiso deja un candado
 
     def reconectar() -> None:
-        """Relanza `rcd` y repite la última petición."""
+        """Relanza `rcd` y repite la última petición; lo leído al buscar ya no vale."""
         estado["puerto_reintentado"] = False
+        olvidar_busqueda()
         if conectar(forzar=True):
             lanzar_peticion(estado["ultima"], esperar=True)
 
@@ -752,12 +920,32 @@ def open_dialog(parent, config: Config) -> None:
 
     # ------------------------------------------------------------- navegar
     def entrar(_evento=None) -> str:
-        """Entra en la carpeta elegida; un archivo, o varias filas, nada."""
+        """Entra en la carpeta elegida; un archivo, o varias filas, nada.
+
+        En los resultados de una búsqueda, una carpeta se abre y un archivo lleva a su
+        carpeta, con él elegido.
+        """
         elegida = lista.selection()
+        if estado["en_resultados"]:
+            r = estado["resultados"].get(str(elegida[0])) if len(elegida) == 1 else None
+            if r is not None and r.entrada.es_carpeta:
+                lanzar_peticion(("ruta", r.ruta))
+            elif r is not None:
+                ubicacion()
+            return "break"
         e = estado["entradas"].get(str(elegida[0])) if len(elegida) == 1 else None
         if e is not None and e.es_carpeta:
             lanzar_peticion(("ruta", nav.hijo(e.nombre)))
         return "break"
+
+    def ubicacion() -> None:
+        """«Abrir la ubicación»: va a la carpeta de un resultado y lo deja elegido."""
+        elegida = lista.selection()
+        r = estado["resultados"].get(str(elegida[0])) if len(elegida) == 1 else None
+        if r is None or estado["rcd"] is None:
+            return
+        estado["tras"] = (nav.remote, r.carpeta, "", (r.entrada.nombre,))
+        lanzar_peticion(("ruta", r.carpeta))
 
     def doble_clic(evento) -> str | None:
         """Entra en la fila sobre la que se hace doble clic; en la cabecera, nada."""
@@ -776,28 +964,233 @@ def open_dialog(parent, config: Config) -> None:
         return "break"
 
     def repetir() -> None:
-        """Vuelve a leer la carpeta que se enseña."""
-        lanzar_peticion(("ruta", nav.ruta))
+        """Vuelve a leer la carpeta que se enseña (no mueve el historial).
 
-    def cambiar_remote(_evento=None) -> None:
-        """Pasa a la raíz del remote elegido en el desplegable."""
-        nuevo = elegido.get()
+        Algo pudo cambiar en el servidor: lo leído al buscar ya no vale.
+        """
+        olvidar_busqueda()
+        lanzar_peticion(("ruta", nav.ruta, servidor.RELEER))
+
+    def releer() -> None:
+        """«Releer» y F5: con una búsqueda, la recorre otra vez; si no, relee la carpeta."""
+        if estado["en_resultados"] and estado["texto"]:
+            olvidar_busqueda()
+            buscar_ahora(estado["texto"], True, releer_raiz=True)
+        else:
+            repetir()
+
+    # ------------------------------------------------------------- buscar
+    def al_escribir(_texto: str) -> None:
+        """Cada cambio del campo de búsqueda: busca cuando se deja de teclear, o sale."""
+        cancelar_espera()
+        if not direcciones.texto_busqueda.get().strip():
+            vaciar_busqueda()
+            return
+        estado["espera"] = dlg.after(
+            ESPERA_BUSQUEDA_MS, lambda: buscar_ahora(direcciones.texto_busqueda.get()))
+
+    def cancelar_espera() -> None:
+        if estado["espera"] is not None:
+            dlg.after_cancel(estado["espera"])
+            estado["espera"] = None
+
+    def buscar_ahora(texto: str, reanudar: bool = False, releer_raiz: bool = False) -> None:
+        """Busca `texto` desde la carpeta que se ve, en todas las de debajo.
+
+        Si ya hay un recorrido de esta carpeta, se filtra lo leído sin volver al
+        servidor y se sigue donde iba (con `reanudar`, también si se había detenido).
+        Un recorrido nuevo parte de lo que la lista ya sabe de la carpeta, salvo con
+        `releer_raiz` (F5), que la vuelve a pedir: puede haber cambiado.
+        """
+        cancelar_espera()
+        texto = texto.strip()
+        if not texto:
+            vaciar_busqueda()
+            return
+        if estado["rcd"] is None or estado["cerrado"]:
+            return
+        b = estado["busqueda"]
+        if b is None or (b.remote, b.raiz) != (nav.remote, nav.ruta):
+            olvidar_busqueda()
+            b = servidor.Busqueda(nav.remote, nav.ruta, sondeos.get(nav.remote, (False, None))[0],
+                                  None if releer_raiz else nav.entradas)
+            estado["busqueda"] = b
+        elif reanudar:
+            b.reanudar()
+        estado["texto"] = texto
+        if not estado["en_resultados"]:
+            estado["en_resultados"] = True
+            columnas(_CON_CARPETA)
+        lista.delete(*lista.get_children())
+        estado["resultados"] = {}
+        pintar_resultados(b.resultados(texto))
+        seguir_buscando()
+
+    def pintar_resultados(resultados) -> None:
+        """Añade resultados al final de la lista (los que ya estaban no se repiten)."""
+        b = estado["busqueda"]
+        mi_uid = sondeos.get(b.remote, (False, None))[1]
+        for r in resultados:
+            if r.ruta in estado["resultados"]:
+                continue
+            estado["resultados"][r.ruta] = r
+            insertar(_fila(r.entrada, r.ruta, b.remote, r.ruta, config, nav.sin_acceso, mi_uid),
+                     r.carpeta)
+        cuenta.configure(text=servidor.cuantos(len(estado["resultados"])))
+        actualizar_botones()
+
+    def seguir_buscando() -> None:
+        """Pide las carpetas que faltan, hasta llenar los huecos libres, y dice cómo va.
+
+        Un encargo que ya ha terminado se recoge en el acto (los tests lo hacen así), y
+        su recogida vuelve aquí: entonces solo se apunta que hay que dar otra vuelta, para
+        no anidar una llamada por carpeta.
+        """
+        if estado["siguiendo"]:
+            estado["otra_vez"] = True
+            return
+        estado["siguiendo"] = True
+        try:
+            while True:
+                estado["otra_vez"] = False
+                b = estado["busqueda"]
+                if (b is None or estado["cerrado"] or not estado["en_resultados"]
+                        or estado["rcd"] is None):
+                    break
+                for carpeta in b.siguientes(len(libres)):
+                    s = libres.pop()
+                    encargo = segundo_plano.lanzar(partial(
+                        _listar, estado["rcd"], b.remote, carpeta, b.permisos))
+                    s.esperar(encargo, partial(llega_carpeta, s, b, b.numero, carpeta))
+                if not estado["otra_vez"]:
+                    break
+        finally:
+            estado["siguiendo"] = False
+        decir_busqueda()
+
+    def llega_carpeta(s, b: servidor.Busqueda, numero: int, carpeta: str, encargo) -> None:
+        """Recoge el listado de una carpeta de la búsqueda: añade lo que coincide y sigue."""
+        libres.append(s)
+        if estado["cerrado"] or estado["busqueda"] is not b:
+            return
+        # Una respuesta de antes de «Detener» no cuenta, pero su hueco vuelve a estar
+        # libre: tras reanudar puede ser el único que quede para seguir.
+        if encargo.error is not None:
+            b.fallo(numero, carpeta)
+        elif b.recibir(numero, carpeta, encargo.resultado) and estado["en_resultados"]:
+            pintar_resultados(b.de_carpeta(estado["texto"], carpeta))
+        seguir_buscando()
+
+    def decir_busqueda() -> None:
+        """La línea de la búsqueda: cómo va (con «Detener») o cómo acabó."""
+        b, texto = estado["busqueda"], estado["texto"]
+        if b is None or not estado["en_resultados"] or estado["cerrado"] or sondeo.esperando:
+            return                          # una carpeta pedida tiene la línea («Leyendo…»)
+        encontrados = len(estado["resultados"])
+        if b.acabada or b.detenida:
+            decir(b.texto_final(texto, encontrados), "Pista.")
+            if encontrados:
+                vacia.place_forget()
+            else:
+                vacia.configure(text=NADA.format(texto))
+                vacia.place(relx=0.5, rely=0.5, anchor="center")
+            return
+        vacia.place_forget()
+        indicador.poner(b.texto_progreso(texto, encontrados), True)
+        accion.configure(text="Detener", command=detener_busqueda)
+        accion.grid()
+
+    def detener_busqueda() -> None:
+        """«Detener»: deja de pedir carpetas; lo leído se queda y se puede seguir con Intro."""
+        b = estado["busqueda"]
+        if b is not None and not b.acabada and not b.detenida:
+            b.detener()
+        decir_busqueda()
+
+    def olvidar_busqueda() -> None:
+        """Tira lo leído al buscar: algo pudo cambiar en el servidor."""
+        b = estado["busqueda"]
+        if b is not None and not b.detenida:
+            b.detener()
+        estado["busqueda"] = None
+
+    def salir_de_busqueda(repintar: bool = True) -> None:
+        """Deja de buscar: vacía el campo y, con `repintar`, vuelve a la carpeta que se ve.
+
+        La carpeta no se vuelve a pedir: sus entradas siguen en `nav`. Lo leído se
+        guarda para volver a ello.
+        """
+        cancelar_espera()
+        b = estado["busqueda"]
+        if b is not None and not b.acabada and not b.detenida:
+            b.detener()
+        estado["texto"] = ""
+        direcciones.poner_busqueda("")
+        if estado["en_resultados"] and repintar:
+            pintar_lista()
+            decir_lugar()
+
+    def vaciar_busqueda() -> None:
+        """Escape o el campo vacío: vuelve a la carpeta y su lugar ya no guarda búsqueda."""
+        salir_de_busqueda()
+        historial.apuntar_busqueda("")
+
+    def cambiar_remote(nuevo: str) -> None:
+        """Pasa a la raíz del remote elegido en el menú del servidor."""
         if nuevo and nuevo != nav.remote:
             lanzar_peticion(("remote", nuevo))
+
+    def ir_a(ruta_: str) -> None:
+        """Va a esa carpeta del remote que se ve (una miga)."""
+        lanzar_peticion(("ruta", ruta_))
+
+    def ir_a_escrita(texto: str) -> None:
+        """Va a la ruta que se escribió en la barra (siempre desde la raíz del servidor)."""
+        lanzar_peticion(("ruta", servidor.ruta_escrita(texto)))
+
+    def atras(_evento=None) -> str:
+        """Vuelve al lugar de antes del historial, si lo hay."""
+        lugar = historial.anterior()
+        if lugar is not None and estado["rcd"] is not None:
+            lanzar_peticion(("lugar", lugar, servidor.ATRAS))
+        return "break"
+
+    def adelante(_evento=None) -> str:
+        """Va al lugar de después del historial, si lo hay."""
+        lugar = historial.siguiente()
+        if lugar is not None and estado["rcd"] is not None:
+            lanzar_peticion(("lugar", lugar, servidor.ADELANTE))
+        return "break"
+
+    def escribir_ruta(_evento=None) -> str:
+        """Ctrl+L, Alt+D: la barra pasa a escribir la ruta."""
+        direcciones.editar()
+        return "break"
+
+    def ir_a_busqueda(_evento=None) -> str:
+        """Ctrl+F, Ctrl+E: el foco al campo de búsqueda."""
+        direcciones.enfocar_busqueda()
+        return "break"
 
     lista.bind("<<TreeviewSelect>>", lambda _e: actualizar_botones())
     lista.bind("<Double-Button-1>", doble_clic)
     lista.bind("<Return>", entrar)
     lista.bind("<KP_Enter>", entrar)
     lista.bind("<BackSpace>", subir)
-    elegido.bind("<<ComboboxSelected>>", cambiar_remote)
+    for secuencia, hacer in (("<Alt-Left>", atras), ("<Alt-Right>", adelante),
+                             ("<Alt-Up>", subir), ("<Control-l>", escribir_ruta),
+                             ("<Alt-d>", escribir_ruta), ("<Control-f>", ir_a_busqueda),
+                             ("<Control-e>", ir_a_busqueda)):
+        dlg.bind(secuencia, hacer)          # en toda la ventana, como en el Explorador
 
 
     # ------------------------------------------------------------- bajar y subir
     def cambio_de_lote() -> None:
-        """Con el lote que cambia (o su panel): botones según el lote y ventana al tamaño del panel."""
+        """Con el lote que cambia (o su panel): los botones según el lote.
+
+        La ventana no cambia de tamaño: el panel le quita sitio a la lista.
+        """
         actualizar_botones()
-        reajustar()
 
     seg = tk_lote.Seguimiento(
         dlg, panel, sondeo_lote, decir=decir, intervalo_ms=lambda: INTERVALO_PROGRESO_MS,
@@ -1152,7 +1545,6 @@ def open_dialog(parent, config: Config) -> None:
         if op.tipo == gestion.MOVER and estado["corte"] != (op.remote, op.carpeta, op.elementos):
             seg.reintento = None
             panel.ocultar()
-            reajustar()
             return
         mirar_destino(nuevo_trabajo_gestion(op), op, actual)
 
@@ -1205,7 +1597,6 @@ def open_dialog(parent, config: Config) -> None:
             return
         estado["corte"] = (nav.remote, nav.ruta, elementos)
         actualizar_botones()
-        reajustar()
 
     def quitar_corte() -> None:
         """«Cancelar» de la línea: olvida lo cortado."""
@@ -1224,27 +1615,65 @@ def open_dialog(parent, config: Config) -> None:
         op = gestion.Operacion(gestion.MOVER, remote, carpeta, elementos, destino=nav.ruta)
         mirar_destino(nuevo_trabajo_gestion(op), op, None)
 
-    # -- teclas y botón derecho
-    acciones_gestion = {"nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
-                        "cortar": lambda: cortar_elegidos(), "pegar": lambda: pegar_aqui(),
-                        "borrar": lambda: borrar_elegidos()}
+    # -- la botonera, las teclas y el botón derecho
+    acciones = {"abrir": lambda: entrar(), "ubicacion": lambda: ubicacion(),
+                "bajar": lambda: bajar_elegidos(),
+                "archivos": lambda: subir_archivos(), "carpeta": lambda: subir_carpeta(),
+                "nueva": lambda: nueva_carpeta(), "renombrar": lambda: renombrar_elegido(),
+                "cortar": lambda: cortar_elegidos(), "pegar": lambda: pegar_aqui(),
+                "borrar": lambda: borrar_elegidos(), "releer": lambda: releer()}
+    dlg.acciones, dlg.estados_menu = acciones, estados_menu      # los tests las usan
 
     def con_tecla(clave: str):
         """Devuelve el manejador de una tecla: hace la acción solo si ahora se puede."""
         def al_pulsar(_evento=None) -> str:
             if estados_menu()[clave]:
-                acciones_gestion[clave]()
+                acciones[clave]()
             return "break"
         return al_pulsar
 
+    def solo_este(menu):
+        """Destruye el menú que se enseñó antes y apunta este: uno vivo por ventana.
+
+        Windows tiene un tope de menús por proceso, y un menú que no se destruye vive
+        hasta que se cierra la ventana.
+        """
+        import tkinter as tk
+
+        viejo, estado["menu"] = estado.get("menu"), menu
+        if viejo is not None:
+            try:
+                viejo.destroy()
+            except tk.TclError:
+                pass                        # ya no estaba
+        return menu
+
+    def desplegar_subir() -> None:
+        """«Subir»: enseña su menú («Archivos…», «Carpeta…») justo debajo del botón."""
+        boton = barra_gestion.subir
+        menu = solo_este(tk_gestion.menu_subir(boton, acciones, estados_menu()))
+        _mostrar_menu(menu, boton.winfo_rootx(), boton.winfo_rooty() + boton.winfo_height())
+
     def menu_derecho(evento) -> str:
-        """Botón derecho: elige la fila de debajo si no lo estaba y enseña el menú de gestión."""
+        """Botón derecho: sobre una fila, el menú de lo elegido; en el hueco, el de la carpeta.
+
+        Sobre una fila que no estaba elegida, la elige. En el hueco de la lista (sin fila
+        debajo) quita la selección, como el Explorador. En la cabecera, nada.
+        """
+        if lista.identify_region(evento.x, evento.y) in ("heading", "separator"):
+            return "break"
         fila = lista.identify_row(evento.y)
         lista.focus_set()
-        if fila and fila not in lista.selection():
-            lista.selection_set(fila)
-            lista.focus(fila)
-        menu = tk_gestion.menu_contextual(lista, acciones_gestion, estados_menu())
+        if fila:
+            if fila not in lista.selection():
+                lista.selection_set(fila)
+                lista.focus(fila)
+            orden = (tk_gestion.ORDEN_MENU_RESULTADO if estado["en_resultados"]
+                     else tk_gestion.ORDEN_MENU_FILA)
+        else:
+            lista.selection_remove(*lista.selection())
+            orden = tk_gestion.ORDEN_MENU_HUECO
+        menu = solo_este(tk_gestion.menu_contextual(lista, orden, acciones, estados_menu()))
         _mostrar_menu(menu, evento.x_root, evento.y_root)
         return "break"
 
@@ -1253,6 +1682,7 @@ def open_dialog(parent, config: Config) -> None:
                              ("<Control-N>", "nueva")):
         lista.bind(secuencia, con_tecla(clave))
     lista.bind("<Button-3>", menu_derecho)
+    dlg.bind("<F5>", con_tecla("releer"))     # en toda la ventana: el foco puede no estar en la lista
 
     # ------------------------------------------------------------- cerrar
     def cerrar(evento=None) -> None:
@@ -1262,9 +1692,29 @@ def open_dialog(parent, config: Config) -> None:
         if estado["cerrado"]:
             return
         estado["cerrado"] = True
+        cancelar_espera()
         seg.parar()
         if estado["rcd"] is not None:
             segundo_plano.lanzar(partial(estado["rcd"].parar))
+        recordar_tamano()
+
+    def apuntar_tamano(evento) -> None:
+        """Guarda el tamaño del recuadro cada vez que cambia con la ventana a la vista.
+
+        Se guarda al cambiar y no al cerrar porque, al destruirse, sus hijos ya no
+        están. Una ventana que no llegó a enseñarse no tiene un tamaño que recordar.
+        """
+        if dlg.winfo_ismapped() and evento.width > 1 and evento.height > 1:
+            estado["tamano"] = (evento.width, evento.height)
+
+    def recordar_tamano() -> None:
+        """Recuerda en `state/ventana.json` el último tamaño del recuadro, si llegó a verse."""
+        if estado.get("tamano") is None:
+            return
+        ancho, alto = estado["tamano"]
+        clave = _clave_tamano(dlg)
+        prefs.recordar("servidor_ancho", clave, ancho)
+        prefs.recordar("servidor_alto", clave, alto)
 
     def cerrar_ventana() -> None:
         """Cierra; con un lote en marcha pregunta y, si se acepta, lo cancela antes.
@@ -1286,9 +1736,12 @@ def open_dialog(parent, config: Config) -> None:
         cierre_final()
 
     def cierre_final() -> None:
-        """Cierra la ventana: para el `rcd` y la destruye."""
+        """Cierra la ventana: apunta su tamaño, para el `rcd` y la destruye."""
         if estado["cerrado"]:
             return
+        lienzo = dlg.visor.lienzo
+        if dlg.winfo_ismapped() and lienzo.winfo_width() > 1:
+            estado["tamano"] = (lienzo.winfo_width(), lienzo.winfo_height())
         cerrar()
         dlg.destroy()
 
@@ -1296,13 +1749,12 @@ def open_dialog(parent, config: Config) -> None:
     dlg.bind("<Destroy>", cerrar, add="+")
 
     # ------------------------------------------------------------- abrir
+    _fijar_tamanos(dlg, lista)
+    dlg.visor.lienzo.bind("<Configure>", apuntar_tamano, add="+")
     if not remotes:
         decir(SIN_REMOTES, "Pista.")
-        for control in (elegido, arriba, releer):
-            control.configure(state="disabled")
         actualizar_botones()
     else:
-        elegido.set(nav.remote)
         indicador.poner(CONECTANDO, True)
         if conectar():
             lanzar_peticion(("ruta", servidor.RAIZ), esperar=True)

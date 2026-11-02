@@ -51,11 +51,14 @@ class Panel:
         self._girando = False
         self.marco = ttk.Frame(padre)
         self.marco.columnconfigure(0, weight=1)
-        self.titulo = ttk.Label(self.marco, text="", style="Fuerte.TLabel")
-        self.archivo = ttk.Label(self.marco, text="", style="Pista.TLabel")
-        self.cuenta = ttk.Label(self.marco, text="", style="Pista.TLabel")
+        # Cortan a un ancho fijo: la ventana del explorador no cambia de tamaño sola,
+        # así que un nombre largo no puede ensancharla.
+        corte = theme.medida(ANCHO_RESULTADO)
+        self.titulo = ttk.Label(self.marco, text="", style="Fuerte.TLabel", wraplength=corte)
+        self.archivo = ttk.Label(self.marco, text="", style="Pista.TLabel", wraplength=corte)
+        self.cuenta = ttk.Label(self.marco, text="", style="Pista.TLabel", wraplength=corte)
         self.barra = ttk.Progressbar(self.marco, mode="determinate", maximum=100)
-        self.ritmo = ttk.Label(self.marco, text="", style="Pista.TLabel")
+        self.ritmo = ttk.Label(self.marco, text="", style="Pista.TLabel", wraplength=corte)
         self.cancelar = ttk.Button(self.marco, text="Cancelar", command=self._cancelar)
         self.resultado = ttk.Frame(self.marco)
         self.resultado.columnconfigure(0, weight=1)

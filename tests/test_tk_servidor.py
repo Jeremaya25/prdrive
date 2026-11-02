@@ -10,7 +10,7 @@ lo que ve la persona:
   columna de permisos en «—»), y qué se le
   pidió al servidor (`noMimeType` y nada más) mientras `fsinfo` no dice que sabe
   dar permisos;
-- doble clic, Intro, Retroceso, «↑», «Releer» y el desplegable de remotes;
+- doble clic, Intro, Retroceso, «Arriba», «Releer» y el menú de servidores;
 - la carpeta de una pareja marcada, y el aviso al estar dentro de ella;
 - un permiso denegado deja la lista como estaba, lo dice y pone el candado;
 - `rcd` caído → «Reconectar» (lo relanza y repite la petición); puerto ocupado
@@ -22,7 +22,9 @@ lo que ve la persona:
   moría con `BadAlloc` pasadas ~850 filas);
 - cerrar la ventana con un listado en vuelo, con hilos de verdad: `parar()` una
   vez y ninguna excepción de Tk;
-- bajar y subir (pieza 2): los tres botones y cuándo se encienden, selección
+- la botonera corta («Subir» con su menú y «Nueva carpeta…»), el pie sin botones
+  ni «Cerrar», y F5 relee desde cualquier sitio de la ventana;
+- bajar y subir (pieza 2): las tres acciones y cuándo se pueden, selección
   múltiple, el bloqueo y el aviso por pareja, el aviso de choques con sus tres
   respuestas, el filtro escapado que llega a `sync/copy`, el panel con un
   progreso que avanza, el resultado, «Cancelar» (una sola vez), «Reintentar»,
@@ -55,7 +57,9 @@ except Exception as e:                                   # sin entorno gráfico
     print(f"  (saltado) no hay entorno gráfico: {e}")
     sys.exit(c.report())
 
-from ui import icons, segundo_plano, servidor, theme, tk_servidor, tk_transferencia  # noqa: E402
+from ui import (icons, prefs, segundo_plano, servidor, theme, tk_gestion,  # noqa: E402
+                tk_servidor, tk_transferencia)
+from ui import tk as uitk  # noqa: E402
 
 errores: list[str] = []
 raiz.report_callback_exception = (
@@ -270,6 +274,26 @@ def pulsar(dlg, secuencia: str) -> None:
     dlg.update()
 
 
+def servidores(dlg) -> list[str]:
+    """Los servidores que ofrece el menú del icono del servidor, en su orden."""
+    menu = dlg.direcciones.menu_servidores()
+    return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+
+
+def elegir_servidor(dlg, nombre: str) -> None:
+    """Elige ese servidor en el menú del icono del servidor, como lo haría la persona."""
+    menu = dlg.direcciones.menu_servidores()
+    rotulos = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+    menu.invoke(rotulos.index(nombre))
+    dlg.update()
+
+
+def elegir_accion(dlg, clave: str) -> None:
+    """Hace la acción `clave` como una entrada encendida de un menú: apagada, no hace nada."""
+    if dlg.estados_menu()[clave]:
+        dlg.acciones[clave]()
+
+
 TIEMPO = [0]
 
 
@@ -320,10 +344,10 @@ with sandbox():
       [p for m, p in falso.llamadas if m == "operations/fsinfo"], [{"fs": "nas:/"}])
     c("no se pidió el stat: no hay permisos",
       [m for m, _p in falso.llamadas if m == "operations/stat"], [])
-    c("la ruta de arriba", dlg.ruta.cget("text"), "/")
+    c("la ruta de arriba", dlg.direcciones.ruta, "/")
     c("el pie cuenta", dlg.cuenta.cget("text"), "3 elementos")
     c("el indicador no dice nada y no hay botón", (frase(dlg), boton(dlg)), ("", ""))
-    c("el desplegable enseña el remote", dlg.elegido.get(), "nas")
+    c("la barra enseña el remote", dlg.direcciones.remote, "nas")
     c("una carpeta y un archivo llevan su icono",
       (icono(dlg, "datos"), icono(dlg, "leeme.txt")), ("carpeta", "file"))
     c("«datos» no es la carpeta de ninguna pareja: sin marca", texto(dlg, "datos"), "datos")
@@ -332,8 +356,12 @@ with sandbox():
               imagen(dlg, i)) for i in nombres(dlg)]
     c("cada fila dice su nombre en el árbol",
       [v[1].strip() for v in vista], ["datos", "privado", "leeme.txt"])
-    c("  y sus valores (tamaño, fecha, permisos)",
-      [(v[2][0], v[2][2]) for v in vista], [("—", "—"), ("—", "—"), ("2 KB", "—")])
+    c("  y sus valores (tamaño, fecha, permisos), leídos por su columna",
+      [(valores(dlg, i)[0], valores(dlg, i)[2]) for i in nombres(dlg)],
+      [("—", "—"), ("—", "—"), ("2 KB", "—")])
+    c("  la columna «Carpeta» (la de los resultados de una búsqueda) no se ve",
+      [str(x) for x in dlg.lista.tk.splitlist(dlg.lista.cget("displaycolumns"))],
+      ["tamano", "modificado", "permisos"])
     c("  y todas llevan una imagen", all(v[3] for v in vista), True)
     c("  y se ve la columna del árbol, con el nombre", sorted(str(x) for x in dlg.lista.cget("show")), ["headings", "tree"])
 
@@ -342,7 +370,7 @@ with sandbox():
     # -----------------------------------------------------------------------
     elegir_y_entrar(dlg, "datos")
     c("doble clic en «datos» lista «datos»", falso.listados()[-1]["remote"], "datos")
-    c("la ruta de arriba dice «/datos»", dlg.ruta.cget("text"), "/datos")
+    c("la ruta de arriba dice «/datos»", dlg.direcciones.ruta, "/datos")
     c("la lista tiene lo de «datos»", nombres(dlg), ["notas", "a.txt"])
     c("la carpeta de la pareja enseña «  · pareja «Notas»» en el texto que se ve",
       (texto(dlg, "notas"), "· pareja «Notas»" in str(dlg.lista.item("notas", "text"))),
@@ -351,24 +379,108 @@ with sandbox():
     c("fuera de la pareja el indicador calla", frase(dlg), "")
     elegir_y_entrar(dlg, "notas")
     c("dentro de la pareja: el indicador lo dice", frase(dlg), "Estás dentro de la pareja «Notas».")
-    c("  y la ruta es la de dentro", dlg.ruta.cget("text"), "/datos/notas")
+    c("  y la ruta es la de dentro", dlg.direcciones.ruta, "/datos/notas")
     pulsar(dlg, "<BackSpace>")
-    c("Retroceso sube", (dlg.ruta.cget("text"), frase(dlg)), ("/datos", ""))
-    dlg.arriba.invoke()
-    c("«↑» sube hasta la raíz", dlg.ruta.cget("text"), "/")
+    c("Retroceso sube", (dlg.direcciones.ruta, frase(dlg)), ("/datos", ""))
+    dlg.direcciones.arriba.invoke()
+    c("«↑» sube hasta la raíz", dlg.direcciones.ruta, "/")
     n = len(falso.listados())
-    dlg.arriba.invoke()
+    dlg.direcciones.arriba.invoke()
     c("«↑» en la raíz no pide nada", len(falso.listados()), n)
     elegir(dlg, "datos")
     pulsar(dlg, "<Return>")
-    c("Intro entra en la carpeta elegida", dlg.ruta.cget("text"), "/datos")
+    c("Intro entra en la carpeta elegida", dlg.direcciones.ruta, "/datos")
     elegir(dlg, "a.txt")
     n = len(falso.listados())
     pulsar(dlg, "<Return>")
-    c("Intro en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
+    c("Intro en un archivo no hace nada", (len(falso.listados()), dlg.direcciones.ruta),
       (n, "/datos"))
     cerrar(dlg)
     c("cerrar con «Cerrar»/destroy paró el rcd una sola vez", falso.paradas, 1)
+
+    # -----------------------------------------------------------------------
+    # 2b. La barra de direcciones: atrás, adelante, migas y la ruta escrita
+    # -----------------------------------------------------------------------
+    falso = RcdFalso(respuestas(otras={
+        ("operations/list", "no-existe"): rcd.ErrorRc("directory not found", 404)}))
+    dlg = abrir(falso)
+    d = dlg.direcciones
+
+    def encendido(b) -> bool:
+        return not b.instate(["disabled"])
+
+    c("al abrir no hay atrás ni adelante, ni arriba en la raíz",
+      (encendido(d.atras), encendido(d.adelante), encendido(d.arriba), encendido(d.releer)),
+      (False, False, False, True))
+    c("  y las migas son el servidor", d.tramos(), [("nas", "/")])
+    elegir_y_entrar(dlg, "datos")
+    elegir_y_entrar(dlg, "notas")
+    c("tras entrar dos veces: las migas, atrás y arriba encendidos",
+      (d.tramos(), encendido(d.atras), encendido(d.adelante), encendido(d.arriba)),
+      ([("nas", "/"), ("datos", "/datos"), ("notas", "/datos/notas")], True, False, True))
+    d.atras.invoke()
+    dlg.update()
+    c("«Atrás» vuelve a la carpeta de antes y enciende «Adelante»",
+      (d.ruta, nombres(dlg), encendido(d.adelante)), ("/datos", ["notas", "a.txt"], True))
+    d.adelante.invoke()
+    dlg.update()
+    c("«Adelante» vuelve a la de después", (d.ruta, encendido(d.adelante)), ("/datos/notas", False))
+    dlg.focus_force()
+    dlg.event_generate("<Alt-Left>")
+    dlg.update()
+    c("Alt+← es atrás", d.ruta, "/datos")
+    dlg.event_generate("<Alt-Right>")
+    dlg.update()
+    c("Alt+→ es adelante", d.ruta, "/datos/notas")
+    dlg.event_generate("<Alt-Up>")
+    dlg.update()
+    c("Alt+↑ sube", d.ruta, "/datos")
+    n = len(falso.listados())
+    d.pulsar(0)
+    dlg.update()
+    c("pulsar la primera miga va a la raíz del servidor",
+      (d.ruta, len(falso.listados()), falso.listados()[-1]["remote"]), ("/", n + 1, ""))
+    elegir_y_entrar(dlg, "privado")
+    c("una carpeta que falla deja la barra donde estaba", d.ruta, "/")
+    d.atras.invoke()
+    dlg.update()
+    c("  y no entra en el historial: «Atrás» va a «/datos»", d.ruta, "/datos")
+    # la ruta escrita
+    dlg.event_generate("<Control-l>")
+    dlg.update()
+    c("Ctrl+L pasa la barra a escribir, con la ruta", (d.editando, d.campo.get()), (True, "/datos"))
+    d.campo.delete(0, "end")
+    d.campo.insert(0, "datos\\notas\\")
+    d.campo.focus_force()
+    dlg.update()
+    d.campo.event_generate("<Return>")
+    dlg.update()
+    c("escribir «datos\\notas\\» e Intro abre /datos/notas",
+      (d.editando, d.ruta, nombres(dlg)), (False, "/datos/notas", ["hoy.txt"]))
+    d.editar()
+    d.campo.delete(0, "end")
+    d.campo.insert(0, "/no-existe")
+    d.campo.focus_force()
+    dlg.update()
+    d.campo.event_generate("<Return>")
+    dlg.update()
+    c("una ruta que no existe lo dice y la barra se queda en la carpeta de antes",
+      (frase(dlg), d.ruta, d.tramos()[-1], nombres(dlg)),
+      ("Esa carpeta ya no existe en el servidor.", "/datos/notas", ("notas", "/datos/notas"),
+       ["hoy.txt"]))
+    cerrar(dlg)
+
+    # atrás entre servidores
+    nuevo = RcdFalso({**respuestas(), ("operations/list", ""): lista(item("raiz", True))})
+    dlg = abrir(nuevo)
+    d = dlg.direcciones
+    elegir_servidor(dlg, "otro")
+    c("elegir otro servidor en el menú abre su raíz",
+      (d.remote, d.tramos(), nuevo.listados()[-1]["fs"]), ("otro", [("otro", "/")], "otro:/"))
+    d.atras.invoke()
+    dlg.update()
+    c("  y «Atrás» vuelve al primero", (d.remote, nuevo.listados()[-1]["fs"]), ("nas", "nas:/"))
+    cerrar(dlg)
 
     # -----------------------------------------------------------------------
     # 3. «Releer» repite la carpeta que se ve, y un vacío lo dice
@@ -386,14 +498,139 @@ with sandbox():
                 botones.append(h)
             buscar(h, texto)
     buscar(dlg, "Releer")
-    buscar(dlg, "↑")
-    c("están «Releer» y «↑»", [str(b.cget("text")) for b in botones], ["Releer", "↑"])
+    buscar(dlg, "Arriba")
+    c("están «Releer» y «Arriba»", [str(b.cget("text")) for b in botones], ["Releer", "Arriba"])
     botones[0].invoke()
     c("«Releer» vuelve a pedir la carpeta y se ve vacía",
       (falso.listados()[-1]["remote"], nombres(dlg), dlg.cuenta.cget("text")),
       ("datos", [], "0 elementos"))
     c("una carpeta vacía lo dice", dice_vacia(dlg), True)
     cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 3b. La botonera corta, el pie sin botones, F5 y el menú de «Subir»
+    # -----------------------------------------------------------------------
+    falso = RcdFalso(respuestas())
+    dlg = abrir(falso)
+
+    def textos_de_botones(widget) -> list[str]:
+        """El texto de cada `ttk.Button` que cuelga de `widget`, en profundidad."""
+        textos = []
+        for h in widget.winfo_children():
+            if isinstance(h, ttk.Button):
+                textos.append(str(h.cget("text")))
+            textos += textos_de_botones(h)
+        return textos
+
+    c("el pie solo lleva la cuenta: ningún botón", textos_de_botones(dlg.cuenta.master), [])
+    c("no hay botón «Cerrar» (cierra la X de la ventana)",
+      "Cerrar" in textos_de_botones(dlg), False)
+    c("ni «Bajar…» ni las dos «Subir…» como botones",
+      {"Bajar…", "Subir archivos…", "Subir carpeta…"} & set(textos_de_botones(dlg)), set())
+    c("la botonera: «Subir» y «Nueva carpeta…», encendidas con rcd",
+      [(str(b.cget("text")), str(b.cget("state")) != "disabled")
+       for b in (dlg.barra.subir, dlg.barra.nueva)],
+      [("Subir", True), ("Nueva carpeta…", True)])
+    n = len(falso.listados())
+    pulsar(dlg, "<F5>")
+    c("F5 vuelve a leer la carpeta que se ve",
+      (len(falso.listados()), falso.listados()[-1]["remote"]), (n + 1, ""))
+    elegir_y_entrar(dlg, "datos")
+    n = len(falso.listados())
+    dlg.focus_force()
+    dlg.event_generate("<F5>")
+    dlg.update()
+    c("  también con el foco fuera de la lista",
+      (len(falso.listados()), falso.listados()[-1]["remote"]), (n + 1, "datos"))
+    menus: list = []
+    pedidos: list[str] = []
+    previos_3b = (tk_servidor._mostrar_menu, tk_servidor.elegir_archivos,
+                  tk_servidor.elegir_carpeta)
+    tk_servidor._mostrar_menu = lambda menu, x, y: menus.append((menu, x, y))
+    tk_servidor.elegir_archivos = lambda parent, inicial: (pedidos.append("archivos"), [])[1]
+    tk_servidor.elegir_carpeta = lambda parent, inicial: (pedidos.append("carpeta"), None)[1]
+    try:
+        dlg.barra.subir.invoke()
+        menu, x, y = menus[-1]
+        c("«Subir» despliega «Archivos…» y «Carpeta…», encendidas",
+          [(menu.entrycget(i, "label"), str(menu.entrycget(i, "state")))
+           for i in range(menu.index("end") + 1)],
+          [("Archivos…", "normal"), ("Carpeta…", "normal")])
+        b = dlg.barra.subir
+        c("  justo debajo del botón", (x, y),
+          (b.winfo_rootx(), b.winfo_rooty() + b.winfo_height()))
+        menu.invoke(0)
+        menu.invoke(1)
+        c("  cada entrada pide lo suyo al sistema", pedidos, ["archivos", "carpeta"])
+    finally:
+        (tk_servidor._mostrar_menu, tk_servidor.elegir_archivos,
+         tk_servidor.elegir_carpeta) = previos_3b
+    cerrar(dlg)
+
+    # -----------------------------------------------------------------------
+    # 3c. Se puede agrandar y encoger, y recuerda el tamaño
+    # -----------------------------------------------------------------------
+    clave_tam = prefs.clave_ancho(str(tk.TkVersion), float(raiz.tk.call("tk", "scaling")))
+    prefs.ruta_ventana().unlink(missing_ok=True)
+    falso = RcdFalso(respuestas())
+    dlg = abrir(falso)
+    fila = int(ttk.Style(dlg).lookup("Treeview", "rowheight") or 0)
+    c("la ventana se puede agrandar y encoger", tuple(bool(x) for x in dlg.resizable()),
+      (True, True))
+    minimo = dlg.minsize()
+    util = uitk.pantalla_util(dlg)
+    c("  con un mínimo que cabe en la pantalla",
+      (minimo[0] > 1, minimo[1] > 1, minimo[0] <= util[0], minimo[1] <= util[1]),
+      (True, True, True, True))
+    c("abre con sitio para doce filas", dlg.lista.winfo_height() >= 12 * fila, True)
+    c("  y la lista pide solo cinco (lo demás es estirar)", int(dlg.lista.cget("height")), 5)
+
+    def pie_dentro(dlg_) -> bool:
+        """Si la cuenta del pie se ve entera dentro de la ventana."""
+        dlg_.update()
+        abajo = dlg_.cuenta.winfo_rooty() + dlg_.cuenta.winfo_height()
+        return dlg_.cuenta.winfo_ismapped() and abajo <= dlg_.winfo_rooty() + dlg_.winfo_height()
+
+    alto_lista = dlg.lista.winfo_height()
+    dlg.geometry(f"{minimo[0]}x{minimo[1]}")
+    for _ in range(3):
+        dlg.update()
+    c("encogida al mínimo: el pie se ve, sin barras del recuadro y la lista más baja",
+      (pie_dentro(dlg), dlg.visor.barras(), dlg.lista.winfo_height() < alto_lista),
+      (True, (False, False), True))
+    # Más grande, pero dentro de la pantalla: un tamaño que no cabe se recorta al reabrir.
+    dlg.geometry(f"{min(minimo[0] + 300, util[0])}x{min(minimo[1] + 400, util[1])}")
+    for _ in range(3):
+        dlg.update()
+    c("estirada: la lista crece y el nombre se queda lo que sobra a lo ancho",
+      (dlg.lista.winfo_height() > alto_lista, pie_dentro(dlg),
+       int(dlg.lista.column("#0", "width")) > 300), (True, True, True))
+    tam = (dlg.visor.lienzo.winfo_width(), dlg.visor.lienzo.winfo_height())
+    cerrar(dlg)
+    c("al cerrar recuerda el tamaño de su recuadro",
+      (prefs.recordado("servidor_ancho", clave_tam), prefs.recordado("servidor_alto", clave_tam)),
+      tam)
+    dlg = abrir(RcdFalso(respuestas()))
+    c("  y la siguiente vez abre a ese tamaño",
+      (dlg.visor.lienzo.winfo_width(), dlg.visor.lienzo.winfo_height()), tam)
+    cerrar(dlg)
+    prefs.recordar("servidor_ancho", clave_tam, 10_000)
+    prefs.recordar("servidor_alto", clave_tam, 10_000)
+    dlg = abrir(RcdFalso(respuestas()))
+    dlg.update_idletasks()
+    c("un tamaño recordado mayor que la pantalla se recorta a ella",
+      (dlg.winfo_reqwidth() <= util[0], dlg.winfo_reqheight() <= util[1]), (True, True))
+    cerrar(dlg)
+    prefs.ruta_ventana().unlink(missing_ok=True)
+    ARRANQUES[:] = [RcdFalso(respuestas())]
+    ABIERTAS.clear()
+    previo = tk_servidor.mostrar
+    tk_servidor.mostrar = lambda dlg_, parent=None: (ABIERTAS.append(dlg_), dlg_.update())
+    tk_servidor.open_dialog(raiz, CFG)
+    tk_servidor.mostrar = previo
+    cerrar(ABIERTAS[0])
+    c("una ventana que no llegó a enseñarse no recuerda ningún tamaño",
+      prefs.recordado("servidor_ancho", clave_tam), None)
 
     # -----------------------------------------------------------------------
     # 4. Un permiso denegado deja la lista, lo dice y pone el candado
@@ -405,7 +642,7 @@ with sandbox():
     c("la lista sigue con las filas de antes (salvo el candado)",
       (nombres(dlg), [f[:3] for f in lo_que_se_ve(dlg)]),
       (["datos", "privado", "leeme.txt"], [f[:3] for f in antes]))
-    c("la ruta no cambia", dlg.ruta.cget("text"), "/")
+    c("la ruta no cambia", dlg.direcciones.ruta, "/")
     c("el indicador lo dice", frase(dlg), "No tienes permiso para ver esta carpeta.")
     c("y no hay botón", boton(dlg), "")
     c("«privado» lleva candado y tono apagado",
@@ -434,7 +671,7 @@ with sandbox():
     elegir_y_entrar(dlg, "datos")
     c("se dice que se perdió rclone", frase(dlg), "Se ha perdido la conexión con rclone.")
     c("sale «Reconectar», no «Reintentar»", boton(dlg), "Reconectar")
-    c("la lista sigue", dlg.ruta.cget("text"), "/")
+    c("la lista sigue", dlg.direcciones.ruta, "/")
     dlg.accion.invoke()
     c("se relanzó rcd", len(LLAMADAS_ARRANCAR), 2)
     c("el viejo se paró", primero.paradas, 1)
@@ -513,10 +750,9 @@ with sandbox():
     nuevo = RcdFalso({**respuestas(), ("operations/list", ""): lista(item("raiz-de-otro", True))})
     nuevo.respuestas[("operations/fsinfo", None)] = FSINFO_NO
     dlg = abrir(nuevo)
-    c("el desplegable ofrece los remotes del rclone.conf, el de [defaults] primero",
-      list(dlg.elegido.cget("values")), ["nas", "otro"])
-    dlg.elegido.set("otro")
-    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    c("el menú del servidor ofrece los remotes del rclone.conf, el de [defaults] primero",
+      servidores(dlg), ["nas", "otro"])
+    elegir_servidor(dlg, "otro")
     dlg.update()
     c("elegir otro remote lista su raíz con su fs", nuevo.listados()[-1]["fs"], "otro:/")
     c("  y pregunta por sus permisos con ese mismo fs",
@@ -532,11 +768,10 @@ with sandbox():
     dlg = abrir(falso)
     antes = nombres(dlg)
     falso.respuestas[("operations/fsinfo", None)] = rcd.ErrorRc("no existe", 500)
-    dlg.elegido.set("otro")
-    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    elegir_servidor(dlg, "otro")
     dlg.update()
-    c("un cambio de remote fallido deja la lista y el desplegable en el de antes",
-      (nombres(dlg), dlg.elegido.get(), frase(dlg)),
+    c("un cambio de remote fallido deja la lista y la barra en el de antes",
+      (nombres(dlg), dlg.direcciones.remote, frase(dlg)),
       (antes, "nas", "rclone dice: no existe"))
     cerrar(dlg)
 
@@ -626,17 +861,17 @@ with sandbox():
     c("la cabecera es la cabecera para Tk", dlg.lista.identify_region(cx, 2), "heading")
     doble_clic(dlg, cx, 2)                                  # sobre la cabecera
     c("doble clic en la cabecera con una fila elegida no entra en ella",
-      (len(falso.listados()), dlg.ruta.cget("text"), dlg.lista.selection()), (n, "/", ("datos",)))
+      (len(falso.listados()), dlg.direcciones.ruta, dlg.lista.selection()), (n, "/", ("datos",)))
     doble_clic(dlg, 1, 2)                                   # sobre «Nombre», en el borde
-    c("  ni en el borde de la cabecera", (len(falso.listados()), dlg.ruta.cget("text")), (n, "/"))
+    c("  ni en el borde de la cabecera", (len(falso.listados()), dlg.direcciones.ruta), (n, "/"))
     cx, cy = centro(dlg, "datos")
     doble_clic(dlg, cx, cy)
-    c("doble clic en una fila sí entra", (dlg.ruta.cget("text"), nombres(dlg)),
+    c("doble clic en una fila sí entra", (dlg.direcciones.ruta, nombres(dlg)),
       ("/datos", ["notas", "a.txt"]))
     elegir(dlg, "a.txt")
     n = len(falso.listados())
     doble_clic(dlg, *centro(dlg, "a.txt"))
-    c("doble clic en un archivo no hace nada", (len(falso.listados()), dlg.ruta.cget("text")),
+    c("doble clic en un archivo no hace nada", (len(falso.listados()), dlg.direcciones.ruta),
       (n, "/datos"))
     # Tk en Windows no tiene `KP_Enter` (`win/tkWinKey.c`: VK_RETURN es siempre `Return`): allí
     # el Intro del teclado numérico llega como `<Return>`, ya comprobado, y generar `<KP_Enter>`
@@ -646,7 +881,7 @@ with sandbox():
     else:
         elegir(dlg, "notas")
         pulsar(dlg, "<KP_Enter>")
-        c("Intro del teclado numérico entra en la carpeta elegida", dlg.ruta.cget("text"),
+        c("Intro del teclado numérico entra en la carpeta elegida", dlg.direcciones.ruta,
           "/datos/notas")
     cerrar(dlg)
 
@@ -709,11 +944,10 @@ with sandbox():
     tk_servidor.open_dialog(raiz, CFG)
     tk_servidor.mostrar = previo
     dlg = ABIERTAS[0]
-    dlg.elegido.set("otro")
-    dlg.elegido.event_generate("<<ComboboxSelected>>")
+    elegir_servidor(dlg, "otro")
     dlg.update()
-    c("sin rcd, elegir otro remote devuelve el desplegable al que se enseña",
-      (dlg.elegido.get(), frase(dlg), boton(dlg)),
+    c("sin rcd, elegir otro remote deja la barra en el que se enseña",
+      (dlg.direcciones.remote, frase(dlg), boton(dlg)),
       ("nas", "No se puede ejecutar rclone: nada", "Reintentar"))
     cerrar(dlg)
     rcd.arrancar = arrancar_falso
@@ -836,7 +1070,9 @@ with sandbox():
         return str(widget.cget("state"))
 
     def botones_de(dlg) -> tuple[str, str, str]:
-        return (estado_de(dlg.bajar), estado_de(dlg.subir_archivos), estado_de(dlg.subir_carpeta))
+        """Si «Bajar…», «Subir archivos…» y «Subir carpeta…» se pueden elegir ahora."""
+        e = dlg.estados_menu()
+        return tuple("normal" if e[k] else "disabled" for k in ("bajar", "archivos", "carpeta"))
 
     def elegir_varias(dlg, *iids) -> None:
         dlg.lista.selection_set(*iids)
@@ -908,9 +1144,9 @@ with sandbox():
     dialogos()
     falso = servidor_lote(estados=(CORRIENDO,))
     dlg = abrir(falso)
-    c("los tres botones llevan su rótulo",
-      (str(dlg.bajar.cget("text")), str(dlg.subir_archivos.cget("text")),
-       str(dlg.subir_carpeta.cget("text"))), ("Bajar…", "Subir archivos…", "Subir carpeta…"))
+    c("«Bajar…» va en el menú de una fila, y subir en el de «Subir»",
+      ("bajar" in tk_gestion.ORDEN_MENU_FILA, list(tk_gestion.ROTULOS_SUBIR.values())),
+      (True, ["Archivos…", "Carpeta…"]))
     c("con rcd y sin selección: «Bajar…» apagado, las dos «Subir…» encendidas",
       botones_de(dlg), ("disabled", "normal", "normal"))
     elegir_varias(dlg, "datos")
@@ -920,7 +1156,7 @@ with sandbox():
     c("  y «Bajar…» sigue encendido", botones_de(dlg)[0], "normal")
     n = len(falso.listados())
     pulsar(dlg, "<Return>")
-    c("Intro con dos filas elegidas no entra en ninguna", (len(falso.listados()), dlg.ruta.cget("text")),
+    c("Intro con dos filas elegidas no entra en ninguna", (len(falso.listados()), dlg.direcciones.ruta),
       (n, "/"))
     elegir_varias(dlg, "datos")
     dlg.lista.selection_remove("datos")
@@ -929,14 +1165,34 @@ with sandbox():
     # a mitad de un lote, los tres apagados
     dialogos(destino=str(tmpdir()))
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    dlg.update()
+    tamano_antes = (dlg.winfo_width(), dlg.winfo_height())
+    alto_lista = dlg.lista.winfo_height()
+    elegir_accion(dlg, "bajar")
     c("el panel sale y enseña el título", bombear(lambda: panel_a_la_vista(dlg)), True)
+    dlg.update()
+    c("  sin cambiar el tamaño de la ventana: le quita sitio a la lista",
+      ((dlg.winfo_width(), dlg.winfo_height()), dlg.lista.winfo_height() < alto_lista),
+      (tamano_antes, True))
+    geometria = dlg.geometry().split("+")[0]
+    dlg.geometry("%dx%d" % dlg.minsize())
+    for _ in range(3):
+        dlg.update()
+    visor = dlg.visor
+    vertical, horizontal = visor.barras()
+    c("  encogida al mínimo con el panel: nada queda recortado sin una barra que lo enseñe",
+      ((visor.interior.winfo_reqheight() <= visor.lienzo.winfo_height() or vertical),
+       (visor.interior.winfo_reqwidth() <= visor.lienzo.winfo_width() or horizontal)),
+      (True, True))
+    dlg.geometry(geometria)
+    for _ in range(3):
+        dlg.update()
     c("durante el lote los tres botones están apagados", botones_de(dlg),
       ("disabled", "disabled", "disabled"))
     elegir_varias(dlg, "datos")
     c("  y elegir otra fila no enciende «Bajar…»", botones_de(dlg)[0], "disabled")
-    dlg.bajar.invoke()
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "bajar")
+    elegir_accion(dlg, "archivos")
     c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
       (1, []))
     cerrar(dlg)
@@ -970,7 +1226,7 @@ with sandbox():
     falso.respuestas[("operations/list", "datos")] = lambda: listado_normal
     dlg = abrir(falso)
     elegir_varias(dlg, "datos", "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("«Bajar…» empieza el diálogo en una carpeta del equipo",
       len(LLAMADAS_DIALOGOS["destino"]), 1)
     c("el aviso de choques salió una vez, con el plural y el destino",
@@ -997,7 +1253,7 @@ with sandbox():
       (bool(dlg.panel.titulo.winfo_manager()), bool(dlg.panel.reintentar.winfo_manager())),
       (False, False))
     c("  y los botones vuelven", botones_de(dlg)[0], "normal")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("  la última carpeta del equipo se recuerda: el segundo diálogo empieza en ella",
       LLAMADAS_DIALOGOS["destino"][-1], str(destino))
     c("  y el grupo del segundo lote es otro",
@@ -1010,7 +1266,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: frase_panel(dlg) != "")
     c("sin nada que choque no se pregunta y se copia sin IgnoreExisting",
       (LLAMADAS_DIALOGOS["choques"], "_config" in copias(falso)[0]), ([], False))
@@ -1026,7 +1282,7 @@ with sandbox():
         falso = servidor_lote()
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         bombear(lambda: frase_panel(dlg) != "" or not copia)
         c(f"un choque, respuesta {respuesta!r}: el texto va en singular",
           LLAMADAS_DIALOGOS["choques"],
@@ -1045,7 +1301,7 @@ with sandbox():
         falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),))
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c(f"el resultado con {respuesta!r} y 5 comprobados: la cuenta no sale de `checks`",
           bombear(lambda: frase_panel(dlg) == esperado), True)
         cerrar(dlg)
@@ -1053,7 +1309,7 @@ with sandbox():
     falso = servidor_lote(estadisticas=(stats(3, 3, 9, 9, checks=5),), estados=(FALLADO,))
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: bool(dlg.panel.reintentar.winfo_manager()))
     falso.respuestas[("job/status", None)] = ACABADO
     dlg.panel.reintentar.invoke()
@@ -1072,7 +1328,7 @@ with sandbox():
         ("operations/list", "dir{1}"): lista()})
     dlg = abrir(falso)
     elegir_varias(dlg, "raro [1]*", "!x.txt", "a b?.txt", "dir{1}")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: frase_panel(dlg) != "")
     c("las reglas que llegan a sync/copy están escapadas y son solo lo elegido",
       sorted(copias(falso)[0]["_filter"]["IncludeRule"]),
@@ -1103,11 +1359,11 @@ with sandbox():
     falso.respuestas[("operations/list", "datos")] = lista(
         item("copia", True), item("notas", True), item("baja", True), item("espejo", True),
         item("sube", True), item("fotos", True))
-    dlg.arriba.invoke()
+    dlg.direcciones.arriba.invoke()
     elegir_y_entrar(dlg, "datos")
     elegir_y_entrar(dlg, "copia")
-    c("estamos dentro de «Copia» (up-mirror)", dlg.ruta.cget("text"), "/datos/copia")
-    dlg.subir_archivos.invoke()
+    c("estamos dentro de «Copia» (up-mirror)", dlg.direcciones.ruta, "/datos/copia")
+    elegir_accion(dlg, "archivos")
     c("subir a una pareja up-mirror se bloquea con «No se puede»",
       LLAMADAS_DIALOGOS["avisar"],
       [("No se puede", "«Copia» deja el servidor igual que el dispositivo: lo que subas aquí lo "
@@ -1117,10 +1373,10 @@ with sandbox():
     c("  ni queda un lote en marcha", (panel_a_la_vista(dlg), botones_de(dlg)[1]), (False, "normal"))
 
     dialogos(archivos=[str(origen / "uno.txt")], preguntar=False)
-    dlg.arriba.invoke()
+    dlg.direcciones.arriba.invoke()
     elegir_y_entrar(dlg, "notas")
-    c("estamos dentro de «Notas» (bisync)", dlg.ruta.cget("text"), "/datos/notas")
-    dlg.subir_archivos.invoke()
+    c("estamos dentro de «Notas» (bisync)", dlg.direcciones.ruta, "/datos/notas")
+    elegir_accion(dlg, "archivos")
     c("subir a una pareja bisync pregunta con el texto del modo",
       LLAMADAS_DIALOGOS["preguntar"],
       [("Carpeta de una pareja",
@@ -1129,7 +1385,7 @@ with sandbox():
     c("  «Cancelar» no copia nada y deja los botones", (copias(falso), botones_de(dlg)[1]),
       ([], "normal"))
     dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("  «Seguir» copia: «uno.txt» a la raíz absoluta de la carpeta",
       bombear(lambda: len(copias(falso)) == 1), True)
     cp = copias(falso)[0]
@@ -1144,7 +1400,7 @@ with sandbox():
       listados_vistos(falso)[-1]["remote"], "datos/notas")
     n_antes = len(listados_vistos(falso))
     dialogos(archivos=[str(origen / "uno.txt")], preguntar=True)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     bombear(lambda: len(copias(falso)) == 2 and frase_panel(dlg) != "")
     bombear(lambda: len(listados_vistos(falso)) > n_antes)
     c("  tras cada subida a la carpeta que se ve hay un listado nuevo de ella",
@@ -1160,11 +1416,11 @@ with sandbox():
         falso = nuevo_rcd()
         dlg = abrir(falso, config=CFG2)
         falso.respuestas[("operations/list", "")] = lista(item("datos", True))
-        dlg.arriba.invoke()
+        dlg.direcciones.arriba.invoke()
         falso.respuestas[("operations/list", "datos")] = lista(item(carpeta_, True))
         elegir_y_entrar(dlg, "datos")
         elegir_y_entrar(dlg, carpeta_)
-        dlg.subir_archivos.invoke()
+        elegir_accion(dlg, "archivos")
         c(f"subir a «{pareja}» avisa con el texto de su modo",
           [t[1] for t in LLAMADAS_DIALOGOS["preguntar"]], [texto_])
         cerrar(dlg)
@@ -1180,14 +1436,14 @@ with sandbox():
         {"Name": "a.jpg", "Path": "a.jpg", "IsDir": False, "Size": 1},
         {"Name": "b.jpg", "Path": "b.jpg", "IsDir": False, "Size": 1},
         {"Name": "sub", "Path": "sub", "IsDir": True, "Size": -1}]}
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     c("subir una carpeta pregunta por los choques: dos archivos coinciden (la subcarpeta no cuenta)",
       LLAMADAS_DIALOGOS["choques"], ["2 elementos ya existen en /. ¿Sobrescribirlos u omitirlos?"])
     c("  la recursión se pidió solo de «fotos» en el servidor",
       [p["remote"] for p in falso.listados() if p["opt"].get("recurse")], ["fotos"])
     c("  «Cancelar» no copia nada", copias(falso), [])
     dialogos(carpeta=str(origen / "fotos"), choques="omitir")
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     bombear(lambda: len(copias(falso)) == 1)
     cp = copias(falso)[0]
     c("  «Omitir» copia la carpeta entera con IgnoreExisting",
@@ -1198,7 +1454,7 @@ with sandbox():
     # raíz de una unidad
     dialogos(carpeta="/")
     n = len(copias(falso))
-    dlg.subir_carpeta.invoke()
+    elegir_accion(dlg, "carpeta")
     c("la raíz de una unidad no se sube: se dice", (len(copias(falso)), LLAMADAS_DIALOGOS["avisar"]),
       (n, [("No se puede", tk_servidor.SIN_RAIZ)]))
     cerrar(dlg)
@@ -1208,7 +1464,7 @@ with sandbox():
     falso = nuevo_rcd({("operations/stat", ""): {"item": None}})
     dlg = abrir(falso)
     falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("object not found", 404)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     bombear(lambda: len(copias(falso)) == 1)
     c("un archivo que no existe en el servidor (404) no choca y se copia",
       (LLAMADAS_DIALOGOS["choques"], len(copias(falso))), ([], 1))
@@ -1219,7 +1475,7 @@ with sandbox():
     falso = nuevo_rcd()
     falso.respuestas[("operations/stat", "uno.txt")] = rcd.ErrorRc("permission denied", 403)
     dlg = abrir(falso)
-    dlg.subir_archivos.invoke()
+    elegir_accion(dlg, "archivos")
     c("un error al mirar el destino sale en el panel, sin copiar",
       (frase_panel(dlg), copias(falso), botones_de(dlg)[1]),
       ("No tienes permiso para escribir en /.", [], "normal"))
@@ -1236,13 +1492,13 @@ with sandbox():
     falso = servidor_lote()
     dlg = abrir(falso, config=CFG2)
     elegir_varias(dlg, "leeme.txt")
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("bajar a la carpeta de una pareja down-mirror se bloquea",
       (LLAMADAS_DIALOGOS["avisar"], copias(falso)),
       ([("No se puede", "«Espejo» deja su carpeta igual que el servidor: lo que bajes aquí lo "
                         "borraría su próxima pasada. Bájalo fuera de ella.")], []))
     dialogos(destino=str(model.DEVICE_ROOT / "sync-data" / "notas"), preguntar=False)
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("  y a la de una bisync avisa antes de seguir",
       [t[:2] for t in LLAMADAS_DIALOGOS["preguntar"]],
       [("Carpeta de una pareja",
@@ -1265,7 +1521,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: str(dlg.panel.cuenta.cget("text")).startswith("3 de 8 archivos"))
     dlg.panel.cancelar.invoke()
     dlg.panel.cancelar.invoke()
@@ -1288,7 +1544,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("un trabajo que falla por permiso lo dice en llano",
       bombear(lambda: frase_panel(dlg) == f"No tienes permiso para escribir en {destino}."), True)
     c("  y ofrece «Reintentar»", bool(dlg.panel.reintentar.winfo_manager()), True)
@@ -1314,7 +1570,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: panel_a_la_vista(dlg))
     hay.set()
     c("una conexión perdida a mitad: el panel lo dice",
@@ -1339,7 +1595,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     bombear(lambda: panel_a_la_vista(dlg))
     hay.set()
     c("un ErrorRc del seguimiento con el proceso muerto también es conexión perdida",
@@ -1372,14 +1628,14 @@ with sandbox():
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
         falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c(f"[{variante}] el seguimiento falla varias veces y se dice en la ventana",
           bombear(lambda: frase(dlg) == tk_servidor.SIN_RESPUESTA), True)
         c("  el lote sigue: los tres botones apagados, el panel a la vista, sin «Reintentar»",
           (botones_de(dlg), panel_a_la_vista(dlg), bool(dlg.panel.reintentar.winfo_manager()),
            boton(dlg)), (("disabled", "disabled", "disabled"), True, False, ""))
-        dlg.bajar.invoke()
-        dlg.subir_archivos.invoke()
+        elegir_accion(dlg, "bajar")
+        elegir_accion(dlg, "archivos")
         c("  pulsarlos a la fuerza no lanza otro lote", (len(copias(falso)), LLAMADAS_DIALOGOS["archivos"]),
           (1, []))
         LLAMADAS_DIALOGOS["preguntar"].clear()
@@ -1424,7 +1680,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("«job not found» con el rcd vivo: el panel dice que no se sabe cómo acabó",
       bombear(lambda: frase_panel(dlg) == "No se sabe cómo acabó: revisa la carpeta."), True)
     c("  sin «Reintentar», los tres botones libres y la línea de aviso se quita",
@@ -1446,7 +1702,7 @@ with sandbox():
     dlg = abrir(falso)
     elegir_varias(dlg, "leeme.txt")
     falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-    dlg.bajar.invoke()
+    elegir_accion(dlg, "bajar")
     c("un solo fallo del seguimiento: el lote acaba bien, sin avisos ni segundo copy",
       (bombear(lambda: frase_panel(dlg) == "Copiados 0"), frase(dlg), len(copias(falso))),
       (True, "", 1))
@@ -1467,7 +1723,7 @@ with sandbox():
         def dialogo(parent, inicial):
             dlg_ = ventana["dlg"]
             elegir_y_entrar(dlg_, "datos")
-            bombear(lambda: str(dlg_.ruta.cget("text")) == "/datos")
+            bombear(lambda: dlg_.direcciones.ruta == "/datos")
             return respuesta
         return dialogo
 
@@ -1475,10 +1731,10 @@ with sandbox():
     for nombre_, boton_, ajustar in (
             ("bajar", "bajar", lambda: setattr(tk_servidor, "elegir_destino",
                                                 entrar_durante_el_dialogo(str(destino_)))),
-            ("subir archivos", "subir_archivos", lambda: setattr(
+            ("subir archivos", "archivos", lambda: setattr(
                 tk_servidor, "elegir_archivos",
                 entrar_durante_el_dialogo([str(origen_ / "sube.txt")]))),
-            ("subir carpeta", "subir_carpeta", lambda: setattr(
+            ("subir carpeta", "carpeta", lambda: setattr(
                 tk_servidor, "elegir_carpeta", entrar_durante_el_dialogo(str(origen_ / "carpeta"))))):
         dialogos()
         falso = servidor_lote(estados=(ACABADO,), estadisticas=(stats(1, 1, 5, 5),),
@@ -1487,9 +1743,9 @@ with sandbox():
         ventana["dlg"] = dlg
         ajustar()
         elegir_varias(dlg, "leeme.txt")
-        getattr(dlg, boton_).invoke()
+        elegir_accion(dlg, boton_)
         c(f"[{nombre_}] mientras el diálogo estaba abierto se entró en «datos»",
-          bombear(lambda: len(copias(falso)) == 1) and str(dlg.ruta.cget("text")), "/datos")
+          bombear(lambda: len(copias(falso)) == 1) and dlg.direcciones.ruta, "/datos")
         cp = copias(falso)[0]
         c("  y el lote va a donde se vio al pulsar: la raíz, no «datos»",
           (cp["srcFs"], cp["dstFs"]) if nombre_ == "bajar" else (cp["dstFs"],),
@@ -1530,7 +1786,7 @@ with sandbox():
         dlg = abrir(falso)
         elegir_varias(dlg, "leeme.txt")
         falso.respuestas[("operations/stat", "leeme.txt")] = {"item": item("leeme.txt")}
-        dlg.bajar.invoke()
+        elegir_accion(dlg, "bajar")
         c("el trabajo está en marcha y su progreso en vuelo", bombear(bloqueado.is_set), True)
         dlg.tk.call(dlg.protocol("WM_DELETE_WINDOW"))
         c("cerrar con un lote en marcha pregunta antes",

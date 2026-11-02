@@ -325,4 +325,147 @@ c("dentro_de da la pareja más honda, no la primera de la configuración",
   (servidor.dentro_de(cfg_hondo, "nas", "/datos/notas/2026"), servidor.dentro_de(cfg_hondo, "nas", "/otra")),
   ("Notas", "Todo"))
 
+# --- el historial: se apunta al llegar, nunca al pedir
+L = servidor.Lugar
+h = servidor.Historial()
+c("un historial nuevo no tiene lugar ni a dónde ir",
+  (h.actual, h.puede_atras, h.puede_adelante, h.anterior(), h.siguiente()),
+  (None, False, False, None, None))
+h.llegar(L("nas", "/"), servidor.NUEVO)
+h.llegar(L("nas", "/datos"), servidor.NUEVO)
+c("tras dos lugares se puede volver atrás, al primero",
+  (h.actual, h.puede_atras, h.anterior(), h.puede_adelante), (L("nas", "/datos"), True, L("nas", "/"), False))
+h.llegar(L("nas", "/"), servidor.ATRAS)
+c("volver atrás deja ir adelante", (h.actual, h.puede_atras, h.puede_adelante, h.siguiente()),
+  (L("nas", "/"), False, True, L("nas", "/datos")))
+h.llegar(L("nas", "/datos"), servidor.ADELANTE)
+c("  e ir adelante vuelve", (h.actual, h.puede_atras, h.puede_adelante),
+  (L("nas", "/datos"), True, False))
+h.llegar(L("nas", "/"), servidor.ATRAS)
+h.llegar(L("nas", "/otra"), servidor.NUEVO)
+c("un lugar nuevo tras volver atrás tira lo que había delante",
+  (h.actual, h.puede_adelante, h.anterior()), (L("nas", "/otra"), False, L("nas", "/")))
+h.llegar(L("nas", "/otra"), servidor.NUEVO)
+c("  llegar otra vez al mismo lugar no lo repite", h.anterior(), L("nas", "/"))
+h.llegar(L("nas", "/otra"), servidor.RELEER)
+c("  releer no mueve nada", (h.actual, h.anterior()), (L("nas", "/otra"), L("nas", "/")))
+h.llegar(L("otro", "/"), servidor.NUEVO)
+c("un lugar de otro remote cuenta como cualquiera", (h.actual, h.anterior()),
+  (L("otro", "/"), L("nas", "/otra")))
+h.llegar(L("nas", "/lejos"), servidor.ATRAS)
+c("un «atrás» que no llega al lugar de atrás se apunta como uno nuevo",
+  (h.actual, h.anterior(), h.puede_adelante), (L("nas", "/lejos"), L("otro", "/"), False))
+h.apuntar_busqueda("fotos")
+h.llegar(L("nas", "/lejos/dentro"), servidor.NUEVO)
+c("el texto de una búsqueda queda en el lugar desde el que se buscó",
+  h.anterior(), L("nas", "/lejos", "fotos"))
+h.llegar(L("nas", "/lejos", "fotos"), servidor.ATRAS)
+c("  y volver a él con su búsqueda es volver atrás", (h.actual, h.puede_adelante),
+  (L("nas", "/lejos", "fotos"), True))
+h.apuntar_busqueda("")
+c("  vaciarla la quita del lugar", h.actual, L("nas", "/lejos"))
+
+h = servidor.Historial()
+h.llegar(L("nas", "/"), servidor.NUEVO)
+h.apuntar_busqueda("leeme")
+h.llegar(L("nas", "/"), servidor.NUEVO)
+c("la misma carpeta sin la búsqueda tras una con búsqueda es un paso nuevo: «Atrás» vuelve a ella",
+  (h.actual, h.puede_atras, h.anterior()), (L("nas", "/"), True, L("nas", "/", "leeme")))
+
+# --- ir a un lugar de otro remote, con su movimiento
+nav = servidor.Navegacion("nas")
+p = nav.ir("otro", "/x\\y/", servidor.ATRAS, "fotos")
+c("ir() pide ese remote y esa ruta, normalizada, con su movimiento y su búsqueda",
+  (p.remote, p.ruta, p.movimiento, p.busqueda), ("otro", "/x/y", servidor.ATRAS, "fotos"))
+c("  y al llegar cambia el remote", (nav.recibir(p, ()), nav.remote, nav.ruta), (True, "otro", "/x/y"))
+q = nav.pedir("/a")
+c("pedir() sigue en el remote que se ve y es un lugar nuevo", (q.remote, q.movimiento),
+  ("otro", servidor.NUEVO))
+c("  y se le puede decir que es releer", nav.pedir("/a", servidor.RELEER).movimiento, servidor.RELEER)
+
+# --- las migas
+c("las migas de una ruta: el remote (su raíz) y cada carpeta",
+  servidor.migas("nas", "/d/Carga Datos"),
+  (("nas", "/"), ("d", "/d"), ("Carga Datos", "/d/Carga Datos")))
+c("  en la raíz, solo el remote", servidor.migas("nas", "/"), (("nas", "/"),))
+c("cabe todo: no se recoge nada", servidor.recoger([40, 30, 30, 30], 200, 10), 0)
+c("no cabe: se recoge desde el principio; quedan el primero, «…» y lo último",
+  servidor.recoger([40, 30, 30, 30], 110, 10), 1)
+c("  con menos sitio, se recoge uno más", servidor.recoger([40, 30, 30, 30], 90, 10), 2)
+c("  sin sitio ni para eso, se recogen todos los de en medio",
+  servidor.recoger([40, 30, 30, 30], 20, 10), 2)
+c("  con dos tramos no hay nada en medio que recoger", servidor.recoger([400, 300], 20, 10), 0)
+
+# --- la ruta escrita
+c("la ruta escrita admite barras invertidas y una barra final",
+  servidor.ruta_escrita("d\\Carga\\"), "/d/Carga")
+c("  vacía o en blanco es la raíz", (servidor.ruta_escrita(""), servidor.ruta_escrita("  ")),
+  ("/", "/"))
+c("  sin barra delante es desde la raíz, y las dobles cuentan como una",
+  (servidor.ruta_escrita("a//b/"), servidor.ruta_escrita("/a//b/")), ("/a/b", "/a/b"))
+c("  «..» sube, sin pasar de la raíz: nunca llega a rclone ni a las comprobaciones de parejas",
+  (servidor.ruta_escrita(".."), servidor.ruta_escrita("/a/../b"), servidor.ruta_escrita("a/b/../../.."),
+   servidor.ruta_escrita("../datos/notas"), servidor.ruta_escrita("datos\\..\\x")),
+  ("/", "/b", "/", "/datos/notas", "/x"))
+
+# --- la búsqueda en subcarpetas: qué coincide
+co = servidor.coincide
+c("coincide sin mayúsculas ni acentos", (co("Foto Ñandú.JPG", "nandu"), co("Informe.pdf", "INFO")),
+  (True, True))
+c("  y no por cualquier cosa", co("Informe.pdf", "fotos"), False)
+c("con * o ? el texto es un patrón del nombre entero",
+  (co("viaje.jpg", "*.JPG"), co("viaje.jpg", "*.png"), co("abc", "a?c"), co("xabc", "a?c")),
+  (True, False, True, False))
+c("un texto vacío o en blanco no coincide con nada", (co("a", ""), co("a", "  ")), (False, False))
+
+
+def ent(nombre, carpeta=False):
+    return servidor.Entrada(nombre, carpeta, None if carpeta else 1, None)
+
+
+# --- el recorrido, carpeta a carpeta y en anchura
+b = servidor.Busqueda("nas", "/", False)
+c("una búsqueda nueva pide la raíz primero", (b.siguientes(4), b.acabada), (["/"], False))
+c("  y nada más mientras no llega", b.siguientes(4), [])
+n0 = b.numero
+c("recibir la raíz cuenta", b.recibir(n0, "/", (ent("a", True), ent("b", True), ent("x.txt"))), True)
+c("  y sus subcarpetas se piden después, en orden", b.siguientes(1), ["/a"])
+c("  de a una o de varias", b.siguientes(4), ["/b"])
+c("una carpeta no pedida no cuenta", b.recibir(n0, "/zz", (ent("q"),)), False)
+c("un fallo (sin permiso, ya no está) se cuenta y se sigue",
+  (b.fallo(n0, "/a"), b.fallidas, b.acabada), (True, 1, False))
+b.recibir(n0, "/b", (ent("c", True), ent("x de b.txt")))
+c("los resultados salen de todo lo leído, carpeta y entrada",
+  [(r.carpeta, r.entrada.nombre, r.ruta) for r in b.resultados("x")],
+  [("/", "x.txt", "/x.txt"), ("/b", "x de b.txt", "/b/x de b.txt")])
+c("  y los de una carpeta sola, para añadirlos según llegan",
+  [r.ruta for r in b.de_carpeta("x", "/b")], ["/b/x de b.txt"])
+c("lo que queda por leer sigue", b.siguientes(4), ["/b/c"])
+b.detener()
+c("detener: nada más que pedir y lo que estaba en vuelo ya no cuenta",
+  (b.detenida, b.siguientes(4), b.recibir(n0, "/b/c", ()), b.numero != n0), (True, [], False, True))
+c("  lo leído se queda", len(b.resultados("x")), 2)
+b.reanudar()
+c("reanudar vuelve a pedir lo que quedó a medias", (b.detenida, b.siguientes(4)), (False, ["/b/c"]))
+b.recibir(b.numero, "/b/c", ())
+c("sin nada pendiente ni en vuelo, acabada", (b.acabada, b.carpetas, b.elementos), (True, 3, 5))
+c("el progreso y el final, en llano",
+  (b.texto_progreso("x", 2), b.texto_final("x", 2)),
+  ("Buscando «x»… 3 carpetas · 2 encontrados",
+   "2 encontrados en 3 carpetas · 1 carpeta no se pudo leer"))
+c("  en singular",
+  (servidor.Busqueda("nas", "/", False).texto_final("x", 1)), "1 encontrado en 0 carpetas")
+c("la búsqueda puede nacer con la raíz ya leída (la de la lista)",
+  servidor.Busqueda("nas", "/d", False, (ent("k", True),)).siguientes(4), ["/d/k"])
+previo_limite = servidor.LIMITE_ELEMENTOS
+servidor.LIMITE_ELEMENTOS = 3
+b = servidor.Busqueda("nas", "/", False)
+b.siguientes(1)
+b.recibir(b.numero, "/", tuple(ent(f"d{i}", True) for i in range(4)))
+c("pasado el tope de elementos se para y lo dice",
+  (b.parada, b.acabada, b.siguientes(4), b.texto_final("d", 4)),
+  (True, True, [], "4 encontrados en 1 carpeta · Búsqueda parada: demasiados elementos; "
+                   "busca desde una carpeta más concreta."))
+servidor.LIMITE_ELEMENTOS = previo_limite
+
 sys.exit(c.report())

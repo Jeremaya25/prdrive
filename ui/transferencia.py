@@ -189,7 +189,8 @@ def parejas_que_contienen(config: Config, remote: str, ruta: str,
         ruta: Ruta del servidor.
         sin_mayusculas: Si se da, la ruta y las carpetas de las parejas se comparan tras
             `casefold()` en los dos lados, como en un servidor que no distingue
-            mayúsculas (la gestión del servidor); las transferencias comparan exacto.
+            mayúsculas (la gestión del servidor y las subidas); las bajadas comparan
+            carpetas del equipo, exacto.
 
     Returns:
         Los nombres de esas parejas; vacío si ninguna carpeta de pareja la contiene.
@@ -229,7 +230,9 @@ def afectadas_subida(config: Config, remote: str, ruta_destino: str,
     las que comparten esa carpeta), las parejas cuya carpeta es uno de los elementos
     subidos y las que cuelgan de una carpeta subida (subir `notas/` a `/datos` toca a la
     pareja de `/datos/notas`). La comparación es por tramos de ruta, no por prefijo de
-    texto.
+    texto, y sin mayúsculas en los dos lados, como la gestión: la carpeta que se ve
+    puede venir escrita a mano (`/COPIA`), y en un servidor que no distingue
+    mayúsculas es la de la pareja. En uno que sí, solo puede avisar de más.
 
     Args:
         config: Configuración con las parejas.
@@ -240,15 +243,16 @@ def afectadas_subida(config: Config, remote: str, ruta_destino: str,
     Returns:
         Las parejas alcanzadas, sin repetir y en el orden de la configuración.
     """
-    nombres = parejas_que_contienen(config, remote, ruta_destino)
+    nombres = parejas_que_contienen(config, remote, ruta_destino, sin_mayusculas=True)
     base = remote_picker.normalizar(ruta_destino).rstrip("/")
     for e in elementos:
         objetivo = remote_picker.normalizar(base + "/" + e.nombre)
         if e.es_carpeta:
-            nombres |= parejas_bajo(config, remote, objetivo)
+            nombres |= parejas_bajo(config, remote, objetivo, sin_mayusculas=True)
         else:
-            nombres |= {nombre for carpeta, nombre in _carpetas_de_parejas(config, remote)
-                        if carpeta == objetivo}
+            nombres |= {nombre for carpeta, nombre
+                        in _carpetas_de_parejas(config, remote, sin_mayusculas=True)
+                        if carpeta == _plegada(objetivo, True)}
     return _afectadas(config, nombres)
 
 
