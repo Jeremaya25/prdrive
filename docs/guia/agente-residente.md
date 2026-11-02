@@ -252,7 +252,12 @@ agente»**. El diseño completo está en
   otra sin él); si KeePassXC ya está abierto, lo trae delante. Si no hay
   ninguna con llavero conectada, o si la que toca se está actualizando o
   expulsando, un aviso lo dice. Como el de la bandeja, trae lo último aunque
-  el agente esté en pausa. Se guardan en este
+  el agente esté en pausa. Si la unidad está **sincronizando** en ese momento,
+  **Abrir su ventana** (y **Abrir el llavero**, si lo que se sincroniza es el
+  llavero) no la abre a medias: un aviso dice que se abrirá cuando termine, y
+  se abre sola al acabar (como mucho, al minuto). Pulsarlo otra vez mientras
+  tanto no abre otra. Lo mismo con «Configurar» y «Abrir llavero» de la
+  bandeja. Se guardan en este
   equipo, no en la unidad, y de fábrica no hay
   ninguno. Si una combinación la tiene ya otro programa o el propio sistema, se
   dice al guardar y esa acción se queda sin atajo: elige otra. Si cancelas la

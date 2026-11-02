@@ -254,6 +254,19 @@ GRACIA_DESMONTAJE = 5.0
 """Segundos tras salir VeraCrypt para que el `.hc` quede libre."""
 ESPERA_ABRIR = 180.0
 """Segundos que `abrir` espera a que se desbloquee una raíz cerrada."""
+ESPERA_TRAS_PASADA = 60.0
+"""Segundos que su ventana o su llavero esperan a que acabe la pasada de su raíz.
+
+Contados desde que se pidió por primera vez: pasados, se abre aunque siga
+(`Agente._abrir_tras_pasada()`). La ventana de runsync ya convive con una
+pasada del agente en marcha: lo dice y lo deja acabar.
+"""
+TRAS_VENTANA = "ventana"
+"""Lo que se abre al acabar la pasada: su ventana de runsync (`Conexion.tras_pasada`)."""
+TRAS_LLAVERO = "llavero"
+"""Lo que se abre al acabar la pasada: su llavero, `runsync.py --llavero`."""
+LO_QUE_SE_ABRE = {TRAS_VENTANA: "su ventana", TRAS_LLAVERO: "su llavero"}
+"""Cómo se dice, en el aviso y en el diario, lo que espera a la pasada."""
 GRACIA_ABRIR = 20.0
 """Segundos tras salir VeraCrypt para ver la raíz abierta.
 
@@ -1379,6 +1392,9 @@ class Conexion:
         compatible_leido: Cuándo se miró.
         ventana: Si en la última vuelta tenía su ventana de runsync abierta: al
             abrirse, la raíz cuenta como usada (`Agente.usadas`).
+        tras_pasada: Lo que se abre al acabar su pasada en curso
+            (`TRAS_VENTANA`, `TRAS_LLAVERO`), con cuándo se pidió por primera
+            vez (`Agente._esperar_a_la_pasada()`).
     """
     id: str
     raiz: Path
@@ -1418,6 +1434,7 @@ class Conexion:
     compatible_leido: float = -math.inf
     vista: dict | None = None
     ventana: bool = False
+    tras_pasada: dict[str, float] = field(default_factory=dict)
     con_partes: bool = False
     leidos: dict = field(default_factory=dict)
     config_visto: int | None = None
@@ -2012,6 +2029,7 @@ class Agente:
         self._tras_cierre()
         self._preguntas(ahora)
         self._fin_de_pasada(ahora)
+        self._abrir_tras_pasada(ahora)
         self._cambios_de_red(ahora)
         self._buzones_de_raices(ahora)
         self._bloqueos(ahora)
@@ -2506,6 +2524,7 @@ class Agente:
         con = self.conexiones.pop(uid, None)
         if con is None:
             return
+        self._descartar_tras_pasada(con, "se ha ido")
         # La letra queda para otra unidad: fuera el nombre y el icono que se le
         # pasaron al Explorador (los de esta unidad, no los de otra que la tome).
         explorador.quitar(con.raiz, uid)
@@ -2835,12 +2854,19 @@ class Agente:
             return
         self._lanzar_ventana(con)
 
-    def _lanzar_ventana(self, con: Conexion) -> None:
+    def _lanzar_ventana(self, con: Conexion, esperar: bool = True) -> None:
         """Abre la ventana de runsync de esa raíz.
 
         Se lanza con el Python del agente y desde fuera de la raíz. Nuestro
-        servicio no estorba: la ventana lo pausa al abrirse (`daemon.stop`).
-        Otra ventana sí, y runsync ya se negaría.
+        servicio no estorba: si la atiende, se pone en pausa al lanzarla y la
+        suelta en esta misma vuelta, sin esperar al `daemon.stop` con que la
+        ventana lo pediría (ni empezar mientras tanto otra pareja suya, que la
+        haría esperar). Otra ventana sí estorba, y runsync ya se negaría.
+
+        Args:
+            con: La conexión de la raíz.
+            esperar: Con la raíz a mitad de una pasada, dejarla para cuando
+                acabe (`_esperar_a_la_pasada()`); sin ello se abre ya.
         """
         if self._por_actualizar(con) or rclone_propio() is None:
             diario(f"{con.nombre}: no abro su ventana: "
@@ -2855,16 +2881,25 @@ class Agente:
             diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir "
                    f"la ventana")
             return
+        if esperar and self._esperar_a_la_pasada(con, TRAS_VENTANA):
+            return
+        ahora = self.reloj()
         try:
             lanzar([python(ventana=True), str(app(con.raiz) / "runsync.py")],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    **_opciones_hijo(equipo.DIR, separado=True))
             diario(f"{con.nombre}: ventana abierta")
-            self._usada(con.id, self.reloj())
+            self._usada(con.id, ahora)
         except OSError as e:
             diario(f"{con.nombre}: no he podido abrir la ventana: {e}")
+            return
+        if con.lock is not None:
+            # La pausa de `_contrato()`: la suelta en esta vuelta y la mantiene
+            # mientras se vea su ventana, o `GRACIA` si no llega a abrirse.
+            con.pausa = ahora
+            dlog(con.raiz, "servicio (agente del equipo) en pausa: se abre su ventana")
 
-    def _lanzar_llavero(self, con: Conexion) -> None:
+    def _lanzar_llavero(self, con: Conexion, esperar: bool = True) -> None:
         """Hace el «Abrir llavero» de la bandeja: el `runsync.py --llavero` de esa raíz.
 
         Con el Python del agente y desde fuera de la raíz, como su ventana, y
@@ -2873,6 +2908,11 @@ class Agente:
         `Llavero.bat`). Lo que diga (el fichero llave, combinar) lo dice él.
         Lanzado, pide la pasada que trae lo último si no la va a hacer nadie
         (`_traer_al_abrir()`).
+
+        Args:
+            con: La conexión de la raíz.
+            esperar: Con el llavero a mitad de una pasada, dejarlo para cuando
+                acabe (`_esperar_a_la_pasada()`); sin ello se abre ya.
         """
         if self._por_actualizar(con) or rclone_propio() is None:
             diario(f"{con.nombre}: no abro su llavero: "
@@ -2884,6 +2924,8 @@ class Agente:
             return
         if not hay_pantalla():
             diario(f"{con.nombre}: sin entorno gráfico; no hay dónde abrir su llavero")
+            return
+        if esperar and self._esperar_a_la_pasada(con, TRAS_LLAVERO):
             return
         try:
             lanzar([python(ventana=True), str(app(con.raiz) / "runsync.py"), "--llavero"],
@@ -2918,6 +2960,92 @@ class Agente:
             self.urgentes.append(clave)
             diario(f"{con.nombre}: se trae lo último de su llavero aunque no se "
                    f"sincroniza ({motivo})")
+
+    def _esperar_a_la_pasada(self, con: Conexion, que: str) -> bool:
+        """Deja para el final de la pasada en curso abrir la ventana o el llavero de esa raíz.
+
+        Su ventana espera si esa raíz está a mitad de una pasada (una sonda de
+        su remoto no cuenta); su llavero, solo si el llavero va en ella y su
+        KeePassXC no está ya abierto (abrirlo solo lo traería delante). La
+        primera vez lo dice un aviso con su nombre; pedirlo otra vez mientras
+        espera ni avisa ni alarga el plazo (`ESPERA_TRAS_PASADA`). Lo abre
+        `_abrir_tras_pasada()`.
+
+        Args:
+            con: La conexión de la raíz.
+            que: `TRAS_VENTANA` o `TRAS_LLAVERO`.
+
+        Returns:
+            Si queda esperando: entonces no se abre nada ahora.
+        """
+        pasada = self.pasada
+        if pasada is None or pasada.tarea.raiz != con.id or pasada.tarea.tipo != pl.PASADA:
+            return False
+        if que == TRAS_LLAVERO and ((con.id, model.LLAVERO) not in pasada.claves
+                                    or con.id in self.keepassxc):
+            return False
+        lo = LO_QUE_SE_ABRE[que]
+        if que in con.tras_pasada:
+            diario(f"{con.nombre}: {lo} ya espera a que acabe la pasada")
+            return True
+        con.tras_pasada[que] = self.reloj()
+        diario(f"{con.nombre}: a mitad de una pasada; {lo} se abre cuando acabe")
+        avisar(f"{con.nombre}: sincronizando",
+               f"Hay una sincronización en curso; se abrirá {lo} cuando termine.")
+        return True
+
+    def _abrir_tras_pasada(self, ahora: float) -> None:
+        """Abre lo que esperaba a que acabara la pasada de su raíz (`_esperar_a_la_pasada()`).
+
+        Se abre al acabar esa pasada, haya ido bien o mal (la ventana es donde
+        se ve un fallo), o pasado `ESPERA_TRAS_PASADA` desde que se pidió,
+        aunque siga. Va antes de decidir la pasada siguiente: lanzada su
+        ventana, la raíz queda en pausa (`_lanzar_ventana()`) y no empieza otra
+        pareja suya. Se descarta, con su línea en el diario, si la raíz deja
+        de poder abrirse (`_por_que_no_abrir()`); la que se va la descartan
+        `_fin_de_pasada()` y `_desconectar()`.
+        """
+        for con in list(self.conexiones.values()):
+            if not con.tras_pasada:
+                continue
+            motivo = self._por_que_no_abrir(con)
+            if motivo:
+                self._descartar_tras_pasada(con, motivo)
+                continue
+            en_curso = self.pasada is not None and self.pasada.tarea.raiz == con.id
+            for que, desde in list(con.tras_pasada.items()):
+                if en_curso and ahora - desde < ESPERA_TRAS_PASADA:
+                    continue
+                del con.tras_pasada[que]
+                if en_curso:
+                    diario(f"{con.nombre}: la pasada sigue tras "
+                           f"{ESPERA_TRAS_PASADA:.0f} s; abro {LO_QUE_SE_ABRE[que]} igual")
+                if que == TRAS_VENTANA:
+                    self._lanzar_ventana(con, esperar=False)
+                else:
+                    self._lanzar_llavero(con, esperar=False)
+
+    def _por_que_no_abrir(self, con: Conexion) -> str:
+        """Devuelve por qué ya no se abre lo que esperaba a la pasada de esa raíz, o «».
+
+        Lo mismo que no deja abrirla en `_abrir()` (fuera de la lista, otro
+        código, actualizándose, expulsándose), y bloquearla.
+        """
+        if con.id not in self.ajustes.unidades or con.cambiada or self._por_actualizar(con):
+            return "no está en la lista, o su código ha cambiado"
+        if con.actualizacion is not None:
+            return "se está actualizando"
+        if con.id in self.expulsiones:
+            return "se está expulsando"
+        if con.id in self.bloqueos:
+            return "se está bloqueando"
+        return ""
+
+    def _descartar_tras_pasada(self, con: Conexion, motivo: str) -> None:
+        """Olvida lo que esperaba a la pasada de esa raíz, con una línea por cada cosa."""
+        for que in con.tras_pasada:
+            diario(f"{con.nombre}: no abro {LO_QUE_SE_ABRE[que]}: {motivo}")
+        con.tras_pasada.clear()
 
     def _sirve(self, con: Conexion) -> bool:
         """Indica si el agente tiene que servir esa conexión.
@@ -3886,6 +4014,8 @@ class Agente:
             # pareja y no se avisa de nada.
             diario(f"[{pasada.nombre}] la unidad se ha ido a mitad de "
                    f"{tarea.pareja or 'la comprobación'}; no cuenta")
+            if con is not None:
+                self._descartar_tras_pasada(con, "se ha ido")
             return
         segundos = ahora - pasada.desde
         if tarea.tipo == pl.SONDA:
@@ -5658,7 +5788,9 @@ class Agente:
         cifrada de este equipo, una unidad con BitLocker o una de VeraCrypt con
         el contenedor cerrado) se pide antes su contraseña, y su ventana o su
         carpeta salen al verla abierta, si su código sigue siendo el aceptado;
-        su llavero no, porque bloqueada no se sabe si lo lleva.
+        su llavero no, porque bloqueada no se sabe si lo lleva. A mitad de una
+        pasada suya, su ventana (y su llavero, si va en ella) se abren al
+        acabar, con un aviso que lo dice (`_esperar_a_la_pasada()`).
 
         Args:
             uid: El id de la raíz.
