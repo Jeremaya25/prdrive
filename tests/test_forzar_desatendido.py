@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Ninguna ruta desatendida puede pasar `--force`.
+"""Ninguna ruta desatendida puede pasar `--force` ni `--resume`.
+
+`--resume` aprueba UNA pasada normal de un espejo retenido tras su freno: lo pide una
+persona (la ventana tras «Lanzarla», «Reparación» tras confirmar `aviso_volver()`) o
+quien lo escribe en una terminal; el servicio, `--auto`, el agente y el vigilante no
+lo pasan nunca. Más abajo, el mismo recorrido de fuentes que para `--force`.
 
 `--force` salta el freno de borrados de UNA pasada y lo pide una persona, desde la
 ventana tras leer lo que va a pasar (`ui/repair.aviso_forzar()`), o a mano con
@@ -105,6 +110,7 @@ c("  todas son sync.py, `--` y los nombres: lo que sigue a `--` nunca es una opc
   all(p.args[2] == "--" and not any(a.startswith("-") for a in p.args[3:]) for p in lanzadas),
   True)
 c("  y ninguna lleva --force", [p.args for p in lanzadas if "--force" in p.args], [])
+c("  ni --resume", [p.args for p in lanzadas if "--resume" in p.args], [])
 
 # ---- Las fuentes: quién nombra la opción -------------------------------------------------------
 
@@ -134,5 +140,28 @@ lanzadores = {"runsync.py", "agente.py", "penwatch.py", "prdrive-install.py", "u
               "ui/tk.py", "ui/console.py", "common/llavero.py", "common/keepassxc.py"}
 c("  y ninguno de los que lanzan sync.py (el servicio, el vigilante, el agente, las ventanas) "
   "está entre ellos", sorted(lanzadores & nombran), [])
+
+# ---- Las fuentes: quién nombra `--resume` ------------------------------------------------------
+
+PERMITIDOS_RESUME = {
+    "sync.py": "el argumento de la línea de órdenes",
+    "ui/__init__.py": "manual_args(), tras el sí de quien eligió",
+    "ui/repair.py": "args_volver(), tras confirmar su plan",
+}
+"""Los únicos módulos que nombran `--resume`, y por qué.
+
+`ui/tk_repair.py` no está: llama a `repair.args_volver()`. Un módulo nuevo que lo nombre
+tiene que añadirse aquí con su motivo, junto a un test que fije que solo lo pasa quien lo
+pide una persona.
+"""
+
+nombran_resume = {f for f in fuentes if "--resume" in (REPO / f).read_text(encoding="utf-8")}
+c("solo nombran --resume los módulos previstos", sorted(nombran_resume - set(PERMITIDOS_RESUME)), [])
+c("  y no queda ninguno previsto que ya no lo nombre",
+  sorted(set(PERMITIDOS_RESUME) - nombran_resume), [])
+c("  y ninguno de los que lanzan sync.py sin una persona delante lo nombra",
+  sorted({"runsync.py", "agente.py", "penwatch.py", "pregunta.py", "prdrive-install.py",
+          "ui/tk.py", "ui/console.py", "common/llavero.py", "common/keepassxc.py"}
+         & nombran_resume), [])
 
 sys.exit(c.report())

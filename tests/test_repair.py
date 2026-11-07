@@ -440,4 +440,95 @@ with sandbox():
       [(repair.ETIQUETA_LOCK, "lock", "lock"), (repair.ETIQUETA_LOG, "log", "fallo")])
     c("  cuyo plan es el de siempre, que se confirma", repair.tiene_plan(botones[0][2]), True)
 
+# ---- «Volver a intentar…»: un espejo retenido tras su freno -------------------------------
+from _logs_errores import RED_RECHAZADA  # noqa: E402
+from _logs_frenos import ESPEJO_UP  # noqa: E402
+
+from common import results  # noqa: E402
+
+FOTOS = {"name": "fotos", "mode": "up-mirror", "local": "sync-data/fotos",
+         "remote_path": "/R/fotos"}
+
+
+def motivo_de(f):
+    """Devuelve el mensaje del `ReparacionImposible` que lanza `f()`, o `None` si no lo lanza."""
+    try:
+        f()
+    except repair.ReparacionImposible as e:
+        return str(e)
+    return None
+
+
+def espejo_parado(retenida: bool, red: bool = False):
+    """Deja `fotos` parada en su freno (retenida o no); devuelve `(config, hallazgo, todos)`.
+
+    Con `red`, después de eso una pasada falló por la red sin freno: el fallo hereda la retención.
+    """
+    revision.olvidar_frenos()
+    cfg = mkcfg(None, pairs=[FOTOS])
+    cfg.pairs[0].local_abs.mkdir(parents=True, exist_ok=True)
+    model.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = model.LOG_DIR / "fotos_20261107_100000.log"
+    log.write_text(ESPEJO_UP, encoding="utf-8")
+    results.apuntar("fotos", 7, log, freno=retenida)
+    if red:
+        otro = model.LOG_DIR / "fotos_20261107_110000.log"
+        otro.write_text(RED_RECHAZADA, encoding="utf-8")
+        results.apuntar("fotos", 1, otro)
+    todos = revision.revisar(cfg)
+    return cfg, next(h for h in todos if h.clave == ("fallo" if red else "freno")), todos
+
+
+with sandbox():
+    cfg, freno, _ = espejo_parado(True)
+    c("una retenida ofrece volver a intentarlo", repair.puede_volver(freno), True)
+    c("  con --resume y nada más", repair.args_volver(freno), ["fotos", "--resume"])
+    c("  sin --force, --yes ni --resync",
+      set(repair.args_volver(freno)) & {"--force", "--yes", "--resync"}, set())
+    plan = repair.aviso_volver(cfg, freno)
+    c("  su plan se confirma con el texto de revision",
+      (plan.titulo, plan.warnings[0], plan.execute()),
+      ("Volver a intentar «fotos»", revision.texto_retencion(cfg.pairs[0], freno.dato[2]), []))
+    c.contains("  y dice el tope", plan.consequences[0], "con su tope de borrados (50 ficheros).")
+    c("  y que si acaba bien deja de estar retenida y si no sigue",
+      plan.consequences[1:],
+      ["Si acaba bien, deja de estar retenida: el servicio y el agente vuelven a lanzarla solos.",
+       "Si vuelve a pararse en el freno, sigue retenida."])
+    c("  el texto nombra los botones de verdad",
+      all(e in plan.warnings[0] for e in (repair.ETIQUETA_FORZAR, repair.ETIQUETA_SIMULAR)), True)
+    c("  con la carpeta local vacía, lo avisa una vez más",
+      (len(plan.warnings), repair._LOCAL_VACIA in plan.warnings), (2, True))
+    (cfg.pairs[0].local_abs / "nota.md").write_text("x\n", encoding="utf-8")
+    c("  con algo dentro, no",
+      repair._LOCAL_VACIA in repair.aviso_volver(cfg, freno).warnings, False)
+    c("«Volver a intentar…» es un botón de «Reparación»",
+      freno in repair.hallazgos_reparables([freno]), True)
+
+with sandbox():
+    cfg, fallo, hallazgos = espejo_parado(True, red=True)
+    c("en un fallo retenido, «Volver a intentar…» sustituye a «Reintentar»",
+      [b[0] for b in repair.arreglos_fallo(fallo, hallazgos)], ["Volver a intentar…", "Ver el log"])
+    c("  su acción es «volver» sobre el propio fallo",
+      repair.arreglos_fallo(fallo, hallazgos)[0][1:], ("volver", fallo))
+    c("  y cuenta como reparable", fallo in repair.hallazgos_reparables(hallazgos), True)
+    c("  con --resume", repair.args_volver(fallo), ["fotos", "--resume"])
+    sin_reintento = revision.Hallazgo("fallo", "t", "d", "fotos", revision.AVISO,
+                                      (None, errores.PERMISO, fallo.dato[2]))
+    c("  también cuando su causa no tenía «Reintentar»",
+      [b[0] for b in repair.arreglos_fallo(sin_reintento, [sin_reintento])],
+      ["Volver a intentar…", "Ver el log"])
+
+with sandbox():
+    cfg, freno_sin, _ = espejo_parado(False)
+    c("sin retención no se ofrece", repair.puede_volver(freno_sin), False)
+    c("  y su plan se niega", motivo_de(lambda: repair.aviso_volver(cfg, freno_sin)),
+      "Esta pareja ya no está retenida: lánzala como cualquier otra.")
+
+with sandbox():
+    cfg, fallo_sin, hallazgos_sin = espejo_parado(False, red=True)
+    c("  un fallo de red sin retención sigue con «Reintentar»",
+      [b[0] for b in repair.arreglos_fallo(fallo_sin, hallazgos_sin)],
+      ["Reintentar la pasada", "Ver el log"])
+    c("  y no se ofrece volver", repair.puede_volver(fallo_sin), False)
+
 sys.exit(c.report())

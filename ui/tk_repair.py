@@ -62,10 +62,13 @@ BOTONES = {
 
 Lo que no está aquí no tiene botón, y eso también es una respuesta: la carpeta
 local que falta no se arregla creándola. El freno de borrados (`freno`) tiene
-varios y van aparte, debajo de su texto (`FORZAR`, `repair.ETIQUETA_SIMULAR`, `VER_LOG`).
+varios y van aparte, debajo de su texto (`VOLVER`, `FORZAR`, `repair.ETIQUETA_SIMULAR`,
+`VER_LOG`).
 Un `fallo` con arreglos (`repair.arreglos_fallo()`) también los lleva debajo, y
 entonces su «Ver el log» va con ellos y no junto al título.
 """
+VOLVER = repair.ETIQUETA_VOLVER
+"""El botón que lanza UNA pasada normal de un espejo retenido, tras confirmarlo."""
 FORZAR = repair.ETIQUETA_FORZAR
 """El botón que salta el freno de borrados de UNA pasada, tras confirmarlo."""
 VER_LOG = repair.ETIQUETA_LOG
@@ -215,6 +218,29 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         panel.cerrar(lambda: lanzar(f"Forzar «{hallazgo.pareja}»",
                                     repair.args_forzar(hallazgo)))
 
+    def volver(hallazgo) -> None:
+        """Pide confirmación y lanza UNA pasada normal de una pareja retenida.
+
+        Como `forzar()`: no es un plan de disco sino una pasada de rclone, con su
+        log y su registro, y el plan se hace con el hallazgo recién leído
+        (`fresco()`). Si la pareja ya no está retenida no se pregunta nada.
+        Cancelar no hace nada.
+        """
+        hallazgo = fresco(hallazgo)
+        if hallazgo is None:
+            return
+        try:
+            plan = repair.aviso_volver(config, hallazgo)
+        except repair.ReparacionImposible as e:
+            messagebox.showerror(TITLE, str(e), parent=dlg)
+            repintar()
+            return
+        if not tk_pairs.confirmar_plan(dlg, plan, plan.titulo, ""):
+            return
+        panel.devolver(True)
+        panel.cerrar(lambda: lanzar(f"Volver a intentar «{hallazgo.pareja}»",
+                                    repair.args_volver(hallazgo)))
+
     def simular_forzado(hallazgo) -> None:
         """Lanza la pasada forzada en simulacro: nombra lo que borraría y no toca nada.
 
@@ -257,7 +283,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
     ACCIONES = {"prefijo": aplicar, "lock": aplicar,
                 "resync": resincronizar, "fallo": ver_log}
     ARREGLOS = {"resync": resincronizar, "lock": aplicar,
-                "reintentar": reintentar, "log": ver_log}
+                "reintentar": reintentar, "volver": volver, "log": ver_log}
 
     def arreglos(hallazgo) -> list[tuple[str, object]]:
         """Devuelve los botones de un `fallo` con arreglos, o `[]` si solo tiene el log."""
@@ -281,6 +307,7 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
         if hallazgo.clave != "freno":
             return []
         return [(texto, accion) for texto, accion, vale in (
+            (VOLVER, volver, repair.puede_volver(hallazgo)),
             (FORZAR, forzar, repair.puede_forzar(hallazgo)),
             (repair.ETIQUETA_SIMULAR, simular_forzado, repair.puede_simular_forzado(hallazgo)),
             (VER_LOG, ver_log, True)) if vale]
