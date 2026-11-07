@@ -35,6 +35,7 @@ Uso:
     python sync.py --dry-run       # simula, no toca nada (úsalo SIEMPRE la 1a vez)
     python sync.py --resync        # rehace el baseline de bisync (1a vez o si se rompe)
     python sync.py notas --force   # salta el freno de borrados SOLO en esta pasada de «notas»
+    python sync.py fotos --resume  # lanza un espejo retenido tras su freno (una pasada normal)
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -326,6 +327,9 @@ class RunContext:
             de borrados (`orden.flags_de_la_pasada()`). Solo viene de la línea de
             órdenes y de una persona: ni el servicio, ni `--auto`, ni el agente
             lo pasan, y no es un flag del TOML.
+        retenidas: Los espejos retenidos tras su freno de borrados que esta
+            ejecución NO lanza (`resolver_retenidas()`): `_pasar_pareja()` los
+            salta, sin apuntar nada y sin rclone.
         keep_logs: Si se guarda también el log de las pasadas buenas.
         sello: El sufijo de las versiones guardadas (`--suffix`), en hora local
             como el resto de fechas que ve la persona. Se calcula UNA vez por
@@ -339,6 +343,7 @@ class RunContext:
     force_resync: bool = False
     resync_approved: bool = False
     force: bool = False
+    retenidas: Mapping[str, revision.Retencion] = field(default_factory=dict)
     keep_logs: bool = False
     sello: str = ""
 
@@ -513,7 +518,7 @@ def _bisync_preflight(ctx: RunContext, pair: Pair) -> tuple[bool, bool, int | No
 
 def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
                   reloj: historial.Reloj | None = None,
-                  final: progress.Progreso | None = None) -> None:
+                  final: progress.Progreso | None = None, *, freno: bool = False) -> None:
     """Apunta cómo acabó la pareja, para que la ventana y el servicio lo enseñen.
 
     Un dry-run no apunta nada: un simulacro bueno no puede tapar un fallo real.
@@ -524,6 +529,8 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
     Args:
         reloj: Cuándo empezó la pareja.
         final: Última estadística de rclone, si la hubo.
+        freno: Si la pasada de un espejo se paró en su freno de borrados
+            (`paro_en_el_freno()`): queda retenida (`results.apuntar()`).
     """
     if ctx.dry_run or rc == SKIPPED:
         return
@@ -531,9 +538,29 @@ def record_result(ctx: RunContext, pair: Pair, rc: int, log: Path | None,
     # (`keep_log`, #36) no se encontraría.
     if log is not None and log.parent != model.LOG_DIR:
         log = None
-    results.apuntar(pair.name, rc, log)
+    results.apuntar(pair.name, rc, log, freno=freno)
     historial.apuntar(historial.pasada(pair.name, rc, reloj,
                                        final.hecho if final is not None else None))
+
+
+def paro_en_el_freno(pair: Pair, log: Path | None) -> bool:
+    """Indica si la pasada de un espejo se paró en su freno de borrados.
+
+    Solo un espejo puede quedar retenido (`revision.puede_retenerse()`), y solo lo
+    dice el log que la pasada dejó. Sin log, o con uno que no se puede leer, no es
+    el freno: una pareja que no se deja decidir no se retiene.
+
+    Args:
+        pair: La pareja.
+        log: El log de la pasada, ya guardado en `logs/`, o `None` si no hay.
+    """
+    if log is None or not revision.puede_retenerse(pair):
+        return False
+    try:
+        freno = frenos.detectar_en(log, pair)
+    except OSError:
+        return False
+    return freno is not None and freno.tipo == frenos.ESPEJO
 
 
 def sin_conflictos_nuevos(pair: Pair, dicho: parte.Parte | None) -> bool:
@@ -664,6 +691,14 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
         record_result(ctx, pair, 2, None, reloj)
         return 2
 
+    # Un espejo retenido tras su freno espera a una persona: ni se apunta nada (la
+    # retención no se pierde) ni se lanza rclone. «Saltada» es la palabra que buscan el
+    # agente y el servicio (`parte.RETENIDA` lo dice en el parte).
+    if pair.name in ctx.retenidas:
+        print(f"[{pair.name}] {revision.linea_retenida(ctx.retenidas[pair.name])}")
+        medida.retenida = True
+        return SKIPPED
+
     need_resync = ctx.force_resync
     vacia = False
     if pair.is_bisync:
@@ -729,7 +764,8 @@ def _pasar_pareja(ctx: RunContext, pair: Pair, medida: parte.Medida) -> int:
         print(f"[{pair.name}] FALLÓ (código {rc}). Log: {saved}")
         print_log_tail(saved)
         explain_failure(saved, pair)
-    record_result(ctx, pair, rc, saved, reloj, final)
+    freno = not ctx.dry_run and rc != 0 and paro_en_el_freno(pair, saved)
+    record_result(ctx, pair, rc, saved, reloj, final, freno=freno)
     if not pair.llavero and not ctx.dry_run:
         # El llavero puede dar otra pasada aquí debajo: su parte se cierra al final.
         medida.cerrar(rc, ORDENES[0])
@@ -928,6 +964,41 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     return approved
 
 
+def resolver_retenidas(selected: list[Pair], aprobadas: bool) -> dict[str, revision.Retencion]:
+    """Decide UNA vez qué espejos retenidos tras su freno se lanzan en esta ejecución.
+
+    Un espejo que se paró en su `--max-delete` borró ese número de ficheros y dejó el
+    resto: lanzado otra vez a su hora, vaciaría el lado de destino a plazos. Por eso,
+    mientras una persona no apruebe una pasada, `_pasar_pareja()` lo salta. Se aprueba
+    con `--resume` o `--force` (`aprobadas`), o con un «sí» en una terminal; sin terminal
+    y sin flag no se aprueba. La decisión de las entradas que un `sync.py` anterior escribió
+    sin la clave queda apuntada, para no volver a leer sus logs.
+
+    Args:
+        selected: Las parejas que se van a pasar.
+        aprobadas: Si una persona ya las aprobó en la línea de órdenes.
+
+    Returns:
+        Las retenidas que NO se lanzan, por nombre; `{}` si no hay o se aprueban.
+    """
+    retenciones = revision.retenciones(selected)
+    results.fijar_retenciones({p.name: retenciones[p.name].desde if p.name in retenciones else None
+                               for p in selected if revision.puede_retenerse(p)})
+    if not retenciones:
+        return {}
+    por_nombre = {p.name: p for p in selected}
+    print("Espejos retenidos tras el freno de borrados:")
+    for nombre, retencion in retenciones.items():
+        print("  - " + revision.texto_retencion(por_nombre[nombre], retencion))
+    if aprobadas:
+        print("--resume: se lanzarán con su tope de borrados.")
+        return {}
+    if ask_yes_no("¿Lanzarlas ahora? (una pasada normal, con su tope)"):
+        return {}
+    print("De acuerdo, se saltarán. (Lánzalas desde la ventana, o con --resume.)")
+    return retenciones
+
+
 def run_all(ctx: RunContext, selected: list[Pair]) -> int:
     """Ejecuta las parejas elegidas y devuelve 1 si alguna ha fallado."""
     ok = failures = skipped = 0
@@ -998,6 +1069,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Salta el freno de borrados SOLO en esta pasada de las parejas "
                              "nombradas (bisync: --force; un espejo: --max-delete -1). "
                              "Simula antes con --dry-run.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Lanza también los espejos retenidos tras su freno de borrados, en "
+                             "una pasada normal (con su tope). Lo pasa una persona: la ventana al "
+                             "decir «Lanzarla», o «Reparación».")
     parser.add_argument("--keep-logs", action="store_true",
                         help="Conserva también el log de las ejecuciones correctas "
                              "(por defecto solo se guarda el de las que fallan).")
@@ -1059,6 +1134,7 @@ def main() -> int:
     except OSError as e:
         sys.exit(f"No puedo preparar el rclone de este equipo para ejecutarlo: {e}")
     approved = args.resync or resolve_resync_approval(selected, args.yes)
+    retenidas = {} if args.dry_run else resolver_retenidas(selected, args.resume or args.force)
     ctx = RunContext(
         binary=binary,
         env=config.pen_environment(),
@@ -1066,6 +1142,7 @@ def main() -> int:
         force_resync=args.resync,
         resync_approved=approved,
         force=args.force,
+        retenidas=retenidas,
         keep_logs=args.keep_logs or config.keep_logs,
         sello=datetime.now().strftime("~%Y%m%d-%H%M%S"),
     )

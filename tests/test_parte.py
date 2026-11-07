@@ -170,4 +170,16 @@ c("  de una sola pasada, sin escrituras", consumo.texto(consumo.Cuenta(1, 0, 2, 
   "1 pasada, 2 procesos, 3 s")
 c("  y de ninguna", consumo.texto(consumo.Cuenta()), "ninguna pasada")
 
+# --- la retención (D2): solo cuando es verdad, y sin cambiar los partes de siempre
+c("una saltada de siempre sale igual que antes, byte a byte", parte.linea(parte.Parte("a", -1)),
+  parte.MARCA + '{"pareja": "a", "rc": -1, "movio": null, "ordenes": 0, "escrito": 0}')
+r = parte.Parte("a", -1, retenida=True)
+c.contains("una retenida lo dice", parte.linea(r), '"retenida": true')
+c("  y va y vuelve", parte.leer(parte.linea(r)), {"a": r})
+c("  sin la palabra «saltada»", "saltada" in parte.linea(r).lower(), False)
+c("un parte de un sync.py anterior no está retenido",
+  parte.leer(parte.MARCA + '{"pareja": "a", "rc": -1}')["a"].retenida, False)
+c("  y lo que no es `true` tampoco",
+  parte.leer(parte.MARCA + '{"pareja": "a", "rc": -1, "retenida": "sí"}')["a"].retenida, False)
+
 raise SystemExit(c.report())
