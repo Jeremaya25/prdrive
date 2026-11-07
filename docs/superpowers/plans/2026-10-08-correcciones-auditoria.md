@@ -358,7 +358,7 @@ In `tests/test_repair.py`: `el aviso del resync nombra .prdrive`. `repair.aviso_
 ## After the decisions (outline only; detailed once D1/D2 are answered)
 
 - **D1 (a), retire penwatch:** `ui/tk_install.py:1835` and `ui/tk_watch.py`/`ui/watch.py` offer to install the agent instead. `penwatch.cmd_install` refuses and names the agent. `status_rows()` adds «obsoleto: instala el agente». Docs: `penwatch.md`, `service.md`, `docs/guia/servicio-y-vigilante.md`. Tests: `test_penwatch_instalacion.py`, `test_watch.py`.
-- **D2 (a), hold after the brake:** `sync.py` reports a mirror stopped by `--max-delete` in `results` (a `freno` flag). The planner (`planificador.py`) and `runsync.daemon_cycle` skip that pair until a run started from the window clears it. `revision.py` shows a `freno` finding. Tests: `test_planificador.py`, `test_auto.py`, `test_revision.py`.
+- **D2 (a), hold after the brake:** `sync.py` reports a mirror stopped by `--max-delete` in `results` (a `freno` flag). The planner (`planificador.py`) and `runsync.daemon_cycle` skip that pair until a run started from the window clears it. `revision.py` shows a `freno` finding. Tests: `test_planificador.py`, `test_auto.py`, `test_revision.py`. **Done (2026-11): see `docs/superpowers/specs/2026-11-06-espejo-retenido-tras-el-freno-design.md`** (the rule ended up in `sync.py`, not in the planner or `runsync`).
 
 ## Not doing, and why
 

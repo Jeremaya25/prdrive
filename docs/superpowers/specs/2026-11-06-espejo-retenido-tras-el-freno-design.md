@@ -3,8 +3,8 @@
 Fecha: 06/11/2026. Es la decisión D2 (a) de la auditoría externa, «hold after the brake»
 (`docs/superpowers/plans/2026-10-08-correcciones-auditoria.md`, «Decisions for the user»;
 hallazgo S6 de `docs/superpowers/specs/2026-10-08-auditoria-externa.md`). Se decidió el
-08/10/2026 y solo quedó un esbozo («After the decisions»). Estado: **spec aprobada por el
-dueño el 07/11/2026**; el plan es `docs/superpowers/plans/2026-11-07-espejo-retenido-tras-el-freno.md`.
+08/10/2026 y solo quedó un esbozo («After the decisions»). Estado: **implementada** (spec aprobada por el
+dueño el 07/11/2026); el plan es `docs/superpowers/plans/2026-11-07-espejo-retenido-tras-el-freno.md`.
 
 Decidido con el dueño el 06/11/2026:
 - **La ventana pregunta y lanza.** Si se marca un espejo retenido y se pulsa «Sincronizar

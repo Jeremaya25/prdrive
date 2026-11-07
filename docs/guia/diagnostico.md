@@ -167,6 +167,45 @@ Casos habituales:
   sobrescribir con seguridad lo que no se acaba de leer. Puede que otro
   dispositivo lo haya tocado mientras tanto.
 
+## Un espejo retenido tras el freno
+
+Un espejo (`up-mirror` o `down-mirror`) que se para en el freno de borrados ya
+ha borrado hasta su tope, y lo que quedaba por borrar sigue esperando. Si se
+volviera a lanzar solo, cada pasada borraría otros 50 ficheros: con el origen
+desmontado o vacío, acabaría vaciando el otro lado de 50 en 50 sin que nadie lo
+apruebe. Por eso, en cuanto se para, **queda retenido**: ni el servicio, ni el
+arranque automático, ni el agente lo vuelven a sincronizar solos. Sigue
+retenido hasta que alguien apruebe una pasada y esa pasada acabe bien. Las
+parejas `bisync` no se retienen: su freno para la pasada entera antes de copiar
+nada, así que repetirla no cuesta ficheros.
+
+Se ve en tres sitios:
+
+- En la lista de parejas de la ventana, con la nota **«retenida tras el freno»**.
+- En el aviso del agente («Fotos se ha parado en el freno de borrados») y en su
+  menú de la bandeja («retenida tras el freno»); el aviso dice que no se
+  sincroniza sola hasta que la lances desde la ventana.
+- En **Reparación**, con las cifras: cuánto borró, cuánto le quedaba y desde
+  cuándo está retenido.
+
+Qué hacer:
+
+1. Mira primero **«Ver qué se borraría»**, en Reparación. Si no esperabas esos
+   borrados (la unidad no estaba montada, la carpeta es otra, el remoto estaba
+   vacío), arregla el origen antes de seguir.
+2. Si todo está en orden, lánzalo: desde la lista de parejas con
+   **«Sincronizar ahora»** (te pregunta si lanzas el espejo retenido o lo
+   saltas) o con **«Volver a intentar…»** en Reparación. Es una pasada normal,
+   **con su mismo tope**: borra hasta 50 más y, si aún quedan, vuelve a quedar
+   retenido.
+3. Si los borrados eran a propósito, y son más de 50, usa **«Forzar
+   sincronización…»**: hace todos de una vez, y es lo único que evita ir
+   aprobando de 50 en 50.
+
+La retención se suelta sola cuando una pasada de esa pareja acaba bien. Un fallo
+de otro tipo (sin red, por ejemplo) no la suelta: la causa del freno sigue sin
+comprobarse. Si cambias el modo de la pareja a uno que no borra, tampoco arrastra
+la retención.
 ## Emparejar un móvil
 
 **«Ajustes…» → «Emparejar un móvil»** enseña la conexión con el remoto como un
