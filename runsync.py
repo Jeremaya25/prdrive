@@ -1137,7 +1137,8 @@ def _atender(config: model.Config, startup_msg: str | None) -> int:
 
     # `manual` solo llega desde el menú de consola: la ventana sincroniza sin
     # cerrarse.
-    args = ui.manual_args(config, choice.pairs, frontend.approve_resync)
+    args = ui.manual_args(config, choice.pairs, frontend.approve_resync,
+                          frontend.approve_held)
     return frontend.run_sync("Sincronización manual", args)
 
 

@@ -266,4 +266,40 @@ with sandbox():
     c("deja de ser espejo y no arrastra la retención",
       dict(lanzar_main(["fotos"], toml=TOML_FOTOS_BISYNC)[0].retenidas), {})
 
+# ---- La ventana y la consola --------------------------------------------------------------
+
+import tomllib
+
+import ui
+from ui.console import ConsoleFrontend
+
+with sandbox():
+    cfg = model.parse_config(tomllib.loads(TOML))
+    log_fotos = model.LOG_DIR / "fotos_20261105-182000.log"
+    log_fotos.write_text(ESPEJO_UP, encoding="utf-8")
+    results.apuntar("fotos", 7, log_fotos, freno=True)
+    c("la lista dice cuál está retenida y cuál pide resync", ui.pair_status_notes(cfg),
+      {"fotos": "retenida tras el freno", "notas": "requiere resync"})
+    vistos = []
+    c("«Lanzarla» añade --resume",
+      ui.manual_args(cfg, ["fotos"], lambda *a: vistos.append("resync") or True,
+                     lambda textos: vistos.append(textos) or True), ["fotos", "--resume"])
+    c("  preguntando con el texto de revision, y sin preguntar por un resync que no hay", vistos,
+      [[revision.texto_retencion(cfg.pairs[0], revision.retencion(cfg.pairs[0]))]])
+    c("«Saltarla» deja los nombres (y sync.py la salta)",
+      ui.manual_args(cfg, ["fotos", "copia"], lambda *a: True, lambda t: False),
+      ["fotos", "copia"])
+    c("aprobar el resync no aprueba borrados, ni al revés",
+      (ui.manual_args(cfg, ["notas", "fotos"], lambda *a: True, lambda t: False),
+       ui.manual_args(cfg, ["notas", "fotos"], lambda *a: False, lambda t: True)),
+      (["notas", "fotos", "--yes"], ["notas", "fotos", "--resume"]))
+    c("quien no sabe preguntar por las retenidas no lanza ninguna",
+      ui.manual_args(cfg, ["fotos"], lambda *a: True), ["fotos"])
+    c("la consola deja que pregunte sync.py", ConsoleFrontend().approve_held(["x"]), False)
+    results.ruta_estado().write_text("{roto", encoding="utf-8")
+    c("un registro ilegible no impide sincronizar",
+      (ui.manual_args(cfg, ["fotos"], lambda *a: True, lambda t: True),
+       "fotos" in ui.pair_status_notes(cfg)),
+      (["fotos"], False))
+
 raise SystemExit(c.report())

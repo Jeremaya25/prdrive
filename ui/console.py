@@ -39,6 +39,15 @@ class ConsoleFrontend:
         """
         return False
 
+    def approve_held(self, textos: list[str]) -> bool:
+        """Devuelve siempre `False`: aquí tampoco hace falta preguntar.
+
+        Con consola, `sync.py` hereda la terminal y plantea él la pregunta de la
+        pareja retenida, con su cifra de borrados. Devolver `True` aprobaría la
+        retenida sin que la persona lo lea (`ui.manual_args`).
+        """
+        return False
+
     def info(self, msg: str) -> None:
         """Imprime el mensaje."""
         print(msg)
