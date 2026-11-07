@@ -20,7 +20,7 @@ from _harness import Checks, mkcfg, sandbox, tmpdir
 import sync
 import ui
 import ui.console
-from common import bisync, conflicts, historial, model, results, revision
+from common import bisync, conflicts, historial, model, results, revision, store
 
 c = Checks("el diagnóstico compartido")
 
@@ -695,5 +695,130 @@ with sandbox():
           "contenedor" in uno(revision.revisar(cfg, fisica=fisica), "fallo").detalle, False)
     finally:
         vestibulo.disperso, vestibulo.UMBRAL_LIBRE = real_disperso, real_umbral
+
+from _logs_frenos import ESPEJO_DOWN, ESPEJO_UP  # noqa: E402
+
+# ---- Espejos retenidos tras su freno (D2) ----------------------------------------------------
+AÑO = datetime.now().year
+SELLO = f"{AÑO}-11-05 18:20:00"
+SUBIDA = {"name": "fotos", "mode": "up-mirror", "local": "sync-data/fotos", "remote_path": "/R/fotos"}
+BAJADA = dict(SUBIDA, mode="down-mirror")
+FIN = ("Si esos borrados son lo que querías, «Forzar sincronización…» en «Reparación» los hace "
+       "todos de una vez; si no los esperabas, mira antes «Ver qué se borraría».")
+
+
+def una(raw):
+    """Devuelve `(config, pareja)` con solo esa pareja."""
+    cfg = model.parse_config({"defaults": {"remote": "nas"}, "pair": [raw]})
+    return cfg, cfg.pairs[0]
+
+
+def retener(nombre, texto, *, freno=True, rc=7, sello=SELLO):
+    """Apunta una pasada fallida de `nombre` con ese log; devuelve el log."""
+    log = model.LOG_DIR / f"{nombre}_20261105_182000.log"
+    log.write_text(texto, encoding="utf-8")
+    real, store.stamp = store.stamp, (lambda: sello)
+    try:
+        results.apuntar(nombre, rc, log, freno=freno)
+    finally:
+        store.stamp = real
+    return log
+
+
+with sandbox():
+    cfg, p = una(SUBIDA)
+    log = retener("fotos", ESPEJO_UP)
+    r = revision.retencion(p)
+    c("un espejo con sello está retenido", r, revision.Retencion("fotos", SELLO, log))
+    c("el texto, con las cifras del log y el tope de la pareja", revision.texto_retencion(p, r),
+      "«fotos» se paró en el freno de borrados el 05/11 a las 18:20: borró 50 ficheros en el "
+      "remoto y le quedaban 5. Si la lanzas, puede borrar hasta 50 más. " + FIN)
+    c("la línea de la consola", revision.linea_retenida(r),
+      "Saltada: está retenida desde el 05/11 a las 18:20 porque se paró en el freno de borrados. "
+      "Lánzala desde la ventana (te dirá cuánto puede borrar) o mira «Reparación».")
+    c("  y lleva la palabra que buscan el agente y el servicio",
+      "saltada" in revision.linea_retenida(r).lower(), True)
+    _, propio = una(dict(SUBIDA, flags={"max-delete": 7}))
+    c.contains("el tope es el que recibirá rclone", revision.texto_retencion(propio, r),
+               "puede borrar hasta 7 más.")
+    _, abajo = una(BAJADA)
+    c.contains("hacia abajo borra en el dispositivo",
+               revision.texto_retencion(abajo, revision.Retencion("fotos", SELLO,
+                                        retener("fotos", ESPEJO_DOWN))),
+               "borró 50 ficheros en el dispositivo")
+    log.unlink()
+    c("sin log, sin cifras (y la retención sigue)",
+      (revision.retencion(p) is not None,
+       revision.texto_retencion(p, revision.Retencion("fotos", SELLO, None))),
+      (True, "«fotos» se paró en el freno de borrados el 05/11 a las 18:20. Si la lanzas, "
+             "puede borrar hasta 50 más. " + FIN))
+    grande = retener("fotos", "x" * (frenos.TOPE_LECTURA + 1024) + "\n" + ESPEJO_UP)
+    c.contains("un log de más de 4 MiB no da una cuenta parcial",
+               revision.texto_retencion(p, revision.Retencion("fotos", SELLO, grande)),
+               "se paró en el freno de borrados el 05/11 a las 18:20: le quedaban 5 ficheros "
+               "por borrar en el remoto.")
+    c("un sello que no se entiende retiene igual, sin fecha",
+      revision.linea_retenida(revision.Retencion("fotos", "ayer", None)),
+      "Saltada: está retenida porque se paró en el freno de borrados. Lánzala desde la "
+      "ventana (te dirá cuánto puede borrar) o mira «Reparación».")
+
+with sandbox():
+    # Solo los espejos, y solo con sello.
+    retener("fotos", ESPEJO_UP)
+    for modo in ("bisync", "up", "down"):
+        _, otra = una(dict(SUBIDA, mode=modo))
+        c(f"una pareja {modo} no arrastra la retención", revision.retencion(otra), None)
+    retener("fotos", ESPEJO_UP, rc=0, freno=False)
+    c("una pasada buena la suelta", revision.retencion(una(SUBIDA)[1]), None)
+    c("sin registro no hay retención", revision.retencion(una(dict(SUBIDA, name="otra"))[1]), None)
+    results.ruta_estado().write_text("{roto", encoding="utf-8")
+    c("un registro ilegible no retiene ni lanza", revision.retenciones([una(SUBIDA)[1]]), {})
+
+with sandbox():
+    # §4: un registro de un sync.py de antes, sin la clave.
+    log = model.LOG_DIR / "fotos_20261101_100000.log"
+    log.write_text(ESPEJO_UP, encoding="utf-8")
+    store.write_json(results.ruta_estado(), {"parejas": {"fotos": {
+        "cuando": SELLO, "codigo": 7, "log": log.name, "buena": None}}})
+    p = una(SUBIDA)[1]
+    revision.olvidar_frenos()
+    lecturas, leer_real = [], frenos.leer
+    frenos.leer = lambda *a, **k: lecturas.append(a) or leer_real(*a, **k)
+    try:
+        c("sin la clave se decide por su log", revision.retencion(p),
+          revision.Retencion("fotos", SELLO, log))
+        revision.retencion(p)
+        c("  leyéndolo una vez por proceso", len(lecturas), 1)
+    finally:
+        frenos.leer = leer_real
+    log.write_text(RED_RECHAZADA, encoding="utf-8")
+    revision.olvidar_frenos()
+    c("  un log que no es el freno no retiene", revision.retencion(p), None)
+    log.unlink()
+    c("  y sin log, tampoco", revision.retencion(p), None)
+
+with sandbox():
+    # El hallazgo dice que está retenida, y `--doctor` también.
+    cfg, p = una(SUBIDA)
+    p.local_abs.mkdir(parents=True, exist_ok=True)
+    retener("fotos", ESPEJO_UP)
+    freno = next(h for h in revision.revisar(cfg) if h.clave == "freno")
+    c("el freno de una retenida lleva su retención", freno.dato[2],
+      revision.Retencion("fotos", SELLO, freno.dato[0]))
+    c.contains("  y lo dice", freno.detalle, "Retenida desde el 05/11 a las 18:20: ni el "
+               "servicio ni el agente la lanzan solos hasta que una pasada acabe bien.")
+    c.contains("  también en --doctor", "\n".join(revision.informe(cfg)), "Retenida desde el 05/11")
+    retener("fotos", RED_RECHAZADA, freno=False, rc=1)   # la pasada aprobada falla por la red
+    fallo = next(h for h in revision.revisar(cfg) if h.clave == "fallo")
+    c("un fallo de una retenida también la lleva",
+      (fallo.dato[2].desde, "Retenida desde" in fallo.detalle), (SELLO, True))
+
+with sandbox():
+    # Un freno apuntado sin retención (lo que deja un sync.py de antes que ya escribía la clave).
+    cfg, p = una(SUBIDA)
+    retener("fotos", ESPEJO_UP, freno=False)
+    freno = next(h for h in revision.revisar(cfg) if h.clave == "freno")
+    c("un freno sin retención conserva su dato de siempre", (len(freno.dato),
+      "Retenida" in freno.detalle), (2, False))
 
 sys.exit(c.report())

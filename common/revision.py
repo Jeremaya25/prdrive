@@ -22,8 +22,10 @@ import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
-from . import bisync, conflicts, errores, frenos, historial, model, results, store, vestibulo
+from . import (bisync, conflicts, errores, frenos, historial, model, orden, results, store,
+               vestibulo)
 from .model import Config, Pair
 
 GRAVE = "grave"
@@ -55,7 +57,9 @@ class Hallazgo:
         pareja: La pareja afectada, o `None` si es del dispositivo.
         gravedad: `GRAVE`, `AVISO` o `NOTA`.
         dato: Lo que necesita la reparación. En un `fallo`, `(log, causa)`: el log
-            (o `None`) y la `errores.Causa` reconocida (o `None`).
+            (o `None`) y la `errores.Causa` reconocida (o `None`). En un `freno`,
+            `(log, freno)`. Si la pareja es un espejo retenido (`Retencion`), un
+            tercer elemento lleva esa `Retencion` en los dos casos.
     """
     clave: str
     titulo: str
@@ -265,6 +269,15 @@ def _dia(sello: str) -> str:
     return f"{cuando:%d/%m}" if cuando.year == datetime.now().year else f"{cuando:%d/%m/%Y}"
 
 
+def _cuando(sello: str) -> str:
+    """Devuelve «el 05/11 a las 18:20» (con el año si no es el actual), o `""` si no es un sello."""
+    try:
+        hora = datetime.strptime(sello, store.FORMATO)
+    except (TypeError, ValueError):
+        return ""
+    return f"el {_dia(sello)} a las {hora:%H:%M}"
+
+
 def _frase_racha(racha: historial.Racha) -> str:
     """Resume en una frase desde cuándo falla y cuántas pasadas recientes fueron bien.
 
@@ -372,6 +385,120 @@ def _veredicto(fallo: results.Fallo, pair: Pair | None) -> Veredicto:
         return _NADA
 
 
+@dataclass(frozen=True)
+class Retencion:
+    """Un espejo que se paró en su freno y no se lanza solo hasta que una pasada acabe bien.
+
+    Args:
+        pareja: El nombre de la pareja.
+        desde: El sello (`store.FORMATO`) de la pasada que la retuvo.
+        log: El log de esa pasada, o `None` si ya no está.
+    """
+    pareja: str
+    desde: str
+    log: Path | None
+
+
+def puede_retenerse(pair: Pair) -> bool:
+    """Indica si la pareja puede quedar retenida: un espejo (con freno y que no es bisync)."""
+    return frenos.tiene_freno(pair) and not pair.is_bisync
+
+
+def retenciones(pairs: Iterable[Pair]) -> dict[str, Retencion]:
+    """Devuelve las parejas retenidas entre esas, con una sola lectura de `last_run.json`.
+
+    Solo mira los espejos. Con la clave `retenida` apuntada manda ella. Sin la clave (la
+    escribió un `sync.py` de antes) la pareja está retenida si su última pasada falló y
+    el log que queda es el freno de un espejo; entonces lo está desde el final de aquella
+    pasada. No escribe nada, y ante cualquier fallo devuelve `{}`: una pareja que no se
+    deja decidir no se retiene.
+
+    Returns:
+        La `Retencion` de cada pareja retenida, por nombre.
+    """
+    try:
+        espejos = {p.name: p for p in pairs if puede_retenerse(p)}
+        if not espejos:
+            return {}
+        salida: dict[str, Retencion] = {}
+        for nombre, apunte in results.apuntes(espejos).items():
+            if apunte.sabida:
+                if apunte.retenida:
+                    salida[nombre] = Retencion(nombre, apunte.retenida, apunte.log)
+            elif apunte.codigo != 0 and apunte.log is not None and _es_freno_de_espejo(
+                    apunte.log, espejos[nombre]):
+                salida[nombre] = Retencion(nombre, apunte.cuando, apunte.log)
+        return salida
+    except Exception:                                   # noqa: BLE001
+        return {}
+
+
+def _es_freno_de_espejo(log: Path, pair: Pair) -> bool:
+    """Indica si ese log es el de un espejo parado en su freno; un log ilegible dice que no."""
+    try:
+        freno = _veredicto_de(log, pair).freno
+    except OSError:
+        return False
+    return freno is not None and freno.tipo == frenos.ESPEJO
+
+
+def retencion(pair: Pair) -> Retencion | None:
+    """Devuelve la retención de esa pareja, o `None` si no está retenida."""
+    return retenciones([pair]).get(pair.name)
+
+
+def linea_retenida(retencion: Retencion) -> str:
+    """Devuelve lo que imprime `sync.py` al saltarse una pareja retenida."""
+    cuando = _cuando(retencion.desde)
+    desde = f" desde {cuando}" if cuando else ""
+    return (f"Saltada: está retenida{desde} porque se paró en el freno de borrados. "
+            "Lánzala desde la ventana (te dirá cuánto puede borrar) o mira «Reparación».")
+
+
+def frase_retenida(retencion: Retencion) -> str:
+    """Devuelve la frase que se añade al `detalle` de una pareja retenida."""
+    cuando = _cuando(retencion.desde)
+    desde = f" desde {cuando}" if cuando else ""
+    return (f"Retenida{desde}: ni el servicio ni el agente la lanzan solos hasta que una "
+            "pasada acabe bien.")
+
+
+def texto_retencion(pair: Pair, retencion: Retencion) -> str:
+    """Devuelve el texto completo de una retención: qué pasó, qué puede borrar y qué hacer.
+
+    Las cifras salen del log de la pasada que la retuvo, solo si todavía es el freno de un
+    espejo; un log que falta, que no se lee o que no es ese freno las deja fuera. Un log de
+    más de lo que se lee entero no da una cuenta de lo ya borrado (`_veredicto_de()`).
+    """
+    destino = frenos.nombre_lado(pair.mode.dest)
+    cifras = ""
+    if retencion.log is not None:
+        try:
+            freno = _veredicto_de(retencion.log, pair).freno
+        except OSError:
+            freno = None
+        if freno is not None and freno.tipo == frenos.ESPEJO:
+            hechos, faltan = freno.borrados, freno.pendientes
+            if hechos is not None and faltan is not None:
+                cifras = f": borró {hechos} ficheros en {destino} y le quedaban {faltan}"
+            elif hechos is not None:
+                cifras = f": borró {hechos} ficheros en {destino}"
+            elif faltan is not None:
+                cifras = f": le quedaban {faltan} ficheros por borrar en {destino}"
+    cuando = _cuando(retencion.desde)
+    cuando = f" {cuando}" if cuando else ""
+    tope = orden.max_delete_efectivo(pair)
+    if tope is None:
+        puede = "Si la lanzas, puede volver a borrar."
+    elif tope >= 0:
+        puede = f"Si la lanzas, puede borrar hasta {tope} más."
+    else:
+        puede = "Si la lanzas, ya no tiene tope de borrados: borrará todo lo que sobre."
+    return (f"«{pair.name}» se paró en el freno de borrados{cuando}{cifras}. {puede} "
+            "Si esos borrados son lo que querías, «Forzar sincronización…» en «Reparación» "
+            "los hace todos de una vez; si no los esperabas, mira antes «Ver qué se borraría».")
+
+
 def _frase_freno(pair: Pair, freno: frenos.Freno) -> tuple[str, str]:
     """Devuelve el título y lo que pasó, en la unidad de ese freno.
 
@@ -441,11 +568,13 @@ def _como_argumento(nombre: str) -> str | None:
 
 
 def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
-                    racha: historial.Racha | None) -> Hallazgo:
+                    racha: historial.Racha | None,
+                    retencion: Retencion | None = None) -> Hallazgo:
     """Devuelve el hallazgo del freno que paró la última pasada de esa pareja.
 
     Sustituye al `fallo` de la pareja, nunca va además. El `dato` lleva el log y el
-    freno con sus cifras, que es lo que necesita `ui/repair.py` para el plan.
+    freno con sus cifras, que es lo que necesita `ui/repair.py` para el plan; si la
+    pareja está retenida, también la `Retencion`, y el `detalle` acaba diciéndolo.
     """
     titulo, que = _frase_freno(pair, freno)
     if pair.llavero:
@@ -476,8 +605,12 @@ def _hallazgo_freno(pair: Pair, freno: frenos.Freno, log: Path | None,
         forzar = f"se puede forzar UNA pasada: `python sync.py {nombre} --force`."
     detalle += (" Mientras no se resuelva, eso no está sincronizado. Si es lo que querías, "
                 f"{forzar}")
+    dato = (log, freno)
+    if retencion is not None:
+        detalle += f" {frase_retenida(retencion)}"
+        dato += (retencion,)
     return Hallazgo("freno", f"{nombre_visible(pair.name)}: {titulo}", detalle,
-                    pair.name, AVISO, (log, freno))
+                    pair.name, AVISO, dato)
 
 
 _REMITE_ESPACIO = ("Este dispositivo vive en un contenedor dinámico al que se le acaba el "
@@ -550,19 +683,26 @@ def _fallos(config: Config, espacio: bool = False) -> list[Hallazgo]:
     except Exception:                                   # noqa: BLE001
         rachas = {}
     parejas = {p.name: p for p in config.pairs}
+    retenidas = retenciones(config.pairs)
     hallazgos = []
     for f in fallos:
         racha = rachas.get(f.pareja)
+        retenida = retenidas.get(f.pareja)
         veredicto = _veredicto(f, parejas.get(f.pareja))
         if veredicto.freno is None and f.pareja == model.LLAVERO:
             continue
         if veredicto.freno is not None:
-            hallazgos.append(_hallazgo_freno(parejas[f.pareja], veredicto.freno, f.log, racha))
+            hallazgos.append(_hallazgo_freno(parejas[f.pareja], veredicto.freno, f.log, racha,
+                                             retenida))
             continue
+        detalle = _detalle_fallo(f, veredicto, racha, espacio)
+        dato = (f.log, veredicto.causa)
+        if retenida is not None:
+            detalle += f" {frase_retenida(retenida)}"
+            dato += (retenida,)
         hallazgos.append(Hallazgo(
-            "fallo", f"{nombre_visible(f.pareja)}: la última pasada falló",
-            _detalle_fallo(f, veredicto, racha, espacio),
-            f.pareja, AVISO, (f.log, veredicto.causa)))
+            "fallo", f"{nombre_visible(f.pareja)}: la última pasada falló", detalle,
+            f.pareja, AVISO, dato))
     return hallazgos
 
 
