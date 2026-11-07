@@ -479,12 +479,15 @@ def texto_retencion(pair: Pair, retencion: Retencion) -> str:
             freno = None
         if freno is not None and freno.tipo == frenos.ESPEJO:
             hechos, faltan = freno.borrados, freno.pendientes
+            borro = f"borró {hechos} fichero{'' if hechos == 1 else 's'}"
+            quedaba = "le quedaba" if faltan == 1 else "le quedaban"
             if hechos is not None and faltan is not None:
-                cifras = f": borró {hechos} ficheros en {destino} y le quedaban {faltan}"
+                cifras = f": {borro} en {destino} y {quedaba} {faltan}"
             elif hechos is not None:
-                cifras = f": borró {hechos} ficheros en {destino}"
+                cifras = f": {borro} en {destino}"
             elif faltan is not None:
-                cifras = f": le quedaban {faltan} ficheros por borrar en {destino}"
+                cifras = (f": {quedaba} {faltan} fichero{'' if faltan == 1 else 's'} "
+                          f"por borrar en {destino}")
     cuando = _cuando(retencion.desde)
     cuando = f" {cuando}" if cuando else ""
     tope = orden.max_delete_efectivo(pair)

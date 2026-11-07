@@ -202,11 +202,11 @@ Qué hacer:
 2. Si todo está en orden, lánzalo: desde la lista de parejas con
    **«Sincronizar ahora»** (te pregunta si lanzas el espejo retenido o lo
    saltas) o con **«Volver a intentar…»** en Reparación. Es una pasada normal,
-   **con su mismo tope**: borra hasta 50 más y, si aún quedan, vuelve a quedar
-   retenido.
-3. Si los borrados eran a propósito, y son más de 50, usa **«Forzar
+   **con su mismo tope** (50 ficheros de fábrica): borra hasta ese tope más y,
+   si aún quedan, vuelve a quedar retenido.
+3. Si los borrados eran a propósito, y son más que el tope, usa **«Forzar
    sincronización…»**: hace todos de una vez, y es lo único que evita ir
-   aprobando de 50 en 50.
+   aprobando de tope en tope.
 
 La retención se suelta sola cuando una pasada de esa pareja acaba bien. Un fallo
 de otro tipo (sin red, por ejemplo) no la suelta: la causa del freno sigue sin

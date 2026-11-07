@@ -668,7 +668,7 @@ def aviso_volver(config: Config, hallazgo: Hallazgo) -> RepairPlan:
     pair = _pareja(config, hallazgo.pareja)
     tope = orden.max_delete_efectivo(pair)
     primera = (f"Se lanza UNA pasada normal de «{pair.name}», con su tope de borrados "
-               f"({tope} ficheros)." if tope is not None and tope >= 0
+               f"({tope} fichero{'' if tope == 1 else 's'})." if tope is not None and tope >= 0
                else f"Se lanza UNA pasada normal de «{pair.name}».")
     avisos = [revision.texto_retencion(pair, retencion)]
     if pair.mode.source == "local" and _carpeta_vacia(pair.local_abs):

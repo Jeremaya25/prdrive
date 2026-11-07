@@ -757,6 +757,16 @@ with sandbox():
                revision.texto_retencion(p, revision.Retencion("fotos", SELLO, grande)),
                "se paró en el freno de borrados el 05/11 a las 18:20: le quedaban 5 ficheros "
                "por borrar en el remoto.")
+    uno = retener("fotos", "2026/10/15 09:35:36 INFO  : nota14.md: Deleted\n"
+                  "2026/10/15 09:35:36 ERROR : nota05.md: Got fatal error on delete: "
+                  "--max-delete threshold reached\n"
+                  "2026/10/15 09:35:36 ERROR : Cancelling sync due to fatal error: "
+                  "failed to delete 1 files\n"
+                  "2026/10/15 09:35:36 NOTICE: Failed to sync with 2 errors: last error was: "
+                  "failed to delete 1 files\n")
+    c.contains("con una sola cifra a 1, el texto va en singular",
+               revision.texto_retencion(p, revision.Retencion("fotos", SELLO, uno)),
+               ": borró 1 fichero en el remoto y le quedaba 1. Si la lanzas")
     c("un sello que no se entiende retiene igual, sin fecha",
       revision.linea_retenida(revision.Retencion("fotos", "ayer", None)),
       "Saltada: está retenida porque se paró en el freno de borrados. Lánzala desde la "

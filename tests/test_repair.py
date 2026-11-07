@@ -501,6 +501,10 @@ with sandbox():
     (cfg.pairs[0].local_abs / "nota.md").write_text("x\n", encoding="utf-8")
     c("  con algo dentro, no",
       repair._LOCAL_VACIA in repair.aviso_volver(cfg, freno).warnings, False)
+    uno = mkcfg(None, pairs=[dict(FOTOS, flags={"max-delete": 1})])
+    c.contains("  con un tope de 1, el aviso va en singular",
+               repair.aviso_volver(uno, freno).consequences[0],
+               "con su tope de borrados (1 fichero).")
     c("«Volver a intentar…» es un botón de «Reparación»",
       freno in repair.hallazgos_reparables([freno]), True)
 
