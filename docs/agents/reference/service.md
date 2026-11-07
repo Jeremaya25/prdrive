@@ -74,7 +74,7 @@ Liveness is `store.vivo_en_este_arranque(info, host)`: same host, an int pid in 
 - The daemon is spawned with `pythonw.exe` + `CREATE_NO_WINDOW`; rclone with `CREATE_NO_WINDOW` too (else every invocation flashes a console).
 - The daemon `chdir`s to the temp dir so the device can be ejected.
 - The daemon and `--auto --once` lower their own priority (`prioridad.bajar()`, `common/prioridad.py`) before launching anything, so every `sync.py` and rclone under them inherits it: `BELOW_NORMAL_PRIORITY_CLASS` on Windows, `nice` 10 and I/O best-effort 7 on Linux. The window's own passes keep normal priority: someone is waiting for them.
-- Child `sync.py` runs get `stdin=DEVNULL`: a pair needing `--resync` is skipped, not resynced unattended.
+- Child `sync.py` runs get `stdin=DEVNULL`: a pair needing `--resync` is skipped, not resynced unattended. A skipped pass whose report says `retenida` (a `*-mirror` held after its delete brake) is written `saltada (retenida tras el freno)` in the lock and the journal, not as a `--resync` request (`daemon_cycle()`; the agent does the same).
 
 ## A state file another process has open (Windows)
 

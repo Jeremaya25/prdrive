@@ -570,7 +570,7 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
         pairs: Las parejas a sincronizar.
         lock_data: El registro propio, que se reescribe con el resultado.
     """
-    from common import update
+    from common import parte, update
 
     previos = lock_data.get("last_results") or {}
     results = {}
@@ -586,8 +586,15 @@ def daemon_cycle(pairs: list[str], lock_data: dict) -> None:
             for line in output.splitlines()[-12:]:
                 dlog(f"[{name}]   {line}")
         elif "saltada" in output.lower():
-            results[name] = "saltada (requiere --resync manual)"
-            dlog(f"[{name}] saltada: requiere --resync; ejecútalo a mano desde la UI")
+            dicho = parte.leer(output).get(name)
+            if dicho is not None and dicho.retenida:
+                # Un espejo retenido tras su freno: no pide un resync, pide que
+                # una persona lo lance desde la ventana.
+                results[name] = "saltada (retenida tras el freno)"
+                dlog(f"[{name}] saltada: retenida tras el freno (lánzala desde la ventana)")
+            else:
+                results[name] = "saltada (requiere --resync manual)"
+                dlog(f"[{name}] saltada: requiere --resync; ejecútalo a mano desde la UI")
         else:
             results[name] = f"OK ({secs:.0f}s)"
             dlog(f"[{name}] OK ({secs:.0f}s)")

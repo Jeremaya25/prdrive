@@ -64,6 +64,24 @@ ciclo(lock)
 ciclo(lock, notas=1)
 c("tras un ciclo bueno, volver a fallar vuelve a avisar", avisos[-1], ["notas"])
 
+from common import parte  # noqa: E402
+
+RETENIDA_SALIDA = ("[fotos] Saltada: está retenida porque se paró en el freno de borrados.\n"
+                   + parte.linea(parte.Parte("fotos", -1, retenida=True)) + "\n")
+salidas = {"fotos": RETENIDA_SALIDA,
+           "notas": "[notas] Saltada: requiere --resync y no está aprobado.\n"}
+n = len(avisos)
+runsync.run_pair_quiet = lambda name: (0, salidas[name])
+runsync.daemon_cycle(["notas", "fotos"], lock)
+runsync.run_pair_quiet = lambda name: (codigos.get(name, 0), "salida")
+c("una retenida se apunta con su motivo",
+  (lock["last_results"]["fotos"], lock["last_results"]["notas"]),
+  ("saltada (retenida tras el freno)", "saltada (requiere --resync manual)"))
+c("  en el diario, sin decir que pide un resync",
+  [l for l in diario if l.startswith("[fotos]")][-1],
+  "[fotos] saltada: retenida tras el freno (lánzala desde la ventana)")
+c("  y no es un fallo: no abre el aviso", len(avisos), n)
+
 
 # lo que hace el aviso de verdad, con y sin pantalla
 import ui.tk  # noqa: E402

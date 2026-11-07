@@ -576,4 +576,36 @@ F.vueltas(ag_s, 1)
 fila = next(u for u in ag_s.resumen()["unidades"] if u["id"] == D)
 c("  una buena la quita de la bandeja", fila["saltadas"], [])
 
+# Un espejo retenido tras su freno: también se salta, pero se dice por qué (D2).
+from common import parte  # noqa: E402
+
+E = "e" * 32
+ag_r, RE = fresco(E, parejas=("fotos",))
+F.AVISOS.clear()
+RETENIDA = ("[fotos] Saltada: está retenida porque se paró en el freno de borrados.\n"
+            + parte.linea(parte.Parte("fotos", -1, retenida=True)) + "\n")
+F.acabar(F.pasadas(RE)[-1], 0, RETENIDA)
+F.vueltas(ag_r, 1)
+c("un espejo retenido avisa con su motivo", [a[0] for a in F.AVISOS],
+  ["fotos se ha parado en el freno de borrados"])
+c.contains("  diciendo que no va sola hasta lanzarla desde la ventana", F.AVISOS[0][1],
+           "U: no se sincroniza sola hasta que la lances desde la ventana")
+fila = next(u for u in ag_r.resumen()["unidades"] if u["id"] == E)
+c("  la bandeja la lleva como retenida, no como resync",
+  (fila["retenidas"], fila["saltadas"]), (["fotos"], []))
+c("  el diario dice el motivo",
+  any("fotos: saltada: retenida tras el freno de borrados" in l for l in F.DIARIO), True)
+c("  y el lock también", F.lock(RE)["last_results"]["fotos"], "saltada (retenida tras el freno)")
+F.pasar(3600); F.vueltas(ag_r, 1)
+F.acabar(F.pasadas(RE)[-1], 0, RETENIDA); F.vueltas(ag_r, 1)
+c("  la siguiente no vuelve a avisar", len(F.AVISOS), 1)
+F.pasar(3600); F.vueltas(ag_r, 1)
+F.acabar(F.pasadas(RE)[-1], 0, "fotos: Saltada: requiere --resync\n"); F.vueltas(ag_r, 1)
+c("si cambia el motivo, avisa con el nuevo (un parte sin la clave es el de siempre)",
+  [a[0] for a in F.AVISOS][-1], "fotos necesita --resync")
+F.pasar(3600); F.vueltas(ag_r, 1)
+F.acabar(F.pasadas(RE)[-1], 0, "fotos: OK\n"); F.vueltas(ag_r, 1)
+fila = next(u for u in ag_r.resumen()["unidades"] if u["id"] == E)
+c("una buena la quita de la bandeja", (fila["retenidas"], fila["saltadas"]), ([], []))
+
 raise SystemExit(c.report())
