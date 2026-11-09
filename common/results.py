@@ -95,6 +95,12 @@ def _log(dato: dict) -> Path | None:
         return None
 
 
+def _codigo(dato: dict) -> int | None:
+    """Devuelve el código de salida apuntado, o `None` si falta o no es un entero (un `bool` no lo es)."""
+    valor = dato.get("codigo")
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
+
+
 def _retenida(dato: dict) -> str | None:
     """Devuelve el sello de retención de lo apuntado, o `None` si no hay uno válido."""
     valor = dato.get("retenida")
@@ -142,7 +148,8 @@ class Apunte(NamedTuple):
 
     Args:
         cuando: `store.stamp()` del final de la pasada.
-        codigo: Código de salida de la pasada.
+        codigo: Código de salida de la pasada, o `None` si falta o no es un entero:
+            entonces no consta que la pasada fuera bien.
         log: El log que lo explica, o `None` si no quedó o ya no está.
         retenida: El sello desde el que un espejo está retenido tras su freno,
             o `None` si no lo está (o si la clave no es un texto con algo).
@@ -150,7 +157,7 @@ class Apunte(NamedTuple):
             `sync.py` de antes y no se sabe si estaba retenida.
     """
     cuando: str
-    codigo: int
+    codigo: int | None
     log: Path | None
     retenida: str | None
     sabida: bool
@@ -160,9 +167,10 @@ def apuntes(nombres: Iterable[str]) -> dict[str, Apunte]:
     """Devuelve lo apuntado de esas parejas con una sola lectura de `last_run.json`.
 
     Returns:
-        Un `Apunte` por pareja; no salen las que no constan, las que no son un
-        dict ni las que tienen un `codigo` que no es un número. Con el fichero
-        ilegible, `{}`.
+        Un `Apunte` por pareja; no salen las que no constan ni las que no son un
+        dict. Un `codigo` que falta o no es un entero no tira la entrada (su
+        `retenida` sigue mandando): sale `None`, que no cuenta como una pasada
+        buena. Con el fichero ilegible, `{}`.
     """
     parejas = store.read_json(ruta_estado()).get("parejas")
     if not isinstance(parejas, dict):
@@ -172,11 +180,7 @@ def apuntes(nombres: Iterable[str]) -> dict[str, Apunte]:
         dato = parejas.get(nombre)
         if not isinstance(dato, dict):
             continue
-        try:
-            codigo = int(dato.get("codigo", 0))
-        except (TypeError, ValueError):
-            continue
-        salida[nombre] = Apunte(str(dato.get("cuando", "")), codigo, _log(dato),
+        salida[nombre] = Apunte(str(dato.get("cuando", "")), _codigo(dato), _log(dato),
                                 _retenida(dato), "retenida" in dato)
     return salida
 

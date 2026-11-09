@@ -408,10 +408,10 @@ def retenciones(pairs: Iterable[Pair]) -> dict[str, Retencion]:
     """Devuelve las parejas retenidas entre esas, con una sola lectura de `last_run.json`.
 
     Solo mira los espejos. Con la clave `retenida` apuntada manda ella. Sin la clave (la
-    escribió un `sync.py` de antes) la pareja está retenida si su última pasada falló y
-    el log que queda es el freno de un espejo; entonces lo está desde el final de aquella
-    pasada. No escribe nada, y ante cualquier fallo devuelve `{}`: una pareja que no se
-    deja decidir no se retiene.
+    escribió un `sync.py` de antes) la pareja está retenida si su última pasada no consta
+    como buena (un código que falta o no se lee no es un 0) y el log que queda es el freno
+    de un espejo; entonces lo está desde el final de aquella pasada. No escribe nada, y
+    ante cualquier fallo devuelve `{}`: una pareja que no se deja decidir no se retiene.
 
     Returns:
         La `Retencion` de cada pareja retenida, por nombre.

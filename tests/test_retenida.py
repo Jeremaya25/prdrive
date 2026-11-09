@@ -185,7 +185,13 @@ with sandbox():
     ctx, salida, _ = lanzar_main(["fotos", "--resume"])
     c("con --resume, sí", dict(ctx.retenidas), {})
     c.contains("  y lo dice", salida, "--resume: se lanzarán con su tope de borrados.")
-    c("con --force, sí", dict(lanzar_main(["fotos", "--force"])[0].retenidas), {})
+    ctx, salida, _ = lanzar_main(["fotos", "--force"])
+    c("con --force, sí", dict(ctx.retenidas), {})
+    c.contains("  y dice que va sin tope", salida,
+               "--force: se lanzarán SIN su tope de borrados (pasada forzada)")
+    c("  no que lleva su tope", "con su tope de borrados." in salida, False)
+    c.contains("  también con --resume a la vez: manda --force",
+               lanzar_main(["fotos", "--resume", "--force"])[1], "SIN su tope de borrados")
     c("--yes no la aprueba", sorted(lanzar_main(["fotos", "--yes"])[0].retenidas), ["fotos"])
     c("  -y tampoco", sorted(lanzar_main(["fotos", "-y"])[0].retenidas), ["fotos"])
     c("  ni --resync", sorted(lanzar_main(["fotos", "--resync"])[0].retenidas), ["fotos"])
@@ -245,6 +251,18 @@ with sandbox():
     c("  y la decisión queda apuntada", results.apuntes(["fotos"])["fotos"].sabida, True)
     c("  desde cuando falló", results.apuntes(["fotos"])["fotos"].retenida,
       "2026-11-05 18:20:00")
+
+# Un registro sin la clave y sin un código que se lea: no consta como buena, así que manda el
+# log. Si es el freno de un espejo, queda retenida (un código que falta no vale 0).
+for raro in ({}, {"codigo": True}, {"codigo": "siete"}):
+    with sandbox():
+        nombre = "fotos_20261105-182000.log"
+        (model.LOG_DIR / nombre).write_text(ESPEJO_UP, encoding="utf-8")
+        store.write_json(results.ruta_estado(), {"parejas": {"fotos": {
+            "cuando": "2026-11-05 18:20:00", "log": nombre, "buena": None, **raro}}})
+        ctx, _, _ = lanzar_main(["fotos"])
+        c(f"un registro antiguo con el log del freno y código {raro.get('codigo', 'ausente')!r} "
+          "queda retenido", sorted(ctx.retenidas), ["fotos"])
 
 with sandbox():
     nombre = "fotos_20261105-182000.log"

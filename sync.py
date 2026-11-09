@@ -964,7 +964,8 @@ def resolve_resync_approval(selected: list[Pair], assume_yes: bool) -> bool:
     return approved
 
 
-def resolver_retenidas(selected: list[Pair], aprobadas: bool) -> dict[str, revision.Retencion]:
+def resolver_retenidas(selected: list[Pair], aprobadas: bool, *,
+                       forzadas: bool = False) -> dict[str, revision.Retencion]:
     """Decide UNA vez qué espejos retenidos tras su freno se lanzan en esta ejecución.
 
     Un espejo que se paró en su `--max-delete` borró ese número de ficheros y dejó el
@@ -977,6 +978,8 @@ def resolver_retenidas(selected: list[Pair], aprobadas: bool) -> dict[str, revis
     Args:
         selected: Las parejas que se van a pasar.
         aprobadas: Si una persona ya las aprobó en la línea de órdenes.
+        forzadas: Si esa aprobación es un `--force`: la pasada salta el freno, así
+            que no lleva tope, y se dice en vez de prometer el tope de un `--resume`.
 
     Returns:
         Las retenidas que NO se lanzan, por nombre; `{}` si no hay o se aprueban.
@@ -990,6 +993,10 @@ def resolver_retenidas(selected: list[Pair], aprobadas: bool) -> dict[str, revis
     print("Espejos retenidos tras el freno de borrados:")
     for nombre, retencion in retenciones.items():
         print("  - " + revision.texto_retencion(por_nombre[nombre], retencion))
+    if forzadas:
+        print("--force: se lanzarán SIN su tope de borrados (pasada forzada): pueden borrar "
+              "todo lo que les quede.")
+        return {}
     if aprobadas:
         print("--resume: se lanzarán con su tope de borrados.")
         return {}
@@ -1134,7 +1141,8 @@ def main() -> int:
     except OSError as e:
         sys.exit(f"No puedo preparar el rclone de este equipo para ejecutarlo: {e}")
     approved = args.resync or resolve_resync_approval(selected, args.yes)
-    retenidas = {} if args.dry_run else resolver_retenidas(selected, args.resume or args.force)
+    retenidas = {} if args.dry_run else resolver_retenidas(selected, args.resume or args.force,
+                                                            forzadas=args.force)
     ctx = RunContext(
         binary=binary,
         env=config.pen_environment(),

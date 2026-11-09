@@ -100,12 +100,20 @@ with sandbox():
         "fotos": {"cuando": "2026-11-01 10:00:00", "codigo": 7, "log": None, "buena": None},
         "raro1": {"cuando": "x", "codigo": 7, "retenida": 5},
         "raro2": {"cuando": "x", "codigo": 7, "retenida": ""},
-        "raro3": {"cuando": "x", "codigo": 7, "retenida": ["a"]}}})
-    a = results.apuntes(["fotos", "raro1", "raro2", "raro3", "nadie"])
+        "raro3": {"cuando": "x", "codigo": 7, "retenida": ["a"]},
+        "sincodigo": {"cuando": "x", "retenida": "2026-11-01 10:00:00"},
+        "texto": {"cuando": "x", "codigo": "siete", "retenida": "2026-11-01 10:00:00"},
+        "verdad": {"cuando": "x", "codigo": True}}})
+    a = results.apuntes(["fotos", "raro1", "raro2", "raro3", "sincodigo", "texto", "verdad",
+                         "nadie"])
     c("sin la clave, no se sabe", (a["fotos"].sabida, a["fotos"].retenida), (False, None))
     c("  lo que no es un texto con algo no retiene",
       [a[n].retenida for n in ("raro1", "raro2", "raro3")], [None, None, None])
     c("  y lo que no consta no sale", "nadie" in a, False)
+    c("un código que falta o no es un entero no tira la entrada: su retenida sigue mandando",
+      [(a[n].codigo, a[n].retenida) for n in ("sincodigo", "texto")],
+      [(None, "2026-11-01 10:00:00")] * 2)
+    c("  y un booleano no es un código", a["verdad"].codigo, None)
     results.fijar_retenciones({"fotos": "2026-11-01 10:00:00", "nadie": None})
     datos = json.loads(results.ruta_estado().read_text(encoding="utf-8"))["parejas"]
     c("fijar apunta la decisión donde falta", datos["fotos"]["retenida"], "2026-11-01 10:00:00")
