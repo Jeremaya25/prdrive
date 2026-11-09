@@ -518,6 +518,47 @@ with sandbox():
     c("un espejo también: forzar lanza su pasada con --force (el script sabe qué saltar)",
       desde_reparacion, [("Forzar «espejo»", ["espejo", "--force"])])
     c("  y también se ofrece ver qué se borraría", "Ver qué se borraría" in visto["botones"], True)
+    c("  y, sin retención, no se ofrece volver a intentar", "Volver a intentar…" in visto["botones"],
+      False)
+
+# ---- «Volver a intentar…»: un espejo retenido tras su freno --------------------------------
+# Como forzar: se confirma, lanza UNA pasada y la pantalla se cierra antes; cancelar no hace nada.
+with sandbox():
+    cfg, p = con_freno(ESPEJO_UP, SUBIDA, rc=7)
+    results.apuntar(p.name, 7, model.LOG_DIR / f"{p.name}_20261015_093535.log", freno=True)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    visto = {}
+    vivas = []
+    reparacion(cfg, lambda dlg: (visto.update(botones=sorted(botones(dlg))),
+                                 botones(dlg)["Volver a intentar…"].invoke(),
+                                 vivas.append(bool(dlg.winfo_exists()))))
+    c("un espejo retenido trae «Volver a intentar…» junto a forzar",
+      {"Volver a intentar…", "Forzar sincronización…"} <= set(visto["botones"]), True)
+    c("  confirma con el título de la pareja", confirmaciones, ["Volver a intentar «espejo»"])
+    c("  confirma y lanza --resume", desde_reparacion,
+      [("Volver a intentar «espejo»", ["espejo", "--resume"])])
+    c("  y la pantalla se cierra antes de ceder el paso", vivas, [False])
+
+with sandbox():
+    cfg, p = con_freno(ESPEJO_UP, SUBIDA, rc=7)
+    results.apuntar(p.name, 7, model.LOG_DIR / f"{p.name}_20261015_093535.log", freno=True)
+    desde_reparacion.clear()
+    confirmaciones.clear()
+    vivas = []
+    tk_pairs.confirmar_plan = confirmar(False)
+
+    def no_volver(dlg):
+        """Pulsa «Volver a intentar…», se cancela, y apunta si la pantalla sigue."""
+        botones(dlg)["Volver a intentar…"].invoke()
+        vivas.append(bool(dlg.winfo_exists()))
+
+    try:
+        reparacion(cfg, no_volver)
+    finally:
+        tk_pairs.confirmar_plan = confirmar(True)
+    c("cancelar «Volver a intentar…» no lanza nada y deja la pantalla viva",
+      (desde_reparacion, vivas), ([], [True]))
 
 with sandbox():
     cfg, p = con_freno(BISYNC_CAMBIADOS)

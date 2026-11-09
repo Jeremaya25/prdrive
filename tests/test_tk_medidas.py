@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from _harness import Checks, sandbox, tmpdir
-from _logs_frenos import BISYNC_BORRADOS
+from _logs_frenos import BISYNC_BORRADOS, ESPEJO_UP
 
 import tomllib
 
@@ -53,7 +53,7 @@ except Exception as e:                                   # sin entorno gráfico
     sys.exit(0)
 
 from ui import tk as uitk
-from ui import remote_picker, segundo_plano
+from ui import remote_picker, repair, segundo_plano
 from ui import tk_flags_guia
 from ui import (catalog_editor, pair_editor, tk_configuracion, tk_doctor, tk_fleet, tk_install,
                 tk_llavero, tk_pairs, tk_qr, tk_renombrar, tk_repair, tk_update, tk_versions,
@@ -800,11 +800,27 @@ try:
                     c(f"{nombre}: {que} cabe", entra, True)
                     c(f"{nombre}: {que} no queda recortado", corta, False)
 
+                # El texto de «Sincronizar ahora» con espejos retenidos tras su freno:
+                # tres de nombre largo, con las cifras del log, que es su texto más largo.
+                espejos = model.parse_config({"defaults": BASE["defaults"], "pair": [
+                    {"name": f"fotos-de-toda-la-familia-{i}", "local": f"sync-data/f{i}",
+                     "remote_path": f"/R/f{i}", "mode": "up-mirror"} for i in range(3)]})
+                log_espejo = model.LOG_DIR / "espejo_20261105_182000.log"
+                log_espejo.parent.mkdir(parents=True, exist_ok=True)
+                log_espejo.write_text(ESPEJO_UP, encoding="utf-8")
+                textos_freno = [revision.texto_retencion(p, revision.Retencion(
+                    p.name, "2026-11-05 18:20:00", log_espejo)) for p in espejos.pairs]
+                c(f"{nombre}: (la pregunta del freno lleva las cifras del log)",
+                  all("borró 50 ficheros" in t for t in textos_freno), True)
+
                 # Los cuadros con el tema de la ventana principal (`uitk.preguntar()`
                 # y `uitk.avisar()`), con el peor texto de cada uno: el del resync
-                # con las doce parejas y el aviso de la carpeta del programa, y un
-                # error largo del sistema.
+                # con las doce parejas y el aviso de la carpeta del programa, el del
+                # freno de borrados con varios espejos retenidos, y un error largo
+                # del sistema.
                 for que, fabricar in (
+                        ("la pregunta del freno con varios espejos retenidos",
+                         lambda: uitk.preguntar_retenidas(raiz, textos_freno)),
                         ("la pregunta de «Expulsar»",
                          lambda: uitk.preguntar(
                              raiz, "Expulsar", "Se cierra el llavero (KeePassXC, si está abierto) "
@@ -1083,7 +1099,22 @@ try:
                   sum(h.clave == "freno" for h in revision.revisar(cfg)), 6)
                 # Con llavero, además: su base en conflicto, y la fila de
                 # «Combinar» debajo de los botones de la lista.
-                con_llavero = model.parse_config({**BASE, "keychain": {"base": "personal.kdbx"}})
+                # Y dos espejos retenidos tras su freno: su fila lleva cuatro botones
+                # («Volver a intentar…», «Forzar…», «Ver qué se borraría» y «Ver el
+                # log») en una sola línea, la más ancha de la pantalla.
+                retenidos = [{"name": f"fotos-de-toda-la-familia-{i}", "local": f"sync-data/f{i}",
+                              "remote_path": f"/R/f{i}", "mode": "up-mirror"} for i in range(2)]
+                con_llavero = model.parse_config({**BASE, "pair": BASE["pair"] + retenidos,
+                                                  "keychain": {"base": "personal.kdbx"}})
+                for p in con_llavero.pairs:
+                    if p.name in {r["name"] for r in retenidos}:
+                        p.local_abs.mkdir(parents=True, exist_ok=True)
+                        log = model.LOG_DIR / f"{p.name}_20261015_093535.log"
+                        log.write_text(ESPEJO_UP, encoding="utf-8")
+                        results.apuntar(p.name, 7, log, freno=True)
+                c(f"{nombre}: (dos espejos retenidos, con «Volver a intentar…»)",
+                  sum(h.clave == "freno" and repair.puede_volver(h)
+                      for h in revision.revisar(con_llavero)), 2)
                 base = con_llavero.pareja_llavero.local_abs / "personal.kdbx"
                 base.parent.mkdir(parents=True, exist_ok=True)
                 base.write_bytes(b"base")

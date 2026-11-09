@@ -116,6 +116,14 @@ class Frontend(Protocol):
                 el resync borre el rastro. Vacío si no hay ninguna.
         """
 
+    def approve_held(self, textos: list[str]) -> bool:
+        """Pregunta si se lanzan los espejos retenidos tras el freno de borrados.
+
+        Args:
+            textos: Por espejo retenido, lo que `revision.texto_retencion()` dice:
+                qué pasó, cuánto puede borrar y qué hacer.
+        """
+
     def info(self, msg: str) -> None:
         """Enseña un mensaje."""
 
@@ -123,12 +131,18 @@ class Frontend(Protocol):
         """Lanza `sync.py`, enseña su salida y devuelve su código."""
 
 
-def pair_status_notes(config: Config) -> dict[str, str]:
-    """Devuelve `requiere resync` junto a las parejas bisync sin baseline válido.
+NOTA_RESYNC = "requiere resync"
+"""La nota de una pareja bisync que pide `--resync`."""
 
-    El llavero no sale: se resincroniza solo.
+
+def pair_status_notes(config: Config) -> dict[str, str]:
+    """Devuelve la nota de las parejas que piden algo antes de sincronizar.
+
+    `NOTA_RESYNC` para las bisync sin baseline válido (el llavero no sale: se
+    resincroniza solo) y `parte.RETENIDA` para los espejos que se pararon en su
+    freno de borrados. Un estado ilegible no deja nota.
     """
-    from common import bisync
+    from common import bisync, parte, revision
 
     notes = {}
     for pair in config.pairs:
@@ -136,10 +150,31 @@ def pair_status_notes(config: Config) -> dict[str, str]:
             continue
         try:
             if bisync.resync_reasons(pair):
-                notes[pair.name] = "requiere resync"
+                notes[pair.name] = NOTA_RESYNC
         except Exception:
             pass  # un estado ilegible no puede impedir que se abra la UI
+    try:
+        for nombre in revision.retenciones(config.pairs):
+            notes[nombre] = parte.RETENIDA
+    except Exception:
+        pass  # igual: sin registro legible no hay retenidas
     return notes
+
+
+def retenidas_marcadas(config: Config, nombres) -> list[str]:
+    """Devuelve el texto de cada espejo retenido entre esos nombres, en el orden del config.
+
+    Es `revision.texto_retencion()` de cada uno. Ante un fallo devuelve `[]`: un
+    registro ilegible no impide sincronizar (`sync.py` decide por su cuenta).
+    """
+    from common import revision
+
+    try:
+        retenidas = revision.retenciones(config.pairs)
+        return [revision.texto_retencion(pair, retenidas[pair.name])
+                for pair in config.pairs if pair.name in nombres and pair.name in retenidas]
+    except Exception:
+        return []
 
 
 def carpetas_del_programa(config: Config, nombres) -> dict[str, str]:
@@ -173,19 +208,28 @@ def avisos_de_resync(carpetas: Mapping[str, str]) -> list[str]:
 
 
 def manual_args(config: Config, pairs,
-                approve: Callable[[list[str], Mapping[str, str]], bool]) -> list[str]:
+                approve: Callable[[list[str], Mapping[str, str]], bool],
+                approve_held: Callable[[list[str]], bool] | None = None) -> list[str]:
     """Devuelve los argumentos de `sync.py` para una pasada manual de esas parejas.
 
     Las que piden un `--resync` se le preguntan a quien ha elegido (`approve`),
     UNA vez para todas y con las carpetas del programa que alguna subió
     (`carpetas_del_programa()`): si dice que sí va `--yes` y, si no, `sync.py`
-    las salta. Lo comparten la ventana, que lanza la pasada sin cerrarse, y
-    `runsync` para el menú de consola.
+    las salta. Los espejos retenidos tras el freno se le preguntan aparte
+    (`approve_held`, con el texto de cada uno): si dice que sí va `--resume` y,
+    si no, `sync.py` los salta. Aprobar una cosa no aprueba la otra, y sin
+    `approve_held` no se lanza ninguna retenida. Lo comparten la ventana, que
+    lanza la pasada sin cerrarse, y `runsync` para el menú de consola.
     """
     args = list(pairs)
-    pending = [n for n in pair_status_notes(config) if n in args]
+    pending = [n for n, nota in pair_status_notes(config).items()
+               if nota == NOTA_RESYNC and n in args]
     if pending and approve(pending, carpetas_del_programa(config, pending)):
         args.append("--yes")
+    if approve_held is not None:
+        textos = retenidas_marcadas(config, args)
+        if textos and approve_held(textos):
+            args.append("--resume")
     return args
 
 

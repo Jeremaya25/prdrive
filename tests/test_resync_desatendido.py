@@ -53,8 +53,8 @@ with sandbox():
          runsync.prioridad.bajar) = real
 
 c("el servicio y `--auto --once` lanzaron sync.py", len(llamadas) >= 2, True)
-c("  y ninguno lleva --resync ni --yes (que aprobaría uno)",
-  [cmd for cmd in llamadas if {"--resync", "--yes"} & set(cmd)], [])
+c("  y ninguno lleva --resync, --yes (que aprobaría uno) ni --resume",
+  [cmd for cmd in llamadas if {"--resync", "--yes", "--resume"} & set(cmd)], [])
 c("  solo el nombre de las parejas, tras sync.py",
   [cmd[1:] for cmd in llamadas],
   [[str(model.SYNC_PY), "notas"], [str(model.SYNC_PY), "notas", "fotos"]])

@@ -230,6 +230,16 @@ try:
       (padre_ is raiz, titulo, "docs" in texto and "fotos" in texto, aceptar, cancelar),
       (True, "Resync", True, "Sí", "No"))
     llamadas.clear()
+    c("un espejo retenido pregunta con el diálogo del tema",
+      uitk.preguntar_retenidas(raiz, ["Texto A"]), True)
+    _, padre_, titulo, texto, aceptar, cancelar = llamadas[0]
+    c("  con su texto y «Lanzarla» / «Saltarla»",
+      (padre_ is raiz, titulo, texto.startswith("Texto A"), aceptar, cancelar),
+      (True, "Freno de borrados", True, "Lanzarla", "Saltarla"))
+    llamadas.clear()
+    uitk.preguntar_retenidas(raiz, ["A", "B"])
+    c("  con varias, en plural", llamadas[0][4:], ("Lanzarlas", "Saltarlas"))
+    llamadas.clear()
     c("el llavero pregunta con él, en su título",
       tk_llavero.preguntar(raiz, "¿Cerrarlo?"), True)
     c("  y avisa con el aviso ámbar",

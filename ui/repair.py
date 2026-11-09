@@ -12,7 +12,8 @@ con esto?». Hay tres respuestas posibles:
 - un plan (`plan_*`), que se confirma y se ejecuta;
 - una orden para `sync.py` (`args_*`), que se lanza en la ventana de salida
   porque eso es una sincronización de verdad, con su registro y su log; algunas
-  se confirman antes (`aviso_resync()`, `aviso_forzar()`);
+  se confirman antes (`aviso_resync()`, `aviso_forzar()`, `aviso_volver()`: esta
+  última lanza `sync.py NOMBRE --resume` para una pareja retenida);
 - nada, que es el caso de la carpeta local que no está (ver `revision._local`).
 
 Un `fallo` no tiene plan propio: sus arreglos (`arreglos_fallo()`) son los botones
@@ -27,7 +28,7 @@ from typing import Callable
 
 from common import bisync, errores, frenos, model, orden, revision, store
 from common.model import Config, Pair
-from common.revision import Hallazgo, aviso_carpeta_programa
+from common.revision import Hallazgo, Retencion, aviso_carpeta_programa
 
 from . import prefs
 
@@ -46,6 +47,9 @@ ETIQUETA_LOCK = "Borrar los bloqueos…"
 
 ETIQUETA_REINTENTAR = "Reintentar la pasada"
 """El botón que lanza otra vez la pasada normal de una pareja que falló."""
+
+ETIQUETA_VOLVER = "Volver a intentar…"
+"""El botón que lanza UNA pasada normal de un espejo retenido (`--resume`), tras confirmarlo."""
 
 ETIQUETA_LOG = "Ver el log"
 """El botón que abre el log de la pasada que falló."""
@@ -326,25 +330,34 @@ def arreglos_fallo(hallazgo: Hallazgo,
     (`args_reintentar()`). Nunca hay un `--force`.
 
     Args:
-        hallazgo: El `fallo`; su `dato` es `(log, causa)`.
+        hallazgo: El `fallo`; su `dato` es `(log, causa)`, y `(log, causa, retencion)`
+            si la pareja es un espejo retenido.
         hallazgos: Todo lo que `revisar()` ve ahora, donde se buscan los hermanos.
 
     Returns:
         `(etiqueta, accion, objetivo)`, con `accion` en `"resync"`, `"lock"`,
-        `"reintentar"` o `"log"` y `objetivo` el hallazgo sobre el que actúa.
-        «Ver el log» va siempre el último. Sin causa, solo el log.
+        `"reintentar"`, `"volver"` o `"log"` y `objetivo` el hallazgo sobre el que
+        actúa. «Ver el log» va siempre el último. Sin causa, solo el log. En un
+        `fallo` retenido «Reintentar la pasada» no sale nunca (esa pasada saltaría la
+        pareja): sale una vez «Volver a intentar…», que se confirma, tenga o no su
+        causa el arreglo `reintentar`.
     """
     causa = hallazgo.dato[1] if len(hallazgo.dato) > 1 else None
+    retenida = puede_volver(hallazgo)
     botones: list[tuple[str, str, Hallazgo]] = []
     for arreglo in (causa.arreglos if causa is not None else ()):
         if arreglo == errores.REINTENTAR:
-            botones.append((ETIQUETA_REINTENTAR, "reintentar", hallazgo))
+            # Una retenida no se relanza sin que alguien lo apruebe: «Reintentar» no vale.
+            if not retenida:
+                botones.append((ETIQUETA_REINTENTAR, "reintentar", hallazgo))
             continue
         clave, etiqueta = _ACCIONES_DE_ARREGLO[arreglo]
         hermano = next((h for h in hallazgos
                         if h.clave == clave and h.pareja == hallazgo.pareja), None)
         if hermano is not None:
             botones.append((etiqueta, clave, hermano))
+    if retenida:
+        botones.append((ETIQUETA_VOLVER, "volver", hallazgo))
     return [*botones, (ETIQUETA_LOG, "log", hallazgo)]
 
 
@@ -453,6 +466,11 @@ def _carpeta_vacia(ruta: Path) -> bool:
         return False
 
 
+_LOCAL_VACIA = ("La carpeta local está vacía ahora mismo. Si no la has vaciado tú, lo normal es "
+                "que el dispositivo no esté montado donde toca.")
+"""El aviso de forzar o de volver a intentar cuando el origen local de un espejo está vacío."""
+
+
 def _tope(pair: Pair, freno: frenos.Freno) -> int | None:
     """Devuelve el tope que la pareja llevará en la próxima pasada (`max-delete`), o `None`.
 
@@ -500,9 +518,7 @@ def _forzar_borrados(pair: Pair, freno: frenos.Freno) -> tuple[list[str], list[s
     avisos = [
         f"Si {aqui} está desmontado, vacío o es la carpeta equivocada, perderás esos "
         f"ficheros también en {alli}: el borrado se copia y ahí no vuelven.",
-        *(["La carpeta local está vacía ahora mismo. Si no la has vaciado tú, lo normal es "
-           "que el dispositivo no esté montado donde toca."]
-          if _carpeta_vacia(pair.local_abs) else []),
+        *([_LOCAL_VACIA] if _carpeta_vacia(pair.local_abs) else []),
         _versiones(pair, "borre"),
         f"Antes de forzar, pulsa «{ETIQUETA_SIMULAR}»: es esta misma pasada en simulacro y "
         "nombra los ficheros que borraría.",
@@ -545,9 +561,8 @@ def _forzar_espejo(pair: Pair, freno: frenos.Freno) -> tuple[list[str], list[str
     avisos = [
         f"Si {origen} está vacío, desmontado o es la carpeta equivocada, {destino} se "
         "vaciará: esos borrados son un error y no se pueden deshacer.",
-        *(["La carpeta local está vacía ahora mismo. Si no la has vaciado tú, lo normal es "
-           "que el dispositivo no esté montado donde toca."]
-          if pair.mode.source == "local" and _carpeta_vacia(pair.local_abs) else []),
+        *([_LOCAL_VACIA] if pair.mode.source == "local" and _carpeta_vacia(pair.local_abs)
+          else []),
         "Los espejos no guardan versiones: lo que se borre no se guarda en ninguna parte.",
         f"Antes de forzar, pulsa «{ETIQUETA_SIMULAR}»: es esta misma pasada en simulacro y "
         "nombra los ficheros que borraría.",
@@ -603,13 +618,78 @@ def aviso_forzar(config: Config, hallazgo: Hallazgo) -> RepairPlan:
     return RepairPlan(f"Forzar la sincronización de «{pair.name}»", consecuencias, avisos)
 
 
+def retencion_de(hallazgo: Hallazgo) -> Retencion | None:
+    """Devuelve la retención de un `freno` o un `fallo` de un espejo retenido, o `None`.
+
+    `revision` la pone como tercer elemento del `dato` (`(log, freno, retencion)` o
+    `(log, causa, retencion)`); sin ella, o en cualquier otra avería, la pareja no está
+    retenida.
+    """
+    if hallazgo.clave not in ("freno", "fallo") or len(hallazgo.dato) < 3:
+        return None
+    return hallazgo.dato[2] if isinstance(hallazgo.dato[2], Retencion) else None
+
+
+def puede_volver(hallazgo: Hallazgo) -> bool:
+    """Indica si «Volver a intentar…» se ofrece para ese hallazgo: si su pareja está retenida."""
+    return retencion_de(hallazgo) is not None
+
+
+def args_volver(hallazgo: Hallazgo) -> list[str]:
+    """Devuelve los argumentos de `sync.py` para volver a intentar una pareja retenida.
+
+    `--resume` aprueba UNA pasada normal de la pareja: con su tope de borrados, sin
+    `--force`, `--yes` ni `--resync`. Solo se lanza tras confirmar `aviso_volver()`:
+    ningún lanzador desatendido lo pasa (`tests/test_forzar_desatendido.py`).
+    """
+    return [str(hallazgo.pareja), "--resume"]
+
+
+def aviso_volver(config: Config, hallazgo: Hallazgo) -> RepairPlan:
+    """Devuelve el plan, sin disco, de confirmar que se vuelva a intentar una retenida.
+
+    No es un plan de disco (lo hace rclone, en la ventana de salida, con `args_volver()`)
+    pero se confirma igual: la pasada puede borrar hasta el tope de la pareja otra vez.
+    El aviso es el texto de la retención (`revision.texto_retencion()`: qué pasó, cuánto
+    puede borrar y las salidas), y se añade la frase de la carpeta local vacía si el
+    origen es local y no tiene nada.
+
+    Args:
+        config: La configuración del dispositivo.
+        hallazgo: El `freno` o el `fallo` retenido, recién leído (`vigente()`).
+
+    Raises:
+        ReparacionImposible: Si la pareja ya no está retenida o ya no está configurada.
+    """
+    retencion = retencion_de(hallazgo)
+    if retencion is None:
+        raise ReparacionImposible(
+            "Esta pareja ya no está retenida: lánzala como cualquier otra.")
+    pair = _pareja(config, hallazgo.pareja)
+    tope = orden.max_delete_efectivo(pair)
+    primera = (f"Se lanza UNA pasada normal de «{pair.name}», con su tope de borrados "
+               f"({tope} fichero{'' if tope == 1 else 's'})." if tope is not None and tope >= 0
+               else f"Se lanza UNA pasada normal de «{pair.name}».")
+    avisos = [revision.texto_retencion(pair, retencion)]
+    if pair.mode.source == "local" and _carpeta_vacia(pair.local_abs):
+        avisos.append(_LOCAL_VACIA)
+    return RepairPlan(
+        f"Volver a intentar «{pair.name}»",
+        [primera,
+         "Si acaba bien, deja de estar retenida: el servicio y el agente vuelven a "
+         "lanzarla solos.",
+         "Si vuelve a pararse en el freno, sigue retenida."],
+        avisos)
+
+
 def hallazgos_reparables(hallazgos: list[Hallazgo]) -> list[Hallazgo]:
     """Devuelve los hallazgos que tienen algún botón.
 
     Es un plan o una pasada que lanzar; un `fallo` cuenta si tiene algún arreglo
-    además de «Ver el log».
+    además de «Ver el log», y una pareja retenida siempre.
     """
     return [h for h in hallazgos
             if tiene_plan(h) or h.clave in ("resync", "conflicto") or puede_forzar(h)
+            or puede_volver(h)
             or (h.clave == "fallo" and len(arreglos_fallo(h, hallazgos)) > 1)]
 

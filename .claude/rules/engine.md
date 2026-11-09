@@ -18,6 +18,7 @@ paths:
   - "tests/test_parseo_seguro.py"
   - "tests/test_rclone_portable.py"
   - "tests/test_referencia_vacia.py"
+  - "tests/test_retenida.py"
   - "tests/test_salida_utf8.py"
   - "tests/test_ventana_hora.py"
 ---
