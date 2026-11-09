@@ -298,8 +298,9 @@ def construir(panel: Panel, config: Config, lanzar, marcadas=None, compartida=No
     def botones_debajo(hallazgo) -> list[tuple[str, object]]:
         """Devuelve los botones que van bajo el texto de la avería, en su orden.
 
-        Los lleva el freno de borrados (son tres y juntos no caben en la fila del
-        título sin ensanchar la pantalla) y el `fallo` que tiene arreglos. Qué se
+        Los lleva el freno de borrados (hasta cuatro, en un espejo retenido, y juntos
+        no caben en la fila del título sin ensanchar la pantalla) y el `fallo` que
+        tiene arreglos. Qué se
         ofrece lo decide `repair` (el llavero, por ejemplo, no se fuerza).
         """
         if hallazgo.clave == "fallo":
