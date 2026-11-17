@@ -223,4 +223,21 @@ def mejor_de(f, veces: int = 5) -> float:
 c("_png de una pieza ensanchada tarda menos de la mitad que el de referencia",
   mejor_de(lambda: icons._png(grande)) * 2 < mejor_de(lambda: png_sencillo(grande)), True)
 
+# Los ajustes son un trazado de relleno del icono de SVG Repo, con sus tiradores
+# como agujeros. El pintor de Python decide dentro y fuera con la regla `nonzero`,
+# igual que SVG: el centro de un tirador no tiene tinta, la barra sí.
+import xml.dom.minidom  # noqa: E402
+
+_fondo = icons._expandir(icons.GLIFOS["gear"], 0.8)
+c("ajustes: el centro de un tirador es un agujero", icons._dentro(
+    0.4 * 28 + 1.6, 0.4 * 10 + 1.6, icons._aristas(*icons.GLIFOS["gear"][0][1:])), False)
+c("ajustes: la barra de un deslizador tiene tinta", icons._dentro(
+    0.4 * 4 + 1.6, 0.4 * 25 + 1.6, icons._aristas(*icons.GLIFOS["gear"][0][1:])), True)
+c("ajustes: el borde de la rejilla no tiene tinta",
+  min(icons._sdf(p, 0.2, 0.2, 0.0) for p in _fondo) > 0, True)
+svg_ajustes, _, _ = icons._svg_capas([("#000000", icons.TRAZO, icons.GLIFOS["gear"])],
+                                     16.0, 16)
+c("ajustes: su SVG está bien formado y lleva un único trazado",
+  len(xml.dom.minidom.parseString(svg_ajustes).getElementsByTagName("path")), 1)
+
 sys.exit(c.report())
