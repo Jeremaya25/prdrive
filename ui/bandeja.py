@@ -53,7 +53,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from common import APP_NAME, equipo
+from common import APP_NAME, equipo, parte
 from ui import icons
 
 # En qué está una raíz de este equipo (`Agente._estado_raiz()`).
@@ -220,7 +220,9 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
 
     La frase es la del icono y de los avisos; la entrada lleva a donde se
     arregla. Lo que no tiene arreglo desde aquí (una raíz que no está en su
-    sitio) queda apagado.
+    sitio) queda apagado. Una pareja que pide un `--resync` (`saltadas`) y un
+    espejo retenido tras su freno de borrados (`retenidas`) llevan a la
+    ventana de su unidad, que es donde se aprueba cada uno.
     """
     salida: list[tuple[str, Entrada]] = []
     for u in resumen.get("unidades") or []:
@@ -231,6 +233,9 @@ def _avisos(resumen: Mapping[str, Any]) -> list[tuple[str, Entrada]]:
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
         for pareja in u.get("saltadas") or []:
             frase = f"{nombre}: {pareja} necesita --resync"
+            salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
+        for pareja in u.get("retenidas") or []:
+            frase = f"{nombre}: {pareja} {parte.RETENIDA}"
             salida.append((frase, Entrada(f"{frase} · Abrir…", abrir, icono=I_AVISO)))
         if u.get("error"):
             frase = f"{nombre}: {u['error']}"

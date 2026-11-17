@@ -67,6 +67,14 @@ class TkFrontend:
         finally:
             root.destroy()
 
+    def approve_held(self, textos: list[str]) -> bool:
+        """Pregunta en una ventana si se lanzan los espejos retenidos tras el freno."""
+        root = root_oculto()
+        try:
+            return preguntar_retenidas(root, textos)
+        finally:
+            root.destroy()
+
     def info(self, msg: str) -> None:
         """Enseña un mensaje en una ventana."""
         from tkinter import messagebox
@@ -115,6 +123,21 @@ def preguntar_resync(parent, pending: list[str],
         "diferencias." + aparte +
         "\n¿Ejecutarlo ahora? (si no, esas parejas se saltarán)",
         "Sí", "No")
+
+
+def preguntar_retenidas(parent, textos: list[str]) -> bool:
+    """Devuelve el sí/no de lanzar los espejos retenidos, colgado de la ventana que pregunta.
+
+    Args:
+        parent: La ventana de la que cuelga.
+        textos: Por espejo retenido, lo que `revision.texto_retencion()` dice.
+    """
+    varios = len(textos) > 1
+    cola = ("\n\n¿Las lanzas ahora? Si no, se saltan." if varios
+            else "\n\n¿La lanzas ahora? Si no, se salta.")
+    return preguntar(parent, "Freno de borrados", "\n\n".join(textos) + cola,
+                     "Lanzarlas" if varios else "Lanzarla",
+                     "Saltarlas" if varios else "Saltarla")
 
 
 def _suelto(parent) -> bool:
@@ -2900,7 +2923,8 @@ class VentanaPrincipal:
         try:
             args = manual_args(self.config, sel,
                                lambda pendientes, carpetas: preguntar_resync(
-                                   self.root, pendientes, carpetas))
+                                   self.root, pendientes, carpetas),
+                               lambda textos: preguntar_retenidas(self.root, textos))
         except BaseException:
             self.en_curso = False
             self.reajustar()

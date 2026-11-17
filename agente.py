@@ -384,6 +384,12 @@ VUELVEN = (avisos_carpeta.MOTIVO_SE_FUE, avisos_carpeta.MOTIVO_SIN_RESPUESTA)
 TEXTO_RESULTADO = {OK: "bien", FALLO: "FALLÓ", RED: "FALLÓ por la red",
                    SALTADA: "saltada: pide --resync"}
 """Cómo se dice, en el diario, el resultado de una pasada."""
+TEXTO_RETENIDA = "saltada: retenida tras el freno de borrados"
+"""Cómo dice el diario una pasada saltada porque el espejo está retenido, en lugar de `TEXTO_RESULTADO[SALTADA]`."""
+MOTIVO_RESYNC = "resync"
+"""Por qué se saltó una pareja: pide un `--resync` que aprueba una persona."""
+MOTIVO_FRENO = "freno"
+"""Por qué se saltó una pareja: es un espejo retenido tras su freno de borrados."""
 
 
 LLAVERO_EN_CONFLICTO = ("Se guardó en dos dispositivos sin sincronizar en medio, y las dos "
@@ -1771,8 +1777,10 @@ class Agente:
             entrada.
         marcas: El estado de cada pareja para el planificador, por `(raíz,
             pareja)`.
-        saltadas: Las parejas cuya última pasada se saltó por pedir un
-            `--resync`, por `(raíz, pareja)`: se avisa al entrar, una vez.
+        saltadas: Las parejas cuya última pasada se saltó, por `(raíz,
+            pareja)`, con el motivo (`MOTIVO_RESYNC`: pide un `--resync`;
+            `MOTIVO_FRENO`: es un espejo retenido tras su freno de borrados):
+            se avisa al entrar, una vez, y otra si cambia el motivo.
         entorno: Batería, red de uso medido, remotos sin conexión y pausa, para
             el planificador.
         entorno_leido: Cuándo se leyó el entorno por última vez; con menos
@@ -1928,7 +1936,7 @@ class Agente:
     cerradas: dict[str, int] = field(default_factory=dict)
     vestibulos: dict[str, str] = field(default_factory=dict)
     marcas: dict[tuple[str, str], pl.Marca] = field(default_factory=dict)
-    saltadas: set[tuple[str, str]] = field(default_factory=set)
+    saltadas: dict[tuple[str, str], str] = field(default_factory=dict)
     entorno: pl.Entorno = field(default_factory=pl.Entorno)
     entorno_leido: float = -math.inf
     red_leida: float = -math.inf
@@ -2477,7 +2485,7 @@ class Agente:
         # enchufar: se sincroniza enseguida y el modo `sync` vuelve a tocar.
         for clave in [k for k in self.marcas if k[0] == uid]:
             del self.marcas[clave]
-        self.saltadas = {k for k in self.saltadas if k[0] != uid}
+        self.saltadas = {k: m for k, m in self.saltadas.items() if k[0] != uid}
         self._olvidar_vigiladas(uid)
         con.vieja = version_vieja(raiz)
         if con.vieja is not None:
@@ -4078,6 +4086,11 @@ class Agente:
                        primera: bool = True) -> None:
         """Apunta cómo le fue a una pareja en la pasada que acaba de terminar.
 
+        Una saltada tiene dos motivos que se dicen distinto (`MOTIVO_RESYNC`,
+        `MOTIVO_FRENO`): en el diario, en el lock y en el aviso, que se repite
+        si el motivo cambia. Lo dice el parte de la pareja (`Parte.retenida`);
+        sin parte es la de siempre.
+
         Args:
             con: La conexión de su raíz.
             tarea: La pareja.
@@ -4090,6 +4103,7 @@ class Agente:
                 proceso y con su duración en la cuenta de lo gastado.
         """
         clave = (tarea.raiz, tarea.pareja)
+        motivo = MOTIVO_FRENO if dicho is not None and dicho.retenida else MOTIVO_RESYNC
         consumo.apuntar(con.id, consumo.Cuenta(
             1, int(dicho is not None and dicho.vacia),
             int(primera) + (dicho.ordenes if dicho is not None else int(como != SALTADA)),
@@ -4105,6 +4119,8 @@ class Agente:
             dlog(con.raiz, f"[{tarea.pareja}] FALLÓ (rc={rc}, {segundos:.0f}s); salida:")
             for linea in texto.splitlines()[-12:]:
                 dlog(con.raiz, f"[{tarea.pareja}]   {linea}")
+        elif como == SALTADA and motivo == MOTIVO_FRENO:
+            dlog(con.raiz, f"[{tarea.pareja}] {TEXTO_RETENIDA}; lánzala desde la ventana")
         elif como == SALTADA:
             dlog(con.raiz, f"[{tarea.pareja}] saltada: requiere --resync; ejecútalo a "
                            f"mano desde la ventana")
@@ -4112,9 +4128,12 @@ class Agente:
             dlog(con.raiz, f"[{tarea.pareja}] OK ({segundos:.0f}s)")
             if como == OK:
                 self.ultima_buena = ahora
-        diario(f"[{con.nombre}] {tarea.pareja}: {TEXTO_RESULTADO[como]} "
+        texto_diario = (TEXTO_RETENIDA if como == SALTADA and motivo == MOTIVO_FRENO
+                        else TEXTO_RESULTADO[como])
+        diario(f"[{con.nombre}] {tarea.pareja}: {texto_diario} "
                f"(rc={rc}, {segundos:.0f}s)")
-        self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos)
+        self._apuntar_en_lock(con, tarea.pareja, como, rc, segundos,
+                              retenida=motivo == MOTIVO_FRENO)
         if tarea.pareja == model.LLAVERO:
             self._copias_del_llavero(con, ahora, ya=True)
 
@@ -4136,15 +4155,21 @@ class Agente:
                 avisar(f"{con.nombre}: falla {tarea.pareja}", self._donde_mirar(con), True)
         # Saltada no es un fallo para el planificador (vuelve a su intervalo),
         # pero la pareja deja de sincronizarse sin que nadie lo vea: se avisa
-        # cuando EMPIEZA a pedir el --resync, como con un fallo, y no otra vez
-        # hasta que deje de pedirlo.
-        if como == SALTADA and clave not in self.saltadas:
-            self.saltadas.add(clave)
-            avisar(f"{tarea.pareja} necesita --resync",
-                   f"{con.nombre}: no se sincroniza sola. El resync se aprueba en "
-                   f"«Reparación». {self._donde_mirar(con)}", True)
+        # cuando EMPIEZA a saltarse, como con un fallo, y no otra vez hasta
+        # que deje de saltarse; sí si cambia el motivo (pasar de pedir un
+        # resync a estar retenida dice otra cosa y se arregla en otro sitio).
+        if como == SALTADA and self.saltadas.get(clave) != motivo:
+            self.saltadas[clave] = motivo
+            if motivo == MOTIVO_FRENO:
+                avisar(f"{tarea.pareja} se ha parado en el freno de borrados",
+                       f"{con.nombre}: no se sincroniza sola hasta que la lances desde "
+                       f"la ventana. {self._donde_mirar(con)}", True)
+            else:
+                avisar(f"{tarea.pareja} necesita --resync",
+                       f"{con.nombre}: no se sincroniza sola. El resync se aprueba en "
+                       f"«Reparación». {self._donde_mirar(con)}", True)
         elif como in (OK, FALLO):           # una de red no dice cómo está la pareja
-            self.saltadas.discard(clave)
+            self.saltadas.pop(clave, None)
 
     def _fin_de_sonda(self, con: Conexion, remoto: str, rc: int, texto: str,
                       ahora: float) -> None:
@@ -4263,12 +4288,18 @@ class Agente:
         return destino is not None and store.write_json(destino, datos)
 
     def _apuntar_en_lock(self, con: Conexion, pareja: str, como: str, rc: int,
-                         segundos: float) -> None:
-        """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo."""
+                         segundos: float, retenida: bool = False) -> None:
+        """Deja en el lock lo mismo que el servicio de runsync tras cada ciclo.
+
+        Args:
+            retenida: Si la saltada es de un espejo retenido tras su freno (no
+                pide un `--resync`): lo dice el lock.
+        """
         if con.lock is None or not self._lock_es_nuestro(con):
             return
-        texto = {OK: f"OK ({segundos:.0f}s)", SALTADA: "saltada (requiere --resync manual)"
-                 }.get(como, f"ERROR rc={rc}")
+        saltada = ("saltada (retenida tras el freno)" if retenida
+                   else "saltada (requiere --resync manual)")
+        texto = {OK: f"OK ({segundos:.0f}s)", SALTADA: saltada}.get(como, f"ERROR rc={rc}")
         con.lock.setdefault("last_results", {})[pareja] = texto
         con.lock["last_cycle"] = store.stamp()
         con.lock["arranque"] = store.arranque_del_sistema()     # cancela la deriva del reloj
@@ -6045,8 +6076,10 @@ class Agente:
                              "pausada": bool(unidad and unidad.pausada),
                              "fallando": sorted(p for (r, p), m in self.marcas.items()
                                                 if r == con.id and m.fallos > 0),
-                             "saltadas": sorted(p for r, p in self.saltadas
-                                                if r == con.id),
+                             "saltadas": sorted(p for (r, p), m in self.saltadas.items()
+                                                if r == con.id and m == MOTIVO_RESYNC),
+                             "retenidas": sorted(p for (r, p), m in self.saltadas.items()
+                                                 if r == con.id and m == MOTIVO_FRENO),
                              "estiradas": self._estiradas(con),
                              "vigila": vigila,
                              "vigila_abandonada": abandonadas,

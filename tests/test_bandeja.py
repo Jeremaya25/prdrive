@@ -693,6 +693,14 @@ c("  y encabeza el menú, llevando a su ventana",
   (primera.texto, primera.pide[0]["pide"]),
   ("PRDRIVE: Proyectos necesita --resync · Abrir…", equipo.PIDE_ABRIR))
 
+retenida = {"unidades": [{"id": "u", "nombre": "PRDRIVE", "atendida": True,
+                          "en_lista": True, "retenidas": ["Fotos"]}]}
+c("un espejo retenido es un aviso", bandeja.avisos(retenida), ["PRDRIVE: Fotos retenida tras el freno"])
+c("  con el icono de aviso", bandeja.estado(retenida)[0], icons.AVISO)
+c("  y lleva a su ventana", (bandeja.vista(retenida).menu[0].texto,
+                            bandeja.vista(retenida).menu[0].pide[0]["pide"]),
+  ("PRDRIVE: Fotos retenida tras el freno · Abrir…", equipo.PIDE_ABRIR))
+
 # Una unidad de la lista enchufada y bloqueada con BitLocker
 BL = {"id": "k" * 32, "nombre": "Trabajo", "raiz": "E:\\", "desbloqueando": False}
 conectada = {"id": "u", "nombre": "PRDRIVE", "atendida": True, "en_lista": True}

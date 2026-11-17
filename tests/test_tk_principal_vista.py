@@ -815,8 +815,8 @@ with sandbox():
         visto["después"] = list(orden)
 
     tk_principal.VistaPrincipal.aplicar = aplicar_apuntando
-    uitk.manual_args = lambda config, pairs, approve: (orden.append("manual_args"),
-                                                       list(pairs))[1]
+    uitk.manual_args = lambda config, pairs, approve, retenidas=None: (
+        orden.append("manual_args"), list(pairs))[1]
     uitk.output_window = lambda titulo, cmd, **k: orden.append("output_window")
     try:
         abrir(TRES, pasada)

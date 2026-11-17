@@ -211,8 +211,8 @@ absoluta reaparece.
 | `bisync` | `bisync` | ↔ | — | `--max-delete 25`: el 25 % del listado anterior |
 | `up` | `copy` | dispositivo → remoto | nada | — |
 | `down` | `copy` | remoto → dispositivo | nada | — |
-| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50`: 50 ficheros |
-| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50`: 50 ficheros |
+| `up-mirror` | `sync` | dispositivo → remoto | **el remoto** | `--max-delete 50`: 50 ficheros; si se para ahí, queda retenido hasta que lo lances desde la ventana |
+| `down-mirror` | `sync` | remoto → dispositivo | **el dispositivo** | `--max-delete 50`: 50 ficheros; si se para ahí, queda retenido hasta que lo lances desde la ventana |
 
 `bisync` viene además con `--conflict-resolve newer`, `--resilient`, `--recover` y
 `--max-lock 2m`: un error menor no obliga a rehacer la referencia, una
@@ -221,6 +221,9 @@ un proceso muerto caduca en vez de bloquear para siempre. Y con
 `--conflict-suffix conflicto-dispositivo,conflicto-remoto`, para que el nombre de
 la copia que pierde un conflicto diga de qué lado venía (ver
 [Conflictos](conflictos-y-versiones.md#conflictos)).
+
+Un espejo retenido no se sincroniza solo: la ventana, «Reparación» y el aviso del agente lo dicen,
+y [Diagnóstico](diagnostico.md#un-espejo-retenido-tras-el-freno) explica cómo soltarlo.
 
 Un `mode` mal escrito se rechaza **al leer el config**, no cuando esa pareja
 corre: un error tipográfico para `--list`, `--doctor` y la ejecución por igual, en

@@ -31,6 +31,12 @@ MARCA = "@prdrive "
 """Cómo empieza la línea del parte; el resto es un objeto JSON."""
 SALTADA = -1
 """El `rc` del parte de una pareja que se saltó (pedía `--resync`): es `sync.SKIPPED`."""
+RETENIDA = "retenida tras el freno"
+"""Cómo se nombra, en una línea, un espejo que se paró en su freno de borrados.
+
+La usan el agente, el servicio, la ventana y la bandeja. El parte de esa pareja
+lleva `retenida` (`Parte.retenida`) y el mismo `rc` que una saltada.
+"""
 TOPE_LOG = 256 * 1024
 """Bytes de log que se leen como mucho para saber si una pasada movió algo."""
 NADA_QUE_MOVER = "There was nothing to transfer"
@@ -50,12 +56,16 @@ class Parte(NamedTuple):
         movio: Si la pasada cambió algo en algún lado; `None` si no se sabe.
         ordenes: Cuántas veces se lanzó rclone.
         escrito: Bytes de la base de bisync que la pasada reescribió.
+        retenida: Si se saltó porque es un espejo retenido tras su freno de
+            borrados y nadie aprobó una pasada. Solo sale en la línea cuando
+            es verdad.
     """
     pareja: str
     rc: int
     movio: bool | None = None
     ordenes: int = 0
     escrito: int = 0
+    retenida: bool = False
 
     @property
     def vacia(self) -> bool:
@@ -64,8 +74,14 @@ class Parte(NamedTuple):
 
 
 def linea(parte: Parte) -> str:
-    """Devuelve la línea que `sync.py` escribe para el agente."""
-    return MARCA + json.dumps(parte._asdict(), ensure_ascii=False)
+    """Devuelve la línea que `sync.py` escribe para el agente.
+
+    `retenida` solo va cuando es verdad: los partes de siempre salen igual.
+    """
+    datos = parte._asdict()
+    if not parte.retenida:
+        del datos["retenida"]
+    return MARCA + json.dumps(datos, ensure_ascii=False)
 
 
 def leer(texto: str) -> dict[str, Parte]:
@@ -83,7 +99,8 @@ def leer(texto: str) -> dict[str, Parte]:
             movio = d.get("movio")
             parte = Parte(str(d["pareja"]), int(d["rc"]),
                           movio if isinstance(movio, bool) else None,
-                          int(d.get("ordenes") or 0), int(d.get("escrito") or 0))
+                          int(d.get("ordenes") or 0), int(d.get("escrito") or 0),
+                          d.get("retenida") is True)
         except (ValueError, TypeError, KeyError, AttributeError):
             continue
         partes[parte.pareja] = parte
@@ -219,6 +236,8 @@ class Medida:
         """Si la pasada es un `--resync`: rehace la base, así que siempre «mueve»."""
         self.quieta: bool | None = None
         """Lo que diga el log en una pareja que no es bisync (`sin_actividad()`)."""
+        self.retenida = False
+        """Si la pareja se saltó por estar retenida tras su freno (`sync.py` lo pone)."""
         self.parte: Parte | None = None
         """El parte ya cerrado (`cerrar()`), si `sync.py` lo necesitó antes de acabar."""
 
@@ -249,4 +268,4 @@ class Medida:
             movio = not self.quieta
         if rc != 0:
             movio = None            # una pasada que falla o se salta no dice si había algo
-        return Parte(self.pair.name, rc, movio, ordenes - self.ordenes, escrito)
+        return Parte(self.pair.name, rc, movio, ordenes - self.ordenes, escrito, self.retenida)

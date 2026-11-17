@@ -15,7 +15,7 @@ todo junto y, lo que se pueda, con su arreglo al lado:
 | Bloqueos `.lck` de una pasada cortada | Borrarlos, solo si no hay ninguna pasada en marcha |
 | Ficheros en conflicto | Elegir con qué versión te quedas |
 | La última pasada falló | Leer qué ha pasado, en llano, si es un error conocido (sin red, el remoto no acepta la conexión, disco lleno, un fichero en uso…), y usar el arreglo que proponga: reintentar la pasada, resincronizar o borrar un bloqueo, cada uno con su confirmación cuando cambia algo. Si el error no es de los conocidos, se enseña lo que dijo rclone tal cual. El log, siempre al final |
-| **El freno de borrados paró la pasada** (casi todo ha desaparecido de un lado, o han cambiado todos los ficheros) | Ver qué se borraría y, si es lo que querías, **forzar una sola pasada** ([más abajo](#cuando-salta-el-freno-de-borrados)) |
+| **El freno de borrados paró la pasada** (casi todo ha desaparecido de un lado, o han cambiado todos los ficheros) | Ver qué se borraría y, si es lo que querías, **forzar una sola pasada** ([más abajo](#cuando-salta-el-freno-de-borrados)). Un espejo, además, queda **retenido**: no se sincroniza solo hasta que lo lances ([más abajo](#un-espejo-retenido-tras-el-freno)) |
 | Un contenedor VeraCrypt **dinámico** se queda sin sitio fuera (menos de 1 GiB libre en la unidad) | Liberar sitio fuera del contenedor. Si se llena, lo de dentro da errores de escritura en mitad de una pasada |
 | **La carpeta local no está** | **Nada, a propósito**: ver abajo |
 
@@ -69,11 +69,14 @@ una decisión tuya. Por eso rclone frena, y no se mide igual en todos los modos:
 
 «Reparación» lo cuenta con las cifras y el lado, en vez de dejarlo en un «la última
 pasada falló»: *«Se han borrado 3429 de 3452 ficheros (99 %) en el dispositivo… La
-pasada se paró para no copiar ese borrado al remoto.»* Y trae tres botones:
+pasada se paró para no copiar ese borrado al remoto.»* Y trae estos botones (en un
+espejo se suma uno más, **«Volver a intentar…»**, que se explica en [Un espejo
+retenido tras el freno](#un-espejo-retenido-tras-el-freno)):
 
 | Botón | Qué hace |
 |---|---|
 | **Ver qué se borraría** | La misma pasada en simulacro (`--dry-run`): enseña los ficheros que borraría y no toca nada. No pide confirmación. |
+| **Volver a intentar…** (solo en un espejo) | Lanza **una** pasada normal, con su mismo tope de borrados, tras enseñarte cuánto borró y cuánto puede borrar aún. |
 | **Forzar sincronización…** | Enseña lo que va a pasar —qué se borrará y dónde, y que si ese lado está desmontado o vacío por error, se pierde— y solo si le dices que sí lanza **una** pasada sin el freno. |
 | **Ver el log** | Abre el log de la pasada que paró. |
 
@@ -96,9 +99,12 @@ siempre? Hay salidas menos peligrosas:
 
 - En una pareja `bisync`, si los ficheros se borraron por error, un `--resync` los
   recupera desde el otro lado: junta los dos lados sin borrar nada.
-- En un espejo, arregla el origen (móntalo, recupera la carpeta) y la siguiente
-  pasada vuelve a copiar lo que falte. Un espejo no guarda versiones: lo que ya
-  borró no se puede recuperar de ahí.
+- En un espejo, arregla el origen (móntalo, recupera la carpeta) y lánzalo tú: el
+  espejo que se para en su freno queda **retenido** y no vuelve a sincronizarse
+  solo. Hazlo con **«Volver a intentar…»** en «Reparación» o con **«Sincronizar
+  ahora»**, que te pregunta antes (ver [Un espejo retenido tras el
+  freno](#un-espejo-retenido-tras-el-freno)). Un espejo no guarda versiones: lo que
+  ya borró no se puede recuperar de ahí.
 
 Desde la consola, con la pareja nombrada (sin nombre, o junto a `--resync`, se
 rechaza):
@@ -167,6 +173,45 @@ Casos habituales:
   sobrescribir con seguridad lo que no se acaba de leer. Puede que otro
   dispositivo lo haya tocado mientras tanto.
 
+## Un espejo retenido tras el freno
+
+Un espejo (`up-mirror` o `down-mirror`) que se para en el freno de borrados ya
+ha borrado hasta su tope, y lo que quedaba por borrar sigue esperando. Si se
+volviera a lanzar solo, cada pasada borraría otros 50 ficheros: con el origen
+desmontado o vacío, acabaría vaciando el otro lado de 50 en 50 sin que nadie lo
+apruebe. Por eso, en cuanto se para, **queda retenido**: ni el servicio, ni el
+arranque automático, ni el agente lo vuelven a sincronizar solos. Sigue
+retenido hasta que alguien apruebe una pasada y esa pasada acabe bien. Las
+parejas `bisync` no se retienen: su freno para la pasada entera antes de copiar
+nada, así que repetirla no cuesta ficheros.
+
+Se ve en tres sitios:
+
+- En la lista de parejas de la ventana, con la nota **«retenida tras el freno»**.
+- En el aviso del agente («Fotos se ha parado en el freno de borrados») y en su
+  menú de la bandeja («retenida tras el freno»); el aviso dice que no se
+  sincroniza sola hasta que la lances desde la ventana.
+- En **Reparación**, con las cifras: cuánto borró, cuánto le quedaba y desde
+  cuándo está retenido.
+
+Qué hacer:
+
+1. Mira primero **«Ver qué se borraría»**, en Reparación. Si no esperabas esos
+   borrados (la unidad no estaba montada, la carpeta es otra, el remoto estaba
+   vacío), arregla el origen antes de seguir.
+2. Si todo está en orden, lánzalo: desde la lista de parejas con
+   **«Sincronizar ahora»** (te pregunta si lanzas el espejo retenido o lo
+   saltas) o con **«Volver a intentar…»** en Reparación. Es una pasada normal,
+   **con su mismo tope** (50 ficheros de fábrica): borra hasta ese tope más y,
+   si aún quedan, vuelve a quedar retenido.
+3. Si los borrados eran a propósito, y son más que el tope, usa **«Forzar
+   sincronización…»**: hace todos de una vez, y es lo único que evita ir
+   aprobando de tope en tope.
+
+La retención se suelta sola cuando una pasada de esa pareja acaba bien. Un fallo
+de otro tipo (sin red, por ejemplo) no la suelta: la causa del freno sigue sin
+comprobarse. Si cambias el modo de la pareja a uno que no borra, tampoco arrastra
+la retención.
 ## Emparejar un móvil
 
 **«Ajustes…» → «Emparejar un móvil»** enseña la conexión con el remoto como un
