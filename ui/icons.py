@@ -37,11 +37,47 @@ la ventana.
 
 from __future__ import annotations
 
+import functools
 import math
 import os
+import re
 
 TRAZO = 1.6
 """Anchura de trazo del diseño, en unidades de la rejilla de 16."""
+
+_AJUSTES_D = (
+    "M29.000,13.858 L29.000,31.000 C29.000,31.553 28.553,32.000 28.000,32.000 "
+    "C27.447,32.000 27.000,31.553 27.000,31.000 L27.000,13.858 "
+    "C25.279,13.411 24.000,11.859 24.000,10.000 C24.000,8.141 25.279,6.589 27.000,6.142 "
+    "L27.000,1.000 C27.000,0.447 27.447,0.000 28.000,0.000 C28.553,0.000 29.000,0.447 29.000,1.000 "
+    "L29.000,6.142 C30.721,6.589 32.000,8.141 32.000,10.000 "
+    "C32.000,11.859 30.721,13.411 29.000,13.858 ZM28.000,8.000 "
+    "C26.898,8.000 26.000,8.897 26.000,10.000 C26.000,11.103 26.898,12.000 28.000,12.000 "
+    "C29.103,12.000 30.000,11.103 30.000,10.000 C30.000,8.897 29.103,8.000 28.000,8.000 Z "
+    "M17.000,25.858 L17.000,31.000 C17.000,31.553 16.553,32.000 16.000,32.000 "
+    "C15.447,32.000 15.000,31.553 15.000,31.000 L15.000,25.858 "
+    "C13.279,25.411 12.000,23.859 12.000,22.000 C12.000,20.141 13.279,18.589 15.000,18.142 "
+    "L15.000,1.000 C15.000,0.447 15.447,0.000 16.000,0.000 C16.553,0.000 17.000,0.447 17.000,1.000 "
+    "L17.000,18.142 C18.721,18.589 20.000,20.141 20.000,22.000 "
+    "C20.000,23.859 18.721,25.411 17.000,25.858 ZM16.000,20.000 "
+    "C14.897,20.000 14.000,20.898 14.000,22.000 C14.000,23.102 14.897,24.000 16.000,24.000 "
+    "C17.103,24.000 18.000,23.102 18.000,22.000 C18.000,20.898 17.103,20.000 16.000,20.000 Z "
+    "M5.000,19.858 L5.000,31.000 C5.000,31.553 4.553,32.000 4.000,32.000 "
+    "C3.447,32.000 3.000,31.553 3.000,31.000 L3.000,19.858 "
+    "C1.279,19.411 0.000,17.859 0.000,16.000 C0.000,14.141 1.279,12.589 3.000,12.142 "
+    "L3.000,1.000 C3.000,0.447 3.447,0.000 4.000,0.000 C4.553,0.000 5.000,0.447 5.000,1.000 "
+    "L5.000,12.142 C6.721,12.589 8.000,14.141 8.000,16.000 C8.000,17.859 6.721,19.411 5.000,19.858 "
+    "ZM4.000,14.000 C2.898,14.000 2.000,14.898 2.000,16.000 C2.000,17.103 2.898,18.000 4.000,18.000 "
+    "C5.102,18.000 6.000,17.103 6.000,16.000 C6.000,14.898 5.102,14.000 4.000,14.000 Z"
+)
+"""El icono de los ajustes: tres deslizadores, cada uno con su tirador.
+
+Es el «config» de SVG Repo: un trazado de relleno de viewBox 0 0 32 32, con los
+tiradores como agujeros (su sentido de giro es el contrario). Se usa tal cual y
+se lleva a la rejilla de 16 con `("ruta", d, 0.4, 1.6, 1.6)`: ocupa 12.8 de los
+16 y deja el margen que tienen los demás glifos, que `tests/test_iconos.py`
+exige.
+"""
 
 
 GLIFOS: dict[str, list[tuple]] = {
@@ -67,10 +103,8 @@ GLIFOS: dict[str, list[tuple]] = {
     "warn": [("p", [(8, 3.9), (13.2, 12.8), (2.8, 12.8), (8, 3.9)]),
              ("l", 8, 7, 8, 9.8), ("d", 8, 11.6)],
     "clock": [("c", 8, 8, 6), ("p", [(8, 4.5), (8, 8), (10.5, 9.5)])],
-    # Los ajustes: dos deslizadores, cada uno con su tirador relleno.
-    "gear": [("l", 2.5, 4.5, 13.5, 4.5), ("l", 2.5, 11.5, 13.5, 11.5),
-             ("c", 10.5, 4.5, 1.7), ("c", 10.5, 4.5, 0.45),
-             ("c", 5.5, 11.5, 1.7), ("c", 5.5, 11.5, 0.45)],
+    # Los ajustes: tres deslizadores con su tirador (el «config» de SVG Repo).
+    "gear": [("ruta", _AJUSTES_D, 0.4, 1.6, 1.6)],
     # Una pareja es un ida y vuelta entre dos sitios: dos flechas opuestas.
     "parejas": [("l", 2.6, 5.4, 12.9, 5.4), ("p", [(10.4, 2.9), (12.9, 5.4), (10.4, 7.9)]),
                 ("l", 13.4, 10.6, 3.1, 10.6), ("p", [(5.6, 8.1), (3.1, 10.6), (5.6, 13.1)])],
@@ -130,6 +164,9 @@ Cada primitiva es una tupla:
     ("r",  x, y, w, h)              rectángulo de trazo
     ("fr", x, y, w, h)              rectángulo relleno
     ("rr", x, y, w, h, radio)       rectángulo relleno de esquinas redondeadas
+    ("ruta", d, escala, dx, dy)     trazado SVG relleno (`M`, `L`, `C`, `Z`
+                                    absolutos); cada coordenada va por
+                                    `escala` y luego `(dx, dy)`
 
 Los ángulos van en el sentido de la pantalla (la y crece hacia abajo), que es
 el mismo en el que los escribe SVG: 0° a la derecha, 90° abajo.
@@ -235,6 +272,108 @@ def _dist_arco(x: float, y: float, cx: float, cy: float, r: float,
                for a in (a0, a1))
 
 
+_ORDEN_TRAZADO = re.compile(r"[MLCZ]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+"""Los tokens de un trazado SVG: las órdenes absolutas y los números."""
+
+_PASOS_CURVA = 8
+"""En cuántos segmentos se parte cada curva Bézier al aplanarla."""
+
+
+def _bezier(p0, p1, p2, p3, t: float) -> tuple[float, float]:
+    """Devuelve el punto de una cúbica en `t` (0 a 1)."""
+    u = 1 - t
+    a, b, c, d = u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t
+    return (a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+            a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1])
+
+
+@functools.lru_cache(maxsize=None)
+def _aristas(d: str, escala: float, dx: float, dy: float) -> tuple:
+    """Devuelve el contorno de un trazado SVG como segmentos rectos en la rejilla.
+
+    `d` lleva órdenes absolutas `M`, `L`, `C` y `Z`. Cada coordenada se lleva
+    antes a la rejilla con `escala` y luego se desplaza `(dx, dy)`, igual que el
+    `transform` que pone el SVG. Las curvas se parten en `_PASOS_CURVA`
+    segmentos, y cada subtrazado se cierra, porque SVG rellena lo abierto como
+    si estuviera cerrado.
+
+    Returns:
+        Una tupla de `(x1, y1, x2, y2)`.
+
+    Raises:
+        ValueError: Si `d` lleva una orden que no se conoce.
+    """
+    tokens = _ORDEN_TRAZADO.findall(d)
+    aristas: list[tuple] = []
+
+    def unir(a, b) -> None:
+        """Añade el segmento de `a` a `b`, si no es de largo cero."""
+        if a != b:
+            aristas.append((*a, *b))
+
+    def punto(i: int) -> tuple[float, float]:
+        """Lee el par de coordenadas en `tokens[i]` ya llevado a la rejilla."""
+        return (float(tokens[i]) * escala + dx, float(tokens[i + 1]) * escala + dy)
+
+    inicio = actual = (0.0, 0.0)
+    cmd, i = "", 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t.isalpha():
+            cmd, i = t, i + 1
+            if cmd == "Z":
+                unir(actual, inicio)
+                actual = inicio
+            continue
+        if cmd == "M":                     # lo que sigue a un M son líneas
+            unir(actual, inicio)
+            inicio = actual = punto(i)
+            i += 2
+            cmd = "L"
+        elif cmd == "L":
+            p = punto(i)
+            unir(actual, p)
+            actual = p
+            i += 2
+        elif cmd == "C":
+            c1, c2, p = punto(i), punto(i + 2), punto(i + 4)
+            previo = actual
+            for k in range(1, _PASOS_CURVA + 1):
+                q = _bezier(actual, c1, c2, p, k / _PASOS_CURVA)
+                unir(previo, q)
+                previo = q
+            actual = p
+            i += 6
+        else:
+            raise ValueError(f"orden de trazado sin soporte: {cmd or t}")
+    unir(actual, inicio)
+    return tuple(aristas)
+
+
+def _dentro(x: float, y: float, aristas) -> bool:
+    """Devuelve si el punto cae dentro del relleno, por la regla de vueltas no nulas.
+
+    Es la regla por defecto de SVG (`nonzero`): cuenta cuántas veces da vueltas
+    el contorno alrededor del punto, con signo, y es dentro si no es cero. Así
+    un tirador que gira al revés que su barra sale como agujero.
+    """
+    vueltas = 0
+    for x1, y1, x2, y2 in aristas:
+        if y1 <= y < y2:                  # la arista sube por la pantalla
+            if (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1) > 0:
+                vueltas += 1
+        elif y2 <= y < y1:                # y baja
+            if (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1) < 0:
+                vueltas -= 1
+    return vueltas != 0
+
+
+def _sdf_poli(x: float, y: float, aristas) -> float:
+    """Devuelve la distancia con signo a un relleno de contornos: negativa dentro."""
+    lejos = min(_dist_segmento(x, y, x1, y1, x2, y2, 0.0) for x1, y1, x2, y2 in aristas)
+    return -lejos if _dentro(x, y, aristas) else lejos
+
+
 def _sdf_caja(x: float, y: float, rx: float, ry: float,
               w: float, h: float) -> float:
     """Devuelve la distancia con signo a un rectángulo: negativa dentro."""
@@ -267,6 +406,8 @@ def _sdf(prim: tuple, x: float, y: float, semi: float) -> float:
     if clase == "rr":
         _, rx, ry, w, h, rad = prim
         return _sdf_caja(x, y, rx + rad, ry + rad, w - 2 * rad, h - 2 * rad) - rad
+    if clase == "poli":                    # relleno ya aplanado por _expandir()
+        return _sdf_poli(x, y, prim[1])
     raise ValueError(f"primitiva desconocida: {clase}")
 
 
@@ -349,6 +490,8 @@ def _expandir(prims, semi: float) -> list[tuple]:
         clase = prim[0]
         if clase == "l":
             salida.append(("s", *_alargar(*prim[1:], semi, semi)))
+        elif clase == "ruta":              # un relleno: su contorno en segmentos
+            salida.append(("poli", _aristas(*prim[1:])))
         elif clase == "d":                 # un punto: un segmento de largo cero
             salida.append(("s", prim[1], prim[2], prim[1], prim[2]))
         elif clase == "p":
@@ -663,6 +806,9 @@ def _svg_capa(color: str, trazo: float, prims: list[tuple]) -> str:
             rellenos.append(f'<rect fill="{color}" x="{_n(prim[1])}" y="{_n(prim[2])}" '
                             f'width="{_n(prim[3])}" height="{_n(prim[4])}" '
                             f'rx="{_n(prim[5])}"/>')
+        elif clase == "ruta":              # el mismo trazado, con su misma escala
+            rellenos.append(f'<path fill="{color}" transform="translate({_n(prim[3])} '
+                            f'{_n(prim[4])}) scale({_n(prim[2])})" d="{prim[1]}"/>')
         else:
             raise _SinSvg(clase)
     salida = list(rellenos)
@@ -1088,6 +1234,8 @@ def _mover(prims: list[tuple], dx: float, dy: float) -> list[tuple]:
         elif clase == "l":
             _, x1, y1, x2, y2 = prim
             movidas.append(("l", x1 + dx, y1 + dy, x2 + dx, y2 + dy))
+        elif clase == "ruta":       # el desplazamiento va en el propio trazado
+            movidas.append(("ruta", prim[1], prim[2], prim[3] + dx, prim[4] + dy))
         else:                       # a, c, d, r, fr, rr: lo primero es el sitio
             movidas.append((clase, prim[1] + dx, prim[2] + dy, *prim[3:]))
     return movidas
