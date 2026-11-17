@@ -657,6 +657,10 @@ c("y manda la ruta, la cabecera y el cuerpo",
 # un servidor que contesta con error: peticion devuelve el estado y el cuerpo
 class Fallo(BaseHTTPRequestHandler):
     def do_POST(self):
+        # El cuerpo de la petición se lee entero antes de contestar, como hace rclone:
+        # en Windows, cerrar con datos sin leer manda un RST en vez de un cierre limpio
+        # y el cliente puede fallar con WinError 10053 antes de leer el 404.
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
         cuerpo = b'{"error": "no hay"}'
         self.send_response(404)
         self.send_header("Content-Length", str(len(cuerpo)))
